@@ -1,0 +1,72 @@
+# hs-kak-letter (Hookshot and emulator; #171, the letter part): "We both had the letter from Zelda, but
+# after one player talks to the guard the gate opens for only one player and the letter is gone from both
+# players' inventories." kak-gate proved the gate half with a TEST switch (A:LICHII_COOP_SET_BOOL of the
+# guard's flag 0x19898d14): B's gate opened live. Not run: the real letter. Here both get Zelda's Letter
+# (give, cheats on A and B), A is put beside the guard (Npc_Hylia_Soldier_003 at -47.41 109.69 -11.49, on
+# the village side of the gate Land_Kakariko_Gate_A_02 at -42.36 109.76 -13.02) and SHOWS the letter: first
+# by talking (A), then, if that set nothing, by using it from ZR (assign ZeldaLetter). No SET_BOOL switch:
+# the flag must come from the game's own talk.
+# Item_ZeldaLetter is shared as a mirrored trade item (docs/items.md): it leaving BOTH inventories when one
+# player shows it is the design; the check is that both end the same and B is not left behind a shut gate.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-kak-letter   (emulator: the same name)
+# Check first: both "coop: test give PouchData.Item_ZeldaLetter.StockNum" lines, and B's "mark b-stopped"
+# with z < -12 (the gate was shut before; if B got through, the save's gate was open: INCONCLUSIVE).
+# Pass:
+# - A: "bool 0x19898d14 ... 0 -> 1" after "mark show-talk" or "mark show-zr" (say which), with no
+#   LICHII_COOP_SET_BOOL in the run; B: the same line about 1 s later.
+# - the letter: A's flags line "PouchData.Item_ZeldaLetter.StockNum 1 -> 0" (shown), and B's count ends
+#   the same (0, mirrored), with no "put back" in either.
+# - B through the gate: "mark b-through (Link at x y Z)" with Z > -5, no "goto timed out" after "b-walk";
+#   shots "open": the gate open in both.
+# INCONCLUSIVE: no flag change after both tries (the show needs another button: a hand check).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_BOOL=19898d14
+#! timeout 420
+mark start
+warp KakarikoVillage_Child Kakariko_MountainTrailSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Item_ZeldaLetter.StockNum
+wait 60
+give IsGet.Item_ZeldaLetter
+wait 600                   # B's "before" walk to the shut gate and back
+mark a-letter
+place -46.30 109.90 -10.20  # 1.7 m from the guard, village side
+wait 120
+toward -47.41 -11.49 10
+press ZL 10
+mark at-guard
+press A 12                 # talk: the guard asks for the letter
+wait 120
+press A 12
+wait 120
+press A 12
+wait 120
+press A 12
+wait 240
+mark show-talk
+assign ZeldaLetter
+wait 60
+toward -47.41 -11.49 6
+press ZL 10
+press ZR 12                # show it from the item button
+wait 120
+press A 12
+wait 120
+press A 12
+wait 240
+mark show-zr
+wait 300
+mark open
+wait 1200                  # B walks through
+mark end

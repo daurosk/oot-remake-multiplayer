@@ -251,3 +251,27 @@ TEST_CASE("settings: the join password from coop.ini and LICHII_COOP_PASSWORD") 
   CHECK(errors.size() == 1);
   CHECK(s.password == "fromenv");
 }
+
+TEST_CASE("settings: color, a name or #RRGGBB") {
+  Settings s;
+  std::vector<std::string> errors;
+  CHECK_FALSE(s.color);
+  ApplyIni("color = #12AB7F\n", s, errors);
+  CHECK(errors.empty());
+  CHECK(s.color == 0x12AB7Fu);
+  ApplyIni("color = Purple  # mine\n", s, errors);
+  CHECK(errors.empty());
+  CHECK(s.color == 0xA040FFu);
+  // Empty: none chosen.
+  ApplyIni("color =\n", s, errors);
+  CHECK(errors.empty());
+  CHECK_FALSE(s.color);
+  // The environment wins; a bad one is an error naming the variable.
+  apply_env({{"LICHII_COOP_COLOR", "green"}}, s, errors);
+  CHECK(errors.empty());
+  CHECK(s.color == 0x30D040u);
+  apply_env({{"LICHII_COOP_COLOR", "blurple"}}, s, errors);
+  REQUIRE(errors.size() == 1);
+  CHECK(errors[0].find("LICHII_COOP_COLOR") != std::string::npos);
+  CHECK(s.color == 0x30D040u);  // kept
+}

@@ -1,0 +1,40 @@
+# sign-late (#90, a player who enters later): A warps into Kakariko at the signpost and cuts it
+# as in sign.A.txt; B warps into the Graveyard (Graveyard_Child GraveYard_KakarikoSide) and
+# walks down into Kakariko only after A's cut, so B loads the post already cut. A stays in
+# Kakariko (the server keeps a scene's cuts while a player is in it).
+# Expect: A "... cut here: N words sent"; B, after its Kakariko load, "world: a4bc132d2b5d7eae
+# Obj_GuidePost_A_02 cut by another player: N of N words to write" with no hit line before it
+# (a late loader gets the words 0.3 s after the post is loaded). Shot b-in/b-end: B's post in
+# pieces = PASS.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 420
+mark start
+warp KakarikoVillage_Child Kakariko_GraveYardSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -5.9 101.6 70.5
+wait 120
+toward -7.46 71.12 8
+press Y
+wait 30
+toward -7.46 71.12 8
+press Y
+wait 30
+toward -7.46 71.12 8
+press Y
+wait 60
+mark cut3
+goto -3.5 66.5 0.8 300  # out of B's view
+wait 2400               # B walks in meanwhile
+mark end

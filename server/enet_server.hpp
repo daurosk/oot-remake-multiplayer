@@ -9,10 +9,14 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <map>
+#include <memory>
+#include <span>
 
 #include <enet/enet.h>
 
+#include "coop/net/path_mark.hpp"
 #include "session.hpp"
 
 namespace coop::server {
@@ -56,10 +60,39 @@ class EnetServer {
   // (coop/net/enet_waiting.hpp): above 0 means the line loses packets.
   std::uint64_t mended_bytes() const { return mended_bytes_; }
 
+  // Datagrams on the game port that are not ENet's (STUN answers, NAT punches:
+  // punch.hpp): the handler sees each one first, during service(), and keeps
+  // it from ENet by returning true.
+  using RawHandler = std::function<bool(const ENetAddress& from, std::span<const std::uint8_t> data)>;
+  void set_raw_handler(RawHandler handler) { raw_ = std::move(handler); }
+  bool handle_raw(const ENetAddress& from, std::span<const std::uint8_t> data) const {
+    return raw_ && raw_(from, data);
+  }
+  // One datagram from the game port itself (so routers see the game's port).
+  bool send_raw(const ENetAddress& to, std::span<const std::uint8_t> data);
+
+  // Players sent away to connect again with small datagrams because their
+  // path lost full ones (coop/net/enet_path.hpp, issue 143), and the
+  // addresses remembered for that.
+  std::uint64_t small_path_drops() const { return small_path_drops_; }
+  bool small_path(enet_uint32 host) const { return small_hosts_.count(host) != 0; }
+  // Loopback addresses are not remembered (net::remember_small_path): every
+  // relay guest and the host's own game share 127.0.0.1. Tests turn it on.
+  void remember_loopback_small_paths(bool on) { remember_loopback_ = on; }
+
+  // Sealed packets that did not open (wrong key, changed, replayed) and
+  // plain ones on an encrypted connection: dropped unread.
+  std::uint64_t unsealed_drops() const { return unsealed_drops_; }
+  // Connections whose traffic is encrypted now.
+  std::size_t encrypted_connections() const { return ciphers_.size(); }
+
  private:
   std::uint64_t now_us() const;
   void handle(const ENetEvent& event);
   void apply_actions();
+  // Ends `peer`'s connection with kDisconnectSmallDatagrams (no DISCONNECT
+  // event follows) and tells the session; `why` goes into its drop line.
+  void send_small(ENetPeer* peer, const std::string& why);
 
   ServerOptions options_;
   Session session_;
@@ -75,7 +108,17 @@ class EnetServer {
   std::map<ConnectionId, LinkSeen> links_;
   ConnectionId next_id_ = 1;
   std::uint64_t mended_bytes_ = 0;
+  std::uint64_t small_path_drops_ = 0;
+  // Addresses sent away (ENet's form) and until when (now_us()) one is told
+  // again at connect; told once, then forgotten (net::kRememberMs).
+  std::map<enet_uint32, std::uint64_t> small_hosts_;
+  bool remember_loopback_ = false;
+  std::map<ConnectionId, net::PathMark> path_marks_;  // coop/net/enet_path.hpp
+  // Encrypted connections (EncryptAction, docs/protocol.md "Encrypted traffic").
+  std::map<ConnectionId, std::unique_ptr<protocol::TrafficCipher>> ciphers_;
+  std::uint64_t unsealed_drops_ = 0;
   std::chrono::steady_clock::time_point start_;
+  RawHandler raw_;
 };
 
 }  // namespace coop::server

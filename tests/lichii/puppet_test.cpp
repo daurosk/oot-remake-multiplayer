@@ -207,6 +207,7 @@ TEST_CASE("puppet cave: a game mod at a place co-op patches is found, others' by
     std::vector<std::uint8_t> main(CoopSvc::kCaveEnd, 0);
     for (const auto& h : CoopSvc::kHooks) put(main, h.offset, h.original);
     put(main, CoopHold::kHookOffset, CoopHold::kHookOriginal);
+    put(main, CoopCounters::kStartOffset, CoopCounters::kStartOriginal);
     CHECK_FALSE(CoopSites::ChangedSite(main).has_value());
     // The emulator's own built-ins and other bytes in the padding are not ours.
     main[0x3c46200] = 0xff;  // Dynamic FPS
@@ -227,6 +228,16 @@ TEST_CASE("puppet cave: a game mod at a place co-op patches is found, others' by
     mod[CoopHold::kTableOffset + CoopHold::kTableSize - 1] = 1;
     CHECK(CoopSites::ChangedSite(mod) ==
           std::optional<std::uint64_t>(CoopHold::kTableOffset + CoopHold::kTableSize - 1));
+    // The pause counters' start, its cave and the ring's address (platforms-b2).
+    mod = main;
+    put(mod, CoopCounters::kStartOffset, 0xd503201f);
+    CHECK(CoopSites::ChangedSite(mod) == std::optional<std::uint64_t>(CoopCounters::kStartOffset));
+    mod = main;
+    mod[CoopCounters::kCaveOffset + 4] = 1;
+    CHECK(CoopSites::ChangedSite(mod) == std::optional<std::uint64_t>(CoopCounters::kCaveOffset + 4));
+    mod = main;
+    mod[CoopCounters::kRingPointer + 7] = 1;
+    CHECK(CoopSites::ChangedSite(mod) == std::optional<std::uint64_t>(CoopCounters::kRingPointer + 7));
     // With the NSO header in front, and a module too short to tell.
     std::vector<std::uint8_t> nso(0x100, 0);
     nso.insert(nso.end(), main.begin(), main.end());
@@ -328,11 +339,12 @@ TEST_CASE("puppet: malloc, create, live, follow, delete") {
     CHECK(d.Slots()[0].actor == kActor);
 
     // It follows: the pose is written every frame.
-    Target moved = At(2, 12, 1.5f, -6);
+    // (A step under CoopSnap::kSnapM: drawn as given, not eased; issue 194.)
+    Target moved = At(2, 10.5f, 1.25f, -5.25f);
     moved.rotation = CoopPuppet::QuatToMatrix({0, std::sqrt(0.5f), 0, std::sqrt(0.5f)});
     d.SetInput(Wants({moved}));
     CHECK(Frame(d, g, 400).empty());
-    CheckPosition(g.guest, kActor + addr::kActorPosition, 12, 1.5f, -6);
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 10.5f, 1.25f, -5.25f);
     CHECK(g.guest.Get<float>(kActor + addr::kActorRotation + 4 * 2) ==
           doctest::Approx(moved.rotation[2]));
 
@@ -421,6 +433,81 @@ TEST_CASE("puppet: a player who changes age gets the other puppet, in the same s
     REQUIRE(calls.size() == 1);
     CHECK(calls[0].function == kBase + addr::kCreate);
     CHECK(d.Slots()[0].actor_name == "CoopPuppet_Adult");
+}
+
+TEST_CASE("puppet: a tunic puppet without a Player_ model falls back to the plain one") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Adult_Red")}));
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 2);
+    g.Spawn(calls[1].x[3]);  // the fake actor has no skeleton or model
+    Frame(d, g, 10);
+    Frame(d, g, 15);
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+    Frame(d, g, 1000);
+    CHECK(d.FailedTunics().empty());  // checked only after kTunicModelCheckMs
+    Frame(d, g, 15 + Director::kTunicModelCheckMs + 10);
+    CHECK(d.FailedTunics() == std::vector<std::string>{"CoopPuppet_Adult_Red"});
+}
+
+TEST_CASE("puppet: the plain puppet's model is not checked") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Adult")}));
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 2);
+    g.Spawn(calls[1].x[3]);
+    for (std::uint64_t t = 10; t < 10000; t += 500) Frame(d, g, t);
+    CHECK(d.FailedTunics().empty());
+}
+
+TEST_CASE("puppet: a tunic actor that is never made falls back after two timeouts") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child_Blue")}));
+    for (std::uint64_t t = 0; t < 2 * (Director::kCreateTimeoutMs + 5000) + 2000; t += 250) {
+        Frame(d, g, t);
+    }
+    CHECK(d.FailedTunics() == std::vector<std::string>{"CoopPuppet_Child_Blue"});
+}
+
+TEST_CASE("puppet: a tunic actor the game keeps refusing falls back (an older pack, Hookshot proof 3)") {
+    Game g;
+    g.create_result = 0;  // the game refuses: no such actor in its ActorInfo
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child_Blue")}));
+    std::uint64_t t = 0;
+    for (; t < 60000 && d.FailedTunics().empty(); t += 250) {
+        Frame(d, g, t);
+    }
+    CHECK(d.FailedTunics() == std::vector<std::string>{"CoopPuppet_Child_Blue"});
+    // About 3 x 1 s + 3 x 5 s: longer than a load's refusals, well before a minute.
+    CHECK(t > 3 * Director::kRefusedRetryMs + 2 * Director::kRefusedSlowMs);
+    CHECK(t < 30000);
+}
+
+TEST_CASE("puppet: refusals do not cost the plain puppet or a tunic one that is made in time") {
+    {
+        Game g;
+        g.create_result = 0;
+        Director d;
+        d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child")}));
+        for (std::uint64_t t = 0; t < 60000; t += 250) Frame(d, g, t);
+        CHECK(d.FailedTunics().empty());  // the plain one has nothing to fall back to: it keeps asking
+    }
+    {
+        Game g;
+        g.create_result = 0;  // refused while the scene loads ...
+        Director d;
+        d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child_Blue")}));
+        std::uint64_t t = 0;
+        for (; t < 8000; t += 250) Frame(d, g, t);  // 3 fast refusals and one slow one
+        g.create_result = 1;  // ... then accepted (the refusal count starts again)
+        for (; t < 8000 + Director::kCreateTimeoutMs; t += 250) Frame(d, g, t);
+        CHECK(d.FailedTunics().empty());
+        CHECK(d.Slots()[0].actor_name == "CoopPuppet_Child_Blue");
+    }
 }
 
 TEST_CASE("puppet: an engine-deleted actor is noticed and created again") {
@@ -519,7 +606,7 @@ TEST_CASE("puppet planner: remote players in this scene, and the debug puppet") 
     auto in = p.Plan(kBase, std::string("Kokiri"), CoopPuppet::Vec3{10, 0, 10}, false, remotes, 1000);
     REQUIRE(in.targets.size() == 1);  // the debug puppet waits for the delay
     CHECK(in.targets[0].number == 2);
-    CHECK(in.targets[0].actor == "CoopPuppet_Child");  // by age
+    CHECK(in.targets[0].actor == "CoopPuppet_Child_Red");  // by age, player 2 red
     CHECK(in.targets[0].rotation[0] == doctest::Approx(-1.0f));  // half a turn about y
 
     in = p.Plan(kBase, std::string("Kokiri"), CoopPuppet::Vec3{10, 0, 10}, false, remotes, 4000);
@@ -706,6 +793,27 @@ TEST_CASE("puppet gear: each known piece worn once, on its own name cell") {
     CHECK(calls[0].x[1] == 6u);
 }
 
+
+TEST_CASE("puppet gear: a mask is worn in state 1, other pieces in state 2") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x1000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    Target t = At(1, 4, 5, 6);
+    t.gear[2] = "Armor_Child_Mask_Keaton";  // head, kind 7
+    t.gear[3] = "Armor_Adult_Goron";        // tunic, kind 8
+    d.SetInput(Wants({t}));
+    const auto calls = Frame(d, g, 30);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[0].x[1] == 7u);
+    CHECK(calls[0].x[3] == 1u);
+    CHECK(calls[1].x[1] == 8u);
+    CHECK(calls[1].x[3] == 2u);
+}
 TEST_CASE("puppet gear: a mask taken off is taken off with the game's call, a held item is only put away") {
     Game g;
     Director d;
@@ -931,7 +1039,7 @@ TEST_CASE("puppet move: the game's setter once a frame when asked for") {
     CheckPosition(g2.guest, kActor + addr::kActorPosition, 4, 5, 6);
 }
 
-TEST_CASE("puppet scene filter: hold freezes it, hide parks it under the floor") {
+TEST_CASE("puppet scene filter: hold freezes its frame and follows its place, hide parks it") {
     Game g;
     Director d;
     MakeLive(d, g);
@@ -941,9 +1049,11 @@ TEST_CASE("puppet scene filter: hold freezes it, hide parks it under the floor")
     Frame(d, g, 30);
     CheckPosition(g.guest, kActor + addr::kActorPosition, 4, 5, 6);
 
-    // Hold: not moved, and its frame set back to where it was every frame.
+    // Hold: its frame set back to where it was every frame, and (issue 194) it follows their
+    // place, so it is not left behind for a snap at the end. A jump while held is a real
+    // teleport (their samples move smoothly in a cutscene): drawn at once, not eased.
     Target held = Playing("Walk", 2.0f, 2, CoopPuppet::Show::hold);
-    held.position = {40, 5, 6};
+    held.position = {6, 5, 6};
     d.SetInput(Wants({held}));
     g.guest.Set(kSlot0 + addr::kSlotFrame, 11.0f);
     for (std::uint64_t now : {40, 50}) {
@@ -953,24 +1063,30 @@ TEST_CASE("puppet scene filter: hold freezes it, hide parks it under the floor")
         CHECK(calls[0].s0 == 11.0f);
         g.guest.Set(kSlot0 + addr::kSlotFrame, 12.0f);
     }
-    CheckPosition(g.guest, kActor + addr::kActorPosition, 4, 5, 6);
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 6, 5, 6);
     CHECK(d.Slots()[0].anim_name == "Wait");
+    // Their event walks them on: followed.
+    held.position = {6.2f, 5, 6};
+    d.SetInput(Wants({held}));
+    Frame(d, g, 100);
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 6.2f, 5, 6);
 
     // Hide: parked below its spot, no animation calls, not deleted.
     Target hidden = Playing("Walk", 2.0f, 2, CoopPuppet::Show::hide);
     hidden.position = {40, 5, 6};
     d.SetInput(Wants({hidden}));
-    CHECK(Frame(d, g, 60).empty());
+    CHECK(Frame(d, g, 400).empty());
     CheckPosition(g.guest, kActor + addr::kActorPosition, 40, 5 - Director::kHideDrop, 6);
     CHECK(d.Slots()[0].phase == Phase::live);
 
     // Shown again: moves, and plays what it missed.
     held.show = CoopPuppet::Show::show;
+    held.position = {40, 5, 6};
     d.SetInput(Wants({held}));
-    auto calls = Frame(d, g, 70);
+    auto calls = Frame(d, g, 410);
     REQUIRE(calls.size() == 2);
     CHECK(calls[0].function == kBase + addr::kPlayAs);
-    CheckPosition(g.guest, kActor + addr::kActorPosition, 40, 5, 6);
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 40, 5, 6);  // where it was hidden: no ease
 }
 
 TEST_CASE("puppet: LiveMask has a live puppet shown or held, not one parked or gone (issue 145)") {
@@ -1021,12 +1137,12 @@ TEST_CASE("puppet planner: scene and cutscene rules, actor by age, animation pas
     auto in = p.Plan(kBase, std::string("Kokiri"), std::nullopt, false, remotes, 0);
     REQUIRE(in.targets.size() == 2);
     CHECK(in.targets[0].show == CoopPuppet::Show::show);
-    CHECK(in.targets[0].actor == "CoopPuppet_Child");
+    CHECK(in.targets[0].actor == "CoopPuppet_Child_Blue");  // player 1: blue
     REQUIRE(in.targets[0].anim);
     CHECK(in.targets[0].anim->name == "Wait");
     CHECK(in.targets[0].anim_serial == 7u);
     CHECK(in.targets[1].show == CoopPuppet::Show::hold);  // their cutscene
-    CHECK(in.targets[1].actor == "CoopPuppet_Adult");
+    CHECK(in.targets[1].actor == "CoopPuppet_Adult_Red");  // player 2: red
 
     // Our cutscene: every puppet here kept but hidden.
     in = p.Plan(kBase, std::string("Kokiri"), std::nullopt, true, remotes, 10);
@@ -1043,7 +1159,7 @@ TEST_CASE("puppet planner: scene and cutscene rules, actor by age, animation pas
     CHECK(in.targets[1].actor == "Animal_Cow_LinkHouse");
 }
 
-TEST_CASE("puppet planner: riding parks, the Ocarina plays through their cutscene") {
+TEST_CASE("puppet planner: riding shows (issue 199), the Ocarina plays through their cutscene") {
     CoopPuppet::Planner p;
     std::vector<CoopPuppet::Remote> remotes(3);
     remotes[0].number = 1;
@@ -1057,11 +1173,11 @@ TEST_CASE("puppet planner: riding parks, the Ocarina plays through their cutscen
     remotes[2].number = 3;
     remotes[2].scene = "HyruleField_Child";
     remotes[2].status = coop::protocol::status::in_cutscene;
-    remotes[2].anim = CoopPuppet::Anim{"DemoOcarina", 0.0f, 1.0f};
+    remotes[2].anim = CoopPuppet::Anim{"DemoOcarinaMelodyGet", 0.0f, 1.0f};  // a song taught
 
     auto in = p.Plan(kBase, std::string("HyruleField_Child"), std::nullopt, false, remotes, 0);
     REQUIRE(in.targets.size() == 3);
-    CHECK(in.targets[0].show == CoopPuppet::Show::hide);  // kept, parked
+    CHECK(in.targets[0].show == CoopPuppet::Show::show);  // on its horse copy, never parked
     CHECK(std::string(in.targets[0].why) == "riding");
     CHECK(in.targets[1].show == CoopPuppet::Show::show);
     CHECK(std::string(in.targets[1].why) == "ocarina");
@@ -1640,4 +1756,21 @@ TEST_CASE("fairy join: the fairy waits for the drawing after a load, as her pupp
     calls = Frame(d, g, 3400 + Director::kDrawnMs);
     REQUIRE(calls.size() == 1);
     CHECK(calls[0].function == kBase + addr::kCreate);
+}
+
+TEST_CASE("puppet planner: the Ocarina played freely (DemoOcarina) shows through their event bit (#86)") {
+    CoopPuppet::Planner p;
+    std::vector<CoopPuppet::Remote> remotes(1);
+    remotes[0].number = 1;
+    remotes[0].scene = "Graveyard_Child";
+    remotes[0].status = coop::protocol::status::in_cutscene;
+    remotes[0].anim = CoopPuppet::Anim{"EvtWait", 0.0f, 1.0f};  // taking it out: any event
+    auto in = p.Plan(kBase, std::string("Graveyard_Child"), std::nullopt, false, remotes, 0);
+    REQUIRE(in.targets.size() == 1);
+    CHECK(in.targets[0].show == CoopPuppet::Show::hold);
+    remotes[0].anim = CoopPuppet::Anim{"DemoOcarina", 0.0f, 1.0f};  // playing
+    in = p.Plan(kBase, std::string("Graveyard_Child"), std::nullopt, false, remotes, 10);
+    REQUIRE(in.targets.size() == 1);
+    CHECK(in.targets[0].show == CoopPuppet::Show::show);
+    CHECK(std::string(in.targets[0].why) == "ocarina");
 }

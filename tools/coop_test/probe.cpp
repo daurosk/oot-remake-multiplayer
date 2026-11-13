@@ -29,6 +29,7 @@ net::ClientConfig client_config(const ProbeConfig& config) {
   c.hello.game_build_id = "e0f3ccfaf50065ae";
   c.hello.game_version = "1.1.1";
   c.hello.nickname = config.nickname;
+  c.join_password = config.password;
   return c;
 }
 

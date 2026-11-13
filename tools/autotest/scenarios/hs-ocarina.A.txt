@@ -1,0 +1,54 @@
+# hs-ocarina (Hookshot, issue 152): ocarina-notes on Hookshot. Before hs-ocarina the module had
+# no pad to read, so A sent no notes. Now it reads the word Hookshot's nn::hid gave the game
+# (our patch's HosCoopApi::pad_buttons). Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-ocarina
+# Needs Hookshot built again with this branch's patch (the module's start line has no
+# "gives no pad word" note). Proof, A's log: "coop: ocarina note 4 (Ocarina_D) sent" ...
+# "note 16 (Ocarina_HighD) sent", "note 0 (let go) sent" after each; B's log as in ocarina-notes
+# ("P1 plays sound 'Ocarina_D'"). B only waits.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_OCARINA_SOUND=1
+mark start
+wait 120
+hold LSTICK_UP 40
+wait 60
+press DLEFT 12
+wait 240
+mark out
+# The first Ocarina use shows an "Ocarina Audio Input" note that eats L R Y X; A closes it
+# (the A press may also send one HighD note before the test notes).
+press A 12
+wait 120
+mark ready
+mark note-L
+hold L 30
+wait 90
+mark note-R
+hold R 30
+wait 90
+mark note-Y
+hold Y 30
+wait 90
+mark note-X
+hold X 30
+wait 90
+mark note-A
+hold A 30
+wait 90
+mark lullaby
+press X 15
+wait 30
+press A 15
+wait 30
+press Y 15
+wait 30
+press X 15
+wait 30
+press A 15
+wait 30
+press Y 15
+wait 300
+mark after-song
+press B 12
+wait 120
+press B 12
+wait 90
+mark end

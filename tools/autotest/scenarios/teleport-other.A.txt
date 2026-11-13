@@ -14,6 +14,8 @@ wait 900
 mark arrived
 wait 240
 mark settled
+goto -32.0 12.0 1.0 600 # #197: Link must walk after the load ("test steer at" lines change, no "goto timed out")
+mark walked
 press A 12              # talk / check: must not load the Graveyard again
 wait 120
 press A 12

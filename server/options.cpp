@@ -42,6 +42,7 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
         error = "--port needs a number from 0 to 65535";
         return std::nullopt;
       }
+      line.port_given = true;
     } else if (arg == "--game-build") {
       if (!has_value || args[i + 1].empty()) {
         error = "--game-build needs a game build id";
@@ -55,6 +56,13 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
         return std::nullopt;
       }
       line.run_for_ms = ms;
+    } else if (arg == "--owner-hold-ms") {
+      std::uint32_t ms = 0;
+      if (!has_value || !parse_number(args[++i], ms)) {
+        error = "--owner-hold-ms needs a number of milliseconds";
+        return std::nullopt;
+      }
+      line.owner_hold_ms = ms;
     } else if (arg == "--max-half-open") {
       if (!has_value || !parse_number(args[++i], line.max_half_open)) {
         error = "--max-half-open needs a number (0 for no limit)";
@@ -85,6 +93,17 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
         line.allowed.push_back(*r);
         start = comma + 1;
       }
+    } else if (arg == "--pvp") {
+      const std::string value = has_value ? args[i + 1] : std::string();
+      if (value == "on" || value == "1" || value == "yes") {
+        line.pvp = true;
+      } else if (value == "off" || value == "0" || value == "no") {
+        line.pvp = false;
+      } else {
+        error = "--pvp needs on or off";
+        return std::nullopt;
+      }
+      ++i;
     } else if (arg == "--password" || arg == "--password-env") {
       if (!has_value || args[i + 1].empty()) {
         error = arg + " needs a value";
@@ -100,18 +119,65 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
       } else {
         line.password_env = value;
       }
+    } else if (arg == "--upnp") {
+      line.upnp = true;
+    } else if (arg == "--invite") {
+      line.invite = true;
+    } else if (arg == "--stun" || arg == "--join") {
+      if (!has_value || args[i + 1].empty() || args[i + 1].size() > 260) {
+        error = arg + " needs an address, for example stun.example.net:3478";
+        return std::nullopt;
+      }
+      if (arg == "--stun") {
+        line.stun.push_back(args[++i]);
+      } else {
+        line.join = args[++i];
+      }
+    } else if (arg == "--game-port") {
+      if (!has_value || !parse_number(args[i + 1], line.game_port)) {
+        error = "--game-port needs a port number";
+        return std::nullopt;
+      }
+      ++i;
+    } else if (arg == "--relay") {
+      line.relay = true;
+    } else if (arg == "--relay-via") {
+      if (!has_value || args[i + 1].empty()) {
+        error = "--relay-via needs the relay's address, for example relay.example.net:27530";
+        return std::nullopt;
+      }
+      line.relay_via = args[++i];
+    } else if (arg == "--relay-key" || arg == "--relay-key-env") {
+      if (!has_value || args[i + 1].empty() || args[i + 1].size() > 64) {
+        error = arg + " needs a value of at most 64 characters";
+        return std::nullopt;
+      }
+      (arg == "--relay-key" ? line.relay_key : line.relay_key_env) = args[++i];
     } else {
       error = "unknown argument: " + arg;
       return std::nullopt;
     }
   }
+  if (line.relay && (line.upnp || !line.relay_via.empty())) {
+    error = "--relay runs a relay; it cannot also use --upnp or --relay-via";
+    return std::nullopt;
+  }
+  if (!line.join.empty() && (line.relay || line.upnp || line.invite || !line.relay_via.empty())) {
+    error = "--join runs Join.bat's helper; it cannot also host (--upnp, --invite, --relay, --relay-via)";
+    return std::nullopt;
+  }
+  if (line.relay && line.invite) {
+    error = "--relay runs a relay; it cannot also use --invite";
+    return std::nullopt;
+  }
+  if (line.relay && !line.port_given) line.port = 27530;
   return line;
 }
 
 const char* usage() {
   return "usage: coop_server [--port N] [--bind ADDRESS] [--allow LIST]\n"
          "                   [--game-build ID] [--max-half-open N] [--run-for-ms N]\n"
-         "                   [--password TEXT | --password-env NAME]\n"
+         "                   [--password TEXT | --password-env NAME] [--pvp on|off]\n"
          "  --port N         UDP port to listen on (default 27510, 0 for any)\n"
          "  --bind ADDRESS   listen only on this IPv4 address of this PC, for\n"
          "                   example its Hamachi or Radmin address (default: all)\n"
@@ -122,9 +188,31 @@ const char* usage() {
          "  --max-half-open N  most connections one address may hold before\n"
          "                   sending HELLO (default 4, 0 for no limit)\n"
          "  --run-for-ms N   stop by itself after N milliseconds\n"
-         "  --password TEXT  players must give this join password (default: none)\n"
+         "  --owner-hold-ms N  after the start, objects get their first owner\n"
+         "                   only after N ms, the lowest player number that lists\n"
+         "                   them (default 2000; 0: the first to list owns at once)\n"
+         "  --password TEXT  players must give this join password; it also\n"
+         "                   encrypts the traffic (required, but not with --relay)\n"
          "  --password-env NAME  the join password is in this environment\n"
-         "                   variable (keeps it off the command line)\n";
+         "                   variable (keeps it off the command line)\n"
+         "  --upnp           ask the router (UPnP) to forward the port while the\n"
+         "                   server runs\n"
+         "  --relay-via ADDRESS[:PORT]  host through a relay (default port 27530)\n"
+         "                   and print a join code for the players\n"
+         "  --relay          run as a relay for hosts that use --relay-via\n"
+         "                   (UDP port 27530 unless --port), not a game server\n"
+         "  --relay-key TEXT | --relay-key-env NAME  the relay's host key: on the\n"
+         "                   relay, hosts must give it; with --relay-via, the one\n"
+         "                   to give\n"
+         "  --invite         learn this PC's internet address (STUN), print an invite\n"
+         "                   code with it and the join password, and take answer\n"
+         "                   codes typed here\n"
+         "  --stun NAME:PORT STUN server to ask (more than once; default: Google's\n"
+         "                   and Cloudflare's free ones)\n"
+         "  --join ADDRESS:PORT [--game-port N]  Join.bat's helper for an invite\n"
+         "                   code: the game connects to 127.0.0.1:N (27512)\n"
+         "  --pvp on|off     players can hurt each other (default: off); the\n"
+         "                   host can change it in the game with /pvp\n";
 }
 
 }  // namespace coop::server

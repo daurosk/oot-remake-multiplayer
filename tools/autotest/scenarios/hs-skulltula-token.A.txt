@@ -1,0 +1,60 @@
+# hs-skulltula-token (Hookshot and emulator; #89): the Graveyard Gold Skulltula killed in A and its token
+# TAKEN in A: gone and counted in B. skulltula-kill's re-run (2026-11-12 03:00,
+# shots\skulltula-kill\20261112-030051) killed it ("test kill ... hit", "Die", "+ Obj_Token_Gold at
+# -20.26 104.35 26.06") but nobody took the token: `place -20.20 104.30 26.00` put A 0.08 m from it,
+# and A just hung there (height 104.3 for 10 s) with no pickup: a place moves no body through the
+# token. Here, after the same kill, three ways to take it, each with its mark; the first that
+# counts is the proof:
+#   take1: placed 0.6 m in front of it at body height, then moved into it (stick toward the wall),
+#   take2: placed on it, then A pressed (in case this game picks things up with A),
+#   take3: placed 1.2 m above it, falling through it.
+#! switches LICHII_COOP_TIME_TEST_SET=72000@75,LICHII_COOP_DEBUG_TIME=1
+#! timeout 330
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-skulltula-token   (emulator: the same name)
+# Pass (as skulltula-kill): A "world: <TokenId> Obj_Token_Gold broken here (gone next to Link): sent" and
+# a flags line PouchData.Item_Token_Gold.StockNum N -> N+1 with the Skulltula key 0x32f42f523be6425 set
+# within 1.5 s, after one of take1..take3, and no "put back". B: "Obj_Token_Gold taken by another player:
+# deleted" (if its game made one), "world: key64 ... set to 1 (a token taken elsewhere)", and B's count
+# N -> N+1 (the same N+1). Shots: the token on A's screen at `token`, gone in both at `taken`/`end`.
+# Which take worked goes into the result (the next scenarios use that one).
+# INCONCLUSIVE: "test kill ... none here with a life" at before-kill (still day), or no take counted
+# (then the token needs a real climb or the boomerang: a hand check).
+mark start
+wait 2400               # the host sets 20:00 about 30 s in
+mark night
+stick 0 -1 120          # out to Kakariko (as stray-out)
+wait 480
+mark kakariko
+stick 0 -1 150          # and back in (as stray-back): the Graveyard loads again, at night
+wait 480
+mark graveyard
+goto -24.0 16.0 1.0 900
+goto -20.2 22.5 0.5 900 # 4 m south of the Skulltula
+toward -20.20 26.40 15
+mark at-skulltula
+wait 600                # B gets back in and faces it
+mark before-kill
+kill Enemy_Skulltula_Gold
+wait 120
+mark killed
+kill Enemy_Skulltula_Gold   # once more in case the first hit did not take ("none here" if dead)
+wait 120
+mark token              # the token, where the Skulltula was (-20.26 104.35 26.06)
+place -20.26 103.80 25.45   # take1: in front of it, body height, then into it
+wait 10
+toward -20.26 26.40 20   # walk into it (toward the wall)
+wait 60
+mark take1
+place -20.26 104.35 26.06   # take2: on it, then A
+wait 10
+press A 12
+wait 60
+mark take2
+place -20.26 105.55 26.06   # take3: above it, falling through it
+wait 120
+mark take3
+goto -20.2 22.5 0.5 300
+wait 300
+mark taken
+wait 300
+mark end

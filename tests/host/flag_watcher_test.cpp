@@ -33,6 +33,7 @@ class FakeStore : public FlagStore {
   std::map<FlagKey, proto::FlagEntry> values;
   std::set<FlagKey> unreadable;
   std::set<FlagKey> unwritable;
+  std::set<FlagKey> no_room;  // refused for room in the game's queue (busy)
   int writes = 0;
 
   void set(FlagKey key, std::uint32_t value) { values[key] = entry(key, value); }
@@ -46,11 +47,12 @@ class FakeStore : public FlagStore {
   }
   bool write(const proto::FlagEntry& e) override {
     const FlagKey key = key_of(e);
-    if (unwritable.contains(key) || !values.contains(key)) return false;
+    if (unwritable.contains(key) || no_room.contains(key) || !values.contains(key)) return false;
     ++writes;
     values[key] = e;
     return true;
   }
+  bool busy(FlagKey key) override { return no_room.contains(key); }
 };
 
 SharedFlags shared() { return SharedFlags({kChest, kDoor, kKey0, kKey1}); }
@@ -341,6 +343,23 @@ TEST_CASE("flag watcher, host: a FLAG_SET is applied and answered with what came
   CHECK(store.get(kHearts) == 0);
   CHECK(w.stats().answers_sent == 2);
   CHECK(w.frame(store).empty());  // the write is not seen as a change
+}
+
+TEST_CASE("flag watcher, host: a FLAG_SET refused for queue room is answered as asked and written later (issue 175)") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  w.frame(store);
+  store.no_room.insert(kChest);
+  CHECK(w.receive(proto::FlagSet{2, {entry(kChest, 1)}}));
+  // Not the game's old 0: that would turn the player's change back.
+  CHECK(only<proto::FlagState>(w.frame(store)) == std::vector{entry(kChest, 1)});
+  CHECK(store.get(kChest) == 0);
+  CHECK(w.frame(store).empty());  // still no room: kept, nothing sent
+  CHECK(store.get(kChest) == 0);
+  store.no_room.clear();
+  CHECK(w.frame(store).empty());  // written now, and not seen as a change of the host's
+  CHECK(store.get(kChest) == 1);
+  CHECK(w.frame(store).empty());
 }
 
 TEST_CASE("flag watcher, host: a FLAG_STATE is written into the host's game and not sent back") {
@@ -993,6 +1012,72 @@ TEST_CASE("flag watcher: a one-way room flag the game resets is no save load and
   CHECK(reset == std::vector{entry(kDoor, 0), entry(kKey0, 0)});
 }
 
+TEST_CASE("flag watcher: a max-rule value our game lowers is ours: not sent, no echo (MaxLife loop)") {
+  constexpr FlagKey kMaxLife{0xfbe01da1u, 0};  // PlayerStatus.MaxLife, max
+  FakeStore game_store;
+  game_store.values[kMaxLife] = entry(kMaxLife, 12, proto::FlagKind::int32);
+  ItemFlagStore store(game_store);
+  CHECK(store.is_max(kMaxLife));
+  CHECK_FALSE(store.is_count(kMaxLife));
+  FlagWatcher w(SharedFlags({kMaxLife}), FlagRole::player);
+  w.frame(store);
+  // The group's 16 comes in; our game writes its own 12 back (no object
+  // walk raised Link's hearts). Nothing goes out, every time.
+  for (int round = 0; round < 5; ++round) {
+    CHECK(w.receive(state({entry(kMaxLife, 16, proto::FlagKind::int32)})));
+    CHECK(w.frame(store).empty());
+    CHECK(game_store.get(kMaxLife) == 16u);
+    game_store.values[kMaxLife] = entry(kMaxLife, 12, proto::FlagKind::int32);
+    CHECK(w.frame(store).empty());
+    CHECK(w.frame(store).empty());
+  }
+  CHECK(w.stats().max_drops_kept == 5);
+  // A rise of our own still goes out.
+  game_store.values[kMaxLife] = entry(kMaxLife, 20, proto::FlagKind::int32);
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kMaxLife, 20, proto::FlagKind::int32)});
+  // A host's game lowering it sends no FLAG_STATE either.
+  FakeStore host_game;
+  host_game.values[kMaxLife] = entry(kMaxLife, 16, proto::FlagKind::int32);
+  ItemFlagStore host_store(host_game);
+  FlagWatcher h(SharedFlags({kMaxLife}), FlagRole::host);
+  h.frame(host_store);
+  host_game.values[kMaxLife] = entry(kMaxLife, 12, proto::FlagKind::int32);
+  CHECK(h.frame(host_store).empty());
+}
+
+TEST_CASE("flag watcher: host and player settle a MaxLife the player's game keeps lowering") {
+  // The run that found it: after the host's save load, B's game wrote its own
+  // max life back every frame; B sent it, the host answered with its higher
+  // one, and the two went round for ever with a notice each time.
+  constexpr FlagKey kMaxLife{0xfbe01da1u, 0};
+  FakeStore host_game, player_game;
+  host_game.values[kMaxLife] = entry(kMaxLife, 16, proto::FlagKind::int32);
+  player_game.values[kMaxLife] = entry(kMaxLife, 12, proto::FlagKind::int32);
+  ItemFlagStore host_store(host_game), player_store(player_game);
+  FlagWatcher h(SharedFlags({kMaxLife}), FlagRole::host);
+  FlagWatcher p(SharedFlags({kMaxLife}), FlagRole::player);
+  h.frame(host_store);
+  p.frame(player_store);
+  CHECK(p.receive(state({entry(kMaxLife, 16, proto::FlagKind::int32)})));  // the host's value arrives
+  int sent = 0;
+  int raised = 0;
+  for (int frame = 0; frame < 300; ++frame) {
+    for (const auto& o : p.frame(player_store)) {
+      ++sent;
+      CHECK(h.receive(o.bytes));
+    }
+    for (const auto& o : h.frame(host_store)) CHECK(p.receive(o.bytes));
+    for (const auto& r : p.take_received()) {
+      if (r.key == kMaxLife && r.after.value > r.before.value) ++raised;
+    }
+    // The player's game puts its own hearts back each frame.
+    player_game.values[kMaxLife] = entry(kMaxLife, 12, proto::FlagKind::int32);
+  }
+  CHECK(sent == 0);
+  CHECK(raised == 1);  // the host's value, once
+  CHECK(host_game.get(kMaxLife) == 16);
+}
+
 TEST_CASE("item store: a reset that lowers the hearts holds life to the new maximum") {
   constexpr FlagKey kMaxLife{0xfbe01da1u, 0};
   constexpr FlagKey kLife{0x31ab5580u, 0};
@@ -1377,4 +1462,98 @@ TEST_CASE("flag watcher: the settle lasts 2 s at 165 presents a second, not 0.73
   const std::uint64_t settle = now - loaded;
   CHECK(settle >= 1'950'000);
   CHECK(settle <= 2'100'000);
+}
+
+// Issue 195: our Link opened again a chest another player had opened (it is
+// shown open here, but its AI lets it open). Its content counted once for the
+// group already, so this game's next count gain is put back, not sent.
+TEST_CASE("doubled chest: the next count gain is put back, not sent") {
+  TokenStore store = token_game();
+  FlagWatcher w(token_shared(), FlagRole::player);
+  w.frame(store);
+  w.expect_doubled_gain();
+  store.tokens(6);
+  const auto sent = entries(w.frame(store));
+  CHECK_FALSE(has(sent, token_delta(1)));
+  CHECK(store.tokens() == 5);
+  CHECK(w.stats().doubled_gains == 1);
+  const auto guarded = w.take_counts_guarded();
+  REQUIRE(guarded.size() == 1);
+  CHECK(guarded[0].count == kTokens);
+  CHECK(guarded[0].amount == 1);
+  // Only one: the next gain is ours and counts.
+  CHECK(entries(w.frame(store)).empty());
+  store.tokens(6);
+  CHECK(has(entries(w.frame(store)), token_delta(1)));
+  CHECK(store.tokens() == 6);
+}
+
+TEST_CASE("doubled chest: unused, it lapses, and a drop is never taken back") {
+  TokenStore store = token_game();
+  FlagWatcher w(token_shared(), FlagRole::player);
+  w.frame(store);
+  w.expect_doubled_gain();
+  store.tokens(4);  // spent one: sent as ever
+  CHECK(has(entries(w.frame(store)), token_delta(-1)));
+  for (std::uint64_t f = 0; f <= FlagWatcher::kDoubledGainFrames; ++f) w.frame(store);
+  store.tokens(5);  // a gain after the window: counts
+  CHECK(has(entries(w.frame(store)), token_delta(1)));
+  CHECK(store.tokens() == 5);
+  CHECK(w.stats().doubled_gains == 0);
+}
+
+TEST_CASE("doubled chest: the host takes it back too and sends no total") {
+  TokenStore store = token_game();
+  FlagWatcher w(token_shared(), FlagRole::host);
+  w.frame(store);
+  w.expect_doubled_gain();
+  store.tokens(6);
+  CHECK_FALSE(has(entries(w.frame(store)), token_total(6)));
+  CHECK(store.tokens() == 5);
+  CHECK(w.stats().doubled_gains == 1);
+}
+
+TEST_CASE("doubled chest: a guarded count (tokens, never in a chest) is left to its guard") {
+  TokenStore store = token_game();
+  FlagWatcher w(token_shared(), FlagRole::player);
+  guard(w);
+  w.frame(store);
+  w.expect_doubled_gain();
+  store.set(kSkull, 1);  // a token taken here: its own key and the count
+  store.tokens(6);
+  CHECK(has(entries(w.frame(store)), token_delta(1)));
+  CHECK(store.tokens() == 6);
+  CHECK(w.stats().doubled_gains == 0);
+}
+
+TEST_CASE("doubled chest: once its get scene ends, a key counts again") {
+  TokenStore store = token_game();
+  FlagWatcher w(token_shared(), FlagRole::player);
+  w.frame(store);
+  w.expect_doubled_gain();
+  w.frame(store);
+  w.end_doubled_gain();  // a map chest: no count in its scene
+  store.tokens(6);       // a real key just after
+  CHECK(has(entries(w.frame(store)), token_delta(1)));
+  CHECK(store.tokens() == 6);
+  CHECK(w.stats().doubled_gains == 0);
+}
+
+TEST_CASE("flag watcher, host: a busy count delta is added later, summed, and the other answers still go") {
+  TokenStore store = token_game();  // 5 tokens
+  FlagWatcher w(token_shared(), FlagRole::host);
+  w.frame(store);
+  store.no_room.insert(kTokens);
+  CHECK(w.receive(proto::FlagSet{2, {entry(kChest, 1), token_delta(2)}}));
+  // The Bool's answer goes out; no delta in it (a FLAG_STATE cannot carry one).
+  CHECK(entries(w.frame(store)) == std::vector{entry(kChest, 1)});
+  CHECK(w.receive(proto::FlagSet{3, {token_delta(3)}}));
+  CHECK(w.frame(store).empty());
+  CHECK(store.tokens() == 5);
+  store.no_room.clear();
+  // Both gains, added once, and the new total stated.
+  CHECK(entries(w.frame(store)) == std::vector{token_total(10)});
+  CHECK(store.tokens() == 10);
+  CHECK(w.frame(store).empty());
+  CHECK(w.stats().entries_unsent == 0);
 }

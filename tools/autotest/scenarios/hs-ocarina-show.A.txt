@@ -1,0 +1,39 @@
+# hs-ocarina-show (Hookshot and emulator, issue 86): the other player stays seen while one plays the
+# Ocarina freely. ocarina-b (2026-11-12): the game runs free play as an event with the command
+# 'DemoOcarina' (the probe: slots DemoOcarina, DemoOcarinaFace, DemoOcarinaFinger), which counted as a
+# song taught, so B held A's puppet and A hid B for the whole song. Since ocarina-show 'DemoOcarina'
+# is free play (only 'DemoOcarinaMelodyGet' is a cutscene). Taking it out first is a plain 'EvtWait'
+# event (about 4 s): a hold in B and a hide in A then are expected, as for any talk.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-ocarina-show (emulator: -Scenario ocarina)
+# Pass:
+# - B's log: "P1 their command 'DemoOcarina'", then at once "coop: puppet: P1 hold -> show (ocarina)";
+#   no "P1 show -> hold" after it until A puts it away.
+# - A's log: "ocarina probe: our Link plays the ocarina", then "coop: puppet: P2 hide -> show".
+# - Shots playing*: B's window shows A's puppet with the Ocarina; A's window shows B.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_OCARINA_PROBE=1
+mark start
+give PouchData.Item_Ocarina_Fairy.StockNum
+wait 120
+stick 0 0.6 60          # a step away so B sees A
+wait 120
+press DLEFT 12          # take out the Ocarina
+wait 240
+mark out
+press A 12
+wait 120
+mark playing1
+press L 12
+wait 120
+press R 12
+wait 120
+mark playing2
+press Y 12
+wait 120
+press X 12
+wait 120
+mark playing3
+press B 12              # put it away
+wait 120
+press B 12
+wait 120
+mark end

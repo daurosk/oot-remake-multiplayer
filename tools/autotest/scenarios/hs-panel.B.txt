@@ -1,0 +1,15 @@
+# hs-panel (Hookshot): B answers A's chat line, then turns away and back (see hs-panel.A.txt).
+wait 30
+chat hi A, I see you
+wait 30
+mark b-chat
+wait 300
+mark b-still
+stick -1 0 10           # face left
+press ZL                # camera behind B
+wait 60
+mark b-edge
+stick 1 0 20            # face right
+press ZL
+wait 60
+mark b-back

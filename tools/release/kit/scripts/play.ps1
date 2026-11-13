@@ -4,6 +4,8 @@
 #        play.cmd -Server 192.168.1.20 -Name Saria [-Port 27510]   no questions
 #        Host.bat (play.ps1 host)  starts this kit's server too and plays on it (127.0.0.1)
 #        Join.bat (play.ps1 join)  asks for the host's address each time
+#        Host-Hookshot.bat, Join-Hookshot.bat (play.ps1 host|join -Hookshot)  the same with the
+#                                  Hookshot game Build-Hookshot-Coop.bat built (coop.ini beside its hookshot.exe)
 # On every start it looks for a newer co-op release and, as auto_update in coop-options.ini
 # says, updates the kit (emulator included) and starts the new kit's play.ps1 with -NoUpdate.
 # Every later play.ps1 must accept -NoUpdate.
@@ -12,17 +14,34 @@ param(
     [string]$Server = '',
     [string]$Name = '',
     [string]$Port = '',
-    [switch]$NoUpdate
+    [switch]$NoUpdate,
+    [switch]$Hookshot
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
 . (Join-Path $PSScriptRoot 'kit-paths.ps1')
 . (Join-Path $PSScriptRoot 'hosting.ps1')
+. (Join-Path $PSScriptRoot 'relay-join.ps1')
+. (Join-Path $PSScriptRoot 'invite.ps1')
 $kit = Split-Path -Parent $PSScriptRoot
 $emu = Join-Path $kit 'emulator'
 $exe = Join-Path $emu 'lichii.exe'
 $ini = Join-Path $emu 'user\config\coop.ini'
 $template = Join-Path $PSScriptRoot 'coop.ini.template'
+if ($Hookshot) {
+    # The game Build-Hookshot-Coop.bat built (hookshot-build.ps1 notes where, for -Out); its module
+    # reads coop.ini beside hookshot.exe. The emulator's own steps below are skipped for it.
+    $hsGame = Join-Path $kit 'hookshot\game'
+    $hsWhere = Join-Path $kit 'hookshot\game-folder.txt'
+    if (Test-Path -LiteralPath $hsWhere) { $hsGame = (Get-Content -LiteralPath $hsWhere -TotalCount 1).Trim() }
+    $exe = @((Join-Path $hsGame 'bin\hookshot.exe'), (Join-Path $hsGame 'hookshot.exe')) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if (-not $exe -or -not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $exe) 'hookshot_coop.dll'))) {
+        Write-Host "No co-op Hookshot game in $hsGame yet. Run Build-Hookshot-Coop.bat first (SETUP.md, ""Play on Hookshot"")."
+        exit 1
+    }
+    $emu = Split-Path -Parent $exe
+    $ini = Join-Path $emu 'coop.ini'
+}
 if (-not (Test-Path $exe)) { Write-Host "Not found: $exe"; exit 1 }
 
 # Yes or no, yes when no key comes in $Seconds (an unattended start still updates).
@@ -109,6 +128,7 @@ if (-not $NoUpdate -and (Test-Path $updater)) {
                 foreach ($pair in @(@('-Mode', $Mode), @('-Server', $Server), @('-Name', $Name), @('-Port', $Port))) {
                     if ($pair[1]) { $next += $pair }
                 }
+                if ($Hookshot) { $next += '-Hookshot' }
                 & $ps @next -NoUpdate
                 exit $LASTEXITCODE
             }
@@ -121,6 +141,7 @@ if (-not $NoUpdate -and (Test-Path $updater)) {
 }
 
 $current = Read-CoopIni $ini
+$inviteJoin = $null
 $ask = $Mode -eq 'change'
 $serverGiven = [bool]$Server
 $askServer = $ask -or ($Mode -eq 'join' -and -not $serverGiven)
@@ -131,11 +152,32 @@ if (-not $Name) { $Name = $current.name }
 if (-not $Port) { $Port = if ($current.port) { $current.port } else { '@PORT@' } }
 
 if ($askServer -or -not $Server) {
-    Write-Host 'The host''s address: paste what the host sent you (right-click or Ctrl+V pastes here).'
-    Write-Host 'The host''s server window shows it, and copies it for them. Enter keeps the one in [ ].'
+    # The last join through a relay is offered as its join code (relay-join.ps1).
+    $savedRelay = Read-RelayJoin $kit
+    if ($savedRelay -and $Server -eq $savedRelay.Address) { $Server = $savedRelay.Text }
+    Write-Host 'Paste the INVITE CODE the host sent you (right-click or Ctrl+V pastes here), or the host''s'
+    Write-Host 'address. The host''s server window shows both and copies the code. Enter keeps the one in [ ].'
     do {
-        $answer = Read-Host "Host's address$(if ($Server) { " [$Server]" })"
+        $answer = Read-Host "Invite code or host's address$(if ($Server) { " [$Server]" })"
         $typed = if ($answer -and $answer.Trim()) { $answer } else { $Server }
+        # An invite code (invite.ps1): the host's internet address and the join password. A
+        # helper window (start-join.cmd) carries the game's traffic; the game talks to it here.
+        if (Test-InviteCodeText $typed) {
+            $invite = ConvertFrom-InviteCode $typed
+            $ok = $invite.Ok
+            if ($ok) { $inviteJoin = $invite; $Server = '127.0.0.1'; $Port = '27512' }
+            else { Write-Host "Not used: $($invite.Error)." }
+            continue
+        }
+        # A join code with its relay (ABCD-EFGH@relay.example.net:27530): the code goes to the
+        # relay first, then the game connects to the relay.
+        $relayJoin = ConvertTo-RelayJoin $typed
+        if ($relayJoin) {
+            $relayAddress = Connect-RelayJoin $relayJoin
+            $ok = [bool]$relayAddress
+            if ($ok) { $Server = $relayAddress; $Port = "$($relayJoin.Port)"; Save-RelayJoin $kit $relayJoin $relayAddress }
+            continue
+        }
         # Pasted with spaces, a trailing dot or :port: made plain (hosting.ps1).
         $parsed = ConvertTo-JoinAddress $typed
         $ok = $parsed -and (Test-CoopServer $parsed.Server)
@@ -146,9 +188,21 @@ if ($askServer -or -not $Server) {
         }
         else {
             Write-Host "'$typed' is not an address. It looks like 26.12.34.56 or 192.168.1.20 (four numbers"
-            Write-Host 'with dots), sometimes with :port at the end. Ask the host to copy it from their server window.'
+            Write-Host 'with dots), sometimes with :port at the end, or a join code with its relay (ABCD-EFGH@relay.example.net).'
+            Write-Host 'Ask the host to copy it from their server window.'
         }
     } until ($ok)
+}
+elseif ($serverGiven -and (Test-InviteCodeText $Server)) {
+    $inviteJoin = ConvertFrom-InviteCode $Server
+    if (-not $inviteJoin.Ok) { Write-Host "Not used: $($inviteJoin.Error)."; exit 1 }
+    $Server = '127.0.0.1'; $Port = '27512'
+}
+elseif ($serverGiven -and (ConvertTo-RelayJoin $Server)) {
+    $relayJoin = ConvertTo-RelayJoin $Server
+    $relayAddress = Connect-RelayJoin $relayJoin
+    if (-not $relayAddress) { exit 1 }
+    $Server = $relayAddress; $Port = "$($relayJoin.Port)"; Save-RelayJoin $kit $relayJoin $relayAddress
 }
 elseif ($serverGiven) {
     $parsed = ConvertTo-JoinAddress $Server
@@ -166,49 +220,60 @@ if (-not (Test-CoopServer $Server)) { Write-Host "Bad server address: $Server"; 
 if (-not (Test-CoopName $Name)) { Write-Host "Bad name: $Name"; exit 1 }
 if ($Port -notmatch '^\d{1,5}$' -or [int]$Port -lt 1 -or [int]$Port -gt 65535) { Write-Host "Bad port: $Port"; exit 1 }
 
-# The join password (protocol 9). Host.bat: asked once and saved as server_password in
-# coop-options.ini (an empty line there means none); this game uses the same one. Join.bat
-# and play.cmd change: asked each time, Enter keeps the saved one, '-' clears it.
+# The join password (protocol 9; every session has one, and it encrypts the traffic).
+# Host.bat: server_password in coop-options.ini, or with none (no line or an empty one) a new
+# random one for this session; this game uses the same one. Join.bat and play.cmd change:
+# asked each time (the invite code holds it), Enter keeps the saved one.
 $optionsFile = Join-Path $kit 'coop-options.ini'
 $Password = $current.password
-if ($Mode -eq 'host') {
+if ($inviteJoin) {
+    # The invite code holds the join password: nothing to type.
+    $Password = $inviteJoin.Password
+}
+elseif ($Mode -eq 'host') {
     $Password = (Read-KitServerAccess $optionsFile).Password
     if ($null -eq $Password) {
-        Write-Host 'A join password keeps out anyone who finds your server: players type it in Join.bat.'
-        Write-Host 'Pick a long one without spaces (12 characters or more; three random words work) and send it to your friends with the address. Enter: no password.'
-        do {
-            $answer = Read-Host 'Join password for your server'
-            $Password = if ($answer) { $answer.Trim() } else { '' }
-            $ok = -not $Password -or (Test-CoopPassword $Password)
-            if (-not $ok) { Write-Host 'No spaces, at most 128 characters.' }
-        } until ($ok)
-        Set-KitServerPassword $optionsFile $Password
-        Write-Host "Saved in coop-options.ini (server_password). Delete that line to be asked again."
+        # No server_password line: a new random password for this session only, put in the
+        # invite code by the server (start-server.ps1 gets it in OOT_COOP_SESSION_PASSWORD).
+        $Password = New-JoinPassword
+        $env:OOT_COOP_SESSION_PASSWORD = $Password
+        Write-Host 'Join password: a new random one for this session (it is inside the invite code; nobody types it).'
     }
-    elseif ($Password -and -not (Test-CoopPassword $Password)) {
+    elseif (-not (Test-CoopPassword $Password)) {
         Write-Host 'coop-options.ini: server_password has a space or is longer than 128 characters; the server was not started.'
         exit 1
     }
 }
 elseif ($Mode -eq 'join' -or $ask) {
-    Write-Host 'Join password: only if the host gave you one. Enter keeps the one in [ ], - for none.'
+    Write-Host 'Join password: every session has one; the host sees it in the server window. Enter keeps the one in [ ].'
+    $tries = 0
     do {
         $answer = Read-Host "Join password$(if ($Password) { ' [saved]' })"
-        if ($answer -and $answer.Trim() -eq '-') { $Password = '' }
+        if ($answer -and $answer.Trim() -eq '-') { $Password = '' }  # once "none": every session has one now
         elseif ($answer -and $answer.Trim()) { $Password = $answer.Trim() }
-        $ok = -not $Password -or (Test-CoopPassword $Password)
-        if (-not $ok) { Write-Host 'A join password has no spaces and at most 128 characters. Ask the host for it again.'; $Password = '' }
+        $ok = $Password -and (Test-CoopPassword $Password)
+        if (-not $ok) {
+            Write-Host 'Type the join password the host sent you (every session has one; no spaces, at most 128 characters).'
+            $Password = ''
+            # Nothing more to read (input from a file or pipe): stop instead of asking forever.
+            if (++$tries -ge 5) { exit 1 }
+        }
     } until ($ok)
 }
 if ($Password -and -not (Test-CoopPassword $Password)) { Write-Host 'coop.ini: the join password has a space or is too long.'; exit 1 }
 
 Write-CoopIni $template $ini $Server $Port $Name $Password
-Write-Host "Co-op: server $Server, port $Port, name $Name, join password $(if ($Password) { 'set' } else { 'none' })   (play.cmd change to change the name)"
+Write-Host "Co-op: server $Server, port $Port, name $Name, join password $(if ($Password) { 'set' } else { 'not set: the server will refuse' })   (play.cmd change to change the name)"
 
 $user = Join-Path $emu 'user'
-if (-not (Get-ChildItem (Join-Path $user 'keys') -Filter '*.keys' -ErrorAction SilentlyContinue)) {
+if ($Hookshot) {
+    $running = Get-Process hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
+    if ($running) { Write-Host 'This Hookshot game is already running; close it first to use new settings.'; exit 1 }
+}
+elseif (-not (Get-ChildItem (Join-Path $user 'keys') -Filter '*.keys' -ErrorAction SilentlyContinue)) {
     Write-Host "No keys in $user\keys yet. SETUP.md says what goes where."
 }
+if (-not $Hookshot) {
 $running = Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
 if ($running) { Write-Host 'This emulator is already running; close it first to use new settings.'; exit 1 }
 
@@ -227,9 +292,30 @@ if ($mods.Count -gt 0) {
     Write-Host 'Properties, Add-Ons, untick them. Then start again.'
     exit 1
 }
+}
+# Invite code: the helper window that carries the game's traffic to the host (start-join.ps1).
+if ($inviteJoin) {
+    $helperExe = Join-Path $kit 'server\coop_server.exe'
+    $helperUp = Get-Process coop_server -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $helperExe }
+    if ($helperUp) {
+        Write-Host 'A co-op window of this kit (a join helper or a server) is still open. Close it, then start Join.bat again.'
+        exit 1
+    }
+    $env:OOT_COOP_JOIN_PASSWORD = $inviteJoin.Password
+    Write-Host "Invite code accepted. A second window, the join helper, opens now: keep it open while you play."
+    Write-Host 'If the host''s router does not let the game in directly, that window shows an ANSWER CODE (copied'
+    Write-Host 'to the clipboard): send it to the host, who pastes it into the server window and presses Enter.'
+    Start-Process -FilePath (Join-Path $kit 'start-join.cmd') -ArgumentList @('-HostAddress', "$($inviteJoin.Address):$($inviteJoin.Port)", '-GamePort', '27512') -WorkingDirectory $kit | Out-Null
+    Start-Sleep -Seconds 1
+}
 if ($Mode -eq 'host') {
     $serverExe = Join-Path $kit 'server\coop_server.exe'
     $serverUp = Get-Process coop_server -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $serverExe }
+    if ($serverUp -and $env:OOT_COOP_SESSION_PASSWORD) {
+        # It runs with another session's password: this game could not join it.
+        Write-Host 'The server from this kit is still running from an earlier Host.bat. Close its window, then start Host.bat again.'
+        exit 1
+    }
     if ($serverUp) { Write-Host 'The server from this kit is already running.' }
     else {
         Write-Host "Starting the server in its own window (UDP port $Port). Keep that window open while you play."
@@ -254,6 +340,21 @@ foreach ($key in $options.Keys) {
     Set-Item -Path "env:$key" -Value $value
     Write-Host "Option: $key=$value"
 }
+# No colour chosen: the colour of the player number you will most likely get, for your own Link too
+# (kit-paths.ps1). Before the pack step, which puts that tunic over the game's.
+[void](Set-KitDefaultColor $Mode $Server)
+if ($Hookshot) {
+    # As the emulator below (kit-paths.ps1 Use-KitPuppetPack): the pack hints, your own tunic (#202), the
+    # puppets off without a pack. The pack is in mods\contents (Build-Hookshot-Coop.bat installs it), and
+    # Hookshot indexes its mod files once at start: this runs before Start-Process.
+    [void](Use-KitPuppetPack (Join-Path $emu 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') (Join-Path $kit 'tools\puppet_pack') @(
+        'Puppet pack: not in the Hookshot game, so the other players show only as markers.',
+        '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").'))
+    $started = Get-Date
+    $game = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru
+    Write-Host "Hookshot started. Its hookshot_log.txt (beside the game) says 'coop: module loaded', then 'coop: connected'."
+    exit 0
+}
 # AMD cards: shader libraries off unless the player chose (kit-paths.ps1, issue 118).
 $cardList = $null
 try { $cardList = @(Get-CimInstance Win32_VideoController -OperationTimeoutSec 5 -ErrorAction Stop) } catch { }
@@ -263,18 +364,10 @@ if ($gpl) { Write-Host $gpl }
 # Built-in graphics only: point to the 30 FPS button (docs/setup.md, "Low frame rate").
 $speed = Get-GpuSpeedHint $cardQuery
 if ($speed) { Write-Host $speed }
-$pack = Join-Path (Get-KitLoadDir $user) '0400486024DEC000\coop-puppet\coop_puppet.json'
-if (Test-Path -LiteralPath $pack) {
-    Write-Host 'Puppet pack: found.'
-    # Made before sound or before the kit's pack tool changed (kit-paths.ps1): say so, start anyway.
-    $hint = Get-PuppetPackHint $pack (Join-Path $kit 'tools\puppet_pack')
-    if ($hint) { Write-Host $hint }
-}
-else {
-    Write-Host 'Puppet pack: not made yet, so the other players show only as markers.'
-    Write-Host '  Make it once with make-puppet-pack.cmd (SETUP.md, "The puppet pack").'
-    if ($env:LICHII_COOP_PUPPET) { Remove-Item env:LICHII_COOP_PUPPET; Write-Host 'Option: LICHII_COOP_PUPPET off (no pack)' }
-}
+# The pack hints, your own tunic (#202), the puppets off without a pack (kit-paths.ps1, the same for Hookshot above).
+[void](Use-KitPuppetPack (Join-Path (Get-KitLoadDir $user) '0400486024DEC000\coop-puppet\coop_puppet.json') (Join-Path $kit 'tools\puppet_pack') @(
+    'Puppet pack: not made yet, so the other players show only as markers.',
+    '  Make it once with make-puppet-pack.cmd (SETUP.md, "The puppet pack").'))
 
 $started = Get-Date
 $game = Start-Process -FilePath $exe -WorkingDirectory $emu -PassThru
@@ -285,7 +378,7 @@ Write-Host 'Emulator started. Load the game; the co-op panel is in the top-left 
 # after 15 minutes, or once connected; closing this window does not touch the game.
 if ($Mode -eq 'join' -and $game) {
     $logFile = Join-Path $user 'log\eden_log.txt'
-    $shown = Format-JoinAddress $Server ([int]$Port)
+    $shown = if ($inviteJoin) { 'the host (through the join helper window)' } else { Format-JoinAddress $Server ([int]$Port) }
     Write-Host "This window says when you are connected to $shown (you may also close it)."
     $trying = $null; $helped = $false; $state = ''
     while (-not $game.HasExited -and ((Get-Date) - $started).TotalMinutes -lt 15) {
@@ -302,14 +395,15 @@ if ($Mode -eq 'join' -and $game) {
         if ($state -like 'refused:*') {
             Write-Host "The host's server said no: $($state.Substring(9))."
             Write-Host 'name taken: pick another name with play.cmd change. wrong protocol version: everyone runs Update.bat.'
-            Write-Host 'wrong join password: start Join.bat again and type the password the host sent you (- for none).'
+            Write-Host 'wrong join password: start Join.bat again and type the password the host sent you.'
             exit 1
         }
         if ($state -eq 'trying') {
             if (-not $trying) { $trying = Get-Date }
             elseif (-not $helped -and ((Get-Date) - $trying).TotalSeconds -ge 30) {
                 Write-Host ''
-                foreach ($line in (Get-JoinFailureHelp $shown)) { Write-Host $line }
+                if ($inviteJoin) { Write-Host 'Not connected yet. The join helper window says what is going on (and shows an ANSWER CODE for the host if needed).' }
+                else { foreach ($line in (Get-JoinFailureHelp $shown)) { Write-Host $line } }
                 Write-Host 'The game keeps trying by itself; this window says when it connects.'
                 $helped = $true
             }

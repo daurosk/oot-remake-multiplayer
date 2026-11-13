@@ -29,6 +29,7 @@
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
 #include "coop_boss.h"
+#include "coop_fairy.h"
 #include "coop_flags.h"
 #include "coop_live_events.h"
 #include "coop_svc.h"
@@ -91,9 +92,14 @@ bool AskScene(Core::System& system, std::uint64_t main, std::string_view scene, 
 void ClearScene(Core::System& system, std::uint64_t main, bool all, bool restore,
                 const std::optional<std::string>& saved) {
     CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main);
-    const bool off = coop::host::GameFlags::set_bool(memory, kFreePlayBancChange, false);
+    // Written only when it is on (a kit before #156 set it): set_bool queues
+    // the write in the game's own flag queue, and this runs on the emulator's
+    // thread while the game loads and queues its own writes (#197: nothing of
+    // ours goes into that queue during a load). Off: nothing to write.
+    const bool on = coop::host::GameFlags(memory).get_bool(kFreePlayBancChange).value_or(false);
+    const bool off = !on || coop::host::GameFlags::set_bool(memory, kFreePlayBancChange, false);
     if (!all) {
-        LOG_INFO(Core, "coop: teleport: scene change taken: switch {}", off ? "off" : "NOT off");
+        LOG_INFO(Core, "coop: teleport: scene change taken: switch {}", !on ? "was off" : off ? "off" : "NOT off");
         return;
     }
     const bool banc = coop::host::GameFlags::set_string64_now(memory, RequestFlags().banc, "");
@@ -143,6 +149,13 @@ struct Glue {
             CoopSvc::AddCaller(kEventCallerOrder, [this](CoopPuppet::Guest& guest, bool after_call,
                                                          std::uint64_t result, std::uint64_t) {
                 std::lock_guard lock(event_mutex);
+                // Only while a trip waits for its scene change and nothing
+                // loads (#197): a queued event must never start in the middle
+                // of a load or after the trip ended. A call chain under way
+                // still finishes (it frees its block).
+                if (!after_call && !events_open) {
+                    events.Clear();
+                }
                 auto call = events.Step(guest, after_call, result, main);
                 for (const auto& note : events.TakeNotes()) {
                     LOG_INFO(Core, "coop: teleport: {}", note);
@@ -155,6 +168,7 @@ struct Glue {
 
     static constexpr int kEventCallerOrder = 61;  // after the live events (60)
     std::uint64_t main = 0;  // set by Frame under event_mutex
+    bool events_open = false;  // set by Frame under event_mutex: travelling, no load
 
     void Line(std::string text) {  // with the mutex held
         LOG_INFO(Core, "coop: {}", text);
@@ -321,6 +335,7 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
     {
         std::lock_guard lock(g.event_mutex);
         g.main = main_base;
+        g.events_open = g.trip.phase() == Trip::Phase::travelling && local.scene && !local.loading_banc;
     }
     for (auto& act : all) {
         if ((act.cancel_scene || act.release) && main_base != 0) {
@@ -329,6 +344,9 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
                 g.saved_start.reset();  // the next trip reads it afresh
                 g.saved_read = false;
             }
+        }
+        if (act.game_cleared) {
+            LOG_INFO(Core, "coop: teleport: scene change cleared by the game after its arrival (nothing written)");
         }
         if (act.scene) {
             // Always with a start point of that scene: without one the game
@@ -344,6 +362,30 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
                      Trip::kSceneEvent);
             std::lock_guard lock(g.event_mutex);
             g.events.Want(Trip::kSceneEvent);
+        }
+        if (act.move && local.scene && local.position) {
+            // Issue 197: never into another room of a dungeon (Link stays held).
+            // Read once, at the first move: a pack made (again) while the game runs is
+            // seen after a restart; until then no table means short moves only.
+            static const CoopRooms::Table rooms = CoopFairy::RoomTable();
+            const auto check = CheckMove(rooms, *local.scene, *local.position, *act.move);
+            if (check != MoveCheck::ok) {
+                LOG_INFO(Core, "coop: teleport: not moved to {:.1f} {:.1f} {:.1f}: {} (issue 197)", act.move->x,
+                         act.move->y, act.move->z,
+                         check == MoveCheck::other_room ? "another room of this dungeon"
+                                                        : "far, and no room table for this dungeon");
+                bool told = false;
+                for (auto& line : act.lines) {
+                    if (line.rfind("teleport: next to ", 0) == 0) {
+                        line = NotMovedLine(check, line.substr(18), act.after_load);
+                        told = true;
+                    }
+                }
+                if (!told) {
+                    act.lines.push_back(NotMovedLine(check, "", act.after_load));
+                }
+                act.move.reset();
+            }
         }
         if (act.move) {
             const bool ok = CoopBoss::MoveLink(system, main_base, CoopBoss::Vec{act.move->x, act.move->y, act.move->z});

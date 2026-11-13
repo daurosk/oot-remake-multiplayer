@@ -1,0 +1,69 @@
+# hs-crawl (Hookshot): the twin of `crawl`, whose checks live in crawl.steps.txt (the emulator's
+# runner reads steps files; a Hookshot run plays the A/B scripts only). The steps file's header
+# lines are here, and its checks are the pass lines below: read them in hookshot_log-A/-B.txt.
+# The min=1 ones are also expect= lines in tools/autotest/groups/hookshot-parity.txt. A max=0 line
+# (nothing may match) cannot be an expect=: count those by hand (grep) when grading.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-crawl  (emulator: -Scenario crawl)
+# Checks (from the steps file: lines NAME GAME min|max=N REGEX):
+#   warped-A A min=1 coop: test warp done
+#   warped-B B min=1 coop: test warp done
+#   a-walked-B B min=1 (?<!fairy )coop: puppet: P\d+ (?:their command|plays) '(?!Wait)
+#   crawl-held-B B max=99 (?<!fairy )coop: puppet: P\d+ show -> (hold|hide)
+#   crawl-back-B B max=99 (?<!fairy )coop: puppet: P\d+ (hold|hide) -> show
+#   crawl-stuck-B B max=0 (?<!fairy )coop: puppet: (P\d+) show -> (?:hold|hide)(?![\s\S]*(?<!fairy )coop: puppet: \1 (?:hold|hide) -> show)
+#   crawl-stuck-A A max=0 (?<!fairy )coop: puppet: (P\d+) show -> (?:hide)(?![\s\S]*(?<!fairy )coop: puppet: \1 (?:hold|hide) -> show)
+#   crawl-hides-A A max=99 (?<!fairy )coop: puppet: P\d+ show -> hide \(our cutscene\)
+# crawl's own notes:
+# crawl (issue 86), checked by itself: both warp into Kokiri Forest as child (no save set up), A
+# crawls the Kokiri Sword tunnel, B watches from inside (crawl.A.txt / crawl.B.txt).
+# Run: tools\autotest\run.ps1 -Scenario crawl
+# The counts are what the game does (event or not); PASS/FAIL is by the shots and the end state:
+# at "through" and "end" B's window shows A's puppet (crawling or standing past the tunnel), not
+# frozen at the mouth. Counted FAIL: crawl-stuck-B/-A (a hold or hide with no way back to show
+# later in the log). Standing inside the rock is shots only. a-walked-B counts A's puppet playing
+# anything but Wait (A moved at all); 0 = A never got going: INCONCLUSIVE. Whether A reached the
+# tunnel at all is by the shots (the spot is from the Banc, not seen in game): INCONCLUSIVE if not.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 420
+# crawl (issue 86): what a crawlspace does to the puppets. Both warp into Kokiri Forest as child
+# (no hand-made save). Bigrun 2026-11-12: a warp with no start put Link at 0 0 0, falling, in an
+# endless event (black screen, 'our cutscene'): now the FrontDekuTree StartPos (90.0 115.5 -27.9). The Kokiri Sword area's tunnel runs between the two
+# PushAirWall_Slope placements of KokiriForest_Child_Static, (-68.47 8.00) outside by the
+# signpost KokiriForest_008 and (-75.58 14.13) inside. A is put outside it and pushes into it;
+# B stands inside (boulder.B.txt's spot) facing the tunnel and watches A come through.
+# Run: tools\autotest\run.ps1 -Scenario crawl -NoLoad -Switches "LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_DEBUG_OBJECTS=1"
+# Read in B's log: the commands A plays ("P1 plays '...'") from "at-hole" to "through", and
+# whether "P1 show -> hold (their cutscene)" appears (A's game runs the crawl as an event).
+# In A's log: whether "P2 show -> hide (our cutscene)" appears. Shots: does B's puppet of A
+# crawl, stand frozen at the mouth, or slide through standing? PASS = either a crawl command
+# the puppet plays, or hide/hold and back to show after "through"; FAIL = the puppet stays
+# hidden/held after A is through, or is drawn standing inside the rock.
+#! noload
+#! start coop: test warp done
+# (the A script's own switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_DEBUG_OBJECTS=1: the steps file's line above is the one the emulator ran with)
+# (the A script's own timeout 360: the steps file's line above is the one the emulator ran with)
+mark start
+warp KokiriForest_Child FrontDekuTree
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 600                # let the arrival event end before the place
+place -66.3 118.3 5.8
+wait 240
+toward -68.47 8.00 20
+mark at-hole
+toward -75.58 14.13 240     # push into the tunnel and through it
+press A 12                  # in case the game wants a button at the mouth
+toward -75.58 14.13 300
+mark through
+toward -78.9 17.0 120       # a few steps on, inside
+wait 120
+mark end

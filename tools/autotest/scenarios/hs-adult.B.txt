@@ -1,0 +1,4 @@
+# hs-adult, B: adult too, then stands (see hs-adult.A.txt).
+setflag Sequence_IsChildhood 0
+warp Graveyard_Adult
+wait 1200

@@ -1,56 +1,37 @@
 # ocarina (issue 86): A takes out the Fairy Ocarina and plays a few notes; B watches.
 # Run with -Switches "LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_DEBUG_OBJECTS=1".
-# The quick-select order depends on the save: each try moves to the next item (R) and uses it
-# (ZR); the try whose B log says "P1 plays 'Ocarina..." is the Ocarina one.
+# A takes it out with D-pad Left (its save has it from Saria; give makes sure).
 # Expect: B's log has "P1 plays 'Ocarina...'" and, if A's game runs the Ocarina as an event,
 # no "P1 show -> hold" while it plays (the status bit may be set; the Ocarina overrides it).
 # A's log has no "P2 show -> hide (our cutscene)" while A plays. Screenshots at "playing":
 # B's window shows A's puppet holding the Ocarina; A's window still shows B's puppet.
 # Not covered: a song that starts a cutscene (Song of Time block, warp songs): those are
 # "DemoOcarina..." and cutscenes, so the puppets hide as for any cutscene.
+# Bigrun 2026-11-12: R + ZR never brought the Ocarina out (only sword moves). It is on D-pad Left
+# (ocarina-given.B.txt, ocarina-use #190); notes as there: A, L = Down, R = Right, Y = Left, X = Up.
 mark start
 give PouchData.Item_Ocarina_Fairy.StockNum
 wait 120
 stick 0 0.6 60          # a step away so B sees A
-wait 60
-press R
-wait 30
-press ZR
-wait 150
-mark try1
-press A                 # a note or two (A and the C-direction buttons play notes)
-wait 30
-press X
-wait 30
+wait 120
+press DLEFT 12          # take out the Ocarina
+wait 240
+mark out
+press A 12
+wait 120
 mark playing1
-press B
-wait 60
-press B
-wait 90
-press R
-wait 30
-press ZR
-wait 150
-mark try2
-press A
-wait 30
-press Y
-wait 30
+press L 12
+wait 120
+press R 12
+wait 120
 mark playing2
-press B
-wait 60
-press B
-wait 90
-press R
-wait 30
-press ZR
-wait 150
-mark try3
-press A
-wait 30
+press Y 12
+wait 120
+press X 12
+wait 120
 mark playing3
-press B
-wait 60
-press B
+press B 12              # put it away
+wait 120
+press B 12
 wait 120
 mark end

@@ -1,0 +1,20 @@
+# pvp, B: lands in Hyrule Field in front of Kakariko and stands at 213 14 while A swings at it
+# (see pvp.A.txt).
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark field
+goto 213.0 14.0 0.4 600
+toward 215.0 14.0 6     # face A
+mark standing
+wait 1500
+mark end

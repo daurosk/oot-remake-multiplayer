@@ -1,0 +1,4 @@
+# threads-of-time, B step 3: B moves the scarecrow quest on to its last step; A must take it.
+setenum 0x9472302b Complete
+wait 300
+mark b-step

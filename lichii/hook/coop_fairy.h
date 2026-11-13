@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "coop_puppet.h"
+#include "coop_rooms.h"
 
 namespace coop::host {
 class Session;
@@ -50,6 +51,11 @@ struct Settings {
     float circle_hz = 0.35f;
     float follow_rate = 5.0f;   // 1/s: how fast it closes on where it should be
     float snap = 4.0f;          // farther than this (units) it jumps there
+    // Issue 145: in a dungeon, a fairy is parked while her player is in
+    // another room than ours (coop_rooms.h), unless the two Links are within
+    // room_near units (a doorway, or a room guessed wrong). Off: false.
+    bool rooms = true;
+    float room_near = 8.0f;
 };
 
 // The svc cave's order for the fairy director (puppets first, CoopSpawn 10).
@@ -58,15 +64,23 @@ inline constexpr int kCallerOrder = 20;
 // Turns the puppets' targets into fairy targets. The present thread only.
 class Follower {
 public:
-    explicit Follower(Settings settings = {}) : settings_(std::move(settings)) {}
+    using Log = std::function<void(const std::string&)>;
+    // `rooms`: the dungeon room table (coop_rooms.txt from the puppet pack);
+    // empty: no room rule. `log`: one line when a fairy is parked or shown
+    // again for the room rule, naming both rooms.
+    explicit Follower(Settings settings = {}, CoopRooms::Table rooms = {}, Log log = {})
+        : settings_(std::move(settings)), rooms_(std::move(rooms)), log_(std::move(log)) {}
 
     // `puppets` is what the puppet planner gives for this frame. Returns the
     // same input with each target a fairy beside its puppet (same numbers).
     // `live`: CoopPuppet::LivePuppets(), bit n while puppet n's actor is live
     // and not parked; a fairy whose puppet is not (still being made, refused,
     // gone) is parked under the floor (issue 145).
+    // `local`: our Link's position; with it, a fairy whose player is in
+    // another room of our dungeon is parked too (Settings::rooms).
     CoopPuppet::Input Follow(const CoopPuppet::Input& puppets, std::uint64_t now_ms,
-                             std::uint32_t live = ~0u);
+                             std::uint32_t live = ~0u,
+                             const std::optional<Vec3>& local = std::nullopt);
 
     const Settings& settings() const { return settings_; }
 
@@ -82,6 +96,10 @@ private:
     Settings settings_;
     std::map<std::uint8_t, Track> tracks_;
     std::string scene_;
+    CoopRooms::Tracker rooms_;
+    Log log_;
+    std::map<std::uint8_t, bool> room_parked_;  // per player: parked by the room rule (for the log)
+    static constexpr std::uint32_t kLocalKey = 0x100;  // our Link in rooms_
 };
 
 // The game's live actor list (coop_objects.cpp reads the same, build
@@ -144,6 +162,10 @@ private:
 // LICHII_COOP_FAIRY=0 off, LICHII_COOP_FAIRY_ACTOR another actor) and
 // registers the fairy director with the cave. Each Navi shows, holds or
 // hides as her puppet does (CoopPuppet::Collect, the same `local_event`).
+// The dungeon room table from the puppet pack (coop_rooms.txt), read now;
+// empty without one. Also for /teleport (coop_teleport.h CheckMove).
+CoopRooms::Table RoomTable();
+
 void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
              const std::optional<Vec3>& position, bool local_event,
              coop::host::Session* session, std::uint64_t server_now_us);

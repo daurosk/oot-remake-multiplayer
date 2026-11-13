@@ -23,6 +23,8 @@ namespace CoopEvery {
 inline constexpr std::uint64_t kTwoFramesUs = 33'333;    // was every 2 frames
 inline constexpr std::uint64_t kQuarterUs = 250'000;     // was every 15 frames
 inline constexpr std::uint64_t kSecondUs = 1'000'000;    // was every 60 frames
+inline constexpr std::uint64_t kHalfSecondUs = 500'000;  // was every 30 frames (save folder check)
+inline constexpr std::uint64_t kSaveStuckUs = 10'000'000;  // was 600 frames (a save transfer stopped)
 
 // Microseconds on the steady clock (never 0 once the process has run a moment).
 inline std::uint64_t NowUs() {

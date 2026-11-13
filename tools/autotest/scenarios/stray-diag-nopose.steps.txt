@@ -1,0 +1,36 @@
+# stray-diag-nopose (#175 root cause): copies get no poses from their owner (LICHII_COOP_OBJECTS_POSE=0).
+# After a server restart the first game to list the scene's objects owns them all. When B lists first,
+# A's live actors it owned become copies at once, and in stray (2026-11-12) A's game aborted 66 ms later
+# (result 2162-0001). This file turns ONE part of object sharing off and restarts the server three times
+# (the rejoin order is a race: three tries for "B lists first" at least once).
+# The owner hold (stray-hold) must be OFF here, or no flip happens: '#! server --owner-hold-ms 0' below. A
+# coop_server built with stray-hold takes that option; an older server has no hold at all and refuses the
+# option, so on one of those delete the '#! server' line.
+# Run: tools\autotest\run.ps1 -Scenario stray-diag-nopose   (emulator; Hookshot: -Runtime hookshot)
+# Read per restart (counts.txt and the logs):
+#  - which game listed first: A's log "objects: share owner ... is player 2 epoch 0" after its "welcomed as
+#    player 1" = B first (the case that aborted); "is player 1" = A first (no flip, proves nothing);
+#  - no-panic-A / no-panic-B: 0 "Userspace PANIC" lines. A PANIC after a "B first" restart: this part is NOT
+#    the cause. No PANIC after a "B first" restart: this part (or what it turns off) is the cause.
+# Compare with stray-diag-noobj (all object sharing off): if that one aborts too, objects are not the cause.
+#! switches LICHII_COOP_OBJECTS_POSE=0
+#! server --owner-hold-ms 0
+start A B
+load A B
+expect both-loaded A=1 B=1
+server stop
+expect server-down-1 A=0 B=0
+server start
+expect server-back-1 A=1 B=1
+server stop
+expect server-down-2 A=0 B=0
+server start
+expect server-back-2 A=1 B=1
+server stop
+expect server-down-3 A=0 B=0
+server start
+expect server-back-3 A=1 B=1
+lines no-panic-A A max=0 Userspace PANIC
+lines no-panic-B B max=0 Userspace PANIC
+lines a-took-over A min=0 objects: share owner \S+ is player 2 epoch 0
+lines b-first B min=0 objects: share owner \S+ is player 2 epoch 0

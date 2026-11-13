@@ -10,8 +10,8 @@ When the host leaves, the host role **moves to another player** who is still in 
 
 ## Host.bat or start-server.cmd?
 
-- **`Host.bat`** starts the co-op server in its own window and then your game. Use it when you play and run the server on the same PC. The others use `Join.bat` with your address.
-- **`start-server.cmd`** starts only the server, with no game. Everyone, you included, then plays with `Join.bat`.
+- **`Host.bat`** starts the co-op server in its own window and then your game. Use it when you play and run the server on the same PC. It shows an invite code (and copies it); the others paste it into `Join.bat` ([play-online.md](play-online.md)). On the same network they can type your address instead.
+- **`start-server.cmd`** starts only the server, with no game. Everyone, you included, then plays with `Join.bat` (the server window shows the invite code too).
 
 The PC that runs the server and the host are two separate things. The server only passes messages on; the host is still whoever joins first.
 
@@ -37,8 +37,24 @@ We never ship save files, keys, firmware or the game in a release or in this rep
 
 ## The update did not happen
 
-`Host.bat`, `Join.bat` and `Update.bat` say why and how to update by hand. Most often: the emulator is still open (close it), there is no network, or GitHub turned the check away for a while (it allows 60 checks an hour from one internet address). By hand: download the newest `oot-coop-....zip` from the [releases](https://github.com/daurosk/oot-remake-multiplayer/releases), unzip it to a new short folder, copy `emulator\user` and `coop-options.ini` from your old kit into it, and play from there.
+`Host.bat`, `Join.bat` and `Update.bat` say why and how to update by hand. Most often: the emulator is still open (close it), there is no network, or GitHub turned the check away for a while (it allows 60 checks an hour from one internet address). If it says the release signature does not check, the release was published moments ago and is not signed yet: try again later (only set `verify_signature = no` in `coop-options.ini` if it keeps failing and you downloaded nothing from elsewhere). By hand: download the newest `oot-coop-....zip` from the [releases](https://github.com/daurosk/oot-remake-multiplayer/releases), unzip it to a new short folder, copy `emulator\user` and `coop-options.ini` from your old kit into it, and play from there.
 
 ## My coop-options.ini is missing a line I see in the release
 
-From this release on, `Update.bat` and every start of `Host.bat` / `Join.bat` add each key a newer kit has and your file lacks, at the end of the file under "Added by Update.bat", with its comment. Your own lines stay as they are. Before that, an update could miss new keys (such as `server_allow`); copy the line from the release's `coop-options.ini` into yours, or start the kit once after updating.
+`Update.bat` and every start of `Host.bat` / `Join.bat` add each key a newer kit has and your file lacks, at the end of the file under "Added by Update.bat", with its comment. Your own lines stay as they are. If a line is still missing (kits from before this was added could miss keys such as `server_allow`), copy the line from the release's `coop-options.ini` into yours, or start the kit once after updating.
+
+## Is it safe to share the invite code?
+
+Share it only with the people you play with. It holds your internet address, the port and the join password, so anyone who has it can join while your server window is open. It stops working when you close that window, and `Host.bat` makes a new password each time it starts (unless you set `server_password`). More in [SECURITY.md](../SECURITY.md).
+
+## Emulator or Hookshot?
+
+The emulator kit is the usual way and has every co-op feature. [Hookshot](setup.md#play-on-hookshot-experimental) is experimental: no emulator, but it needs a graphics card with mesh shaders (NVIDIA RTX 20 or newer, AMD RX 6000 or newer), 16 GB of RAM and a long first build. It has the same co-op features, with some keys of its own (T for chat, F6 for the player list). Both can join one session and see each other as Link in their colours (checked by hand).
+
+## Is my game traffic encrypted?
+
+Yes, always. Every session has a join password, which `Host.bat` makes by itself each time (or the host sets with `server_password`), and the traffic is encrypted with it. The co-op panel's first line ends in `, encrypted`. There is no plain mode: the server does not start without a password, and the game does not join a server that does not encrypt.
+
+## The other players are all green
+
+Your puppet pack was made before the tunic colours. Run `make-puppet-pack.cmd` once more (`Update.bat` does not rebuild it); `Host.bat` and `Join.bat` say so at start when the pack has no colours.

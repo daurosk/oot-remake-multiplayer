@@ -38,14 +38,17 @@ std::optional<std::string> Decider::Next(const std::vector<std::string>& held, c
     if (scene.empty()) {
         return std::nullopt;  // no scene read (a load): the same visit, nothing asked
     }
-    if (scene != scene_) {
-        scene_ = scene;
-        asked_.clear();
-    }
+    Visit(scene);
     if (event_running) {
         return std::nullopt;
     }
-    for (const std::string& name : held) {
+    std::vector<std::string> wanted = held;
+    for (const std::string& name : early_) {
+        if (std::find(wanted.begin(), wanted.end(), name) == wanted.end()) {
+            wanted.push_back(name);
+        }
+    }
+    for (const std::string& name : wanted) {
         const bool named = allowed_.contains(name);
         if (!allowed_.empty() && !named) {
             continue;
@@ -58,6 +61,7 @@ std::optional<std::string> Decider::Next(const std::vector<std::string>& held, c
             continue;  // not near it yet (it waits), or no place known and not asked by name
         }
         asked_.insert(name);
+        early_.erase(name);
         return name;
     }
     return std::nullopt;
@@ -120,7 +124,7 @@ std::optional<std::set<std::string>> ParseNames(std::string_view text) {
     return out;
 }
 
-void Requester::Want(std::string name) {
+void Requester::Want(std::string name, std::string scene, std::uint64_t at_us, std::uint64_t max_age_us) {
     if (name.empty()) {
         notes_.push_back("live event with no name not asked");
         return;
@@ -129,8 +133,10 @@ void Requester::Want(std::string name) {
         notes_.push_back("live event " + name + " not asked (name too long or too many waiting)");
         return;
     }
-    if (std::find(wanted_.begin(), wanted_.end(), name) == wanted_.end() && name != current_) {
-        wanted_.push_back(std::move(name));
+    const bool waiting =
+        std::any_of(wanted_.begin(), wanted_.end(), [&](const Wanted& w) { return w.name == name; });
+    if (!waiting && name != current_) {
+        wanted_.push_back(Wanted{std::move(name), std::move(scene), at_us, max_age_us});
     }
 }
 
@@ -243,7 +249,7 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
         return std::nullopt;  // an event began since it was asked: wait, it stays queued
     }
     if (current_.empty()) {
-        current_ = std::move(wanted_.front());
+        current_ = std::move(wanted_.front().name);
         wanted_.pop_front();
     }
     c.function = main + addr::kArgBuild;

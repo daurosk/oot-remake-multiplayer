@@ -1,0 +1,6 @@
+# threads-of-time, B step 1: our scarecrow quest at NotReady (a lowered step stays ours).
+mark start
+wait 120
+setenum 0x9472302b NotReady
+wait 300
+mark base

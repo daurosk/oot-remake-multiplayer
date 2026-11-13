@@ -300,11 +300,12 @@ function Get-HostingFindings([string]$ServerExe, [int]$Port, $Rules, $Listen, $L
             '  To let in only your friends: in coop-options.ini remove the # in front of server_allow, put in',
             '  their addresses (their VPN addresses, or their public ones with port forwarding), restart Host.bat.')
     }
-    if ($Access.Password) { Add-Finding 'ok' @('A join password is set (server_password): players need it to join.') }
+    # Every session has a join password, and the traffic is encrypted with it.
+    if ($Access.Password) { Add-Finding 'ok' @('A join password is set (server_password): players need it to join, and it encrypts the traffic.') }
     else {
-        Add-Finding 'note' @('No join password (server_password is not set).',
-            '  To make players give one: in coop-options.ini set server_password = <one without spaces>',
-            '  (or delete that line and Host.bat asks), restart Host.bat and send it to your friends.')
+        Add-Finding 'ok' @('Join password: Host.bat makes a new random one each session (server_password is not set).',
+            '  It is inside the invite code, and the server window shows it for friends who join by address.',
+            '  The traffic is encrypted with it.')
     }
 
     # 3. The firewall.

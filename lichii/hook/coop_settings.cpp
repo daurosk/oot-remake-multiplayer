@@ -1,5 +1,7 @@
 #include "coop_settings.h"
 
+#include "coop_colors.h"
+
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -121,6 +123,18 @@ void Set(std::string_view key, std::string_view value, const std::string& where,
             return;
         }
         settings.password = std::string(value);
+    } else if (key == "color") {
+        // docs/puppet.md, "Colour". Empty: none chosen (the slot's colour).
+        if (value.empty()) {
+            settings.color.reset();
+            return;
+        }
+        const auto color = CoopColors::Parse(value);
+        if (!color) {
+            errors.push_back(where + ": color must be #RRGGBB or one of " + CoopColors::Names());
+            return;
+        }
+        settings.color = color;
     } else {
         errors.push_back(where + ": unknown key '" + std::string(key) + "'");
     }
@@ -161,6 +175,7 @@ void ApplyEnvironment(const std::function<std::optional<std::string>(const char*
         {"LICHII_COOP_PORT", "port"},
         {"LICHII_COOP_NAME", "name"},
         {"LICHII_COOP_PASSWORD", "password"},
+        {"LICHII_COOP_COLOR", "color"},
     };
     // Server first, so LICHII_COOP_PORT wins over a port inside it.
     for (const auto& v : kVariables) {

@@ -70,6 +70,7 @@ class Notifier {
   Extra extra_;
   std::deque<std::uint64_t> said_ms_;  // live lines in the window
   std::size_t held_back_ = 0;          // live lines not said (the window was full)
+  std::map<FlagKey, std::int32_t> hearts_told_;  // highest MaxLife a notice named, by key
 };
 
 }  // namespace coop::host

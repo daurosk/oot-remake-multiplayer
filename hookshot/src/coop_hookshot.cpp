@@ -34,6 +34,7 @@
 #include "coop_chatbox.h"
 #include "coop_draw.h"
 #include "coop_game_build.h"
+#include "coop_save.h"
 #include "coop_hold.h"
 #include "coop_hook.h"
 #include "coop_hud.h"
@@ -719,6 +720,20 @@ COOP_HOOKSHOT_EXPORT int hos_coop_char(uint32_t ch) {
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_keys_taken(void) {
     return CoopHookshot::KeysTaken() ? 1 : 0;
+}
+// The host's save for a guest (patch 0001: nn_fs.c user_mount -> coop_bridge.c). Before the account save is mounted:
+// a guest of another PC's server plays from a folder of its own (CoopSave::SaveDirectory: <folder>-coop, its own saves
+// untouched), into which the host's save comes (issue 167, as on the emulator's patch 0006). 1 = `out` is another folder.
+COOP_HOOKSHOT_EXPORT int hos_coop_save_dir(const char* in, char* out, size_t cap) {
+    if (!in || !out || cap == 0) return 0;
+    const std::string dir = CoopSave::SaveDirectory(in, true);
+    if (dir == in || dir.size() + 1 > cap) return 0;
+    std::memcpy(out, dir.c_str(), dir.size() + 1);
+    return 1;
+}
+// After the mount: the folder the game's saves are in (the host reads its slots there; a guest's gets the host's save).
+COOP_HOOKSHOT_EXPORT void hos_coop_save_opened(const char* dir) {
+    if (dir) CoopSave::NoteSaveDir(dir);
 }
 // The mouse (hos_coop_api.h): the cheats panel's clicks.
 COOP_HOOKSHOT_EXPORT int hos_coop_mouse(float fx, float fy, int event) {

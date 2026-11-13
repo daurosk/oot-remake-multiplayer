@@ -115,7 +115,7 @@ Players saw a softlock in the Deku Tree: one player was in a beaten Deku Scrub's
 
 ## Live dungeon actions (branch `dungeon-live`)
 
-Caleb (2026-11-11): "if a player stands on a button that opens something, it should open on the other players screen and also if something drains water." What is live now, what is not, and how the next run finds the rest:
+Alex (2026-11-11): "if a player stands on a button that opens something, it should open on the other players screen and also if something drains water." What is live now, what is not, and how the next run finds the rest:
 
 | Action | Where the game keeps it | Live in every game? | How / next step |
 |---|---|---|---|

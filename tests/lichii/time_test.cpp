@@ -420,7 +420,7 @@ TEST_CASE("time: a guest's reload without a save load seen (Link gone) sends no 
     guest.Tick(55'000, false, 0, send);
     guest.Tick(55'025, false, 250 * kMs, send);
     // A death's reload: Link cannot be read for a few frames, then the clock
-    // reads the reload's time (four hours back, as in Caleb's hand test at 245.8 s).
+    // reads the reload's time (four hours back, as in Alex's hand test at 245.8 s).
     for (std::uint64_t t = 500; t <= 1000; t += 16) guest.Loading(t * kMs);
     guest.Tick(40'817, false, 1'600 * kMs, send);
     CHECK(send.empty());

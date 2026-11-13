@@ -72,7 +72,7 @@ TEST_CASE("story: Saria's goodbye, the owl, the Deku Tree and the forest-exit wa
         CHECK(std::string(f->name) == name);
     }
     CHECK(CoopStory::Find(host::flag_hash(kWall))->kind == CoopStory::Kind::world);
-    // Caleb's play-test (2026-11-12): Link's house door, the Deku Tree's mouth after
+    // Alex's play-test (2026-11-12): Link's house door, the Deku Tree's mouth after
     // its talk, the Kokiri Shop keeper's talks.
     for (const char* name : {"HavePlayedEvent.Dm_Kokiri_0045", "HavePlayedEvent.Dm_Kokiri_0050",
                              "KokiriForest_LinkHouseDoor_Open", "KokiriForest_Meet_DekuTree_OpenDekuTreeMouth",
@@ -110,7 +110,7 @@ TEST_CASE("story: what must stay each game's own is left out") {
             CHECK_MESSAGE(kOverworld.contains(name), name);
         }
         if (name.rfind("HaveTalked", 0) == 0 && f.kind != CoopStory::Kind::talk) {
-            // a talk is one player's, the owl's is story (and the few Caleb asked for)
+            // a talk is one player's, the owl's is story (and the few Alex asked for)
             CHECK_MESSAGE(name.rfind("HaveTalked_Special.Npc_Kaepora_", 0) == 0, name);
         }
         if (f.kind == CoopStory::Kind::talk) {  // only the Kokiri Shop keeper's (play-test 2026-11-12)
@@ -118,7 +118,7 @@ TEST_CASE("story: what must stay each game's own is left out") {
         }
     }
     // The opening of a new game: a fresh save still wakes up (leaving the house,
-    // 0045 and 0050, is shared since Caleb's play-test of 2026-11-12).
+    // 0045 and 0050, is shared since Alex's play-test of 2026-11-12).
     for (const char* opening : {"HavePlayedEvent.Dm_Kokiri_0000", "HavePlayedEvent.Dm_Kokiri_0010",
                                 "HavePlayedEvent.Dm_Kokiri_0030"}) {
         CHECK_MESSAGE(CoopStory::Find(host::flag_hash(opening)) == nullptr, opening);

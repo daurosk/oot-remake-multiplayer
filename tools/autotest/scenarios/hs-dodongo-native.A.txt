@@ -5,8 +5,8 @@
 # the log says "native sync off ... not wrapped" and the run is INCONCLUSIVE.
 # Route: both warp into the boss rush's Dodongo room (DodongoStage: it places its own King Dodongo, as
 # gohma-sync's GohmaStage; no kit save is from before him). A throws a bomb into his mouth when he
-# inhales, three times; B throws its own bombs a little later. Fallback with a real save: Caleb's own
-# save before King Dodongo as a CALEB TEST (the boss room of DodongoCavern).
+# inhales, three times; B throws its own bombs a little later. Fallback with a real save: Alex's own
+# save before King Dodongo as an ALEX TEST (the boss room of DodongoCavern).
 # PASS (proof lines):
 #  1. Both: "coop: bosses: native sync on (brain verbs wrapped, action verbs wrapped)".
 #  2. A: "coop: bosses: Enemy_DungeonBoss_Dodongo: native boss sync on (BSA 0x..., ours)"; B the same with "a copy".

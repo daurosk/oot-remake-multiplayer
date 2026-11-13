@@ -110,6 +110,44 @@ TEST_CASE("puppet config: a pack without tunic puppets turns the tunics off (Hoo
     CHECK(log.back().find("(LICHII_COOP_TUNICS=0)") != std::string::npos);
 }
 
+TEST_CASE("puppet config: the pack's coloured Goron and Zora tunics are taken while the tunics are on") {
+    int asked = 0;
+    const auto with = [&](std::vector<std::string> armors, std::vector<std::string>* log,
+                          const std::map<std::string, std::string>& vars = {}) {
+        return CoopPuppetConfig::Settings(
+            [&](const char* name) {
+                const auto it = vars.find(name);
+                return it == vars.end() ? std::string() : it->second;
+            },
+            [] { return true; }, log, [] { return std::optional<bool>(true); },
+            [&asked, armors] {
+                ++asked;
+                return armors;
+            });
+    };
+    std::vector<std::string> log;
+    auto s = with({"CoopArmor_Goron_Red", "CoopArmor_Zora_Red"}, &log);
+    CHECK(s.armor_tunics == std::vector<std::string>{"CoopArmor_Goron_Red", "CoopArmor_Zora_Red"});
+    REQUIRE(log.size() == 2);
+    CHECK(log[0].find("the Goron and Zora tunics show each player's colour (2 in the pack)") != std::string::npos);
+    // An older pack: none, said once, with what to do.
+    log.clear();
+    s = with({}, &log);
+    CHECK(s.armor_tunics.empty());
+    REQUIRE(log.size() == 2);
+    CHECK(log[0].find("no coloured Goron and Zora tunics") != std::string::npos);
+    CHECK(log[0].find("make-puppet-pack") != std::string::npos);
+    // Tunics off: the pack is not asked and nothing is said about them.
+    asked = 0;
+    log.clear();
+    s = with({"CoopArmor_Goron_Red"}, &log, {{"LICHII_COOP_TUNICS", "0"}});
+    CHECK(s.armor_tunics.empty());
+    CHECK(asked == 0);
+    CHECK(log.size() == 1);
+    // No reader given (the callers before this): none.
+    CHECK(From({}, true).armor_tunics.empty());
+}
+
 TEST_CASE("puppet config: the manifest names tunic puppets or only the plain ones") {
     // Lines as tools/puppet_pack writes them (coop_puppet.json "actors").
     const std::string plain = R"({"actors": [{"actor": "CoopPuppet_Child", "pack": "Pack/Actor/CoopPuppet_Child.pack.zs",

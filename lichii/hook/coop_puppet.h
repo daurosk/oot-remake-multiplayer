@@ -172,6 +172,7 @@ inline constexpr std::uint64_t kSetMatrix = 0x4c6580;
 // its playing animations take it in hand. The puppet wears the same two, as
 // Accessory1 (kind 13) and Accessory4 (kind 16), from PLAYER_EQUIP's ocarina.
 inline constexpr std::size_t kGearCount = 13;
+inline constexpr std::size_t kGearArmor = 3;  // index of the tunic (kind 8, ArmorUpper)
 inline constexpr std::size_t kGearHeld = 5;  // index of the held item
 inline constexpr std::size_t kGearHand = 6;  // the gauntlets
 inline constexpr std::size_t kGearSubWeapon = 7;
@@ -330,6 +331,19 @@ public:
                name.find('_', kBase.size()) != std::string_view::npos;
     }
 
+    // CoopArmor_<Goron|Zora>_<Colour>: the puppet pack's Goron or Zora tunic
+    // in a player's colour (Planner::ArmorFor), not the game's own.
+    static bool IsTunicArmor(std::string_view name) {
+        constexpr std::string_view kBase = "CoopArmor_";
+        return name.substr(0, kBase.size()) == kBase;
+    }
+    // How long after a coloured tunic is worn its armor link is looked at: a
+    // link still empty then means the game did not make the piece (the pack
+    // lacks it, or the game refuses a tunic it does not know), and that tunic
+    // goes into FailedTunics, so the planner asks for the game's own instead.
+    // Only until one coloured tunic was seen worn (as the tunic puppets).
+    static constexpr std::uint64_t kArmorCheckMs = 6000;
+
     // Any thread. The next frame of the cave uses it.
     void SetInput(Input input);
 
@@ -426,6 +440,7 @@ private:
         bool meter_skip = false;            // the next read is still the parked spot
         Show shown = Show::show;            // the last `show` acted on (log on change)
         bool model_checked = false;         // a tunic puppet's model (kTunicModelCheckMs)
+        std::uint64_t armor_check_ms = 0;   // a coloured tunic's link is looked at then (0: no check)
         std::uint64_t frame_set_in = 0;     // the cave frame of the last frame set
         std::string play_name;              // the play being made
         float play_frame = 0.0f;
@@ -502,6 +517,9 @@ private:
     std::map<std::string, int> tunic_timeouts_;    // by actor name
     bool tunic_proven_ = false;  // a tunic puppet spawned with its model: the pack has them
     void TunicFails(const std::string& actor, const std::string& why);
+    bool armor_proven_ = false;  // a coloured Goron or Zora tunic was seen worn
+    // The coloured tunic a puppet was given, kArmorCheckMs later (IsTunicArmor).
+    void CheckArmor(Slot& slot, Guest& guest, std::uint64_t now_ms);
 
     mutable std::mutex input_mutex_;
     Input next_input_;  // guarded
@@ -555,6 +573,10 @@ struct PlannerSettings {
     // kit when it put that colour's tile over the game's): the plain puppet
     // would wear it too, so a green player gets CoopPuppet_<Age>_Green.
     bool green_puppet = false;
+    // The Goron and Zora tunics in the players' colours: the puppet pack's
+    // CoopArmor_<Goron|Zora>_<Colour> actors (PackArmorTunics of its
+    // coop_puppet.json). Empty (an older pack): the game's own red and blue.
+    std::vector<std::string> armor_tunics;
     bool debug = false;           // LICHII_COOP_TEST_PUPPET: one more, beside you,
                                   // wearing your own gear
     std::uint64_t debug_delay_ms = 3000;  // after the scene is known
@@ -574,6 +596,10 @@ bool PackHasGreenPuppets(std::string_view manifest);
 // puppet must be the plain one (Hookshot proof 3: no puppet at all).
 bool PackHasTunicPuppets(std::string_view manifest);
 
+// The coloured Goron and Zora tunics a puppet pack's coop_puppet.json lists:
+// every "CoopArmor_..." name in it, once each (tools/puppet_pack/tunic_armor.py).
+std::vector<std::string> PackArmorTunics(std::string_view manifest);
+
 class Planner {
 public:
     explicit Planner(PlannerSettings settings = {}) : settings_(std::move(settings)) {}
@@ -589,7 +615,18 @@ public:
     // The actor for a player of that age and colour: CoopPuppet_<Age>, or
     // CoopPuppet_<Age>_<Colour> (CoopColors::TunicOf) while tunics are on.
     std::string ActorFor(bool adult, std::optional<std::uint32_t> color = {}) const;
+    // What a puppet of that colour wears for the tunic its player wears: for
+    // the Goron and Zora tunics (Armor_Adult_Goron, Armor_Adult_Zora) the
+    // pack's CoopArmor_<Goron|Zora>_<Colour> of the colour's preset
+    // (CoopColors::TunicOf), so they show the player's colour as the Kokiri
+    // tunic does. Green (no preset) wears the game's own, red and blue as the
+    // game made them; only when your own Link wears another colour
+    // (green_puppet: the game's tunic models are then your colour's) the
+    // pack's green copy. Anything else, tunics off, a pack without that
+    // actor, or one that failed (SetFailedTunics): `worn` unchanged.
+    std::string ArmorFor(std::string_view worn, std::optional<std::uint32_t> color) const;
     void SetTunics(bool on) { settings_.tunics = on; }
+    void SetArmorTunics(std::vector<std::string> names) { settings_.armor_tunics = std::move(names); }
     void SetGreenPuppet(bool on) { settings_.green_puppet = on; }
     // Tunic actors that do not work here (Director::FailedTunics): the plain
     // puppet for them.

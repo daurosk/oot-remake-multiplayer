@@ -61,13 +61,16 @@ def is_green(rgb):
 
 
 class Shade:
-    """A green end colour -> the target, as bright (linear luma) against `base` as it was."""
+    """A picked end colour -> the target, as bright (linear luma) against `base` as it was.
+    `pick`: which end colours change (default the tunic's green; puppet_pack.tunic_armor has the
+    Goron tunic's red and the Zora tunic's blue)."""
 
-    def __init__(self, target, base):
+    def __init__(self, target, base, pick=None):
         if base <= 0:
-            raise TunicError("no green in the texture")
+            raise TunicError("none of the colour to change in the texture")
         self.t = tuple(_lin(c) for c in target)
         self.base = base
+        self.pick = pick or is_green
         self.memo = {}
 
     def __call__(self, rgb):
@@ -79,10 +82,11 @@ class Shade:
         return out
 
 
-def _green_luma(colors):
+def _green_luma(colors, pick=None):
+    pick = pick or is_green
     total = n = 0
     for c in colors:
-        if is_green(c):
+        if pick(c):
             total += _luma(tuple(_lin(x) for x in c[:3]))
             n += 1
     return total / n if n else 0.0
@@ -101,21 +105,21 @@ def _bc_blocks(data):
     return fmt, [p + off for p in range(start, end - step + 1, step)]
 
 
-def _bc_recolor(data, target, base=None):
+def _bc_recolor(data, target, base=None, pick=None):
     fmt, offs = _bc_blocks(data)
     ends = []
     for q in offs:
         c0, c1, idx = struct.unpack_from("<HHI", data, q)
         if c0 or c1 or idx:
             ends += [unpack565(c0), unpack565(c1)]
-    f = Shade(target, base or _green_luma(ends))
+    f = Shade(target, base or _green_luma(ends, pick), pick)
     out = bytearray(data)
     for q in offs:
         c0, c1, idx = struct.unpack_from("<HHI", out, q)
         if not (c0 or c1 or idx):
             continue
         e0, e1 = unpack565(c0), unpack565(c1)
-        g0, g1 = is_green(e0), is_green(e1)
+        g0, g1 = f.pick(e0), f.pick(e1)
         if not (g0 or g1):
             continue
         n0 = pack565(f(e0)) if g0 else c0
@@ -199,7 +203,9 @@ def _ise_read(v, start, count, rng):
 
 
 def _astc_layout(v):
-    """(cem field position or None, [cem], colour start, value count, colour range) or None."""
+    """(cem field position or None, [cem], colour start, value count, colour range, the bit
+    places of each partition's two low mode bits when the modes are told apart per partition,
+    else None) or None."""
     bm = tx._block_mode(tx._bits(v, 0, 11))
     if bm is None:
         return None
@@ -209,6 +215,7 @@ def _astc_layout(v):
     if wcount > 64 or (dual and parts == 4):
         return None
     below = 128 - tx._ise_bits(wcount, wrange)
+    low_at = None
     if parts == 1:
         cems, cstart, cem_at = [tx._bits(v, 13, 4)], 17, 13
     else:
@@ -224,6 +231,9 @@ def _astc_layout(v):
             cems = [((base + ((enc >> (2 + i)) & 1)) << 2) | ((enc >> (2 + parts + 2 * i)) & 3)
                     for i in range(parts)]
             cem_at = None
+            # bit j of the mode field: 23 + j for the first six, the rest just below the weights
+            at = [23 + j if j < 6 else below + j - 6 for j in range(6 + extra)]
+            low_at = [(at[2 + parts + 2 * i], at[3 + parts + 2 * i]) for i in range(parts)]
     if dual:
         below -= 2
     nvals = sum(2 * ((c >> 2) + 1) for c in cems)
@@ -232,7 +242,7 @@ def _astc_layout(v):
     crange = next((r for r in reversed(tx._COLOUR_RANGES) if tx._ise_bits(nvals, r) <= below - cstart), None)
     if crange is None:
         return None
-    return cem_at, cems, cstart, nvals, crange
+    return cem_at, cems, cstart, nvals, crange, low_at
 
 
 def _decode_vals(dm, rng):
@@ -263,63 +273,97 @@ def _direct(n0, n1, a0, a1, alpha):
 
 
 def _astc_block(v, f):
-    """The block with its green end colours through `f`, or None (unchanged)."""
+    """The block with its picked end colours through `f`, or None (unchanged)."""
+    parsed = _astc_parse(v, f.pick)
+    return None if parsed is None else _astc_apply(v, parsed, f)
+
+
+def _astc_parse(v, pick):
+    """What of a block does not depend on the new colour (the slow half, done once per texture
+    for all colours): None when nothing in it is picked or it cannot be read, else
+    ("void", rgb) or ("ends", layout, values as (digit, bits), parts), `parts` being one
+    (kind, partition, first value, value count, a, b) per partition that changes: kind "lum"
+    with a = the grey, kind "rgb" with a, b = the two end colours (RGBA)."""
     if tx._bits(v, 0, 9) == 0x1FC:  # void extent: one RGBA16 colour
         c = [tx._bits(v, 64 + 16 * k, 16) >> 8 for k in range(3)]
-        if not is_green(c):
-            return None
-        for k, x in enumerate(f(c)):
-            v = (v & ~(0xFFFF << (64 + 16 * k))) | ((x << 8 | x) << (64 + 16 * k))
-        return v
+        return ("void", c) if pick(c) else None
     lay = _astc_layout(v)
     if lay is None:
         return None
-    cem_at, cems, cstart, nvals, rng = lay
+    cem_at, cems, cstart, nvals, rng, low_at = lay
     dm = _ise_read(v, cstart, nvals, rng)
     vals = _decode_vals(dm, rng)
-    quant = _quant(rng)
-    new_dm = list(dm)
-    new_cems = list(cems)
-    changed = False
     # one mode field for all partitions: if one base+offset partition becomes direct, all do
-    convert_all = cem_at is not None and cems[0] in (9, 13) and len(set(cems)) == 1 and _any_green(cems, vals)
+    convert_all = cem_at is not None and cems[0] in (9, 13) and len(set(cems)) == 1 and _any_green(cems, vals, pick)
+    parts = []
     k = 0
     for i, c in enumerate(cems):
         n = 2 * ((c >> 2) + 1)
         part = vals[k:k + n]
         if c in (6, 10):
-            if is_green(part[:3]):
-                rgb = f(part[:3])
-                for j in range(3):
-                    new_dm[k + j] = quant[rgb[j]]
-                changed = True
+            if pick(part[:3]):
+                parts.append(("lum", i, k, n, tuple(part[:3]), None))
         elif c in (8, 9, 12, 13):
             e0, e1 = tx._endpoints(c, part)
-            g0, g1 = is_green(e0), is_green(e1)
-            if g0 or g1 or convert_all:
-                n0 = f(e0) if g0 else e0[:3]
-                n1 = f(e1) if g1 else e1[:3]
-                alpha = c in (12, 13)
-                best = None
-                for cand in _direct(n0, n1, e0[3], e1[3], alpha):
-                    qdm = [quant[x] for x in cand]
-                    got = tx._endpoints(12 if alpha else 8, _decode_vals(qdm, rng))
-                    err = sum(abs(a - b) for a, b in zip(got[0][:3] + got[1][:3], tuple(n0) + tuple(n1)))
-                    err += sum(abs(a - b) for a, b in ((got[0][3], e0[3]), (got[1][3], e1[3])))
-                    if best is None or err < best[0]:
-                        best = (err, qdm)
-                if best is None:
-                    return None
-                new_dm[k:k + n] = best[1]
-                new_cems[i] = 12 if alpha else 8
-                changed = True
+            if pick(e0) or pick(e1) or convert_all:
+                parts.append(("rgb", i, k, n, e0, e1))
         k += n
-    if not changed:
+    if not parts:
         return None
+    return ("ends", lay, dm, parts)
+
+
+def _astc_apply(v, parsed, f):
+    """The parsed block (`_astc_parse`) with its picked end colours through `f`, or None."""
+    if parsed[0] == "void":
+        for k, x in enumerate(f(parsed[1])):
+            v = (v & ~(0xFFFF << (64 + 16 * k))) | ((x << 8 | x) << (64 + 16 * k))
+        return v
+    _, (cem_at, cems, cstart, nvals, rng, low_at), dm, parts = parsed
+    quant = _quant(rng)
+    new_dm = list(dm)
+    new_cems = list(cems)
+    for kind, i, k, n, e0, e1 in parts:
+        if kind == "lum":
+            rgb = f(e0)
+            for j in range(3):
+                new_dm[k + j] = quant[rgb[j]]
+            continue
+        c = cems[i]
+        n0 = f(e0) if f.pick(e0) else e0[:3]
+        n1 = f(e1) if f.pick(e1) else e1[:3]
+        alpha = c in (12, 13)
+        best = None
+        cands = _direct(n0, n1, e0[3], e1[3], alpha)
+        first = cands[0]
+        for cand in cands:
+            qdm = [quant[x] for x in cand]
+            dv = _decode_vals(qdm, rng)
+            got = tx._endpoints(12 if alpha else 8, dv)
+            err = sum(abs(a - b) for a, b in zip(got[0][:3] + got[1][:3], tuple(n0) + tuple(n1)))
+            err += sum(abs(a - b) for a, b in ((got[0][3], e0[3]), (got[1][3], e1[3])))
+            if best is None or err < best[0]:
+                best = (err, qdm)
+            # The plain values, read back as written (off only by the range's rounding): the
+            # ends as asked, no other candidate is tried.
+            if best[1] is qdm and cand is first and err <= sum(abs(a - b) for a, b in zip(dv, cand)):
+                break
+        if best is None:
+            return None
+        new_dm[k:k + n] = best[1]
+        new_cems[i] = 12 if alpha else 8
     if new_cems != cems:
-        if cem_at is None or len(set(new_cems)) != 1 or len(set(cems)) != 1:
-            return None  # mixed modes: the field cannot say it
-        v = (v & ~(0xF << cem_at)) | (new_cems[0] << cem_at)
+        if cem_at is not None:
+            if len(set(new_cems)) != 1:
+                return None  # one mode field for all partitions cannot say mixed modes
+            v = (v & ~(0xF << cem_at)) | (new_cems[0] << cem_at)
+        else:
+            # A mode per partition: base+offset (9, 13) and direct (8, 12) differ only in the
+            # partition's two low mode bits, so the value count and every other field stay.
+            for (b0, b1), old, new in zip(low_at, cems, new_cems):
+                if old >> 2 != new >> 2:
+                    return None
+                v = (v & ~((1 << b0) | (1 << b1))) | ((new & 1) << b0) | (((new >> 1) & 1) << b1)
     try:
         bits, length = _ise_encode(new_dm, rng)
     except ValueError:
@@ -330,14 +374,14 @@ def _astc_block(v, f):
     return v
 
 
-def _any_green(cems, vals):
-    """Any green end colour in a block's direct or base+offset partitions."""
+def _any_green(cems, vals, pick=is_green):
+    """Any picked end colour in a block's direct or base+offset partitions."""
     k = 0
     for c in cems:
         n = 2 * ((c >> 2) + 1)
         if c in (8, 9, 12, 13):
             e0, e1 = tx._endpoints(c, vals[k:k + n])
-            if is_green(e0) or is_green(e1):
+            if pick(e0) or pick(e1):
                 return True
         k += n
     return False
@@ -349,7 +393,7 @@ def _astc_ends(v):
     lay = _astc_layout(v)
     if lay is None:
         return []
-    _, cems, cstart, nvals, rng = lay
+    _, cems, cstart, nvals, rng, _ = lay
     vals = _decode_vals(_ise_read(v, cstart, nvals, rng), rng)
     out, k = [], 0
     for c in cems:
@@ -361,31 +405,76 @@ def _astc_ends(v):
     return out
 
 
-def _astc_recolor(data, target, base=None):
+def _astc_recolor(data, target, base=None, pick=None, parsed=None):
     fmt, start, end = _brti(data)
-    blocks = [(p, int.from_bytes(data[p:p + 16], "little")) for p in range(start, end - 15, 16)]
-    ends = []
-    for _, v in blocks:
-        ends += _astc_ends(v)
-    f = Shade(target, base or _green_luma(ends))
+    if base is None:
+        ends = []
+        for p in range(start, end - 15, 16):
+            ends += _astc_ends(int.from_bytes(data[p:p + 16], "little"))
+        base = _green_luma(ends, pick)
+    f = Shade(target, base, pick)
+    if parsed is None:
+        parsed = astc_parsed(data, pick)
     out = bytearray(data)
-    for p, v in blocks:
-        nv = _astc_block(v, f)
+    for p, ps in parsed.items():
+        nv = _astc_apply(int.from_bytes(data[p:p + 16], "little"), ps, f)
         if nv is not None:
             out[p:p + 16] = nv.to_bytes(16, "little")
     return bytes(out)
 
 
-def recolor(data, color, base=None):
+def astc_parsed(data, pick=None):
+    """{block offset: `_astc_parse`} of an ASTC texture's blocks that change: pass it to `recolor`
+    as `parsed` to make several colours of one texture without reading its blocks again."""
+    fmt, start, end = _brti(data)
+    pick = pick or is_green
+    out = {}
+    memo = {}
+    for p in range(start, end - 15, 16):
+        blk = data[p:p + 16]
+        ps = memo.get(blk, 0)
+        if ps == 0:
+            ps = memo[blk] = _astc_parse(int.from_bytes(blk, "little"), pick)
+        if ps is not None:
+            out[p] = ps
+    return out
+
+
+def is_astc(data):
+    return ASTC_FIRST <= _brti(data)[0] <= ASTC_LAST
+
+
+def picked_luma(data, pick=None):
+    """The mean linear luma of the texture's picked end colours (0 when it has none)."""
+    fmt = _brti(data)[0]
+    if fmt in (BC1, BC3):
+        ends = []
+        for q in _bc_blocks(data)[1]:
+            c0, c1, idx = struct.unpack_from("<HHI", data, q)
+            if c0 or c1 or idx:
+                ends += [unpack565(c0), unpack565(c1)]
+        return _green_luma(ends, pick)
+    if ASTC_FIRST <= fmt <= ASTC_LAST:
+        _, start, end = _brti(data)
+        ends = []
+        for p in range(start, end - 15, 16):
+            ends += _astc_ends(int.from_bytes(data[p:p + 16], "little"))
+        return _green_luma(ends, pick)
+    raise TunicError(f"texture format 0x{fmt:02x} is not BC1, BC3 or ASTC")
+
+
+def recolor(data, color, base=None, pick=None, parsed=None):
     """The texture (a one-texture BNTX) with its green parts in `color`, same name and size.
     `base`: the linear luma that becomes the target (the main tile's average, so each part keeps
-    its shade against the tile); default the texture's own green average."""
+    its shade against the tile); default the texture's own green average. `pick`: another test
+    than `is_green` for the end colours that change. `parsed`: `astc_parsed(data, pick)`, when
+    the caller makes several colours of one ASTC texture."""
     target = COLORS[color][1]
     fmt = _brti(data)[0]
     if fmt in (BC1, BC3):
-        return _bc_recolor(data, target, base)
+        return _bc_recolor(data, target, base, pick)
     if ASTC_FIRST <= fmt <= ASTC_LAST:
-        return _astc_recolor(data, target, base)
+        return _astc_recolor(data, target, base, pick, parsed)
     raise TunicError(f"texture format 0x{fmt:02x} is not BC1, BC3 or ASTC")
 
 

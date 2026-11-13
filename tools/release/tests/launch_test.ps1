@@ -250,6 +250,22 @@ try {
     Check ((Set-KitSelfTunic $sp 'red') -eq 'red' -and [System.IO.File]::ReadAllText($model) -eq 'REDMODEL') 'self tunic: self_files: the adult model copy put in'
     Check (-not (Test-Path -LiteralPath (Join-Path $sp 'romfs\Model\Other.bfres.zs'))) 'self tunic: self_files: no other model path written'
     Check ((Set-KitSelfTunic $sp '') -eq '' -and -not (Test-Path -LiteralPath $model) -and (Test-Path -LiteralPath (Join-Path $sp 'romfs\Model\CoopTunic_Adult_Red.Player_Adult.bfres.zs'))) 'self tunic: self_files: no colour takes the model copy away, the puppet''s stays'
+    # the Goron and Zora tunics (tunic_armor.py): your own are the pack's model copies over the game's models
+    Write-File (Join-Path $sp 'romfs\Model\CoopTunic_Goron_Red.Armor_Adult_Goron.bfres.zs') 'REDGORON'
+    Write-File (Join-Path $sp 'romfs\Model\CoopTunic_Zora_Red.Armor_Adult_Zora.bfres.zs') 'REDZORA'
+    Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"], "green": ["y"]}, "self_files": {"red": {"Tex/Angin_Tile_A_Alb.bntx.zs": "coop_self/red.bntx.zs", "Model/Armor_Adult_Goron.Armor_Adult_Goron.bfres.zs": "romfs/Model/CoopTunic_Goron_Red.Armor_Adult_Goron.bfres.zs", "Model/Armor_Adult_Zora.Armor_Adult_Zora.bfres.zs": "romfs/Model/CoopTunic_Zora_Red.Armor_Adult_Zora.bfres.zs", "Model/Armor_Adult_HoverBoot.Armor_Adult_HoverBoot.bfres.zs": "coop_self/red.bntx.zs"}}}'
+    $goron = Join-Path $sp 'romfs\Model\Armor_Adult_Goron.Armor_Adult_Goron.bfres.zs'
+    $zora = Join-Path $sp 'romfs\Model\Armor_Adult_Zora.Armor_Adult_Zora.bfres.zs'
+    Check (-not (Test-KitSelfArmor $sp)) 'self tunic: no Goron or Zora model put in yet'
+    Check ((Set-KitSelfTunic $sp 'red') -eq 'red' -and [System.IO.File]::ReadAllText($goron) -eq 'REDGORON' -and [System.IO.File]::ReadAllText($zora) -eq 'REDZORA') 'self tunic: self_files: the Goron and Zora tunic models of your colour put in'
+    Check (Test-KitSelfArmor $sp) 'self tunic: the Goron and Zora tunics are in your colour'
+    Check (-not (Test-Path -LiteralPath (Join-Path $sp 'romfs\Model\Armor_Adult_HoverBoot.Armor_Adult_HoverBoot.bfres.zs'))) 'self tunic: self_files: no other armor model written'
+    Check ((Set-KitSelfTunic $sp 'green') -eq '' -and -not (Test-Path -LiteralPath $goron) -and -not (Test-Path -LiteralPath $zora) -and (Test-Path -LiteralPath (Join-Path $sp 'romfs\Model\CoopTunic_Goron_Red.Armor_Adult_Goron.bfres.zs'))) 'self tunic: green takes the Goron and Zora models away (the game''s red and blue), the puppets'' copies stay'
+    # a pack made again without them (an older tool): no stale Goron or Zora model
+    Write-File $goron 'STALEGORON'
+    Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"], "green": ["y"]}, "self_files": {"red": {"Tex/Angin_Tile_A_Alb.bntx.zs": "coop_self/red.bntx.zs"}}}'
+    Check ((Set-KitSelfTunic $sp 'red') -eq 'red' -and -not (Test-Path -LiteralPath $goron) -and -not (Test-KitSelfArmor $sp)) 'self tunic: a pack without the Goron and Zora tunics: no stale model'
+    Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"], "green": ["y"]}, "self_files": {"red": {"Tex/Angin_Tile_A_Alb.bntx.zs": "coop_self/red.bntx.zs", "Model/Player_Adult.Player_Adult.bfres.zs": "romfs/Model/CoopTunic_Adult_Red.Player_Adult.bfres.zs"}}}'
     # a pack made again by an older tool (self_tiles only): the newer copies do not stay
     [void](Set-KitSelfTunic $sp 'red')
     Write-File $vest 'STALEVEST'

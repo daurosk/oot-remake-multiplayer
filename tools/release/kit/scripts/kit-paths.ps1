@@ -427,8 +427,9 @@ function Get-KitTunic([string]$Color) {
 # your colour: the pack tool's coop_self/ files, listed in coop_puppet.json as self_files
 # ({colour: {romfs path: file}}: the tile, the child's dark tile, the adult's other tunic
 # textures and the adult's model copy that names the colour's textures, #202); a pack from before that: self_tiles / self_dark_tiles. Green, no colour or a
-# pack without them: takes every copy away, the game's own green. Only the Kokiri tunic: the
-# Goron and Zora tunics have their own textures. Returns the colour put in, or ''.
+# pack without them: takes every copy away, the game's own green. The Goron and Zora tunics are
+# models of their own: for them self_files names the tunic's model, replaced by the pack's copy
+# that names your colour's textures (tools/puppet_pack/tunic_armor.py). Returns the colour put in, or ''.
 function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
     $romfs = Join-Path $PackDir 'romfs'
     $tile = 'Tex/Angin_Tile_A_Alb.bntx.zs'
@@ -439,12 +440,14 @@ function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
         $json = [System.IO.File]::ReadAllText((Join-Path $PackDir 'coop_puppet.json')) | ConvertFrom-Json -ErrorAction Stop
     } catch { }
     $ok = { param($rel) $rel -is [string] -and ($rel -match '^Tex/[A-Za-z0-9_]+\.bntx\.zs$' -or
-            $rel -match '^Model/Player_(Adult|Child)\.Player_(Adult|Child)\.bfres\.zs$') }
+            $rel -match '^Model/Player_(Adult|Child)\.Player_(Adult|Child)\.bfres\.zs$' -or
+            $rel -match '^Model/Armor_Adult_(Goron|Zora)\.Armor_Adult_(Goron|Zora)\.bfres\.zs$') }
     # Every file a colour may put in, taken away first: no copy stays after a change of colour.
     # The fixed list also covers a pack without self_files (made again older): no stale copy.
     $targets = @($tile, $dark, 'Tex/Mt_Vest_Player_Adult_Alb.bntx.zs', 'Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs',
         'Tex/Mt_Cloth_Parts_Player_Child_Alb.bntx.zs', 'Tex/Mt_Vest_Player_Child_Alb.bntx.zs',
-        'Model/Player_Adult.Player_Adult.bfres.zs')
+        'Model/Player_Adult.Player_Adult.bfres.zs', 'Model/Armor_Adult_Goron.Armor_Adult_Goron.bfres.zs',
+        'Model/Armor_Adult_Zora.Armor_Adult_Zora.bfres.zs')
     $put = [ordered]@{}
     try {
         if ($json -and $json.self_files) {
@@ -484,6 +487,15 @@ function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
     return ''
 }
 
+# Whether Set-KitSelfTunic put your colour's Goron or Zora tunic model into the pack's romfs
+# (a pack made before them has none: those two tunics keep the game's red and blue).
+function Test-KitSelfArmor([string]$PackDir) {
+    foreach ($k in 'Goron', 'Zora') {
+        if (Test-Path -LiteralPath (Join-Path $PackDir "romfs\Model\Armor_Adult_$k.Armor_Adult_$k.bfres.zs") -PathType Leaf) { return $true }
+    }
+    return $false
+}
+
 # With no colour chosen (coop-options.ini's color behind its '#'), the others see you in your player
 # number's colour (1 blue, 2 red), which is known only once the game has joined. Your own Link wears
 # the tunic put in before the game starts, so it stayed green (the hand test of a768c36). The colour of
@@ -520,7 +532,9 @@ function Use-KitPuppetPack([string]$Manifest, [string]$ToolDir, [string[]]$Missi
         $self = Set-KitSelfTunic (Split-Path -Parent $Manifest) $want
         if ($self) {
             $env:LICHII_COOP_SELF_TUNIC = $self
-            Write-Host "Your Link: the $self tunic (coop-options.ini color; the Goron and Zora tunics stay as they are)."
+            $armor = Test-KitSelfArmor (Split-Path -Parent $Manifest)
+            $also = if ($armor) { 'the Goron and Zora tunics too' } else { 'the Goron and Zora tunics stay as they are: run make-puppet-pack.cmd again for them' }
+            Write-Host "Your Link: the $self tunic (coop-options.ini color; $also)."
         }
         elseif ($env:LICHII_COOP_SELF_TUNIC) { Remove-Item env:LICHII_COOP_SELF_TUNIC }
         if ($want -and -not $self -and (Get-KitTunic $want) -ne 'green') {

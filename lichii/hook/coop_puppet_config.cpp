@@ -13,7 +13,8 @@ bool On(const std::string& v) {
 }  // namespace
 
 CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool()>& pack_green,
-                                     std::vector<std::string>* log, const PackTunicsFn& pack_tunics) {
+                                     std::vector<std::string>* log, const PackTunicsFn& pack_tunics,
+                                     const PackArmorsFn& pack_armors) {
     CoopPuppet::PlannerSettings settings;
     // The test puppet has its own switch: the logs alone must not put a
     // second Link in the game (Caleb's run of 2026-11-09 with the logs on).
@@ -49,6 +50,19 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
                                 : "get the plain puppet (the pack has no green puppet; make it again)"));
         }
     }
+    // The Goron and Zora tunics in the players' colours: only what the pack
+    // lists is asked for (an older pack: the game's own red and blue).
+    if (settings.tunics && pack_armors) {
+        settings.armor_tunics = pack_armors();
+        if (log != nullptr) {
+            log->push_back(settings.armor_tunics.empty()
+                               ? std::string("coop: the puppet pack has no coloured Goron and Zora tunics (made "
+                                             "before them): those two keep the game's red and blue; run "
+                                             "make-puppet-pack again for them")
+                               : "coop: the Goron and Zora tunics show each player's colour (" +
+                                     std::to_string(settings.armor_tunics.size()) + " in the pack)");
+        }
+    }
     if (log != nullptr) {
         log->push_back(std::string("coop: puppets on, actor ") +
                        (settings.actor.empty() ? "by age" : settings.actor) +
@@ -64,6 +78,7 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
 
 #ifdef LICHII_COOP
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -131,11 +146,24 @@ std::optional<bool> PackTunicPuppets() {
     return false;
 }
 
+// Every coloured Goron and Zora tunic the manifests list.
+std::vector<std::string> PackArmors() {
+    std::vector<std::string> out;
+    for (const auto& text : PackManifests()) {
+        for (auto& name : CoopPuppet::PackArmorTunics(text)) {
+            if (std::find(out.begin(), out.end(), name) == out.end()) {
+                out.push_back(std::move(name));
+            }
+        }
+    }
+    return out;
+}
+
 }  // namespace
 
 void Configure() {
     std::vector<std::string> lines;
-    auto settings = Settings(Env, PackGreenPuppets, &lines, PackTunicPuppets);
+    auto settings = Settings(Env, PackGreenPuppets, &lines, PackTunicPuppets, PackArmors);
     for (const auto& line : lines) {
         LOG_INFO(Core, "{}", line);
     }

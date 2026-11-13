@@ -133,7 +133,7 @@ Do not use the emulator's **Dump RomFS** for a `.nup`: you do not need it, and i
 
 The other players appear as Link only with the puppet pack, which is made from your own game files, so it cannot come in the zip. Do this once per PC, and **again after every update** that changes the pack ([Updating](#updating); `Update.bat` does not rebuild it). Without the pack, co-op still works, but the other players show only as a name and a dot, and co-op's text is plain (no game font or hearts).
 
-The pack also holds the **tunic colours**: each player's Link wears that player's colour in the other games, and your own Link wears yours (the Kokiri tunic; the Goron and Zora tunics keep their colours). Pick yours with `color =` in `coop-options.ini` ([Your colour](play-online.md#your-colour)). With a pack made before the colours, the other players stay green, and `Host.bat` / `Join.bat` say: "Puppet pack: made without the tunic colours ... Run make-puppet-pack.cmd again."
+The pack also holds the **tunic colours**: each player's Link wears that player's colour in the other games, and your own Link wears yours (the Kokiri tunic, and the cloth of the Goron and Zora tunics; with a pack made before those two were added they keep their red and blue until you run `make-puppet-pack.cmd` again). Pick yours with `color =` in `coop-options.ini` ([Your colour](play-online.md#your-colour)). With a pack made before the colours, the other players stay green, and `Host.bat` / `Join.bat` say: "Puppet pack: made without the tunic colours ... Run make-puppet-pack.cmd again."
 
 ### Only if your game is an `.nsp` or `.xci`: dump the RomFS first
 

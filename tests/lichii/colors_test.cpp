@@ -218,3 +218,59 @@ TEST_CASE("colours: the tunic of a colour, and the puppet actor for it") {
     CHECK_FALSE(CoopPuppet::Director::IsTunicActor("CoopPuppet_Adult"));
     CHECK_FALSE(CoopPuppet::Director::IsTunicActor("Npc_Some_Thing"));
 }
+
+TEST_CASE("colours: the Goron and Zora tunics a puppet wears follow its player's colour") {
+    const std::string goron = "Armor_Adult_Goron";
+    const std::string zora = "Armor_Adult_Zora";
+    // The names as tools/puppet_pack writes them (coop_puppet.json "armors"), each once.
+    const auto pack = CoopPuppet::PackArmorTunics(
+        R"({"armors": [{"actor": "CoopArmor_Goron_Red", "pack": "Pack/Actor/CoopArmor_Goron_Red.pack.zs",
+            "members": ["Actor/CoopArmor_Goron_Red.engine__actor__ActorParam.bgyml"]},
+            {"actor": "CoopArmor_Goron_Blue"}, {"actor": "CoopArmor_Goron_Green"},
+            {"actor": "CoopArmor_Zora_Red"}, {"actor": "CoopArmor_Zora_Green"}],
+            "actors": [{"actor": "CoopPuppet_Adult_Red"}]})");
+    CHECK(pack == std::vector<std::string>{"CoopArmor_Goron_Red", "CoopArmor_Goron_Blue", "CoopArmor_Goron_Green",
+                                           "CoopArmor_Zora_Red", "CoopArmor_Zora_Green"});
+    CHECK(CoopPuppet::PackArmorTunics(R"({"actors": [{"actor": "CoopPuppet_Adult_Red"}]})").empty());
+    CHECK(CoopPuppet::PackArmorTunics("").empty());
+    CHECK(CoopPuppet::PackArmorTunics(R"("CoopArmor_Goron_Re)").empty());  // cut short: nothing
+
+    CoopPuppet::Planner p;
+    // A pack without them (made before): the game's own tunics, as before.
+    CHECK(p.ArmorFor(goron, 0xFF3030u) == goron);
+    p.SetArmorTunics(pack);
+    CHECK(p.ArmorFor(goron, 0xFF3030u) == "CoopArmor_Goron_Red");
+    CHECK(p.ArmorFor(zora, 0xFF3030u) == "CoopArmor_Zora_Red");
+    CHECK(p.ArmorFor(goron, 0x3070FFu) == "CoopArmor_Goron_Blue");
+    CHECK(p.ArmorFor(goron, 0xE01818u) == "CoopArmor_Goron_Red");  // a hex colour: its nearest preset
+    CHECK(p.ArmorFor(zora, 0x3070FFu) == zora);  // the pack has no blue Zora tunic: the game's
+    // Green (no colour): the game's own Goron red and Zora blue, untouched.
+    CHECK(p.ArmorFor(goron, 0x30D040u) == goron);
+    CHECK(p.ArmorFor(zora, 0x30D040u) == zora);
+    CHECK(p.ArmorFor(goron, std::nullopt) == goron);
+    // Anything else a player wears is never changed.
+    CHECK(p.ArmorFor("Armor_Adult_Normal", 0xFF3030u) == "Armor_Adult_Normal");
+    CHECK(p.ArmorFor("Armor_Adult_HoverBoot", 0xFF3030u) == "Armor_Adult_HoverBoot");
+    CHECK(p.ArmorFor("", 0xFF3030u) == "");
+    // One that was not made in the game: the game's own for it, the others stay.
+    p.SetFailedTunics({"CoopArmor_Goron_Red"});
+    CHECK(p.ArmorFor(goron, 0xFF3030u) == goron);
+    CHECK(p.ArmorFor(zora, 0xFF3030u) == "CoopArmor_Zora_Red");
+    p.SetFailedTunics({});
+    // Your own Link wears another colour: the game's tunic models are that colour's, so a green
+    // player gets the pack's green copy (the game's red and blue under another name).
+    p.SetGreenPuppet(true);
+    CHECK(p.ArmorFor(goron, 0x30D040u) == "CoopArmor_Goron_Green");
+    CHECK(p.ArmorFor(zora, 0x30D040u) == "CoopArmor_Zora_Green");
+    CHECK(p.ArmorFor(goron, 0xFF3030u) == "CoopArmor_Goron_Red");
+    p.SetGreenPuppet(false);
+    p.SetTunics(false);  // LICHII_COOP_TUNICS=0
+    CHECK(p.ArmorFor(goron, 0xFF3030u) == goron);
+    CHECK(CoopPuppet::Director::IsTunicArmor("CoopArmor_Goron_Red"));
+    CHECK_FALSE(CoopPuppet::Director::IsTunicArmor(goron));
+    CHECK_FALSE(CoopPuppet::Director::IsTunicArmor("CoopPuppet_Adult_Red"));
+    // Every name fits the gear text the equip call is given.
+    for (const auto tunic : CoopColors::Tunics()) {
+        CHECK(std::string("CoopArmor_Goron_").size() + tunic.size() < CoopPuppet::block::kGearCapacity);
+    }
+}

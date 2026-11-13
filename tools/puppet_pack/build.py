@@ -32,7 +32,8 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import ainb, byml, dumpcheck, dungeon_rooms, hud, nup, rstb, sarc, title_menu, tunic, tunic_extra, zs  # noqa: E402
+from . import (ainb, byml, dumpcheck, dungeon_rooms, hud, nup, rstb, sarc, title_menu, tunic, tunic_armor,  # noqa: E402
+               tunic_extra, zs)
 
 TITLE_ID = "0400486024DEC000"
 DEFAULT_MOD_NAME = "coop-puppet"
@@ -701,6 +702,100 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
     return out
 
 
+def armor_pack(members, source, name, project):
+    """(pack bytes, actor param bytes, member list) of a tunic's actor in a colour
+    (puppet_pack.tunic_armor): the game's Goron or Zora tunic actor whole, under the name `name`,
+    with a ModelInfo of its own naming the colour's model project."""
+    src = actor_param_path(source)
+    if src not in members:
+        raise BuildError(f"{source}'s pack has no {src}")
+    doc = byml.loads(members[src])
+    files = {k: v for k, v in members.items() if k != src}
+    info = f"Component/ModelInfo/{name}.engine__component__ModelInfo.bgyml"
+    files[info] = byml.dumps({"FmdbName": source, "ModelProjectName": project})
+    doc.setdefault("Components", {})["ModelInfoRef"] = "?" + info
+    ap = byml.dumps(doc)
+    files[actor_param_path(name)] = ap
+    return sarc.write(files), ap, sorted(files)
+
+
+def armor_row(source_row, name, project):
+    """The coloured tunic's ActorInfo row: the game's tunic's, with the colour's model project."""
+    row = dict(source_row)
+    row["ModelProjectName"] = project
+    row["__RowId"] = name
+    return row
+
+
+def write_armors(romfs, out_romfs, dicts, table, colors, ai_rows, log=print, self_files=None):
+    """The Goron and Zora tunics in each colour (puppet_pack.tunic_armor): the recoloured cloth
+    textures, the model copy that names them and the actor copy that names the model, with their
+    size-table entries (the game's own file's). Green: the game's model under the copy's name,
+    no textures. Returns (files {kind: {colour: [paths]}}, manifest entries, ActorInfo rows,
+    GameActorInfo rows). `self_files` ({colour: {romfs path: file}}) gets, per colour but green,
+    the tunic's model: your own Link's Goron and Zora tunics are the puppet's model copy (no
+    second copy). A tunic the romfs lacks a file of is left out, with a line."""
+    files, made, new_ai, new_gai = {}, [], [], []
+    for kind, spec in tunic_armor.ARMORS.items():
+        source = spec["actor"]
+        pack_rel = f"Pack/Actor/{source}.pack.zs"
+        model_rel = f"Model/{source}.{source}.bfres.zs"
+        tex_rels = [f"Tex/{n}.bntx.zs" for n in spec["textures"]]
+        missing = [r for r in [pack_rel, model_rel] + tex_rels if not os.path.isfile(os.path.join(romfs, r))]
+        if missing or source not in ai_rows:
+            log(f"{kind} tunic: no {', '.join(missing) or 'ActorInfo row ' + source} in this romfs, "
+                "it keeps the game's colour")
+            continue
+        members = sarc.read(dicts.decompress(read(os.path.join(romfs, pack_rel))))
+        model_raw = read(os.path.join(romfs, model_rel))
+        model = dicts.decompress(model_raw)
+        textures = []
+        try:
+            for name, r in zip(spec["textures"], tex_rels):
+                raw = read(os.path.join(romfs, r))
+                data = dicts.decompress(raw)
+                textures.append((name, r, raw, data, tunic_armor.parsed(data, kind)))
+            base = tunic_armor.base_luma(textures[0][3], kind)
+        except tunic.TunicError as e:
+            log(f"{kind} tunic: {e}; it keeps the game's colour")
+            continue
+        chain_ap = sum(table.get(path) or 0 for path, _ in actor_param_chain(members, source))
+        for c in colors:
+            paths = []
+            actor = tunic_armor.actor_name(kind, c)
+            project = tunic_armor.project_name(kind, c)
+            try:
+                for name, r, raw, data, parsed in textures if c != "green" else ():
+                    out = tunic_armor.texture_for(data, kind, name, c, base, parsed)
+                    dst = f"Tex/{tunic_armor.texture_name(name, c)}.bntx.zs"
+                    write(os.path.join(out_romfs, dst), recompress(dicts, raw, out))
+                    table.add_new(strip_zs(dst), table.get(strip_zs(r)) or len(out) + PACK_SIZE_MARGIN)
+                    paths.append(dst)
+                m = tunic_armor.model_for(model, kind, c, spec["textures"])
+            except tunic.TunicError as e:
+                raise BuildError(f"{kind} tunic, {c}: {e}")
+            dst = f"Model/{project}.{source}.bfres.zs"
+            # Green is the game's model as it is: its own compressed bytes, nothing to pack again.
+            write(os.path.join(out_romfs, dst), model_raw if c == "green" else recompress(dicts, model_raw, m, level=3))
+            table.add_new(strip_zs(dst), table.get(strip_zs(model_rel)) or len(m) + PACK_SIZE_MARGIN)
+            paths.append(dst)
+            if self_files is not None and c != "green":
+                self_files.setdefault(c, {})[model_rel] = f"romfs/{dst}"
+            pack, ap, names = armor_pack(members, source, actor, project)
+            dst = f"Pack/Actor/{actor}.pack.zs"
+            write(os.path.join(out_romfs, dst), dicts.compress(pack, PACK_DICT))
+            table.add_new(strip_zs(dst), ((len(pack) + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN)
+            table.add_new(actor_param_path(actor), max(chain_ap, len(ap) + PACK_SIZE_MARGIN))
+            paths.append(dst)
+            new_ai.append(armor_row(ai_rows[source], actor, project))
+            new_gai.append({"__RowId": actor})
+            made.append({"actor": actor, "from": source, "kind": kind, "tunic": c, "model": project,
+                         "pack": dst, "pack_bytes": len(pack), "members": names})
+            files.setdefault(kind, {})[c] = paths
+        log(f"{kind} tunic: {len(files.get(kind, {}))} colours, {len(textures)} textures each")
+    return files, made, new_ai, new_gai
+
+
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
           tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False):
     """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
@@ -799,6 +894,13 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                      "members": names, "equipment_keys": keys, "footstep": footstep})
         log(f"{actor}: {len(names)} files, {len(pack)} bytes, {len(keys)} equipment keys -> {dst_rel}")
 
+    # The Goron and Zora tunics in the same colours (puppet_pack.tunic_armor): a puppet of a
+    # colour wears CoopArmor_<Goron|Zora>_<Colour> instead of the game's tunic actor.
+    armor_files, armors, armor_ai, armor_gai = write_armors(
+        romfs, out_romfs, dicts, table, tunics, ai_rows, log, self_files) if tunics else ({}, [], [], [])
+    new_ai += armor_ai
+    new_gai += armor_gai
+
     src = os.path.join(romfs, "Pack", "Actor", f"{IMPACT_SOURCE}.pack.zs")
     template = None
     if os.path.isfile(src) and IMPACT_SOURCE in ai_rows:
@@ -890,6 +992,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "shots": shots,
         "impacts": impacts,
         "tunics": tunic_files,
+        "armors": armors,
+        "armor_files": armor_files,
         "self_tiles": self_tiles,
         "self_dark_tiles": self_dark_tiles,
         "self_files": self_files,

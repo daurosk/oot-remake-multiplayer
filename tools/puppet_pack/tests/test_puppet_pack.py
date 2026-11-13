@@ -16,7 +16,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from puppet_pack import build, byml, dumpcheck, dungeon_rooms, nup, rstb, sarc  # noqa: E402
+from puppet_pack import build, byml, dumpcheck, dungeon_rooms, nup, rstb, sarc, tunic_armor  # noqa: E402
 
 # The co-op HUD's tests run with these (CI runs this file).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -776,6 +776,129 @@ class TunicExtraTest(unittest.TestCase):
         self.assertTrue(any(ok[2:]))  # the fallbacks hold a red pair
 
 
+class TunicArmorTest(unittest.TestCase):
+    """The Goron and Zora tunics in a colour: only the cloth's own red / blue changes."""
+
+    def test_names(self):
+        from puppet_pack import tunic, tunic_armor as ta
+        for kind, spec in ta.ARMORS.items():
+            for n in spec["textures"]:
+                for c in tunic.COLORS:
+                    self.assertEqual(len(ta.texture_name(n, c)), len(n))
+                self.assertIn(kind, n)
+        self.assertEqual(ta.texture_name("Mt_Angin_Armor_Adult_Goron_Alb", "red"), "Mt_Angin_CoopR_Adult_Goron_Alb")
+        self.assertEqual(ta.actor_name("Goron", "red"), "CoopArmor_Goron_Red")
+        self.assertEqual(ta.project_name("Zora", "blue"), "CoopTunic_Zora_Blue")
+        with self.assertRaises(tunic.TunicError):
+            ta.texture_name("Mt_Vest_Player_Adult_Alb", "red")
+        # the actor name fits the hook's gear text (lichii/hook/coop_puppet.h kGearCapacity 0x40)
+        self.assertLess(max(len(ta.actor_name(k, c)) for k in ta.ARMORS for c in tunic.COLORS), 0x40)
+
+    def test_picks(self):
+        from puppet_pack import tunic_armor as ta
+        for c in ((160, 30, 30), (70, 20, 20), (120, 25, 40)):  # the Goron cloth, its dark folds
+            self.assertTrue(ta.is_red(c), c)
+        for c in ((200, 170, 60), (60, 45, 45), (90, 70, 50), (128, 128, 128), (40, 80, 160)):
+            self.assertFalse(ta.is_red(c), c)  # gold trim, dull plates, leather, grey, blue
+        for c in ((40, 80, 160), (20, 28, 54), (90, 130, 190)):  # the Zora cloth
+            self.assertTrue(ta.is_blue(c), c)
+        for c in ((160, 30, 30), (200, 200, 205), (120, 96, 72), (55, 66, 47)):
+            self.assertFalse(ta.is_blue(c), c)  # red, white, leather, the Kokiri green
+
+    def test_only_the_cloth_changes(self):
+        from puppet_pack import tunic, tunic_armor as ta
+        name = "Mt_Angin_Armor_Adult_Goron_Alb"
+        src = fake_bntx(name, blocks=[void_block(160, 30, 30), void_block(200, 170, 60), void_block(80, 15, 15)],
+                        fmt=0x33)
+        base = ta.base_luma(src, "Goron")
+        out = ta.texture_for(src, "Goron", name, "blue", base, ta.parsed(src, "Goron"))
+        self.assertEqual(len(out), len(src))
+        self.assertIn(b"Mt_Angin_CoopB_Adult_Goron_Alb\x00", out)
+        self.assertNotIn(name.encode(), out)
+        start = out.find(b"BRTD") + 0x10
+
+        def rgb(k):
+            v = int.from_bytes(out[start + 16 * k:start + 16 * k + 16], "little")
+            return [(v >> (64 + 16 * j)) & 0xFF for j in range(3)]
+        self.assertGreater(rgb(0)[2], 2 * rgb(0)[0])  # the red cloth is blue
+        self.assertEqual(out[start + 16:start + 32], src[start + 16:start + 32])  # the gold trim stays
+        self.assertGreater(rgb(2)[2], rgb(2)[0])  # the dark fold too, and darker than the cloth
+        self.assertLess(sum(rgb(2)), sum(rgb(0)))
+        # without the parsed blocks: the same bytes
+        self.assertEqual(out, ta.texture_for(src, "Goron", name, "blue", base))
+        # the Zora tunic's blue with the Goron test: nothing to change
+        zora = fake_bntx("Mt_Angin_Armor_Adult_Zora_Alb", blocks=[void_block(40, 80, 160)], fmt=0x33)
+        with self.assertRaises(tunic.TunicError):
+            ta.base_luma(zora, "Goron")
+        self.assertGreater(ta.base_luma(zora, "Zora"), 0)
+        with self.assertRaises(tunic.TunicError):
+            ta.texture_for(src, "Goron", name, "green", base)
+
+    def test_model(self):
+        from puppet_pack import tunic, tunic_armor as ta
+        names = ta.ARMORS["Zora"]["textures"]
+        model = b"FRES" + b"".join(n.encode() + b"\x00" for n in names) + b"Mt_Parts_Armor_Adult_Zora_Alb\x00"
+        out = ta.model_for(model, "Zora", "pink", names)
+        self.assertEqual(len(out), len(model))
+        for n in names:
+            self.assertNotIn(n.encode() + b"\x00", out)
+            self.assertIn(ta.texture_name(n, "pink").encode() + b"\x00", out)
+        self.assertIn(b"Mt_Parts_Armor_Adult_Zora_Alb\x00", out)  # the fins stay the game's
+        self.assertEqual(ta.model_for(model, "Zora", "green", names), model)
+        with self.assertRaises(tunic.TunicError):
+            ta.model_for(b"FRES", "Zora", "pink", names)
+
+    def test_mode_per_partition(self):
+        # Two partitions with a mode each (base+offset and base+scale): the base+offset one
+        # becomes direct by its two low mode bits, everything else of the block stays.
+        from puppet_pack import texture as tx, tunic_armor as ta, tunic_extra as te
+        mode = 2  # a 4 x 2 weight grid, one plane
+        gw, gh, dual, wrange = tx._block_mode(mode)
+        below = 128 - tx._ise_bits(gw * gh, wrange) - 2  # two more mode bits just below the weights
+        enc = 2 | (1 << 2) | (1 << 4) | (2 << 6)  # modes 9 and 6
+        head = mode | (1 << 11) | (5 << 13) | ((enc & 0x3F) << 23) | ((enc >> 6) << below)
+        lay = te._astc_layout(head)
+        self.assertEqual(lay[1], [9, 6])
+        self.assertIsNone(lay[0])
+        rnd = random.Random(3)
+        t, q, b = tx._ISE[lay[4]]
+        done = 0
+        for _ in range(4000):
+            vals = [(rnd.randrange(3) if t else rnd.randrange(5) if q else None, rnd.randrange(1 << b))
+                    for _ in range(lay[3])]
+            bits, length = te._ise_encode(vals, lay[4])
+            weights = rnd.getrandbits(128 - below - 2) << (below + 2)
+            v = head | (bits << lay[2]) | weights
+            ends = te._astc_ends(v)
+            if not (ta.is_blue(ends[0]) and ta.is_blue(ends[1])) or ta.is_blue(ends[2]) or ta.is_blue(ends[3]):
+                continue
+            out = te._astc_block(v, te.Shade((0xD0, 0x20, 0x20), 0.05, ta.is_blue))
+            self.assertIsNotNone(out)
+            new = te._astc_layout(out)
+            self.assertEqual(new[1], [8, 6])
+            self.assertEqual(new[2:5], lay[2:5])
+            self.assertEqual(out >> (below + 2), v >> (below + 2))  # the weights
+            self.assertEqual(out & ((1 << 23) - 1), v & ((1 << 23) - 1))  # block mode, partitions
+            got = te._astc_ends(out)
+            self.assertFalse(ta.is_blue(got[0]) or ta.is_blue(got[1]), (ends, got))
+            self.assertEqual(got[2:], ends[2:])  # the other partition's colours
+            done += 1
+        self.assertGreater(done, 5)
+
+    def test_parsed_once_gives_the_same(self):
+        from puppet_pack import tunic_extra as te
+        src = fake_bntx("Mt_Vest_Player_Adult_Alb", blocks=[void_block(55, 66, 47), void_block(146, 134, 114)] * 3,
+                        fmt=0x34)
+        parsed = te.astc_parsed(src)
+        self.assertEqual(len(parsed), 3)  # the green blocks only
+        for c in ("red", "blue", "white"):
+            self.assertEqual(te.recolor(src, c, 0.05, None, parsed), te.recolor(src, c, 0.05))
+        self.assertTrue(te.is_astc(src))
+        self.assertFalse(te.is_astc(fake_bntx("Angin_Tile_A_Alb")))
+        self.assertGreater(te.picked_luma(src), 0)
+        self.assertEqual(te.picked_luma(fake_bntx("X", blocks=[void_block(146, 134, 114)], fmt=0x34)), 0)
+
+
 class TunicTest(unittest.TestCase):
     def test_dark_tile(self):
         # #202: the child's tunic body is the dark tile (ASTC in the game): your colour's copy is
@@ -1292,6 +1415,125 @@ class FullBuildTest(unittest.TestCase):
         # the game's dark tile's entry holds the BC3 copy the kit puts in its place
         self.assertGreaterEqual(t.get("Tex/Angin_Tile_A_Dark_Alb.bntx"), len(game_tile))
 
+    def add_armors(self, kinds=("Goron", "Zora")):
+        """The Goron and Zora tunics' files (puppet_pack.tunic_armor), made up."""
+        from puppet_pack import tunic_armor as ta
+        plain = zstandard.ZstdCompressor()
+        sarc_dicts = sarc.read(zstandard.ZstdDecompressor().decompress(self.dicts_raw))
+        pack_dict = zstandard.ZstdCompressionDict(sarc_dicts["pack.zsdic"])
+        ai = byml.loads(self.ai_bytes)
+        cloth = {"Goron": (160, 30, 30), "Zora": (40, 80, 160)}
+        for kind in kinds:
+            actor = ta.ARMORS[kind]["actor"]
+            short = f"Armor_{kind}"
+            files = {
+                f"Actor/{actor}.engine__actor__ActorParam.bgyml": byml.dumps({"Components": {
+                    "ArmorRef": f"?Component/ArmorParam/{short}.game__component__ArmorParam.bgyml",
+                    "ModelInfoRef": f"?Component/ModelInfo/{short}.engine__component__ModelInfo.bgyml"}}),
+                f"Component/ArmorParam/{short}.game__component__ArmorParam.bgyml": byml.dumps(
+                    {"HideMaterialGroupNameList": ["G_Angin"]}),
+                f"Component/ModelInfo/{short}.engine__component__ModelInfo.bgyml": byml.dumps(
+                    {"FmdbName": actor, "ModelProjectName": actor}),
+            }
+            self.write(f"Pack/Actor/{actor}.pack.zs",
+                       zstandard.ZstdCompressor(dict_data=pack_dict).compress(sarc.write(files)))
+            ai.append({"__RowId": actor, "ActorName": actor, "FmdbName": actor, "ModelProjectName": actor,
+                       "InstanceHeapSize": 115400})
+            names = ta.ARMORS[kind]["textures"]
+            for n in names:
+                self.write(f"Tex/{n}.bntx.zs", plain.compress(fake_bntx(
+                    n, blocks=[void_block(*cloth[kind]), void_block(200, 170, 60)], fmt=0x33)))
+            self.write(f"Model/{actor}.{actor}.bfres.zs", plain.compress(
+                b"FRES" + bytes(12) + b"".join(n.encode() + b"\x00" for n in names)
+                + f"Mt_Inner_Armor_Adult_{kind}_Alb\x00{actor}\x00".encode()))
+        ai.sort(key=lambda r: r["__RowId"].encode())
+        self.write("RSDB/ActorInfo.Product.999.rstbl.byml.zs", plain.compress(byml.dumps(ai)))
+        self.write("RSDB/GameActorInfo.Product.999.rstbl.byml.zs",
+                   plain.compress(byml.dumps([{"__RowId": r["__RowId"]} for r in ai])))
+
+    def test_build_armor_tunics(self):
+        from puppet_pack import tunic_armor as ta, zs
+        self.add_armors()
+        mod = os.path.join(self.dir, "mod_a")
+        m = build.build(self.romfs, mod, log=lambda *_: None, tunics=["red", "blue", "green"])
+        d = zs.Dicts.from_romfs(self.romfs)
+        out = os.path.join(mod, "romfs")
+        self.assertEqual(sorted(m["armor_files"]), ["Goron", "Zora"])
+        self.assertEqual([a["actor"] for a in m["armors"]],
+                         [f"CoopArmor_{k}_{c}" for k in ("Goron", "Zora") for c in ("Red", "Blue", "Green")])
+        rows = {r["__RowId"]: r for r in byml.loads(d.decompress(build.read(
+            os.path.join(out, "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))}
+        gai = {r["__RowId"] for r in byml.loads(d.decompress(build.read(
+            os.path.join(out, "RSDB/GameActorInfo.Product.999.rstbl.byml.zs"))))}
+        t = rstb.Rstb.loads(d.decompress(build.read(os.path.join(
+            out, "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"))))
+        for kind, spec in ta.ARMORS.items():
+            src = spec["actor"]
+            game_model = d.decompress(build.read(os.path.join(self.romfs, f"Model/{src}.{src}.bfres.zs")))
+            for c in ("red", "blue", "green"):
+                actor, project = ta.actor_name(kind, c), ta.project_name(kind, c)
+                # the actor: the game's tunic whole, its own name and ModelInfo
+                files = sarc.read(d.decompress(build.read(os.path.join(out, f"Pack/Actor/{actor}.pack.zs"))))
+                self.assertNotIn(f"Actor/{src}.engine__actor__ActorParam.bgyml", files)
+                ap = byml.loads(files[f"Actor/{actor}.engine__actor__ActorParam.bgyml"])
+                self.assertEqual(byml.loads(files[ap["Components"]["ModelInfoRef"][1:]]),
+                                 {"FmdbName": src, "ModelProjectName": project})
+                self.assertIn(ap["Components"]["ArmorRef"][1:], files)  # what it hides of Link stays
+                self.assertEqual(rows[actor]["ModelProjectName"], project)
+                self.assertEqual(rows[actor]["FmdbName"], src)
+                self.assertEqual(rows[actor]["InstanceHeapSize"], 115400)
+                self.assertIn(actor, gai)
+                self.assertIsNotNone(t.get(f"Pack/Actor/{actor}.pack"))
+                self.assertIsNotNone(t.get(f"Actor/{actor}.engine__actor__ActorParam.bgyml"))
+                self.assertIsNotNone(t.get(f"Model/{project}.{src}.bfres"))
+                model = d.decompress(build.read(os.path.join(out, f"Model/{project}.{src}.bfres.zs")))
+                self.assertEqual(len(model), len(game_model))
+                for n in spec["textures"]:
+                    copy = os.path.join(out, f"Tex/{ta.texture_name(n, c)}.bntx.zs")
+                    if c == "green":  # the game's own model and textures: the game's red and blue
+                        self.assertEqual(model, game_model)
+                        self.assertFalse(os.path.exists(copy))
+                        continue
+                    self.assertIn(ta.texture_name(n, c).encode() + b"\x00", model)
+                    self.assertNotIn(n.encode() + b"\x00", model)
+                    tex = d.decompress(build.read(copy))
+                    game = d.decompress(build.read(os.path.join(self.romfs, f"Tex/{n}.bntx.zs")))
+                    self.assertEqual(len(tex), len(game))
+                    self.assertIn(ta.texture_name(n, c).encode() + b"\x00", tex)
+                    self.assertEqual(tex[-16:], game[-16:])  # the gold block is not the cloth
+                    self.assertNotEqual(tex[-32:-16], game[-32:-16])
+                    self.assertIsNotNone(t.get(f"Tex/{ta.texture_name(n, c)}.bntx"))
+                self.assertIn(f"Mt_Inner_Armor_Adult_{kind}_Alb\x00".encode(), model)  # not the cloth
+            # the game's own files are never in the pack's romfs
+            self.assertFalse(os.path.exists(os.path.join(out, f"Model/{src}.{src}.bfres.zs")))
+            self.assertFalse(os.path.exists(os.path.join(out, f"Pack/Actor/{src}.pack.zs")))
+            # your own Link's tunic: the puppet's model copy, no second file
+            for c in ("red", "blue"):
+                self.assertEqual(m["self_files"][c][f"Model/{src}.{src}.bfres.zs"],
+                                 f"romfs/Model/{ta.project_name(kind, c)}.{src}.bfres.zs")
+        self.assertNotIn("green", m["self_files"])
+        self.assertEqual(rows["Armor_Adult_Goron"]["ModelProjectName"], "Armor_Adult_Goron")  # the game's row
+
+    def test_build_one_armor_missing(self):
+        # A romfs without one of the Zora tunic's textures: the Goron tunic is still made.
+        self.add_armors()
+        os.remove(os.path.join(self.romfs, "Tex", "Mt_Vest_Armor_Adult_Zora_Alb.bntx.zs"))
+        lines = []
+        m = build.build(self.romfs, os.path.join(self.dir, "mod_z"), log=lines.append, tunics=["red", "green"])
+        self.assertEqual(sorted(m["armor_files"]), ["Goron"])
+        self.assertTrue(any(x.startswith("Zora tunic: no Tex/Mt_Vest_Armor_Adult_Zora_Alb.bntx.zs") for x in lines))
+        self.assertNotIn("Model/Armor_Adult_Zora.Armor_Adult_Zora.bfres.zs", m["self_files"]["red"])
+        self.assertIn("Model/Armor_Adult_Goron.Armor_Adult_Goron.bfres.zs", m["self_files"]["red"])
+
+    def test_build_no_armors(self):
+        # A romfs without the tunics' files, and --tunics none: no armour actors, nothing else changes.
+        m = build.build(self.romfs, os.path.join(self.dir, "mod_p"), log=lambda *_: None, tunics=["red"])
+        self.assertEqual((m["armors"], m["armor_files"]), ([], {}))
+        self.add_armors()
+        m = build.build(self.romfs, os.path.join(self.dir, "mod_q"), log=lambda *_: None)
+        self.assertEqual((m["armors"], m["armor_files"]), ([], {}))
+        self.assertFalse(any("CoopArmor" in n for n in os.listdir(os.path.join(self.dir, "mod_q", "romfs", "Pack", "Actor"))))
+
     def test_build_no_tile_no_tunics(self):
         os.remove(os.path.join(self.romfs, "Tex", "Angin_Tile_A_Alb.bntx.zs"))
         m = build.build(self.romfs, os.path.join(self.dir, "mod_n"), log=lambda *_: None, tunics=["red"])
@@ -1400,7 +1642,11 @@ class NupTest(unittest.TestCase):
                          {"Tex/Angin_Tile_A_Alb.bntx.zs", "Tex/Angin_Tile_A_Dark_Alb.bntx.zs",
                           "Tex/Mt_Vest_Player_Adult_Alb.bntx.zs", "Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs",
                           "Tex/Mt_Cloth_Parts_Player_Child_Alb.bntx.zs", "Tex/Mt_Vest_Player_Child_Alb.bntx.zs"} |
-                         {f"Model/Player_{v}.Player_{v}.bfres.zs" for v in build.VARIANTS},
+                         {f"Model/Player_{v}.Player_{v}.bfres.zs" for v in build.VARIANTS} |
+                         # the Goron and Zora tunics: actor, model and cloth textures (tunic_armor.py)
+                         {f"Pack/Actor/{a['actor']}.pack.zs" for a in tunic_armor.ARMORS.values()} |
+                         {f"Model/{a['actor']}.{a['actor']}.bfres.zs" for a in tunic_armor.ARMORS.values()} |
+                         {f"Tex/{n}.bntx.zs" for a in tunic_armor.ARMORS.values() for n in a["textures"]},
                          set(dumpcheck.OPTIONAL))
         seed = "Pack/Actor/Shootable_DekuSeed.pack.zs"
         nup.write_nup(self.path, [(self.TID, 0, nup.KIND_BASE, dict(self.base, **{seed: (b"seed", nup.CODEC_RAW)}))])

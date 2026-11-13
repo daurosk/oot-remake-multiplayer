@@ -20,13 +20,19 @@ using EnvFn = std::function<std::string(const char*)>;
 // std::nullopt when no pack manifest was found (nothing to judge by).
 using PackTunicsFn = std::function<std::optional<bool>()>;
 
+// The coloured Goron and Zora tunics the puppet pack has
+// (CoopPuppet::PackArmorTunics of every manifest found).
+using PackArmorsFn = std::function<std::vector<std::string>()>;
+
 // The settings the variables ask for. pack_green answers whether the puppet
 // pack has both green puppets; it is asked only when the player's own Link
 // wears another colour. pack_tunics (optional): a pack without tunic puppets
-// turns the tunics off, so every puppet is the plain one the pack has. Each
-// line for the log goes into *log.
+// turns the tunics off, so every puppet is the plain one the pack has.
+// pack_armors (optional): the pack's coloured Goron and Zora tunics, asked
+// only while the tunics are on. Each line for the log goes into *log.
 CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool()>& pack_green,
-                                     std::vector<std::string>* log, const PackTunicsFn& pack_tunics = {});
+                                     std::vector<std::string>* log, const PackTunicsFn& pack_tunics = {},
+                                     const PackArmorsFn& pack_armors = {});
 
 #ifdef LICHII_COOP
 // Settings() from the process's variables and the puppet pack under

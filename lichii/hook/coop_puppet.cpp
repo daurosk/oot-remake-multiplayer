@@ -476,6 +476,10 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         break;
     case Pending::equip:
         slot.worn[slot.equip_index] = slot.equip_name;
+        if (slot.equip_index == kGearArmor) {
+            slot.armor_check_ms =
+                IsTunicArmor(slot.equip_name) && !armor_proven_ ? now_ms + kArmorCheckMs : 0;
+        }
         if (const int s = kGearSlots[slot.equip_index]; s >= 0) {
             // A new piece is worn put away, whatever the old one was.
             slot.in_hand = static_cast<std::uint8_t>(slot.in_hand & ~(1u << s));
@@ -744,6 +748,7 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.far_since_ms = {};
     slot.rewear_tries = {};
     slot.remake = false;
+    slot.armor_check_ms = 0;
     slot.off_since_ms = {};
     slot.unequip_refused = {};
     pending_ = Pending::create;
@@ -895,6 +900,9 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
     if (target.show == Show::show && now_ms >= slot.rewear_ms) {
         LeftBehind(slot, guest, now_ms);
     }
+    if (slot.armor_check_ms != 0 && now_ms >= slot.armor_check_ms) {
+        CheckArmor(slot, guest, now_ms);
+    }
     for (std::size_t i = 0; i < target.gear.size(); ++i) {
         const auto& want = target.gear[i];
         if (want && want->empty() && !slot.worn[i].empty() && !GearIsCarried(i)) {
@@ -960,6 +968,47 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
         return c;
     }
     return std::nullopt;
+}
+
+// A coloured Goron or Zora tunic (CoopArmor_..., Planner::ArmorFor) is an
+// actor only the puppet pack has. kArmorCheckMs after the equip call the
+// tunic's armor link (the one the take-off call empties: kind 8, index 1)
+// must hold a piece; an empty link means the game made none, and the tunic's
+// name goes to FailedTunics: the planner then asks for the game's own tunic,
+// another name than the one worn, so Equip wears it in its place.
+void Director::CheckArmor(Slot& slot, Guest& guest, std::uint64_t now_ms) {
+    const std::size_t i = kGearArmor;
+    if (!IsTunicArmor(slot.worn[i]) || armor_proven_) {
+        slot.armor_check_ms = 0;
+        return;
+    }
+    std::uint64_t parts = 0;
+    std::uint64_t eu = 0;
+    std::uint32_t id = 0xFFFFFFFFu;
+    const std::uint64_t index = kGearKinds[i] - addr::kArmorKindFirst;
+    if (!ReadValue(guest, slot.actor + addr::kActorParts, parts) || parts == 0 ||
+        !ReadValue(guest, parts + addr::kPartsEquipmentUser, eu) || eu == 0 ||
+        !ReadValue(guest, eu + addr::kArmorLinks + addr::kEquipSlotStride * index + addr::kEquipSlotId,
+                   id)) {
+        slot.armor_check_ms = now_ms + 1000;  // not readable now: look again
+        return;
+    }
+    slot.armor_check_ms = 0;
+    const std::string who = "P" + std::to_string(slot.number);
+    if (id != 0xFFFFFFFFu) {
+        armor_proven_ = true;
+        Say(who + " wears '" + slot.worn[i] + "' (armor link " + std::to_string(index) + ": id " +
+            Hex(id) + "): the pack's coloured tunics work");
+        return;
+    }
+    {
+        std::lock_guard lock(tunic_mutex_);
+        tunic_failed_.insert(slot.worn[i]);
+    }
+    Say(who + " '" + slot.worn[i] + "' was not made (its armor link is empty " +
+        std::to_string(kArmorCheckMs / 1000) +
+        " s after it was worn; an older puppet pack? run make-puppet-pack again): the game's own "
+        "tunic for that colour from now on");
 }
 
 // A worn sword or shield far from its puppet does not follow it: the game
@@ -1493,6 +1542,9 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         t.anim = r.anim;
         t.anim_serial = r.anim_serial;
         t.gear = r.gear;
+        if (auto& armor = t.gear[kGearArmor]; armor && !armor->empty()) {
+            *armor = ArmorFor(*armor, t.color);  // the Goron and Zora tunics in their colour
+        }
         t.drawn = r.drawn;
         t.ocarina = r.ocarina;
         in.targets.push_back(std::move(t));
@@ -1508,6 +1560,9 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         t.actor = ActorFor(false, own_color);
         t.position = *debug_spot_;
         t.gear = own_gear;
+        if (auto& armor = t.gear[kGearArmor]; armor && !armor->empty()) {
+            *armor = ArmorFor(*armor, own_color);
+        }
         t.drawn = own_drawn;
         t.color = own_color;  // the test puppet wears your own colour, if you chose one
         in.targets.push_back(std::move(t));
@@ -1543,6 +1598,47 @@ std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color) co
         }
     }
     return plain;
+}
+
+std::vector<std::string> PackArmorTunics(std::string_view manifest) {
+    constexpr std::string_view kStart = "\"CoopArmor_";
+    std::vector<std::string> out;
+    for (std::size_t at = manifest.find(kStart); at != std::string_view::npos;
+         at = manifest.find(kStart, at + 1)) {
+        const std::size_t end = manifest.find('"', at + 1);
+        if (end == std::string_view::npos) {
+            break;
+        }
+        std::string name(manifest.substr(at + 1, end - at - 1));
+        if (std::find(out.begin(), out.end(), name) == out.end()) {
+            out.push_back(std::move(name));
+        }
+    }
+    return out;
+}
+
+std::string Planner::ArmorFor(std::string_view worn, std::optional<std::uint32_t> color) const {
+    const std::string_view kind = worn == "Armor_Adult_Goron"  ? "Goron"
+                                  : worn == "Armor_Adult_Zora" ? "Zora"
+                                                               : "";
+    if (kind.empty() || !settings_.tunics || !color || settings_.armor_tunics.empty()) {
+        return std::string(worn);
+    }
+    std::string_view tunic = CoopColors::TunicOf(*color);
+    if (tunic.empty()) {
+        if (!settings_.green_puppet) {
+            return std::string(worn);  // green: the game's own red and blue
+        }
+        tunic = "Green";  // the game's tunic models are your colour's (PlannerSettings)
+    }
+    std::string name = "CoopArmor_" + std::string(kind) + '_' + std::string(tunic);
+    const auto has = [&name](const std::vector<std::string>& list) {
+        return std::find(list.begin(), list.end(), name) != list.end();
+    };
+    if (!has(settings_.armor_tunics) || has(failed_tunics_)) {
+        return std::string(worn);
+    }
+    return name;
 }
 
 void Director::TunicFails(const std::string& actor, const std::string& why) {

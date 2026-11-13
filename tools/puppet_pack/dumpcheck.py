@@ -76,6 +76,16 @@ OPTIONAL = (
     "Tex/Mt_Vest_Player_Child_Alb.bntx.zs",
     "Model/Player_Child.Player_Child.bfres.zs",
     "Model/Player_Adult.Player_Adult.bfres.zs",
+    # The Goron and Zora tunics in the players' colours (puppet_pack/tunic_armor.py).
+    "Pack/Actor/Armor_Adult_Goron.pack.zs",
+    "Pack/Actor/Armor_Adult_Zora.pack.zs",
+    "Model/Armor_Adult_Goron.Armor_Adult_Goron.bfres.zs",
+    "Model/Armor_Adult_Zora.Armor_Adult_Zora.bfres.zs",
+    "Tex/Mt_Angin_Armor_Adult_Goron_Alb.bntx.zs",
+    "Tex/Mt_Vest_Armor_Adult_Goron_Alb.bntx.zs",
+    "Tex/Mt_Angin_Armor_Adult_Zora_Alb.bntx.zs",
+    "Tex/Mt_Angin_Acs_Armor_Adult_Zora_Alb.bntx.zs",
+    "Tex/Mt_Vest_Armor_Adult_Zora_Alb.bntx.zs",
 )
 
 REDUMP = ("Delete the folder {romfs} and dump again: Join.bat, right-click the game, "

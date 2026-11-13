@@ -814,6 +814,99 @@ TEST_CASE("puppet gear: a mask is worn in state 1, other pieces in state 2") {
     CHECK(calls[1].x[1] == 8u);
     CHECK(calls[1].x[3] == 2u);
 }
+TEST_CASE("puppet gear: a coloured Goron tunic that is not made gives way to the game's own") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    // The tunic's armor link (kind 8: index 1), its id.
+    constexpr std::uint64_t kLinkId = kEu + addr::kArmorLinks + addr::kEquipSlotStride * 1 + addr::kEquipSlotId;
+    g.guest.Map(kParts, 0x1000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    g.guest.Set(kLinkId, std::uint32_t{0xFFFFFFFFu});  // empty: the game makes no piece
+    Target t = At(1, 4, 5, 6);
+    t.gear[CoopPuppet::kGearArmor] = "CoopArmor_Goron_Red";
+    d.SetInput(Wants({t}));
+    auto calls = Frame(d, g, 30);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kEquip);
+    CHECK(calls[0].x[1] == 8u);
+    std::array<char, block::kGearCapacity> name{};
+    g.guest.Read(g.guest.Get<std::uint64_t>(calls[0].x[2]), name.data(), name.size());
+    CHECK(std::string(name.data()) == "CoopArmor_Goron_Red");
+    CHECK(Frame(d, g, 30 + Director::kArmorCheckMs - 10).empty());
+    CHECK(d.FailedTunics().empty());  // looked at only kArmorCheckMs after the call
+    CHECK(Frame(d, g, 30 + Director::kArmorCheckMs).empty());
+    CHECK(d.FailedTunics() == std::vector<std::string>{"CoopArmor_Goron_Red"});
+    // The planner now asks for the game's own (Planner::ArmorFor): worn in its place, not checked.
+    t.gear[CoopPuppet::kGearArmor] = "Armor_Adult_Goron";
+    d.SetInput(Wants({t}));
+    calls = Frame(d, g, 40 + Director::kArmorCheckMs);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kEquip);
+    CHECK(Frame(d, g, 40 + 3 * Director::kArmorCheckMs).empty());
+    CHECK(d.FailedTunics().size() == 1);
+}
+
+TEST_CASE("puppet gear: a coloured tunic seen worn is kept, and later ones are not looked at") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    constexpr std::uint64_t kLinkId = kEu + addr::kArmorLinks + addr::kEquipSlotStride * 1 + addr::kEquipSlotId;
+    g.guest.Map(kParts, 0x1000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    g.guest.Set(kLinkId, std::uint32_t{0x1234u});  // the game made the piece
+    Target t = At(1, 4, 5, 6);
+    t.gear[CoopPuppet::kGearArmor] = "CoopArmor_Zora_Blue";
+    d.SetInput(Wants({t}));
+    REQUIRE(Frame(d, g, 30).size() == 1);
+    CHECK(Frame(d, g, 40 + Director::kArmorCheckMs).empty());  // still worn: no call
+    CHECK(d.FailedTunics().empty());
+    // Proven: another coloured tunic whose link reads empty for a moment (a load) is not given up.
+    g.guest.Set(kLinkId, std::uint32_t{0xFFFFFFFFu});
+    t.gear[CoopPuppet::kGearArmor] = "CoopArmor_Goron_Blue";
+    d.SetInput(Wants({t}));
+    REQUIRE(Frame(d, g, 50 + Director::kArmorCheckMs).size() == 1);
+    CHECK(Frame(d, g, 60 + 3 * Director::kArmorCheckMs).empty());
+    CHECK(d.FailedTunics().empty());
+}
+
+TEST_CASE("puppet planner: a remote's Goron tunic is the pack's in that player's colour") {
+    CoopPuppet::PlannerSettings s;
+    s.debug = true;
+    s.debug_delay_ms = 0;
+    s.armor_tunics = {"CoopArmor_Goron_Red", "CoopArmor_Goron_Blue", "CoopArmor_Zora_Red"};
+    CoopPuppet::Planner p(s);
+    std::vector<CoopPuppet::Remote> remotes(3);
+    for (std::size_t i = 0; i < remotes.size(); ++i) {
+        remotes[i].number = static_cast<std::uint8_t>(2 + i);
+        remotes[i].scene = "Field";
+        remotes[i].adult = true;
+    }
+    remotes[0].gear[CoopPuppet::kGearArmor] = "Armor_Adult_Goron";  // player 2: red by its number
+    remotes[0].gear[4] = "Armor_Adult_HoverBoot";
+    remotes[1].gear[CoopPuppet::kGearArmor] = "Armor_Adult_Zora";   // chose green
+    remotes[1].color = 0x30D040u;
+    remotes[2].gear[CoopPuppet::kGearArmor] = "";                   // the Kokiri tunic: nothing worn
+    remotes[2].color = 0x3070FFu;
+    CoopPuppet::Gear own;
+    own[CoopPuppet::kGearArmor] = "Armor_Adult_Goron";
+    const auto in = p.Plan(kBase, std::string("Field"), CoopPuppet::Vec3{0, 0, 0}, false, remotes, 10, own, {},
+                           std::uint32_t{0x3070FFu});
+    REQUIRE(in.targets.size() == 4);
+    CHECK(in.targets[0].actor == "CoopPuppet_Adult_Red");
+    CHECK(*in.targets[0].gear[CoopPuppet::kGearArmor] == "CoopArmor_Goron_Red");
+    CHECK(*in.targets[0].gear[4] == "Armor_Adult_HoverBoot");
+    CHECK(*in.targets[1].gear[CoopPuppet::kGearArmor] == "Armor_Adult_Zora");  // green: the game's blue
+    CHECK(*in.targets[2].gear[CoopPuppet::kGearArmor] == "");
+    CHECK(*in.targets[3].gear[CoopPuppet::kGearArmor] == "CoopArmor_Goron_Blue");  // the test puppet: your colour
+}
+
 TEST_CASE("puppet gear: a mask taken off is taken off with the game's call, a held item is only put away") {
     Game g;
     Director d;

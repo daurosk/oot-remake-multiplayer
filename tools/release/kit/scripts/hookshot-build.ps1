@@ -52,7 +52,7 @@ $kit = Split-Path -Parent $PSScriptRoot
 $hs = Join-Path $kit 'hookshot'
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
 
-function Fail([string]$Text) { Write-Host ''; Write-Host "Build-Hookshot-Coop: $Text" -ForegroundColor Red; exit 1 }
+function Fail([string]$Text) { Write-Host ''; Write-Host "Longshot build: $Text" -ForegroundColor Red; exit 1 }
 function Step([string]$Text) { Write-Host ''; Write-Host "== $Text" -ForegroundColor Cyan }
 function Read-KeyFile([string]$Path) {
     $map = @{}
@@ -303,7 +303,7 @@ if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
     if (-not $gameArgs) { Fail 'No game files given.' }
     Step 'Checking your game files'
     $code = Invoke-MakeGame ($gameArgs + @('--check'))
-    if ($code -ne 0) { Fail 'Longshot cannot build from these files (it said why above). It needs program 0400486024DEC000, update v131072, build e0f3ccfa.' }
+    if ($code -ne 0) { Fail 'Longshot cannot build from these files (it said why above). This is not the game version co-op needs: program 0400486024DEC000, update v131072, build e0f3ccfa. Dump that version of your game and give its .nup.' }
     if ($CheckOnly) { Write-Host ''; Write-Host 'Your game files are right for Longshot. Run this again without -CheckOnly to build.' -ForegroundColor Green; exit 0 }
     $drive = [System.IO.Path]::GetPathRoot($work)
     $free = (Get-PSDrive -Name $drive.Substring(0, 1) -ErrorAction SilentlyContinue).Free
@@ -382,8 +382,10 @@ if ($packFrom -and (Test-Path -LiteralPath $packFrom) -and (Test-Path -LiteralPa
     Write-Host '  No game files to build the puppet pack from: run this again with -Game <your .nup>.' -ForegroundColor Yellow
 }
 
-# A desktop shortcut to Play-OoT-Coop.bat, once, for the kit's own game (not for a game hs.py builds elsewhere).
-$launcher = Join-Path $kit 'Play-OoT-Coop.bat'
+# A desktop shortcut to the kit's launcher ("Start OoT Co-op.bat"; Play-OoT-Coop.bat in an older emulator kit), once,
+# for the kit's own game (not for a game hs.py builds elsewhere).
+$launcher = Join-Path $kit 'Start OoT Co-op.bat'
+if (-not (Test-Path -LiteralPath $launcher)) { $launcher = Join-Path $kit 'Play-OoT-Coop.bat' }
 if (-not $PSBoundParameters.ContainsKey('Out') -and -not $Tools -and (Test-Path -LiteralPath $launcher) -and
     -not $env:OOT_COOP_NO_SHORTCUT) {
     try {
@@ -403,6 +405,11 @@ if (-not $PSBoundParameters.ContainsKey('Out') -and -not $Tools -and (Test-Path 
 }
 
 Write-Host ''
+if (Test-Path -LiteralPath (Join-Path $kit 'Start OoT Co-op.bat')) {
+    Write-Host 'Done. The game is ready: "Start OoT Co-op.bat" (or the desktop shortcut) starts it; Host and Join are in the game.' -ForegroundColor Green
+    Write-Host "  The game: $exe. Its longshot_log.txt says 'coop: module loaded'."
+    exit 0
+}
 Write-Host 'Done. To play co-op on Hookshot: Play-OoT-Coop.bat (or the desktop shortcut) starts the game, Host and Join are on its title screen; Host-Hookshot.bat hosts, Join-Hookshot.bat joins (as Host.bat and' -ForegroundColor Green
 Write-Host "  Join.bat, with the Hookshot game in place of the emulator). The game: $exe"
 Write-Host "  Its longshot_log.txt says 'coop: module loaded' and 'coop: connected'. HOS_COOP=0 starts it without co-op."

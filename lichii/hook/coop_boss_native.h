@@ -156,6 +156,7 @@ public:
     // Steps a copy's brain verb may differ from the owner's (nothing queued)
     // before it is put back (about a second at the game's 60 frames).
     static constexpr int kDriftSteps = 60;
+    static constexpr int kMaxDriftFixes = 5;  // put-backs per owner state the game refuses, then left alone
 
 private:
     struct Entry {
@@ -175,6 +176,7 @@ private:
         std::deque<Due> due;
         std::uint32_t queued_seq = 0;  // the owner's newest change queued (or made)
         int drift = 0;                 // steps the brain verb has differed with nothing queued
+        int drift_fixes = 0;           // put-backs since the owner's last new state
         std::uint64_t own_node = 0;    // the copy's own AI node that last asked for an action
     };
     void Record(Entry& e, std::variant<BossBrain, BossAction> what);

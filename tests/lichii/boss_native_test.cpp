@@ -397,4 +397,36 @@ TEST_CASE("native boss: a copy's phase that differs for long is put back to the 
         CHECK_FALSE(t.Step(g, true, 0, kMain));
     }
     CHECK(t.Totals().drift_fixes == 1);
+    // A verb the game keeps refusing: put back kMaxDriftFixes times, then left alone.
+    g.Write(kBsa + addr::kBsaBrainVerb, &other, 4);
+    for (int i = 0; i < 20 * Table::kDriftSteps; ++i) {
+        t.Step(g, true, 0, kMain);
+    }
+    CHECK(t.Totals().drift_fixes == Table::kMaxDriftFixes);
+    // The owner's next state: put back again.
+    t.Receive(kActor, BossBsa{2, 4, std::nullopt, {BossChange{2, BossBrain{4, true}}}});
+    for (int i = 0; i < 3 * Table::kDriftSteps; ++i) {
+        t.Step(g, true, 0, kMain);
+    }
+    CHECK(t.Totals().drift_fixes > Table::kMaxDriftFixes);
+}
+
+TEST_CASE("native boss: a new owner sends the phase its own game's boss is in, not one it had not made") {
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Gohma(Role::copy)});
+    FakeGuest g;
+    const std::int32_t here = 4;
+    g.Write(kBsa + addr::kBsaBrainVerb, &here, 4);
+    t.Receive(kActor, BossBsa{1, 4, std::nullopt, {}});
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+    // The old owner's change to 6 comes, and the boss is ours before it is made here.
+    t.Receive(kActor, BossBsa{2, 6, std::nullopt, {BossChange{2, BossBrain{6, false}}}});
+    t.Publish({Gohma(Role::owner)});
+    CHECK_FALSE(t.Step(g, false, 0, kMain));  // ours: nothing made, the game's verb read
+    t.OnActionVerb(kBsa, GameRequest(11, kNode), true, false);  // a change of ours: the state goes out
+    const auto s = t.OwnerState(kActor);
+    REQUIRE(s);
+    CHECK(s->brain_verb == 4);
+    CHECK(s->seq == 3);
 }

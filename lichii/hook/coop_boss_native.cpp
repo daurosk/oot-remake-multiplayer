@@ -149,8 +149,11 @@ void Table::Publish(const std::vector<Boss>& bosses) {
                 Note(b.name + ": now " + (b.role == Role::owner ? "ours: our game runs it (sends its verbs)"
                                           : e.role == Role::copy ? "a copy of a new owner: it waits for that owner's state"
                                                                  : "a copy: it takes the owner's verbs"));
-                // Ours from here: we go on from where the copy is (the owner's
-                // last verbs were put in). A copy: wait for the owner's state.
+                // Ours from here: we go on from the old owner's last state
+                // and seq (changes still queued here are dropped; Step takes
+                // the brain verb from our game's own BSA at once, so we never
+                // send a phase our boss is not in). A copy: wait for the
+                // owner's state.
                 e.have_mine = e.have_mine || e.wanted.has_value();
                 if (e.wanted) {
                     e.mine = *e.wanted;
@@ -159,6 +162,7 @@ void Table::Publish(const std::vector<Boss>& bosses) {
                 e.due.clear();
                 e.queued_seq = 0;
                 e.drift = 0;
+                e.drift_fixes = 0;
             }
         } else {
             e.actor = b.actor;
@@ -252,8 +256,10 @@ void Table::Record(Entry& e, std::variant<BossBrain, BossAction> what) {
 }
 
 void Table::Resync(Entry& e, const BossBsa& state) {
-    // The state now: the brain verb, then the last action asked (both made
-    // only when the copy is not so already, see Step).
+    // The state now: the brain verb (skipped when the copy is so already,
+    // see Step), then the last action asked. The action is always asked
+    // again: a joiner or a resync starts the owner's current move over
+    // (the game holds no "action now" we could compare with).
     e.due.clear();
     e.due.push_back({BossChange{state.seq, BossBrain{state.brain_verb, true}}, true});
     if (actions_on_ && state.action) {
@@ -328,6 +334,7 @@ void Table::Receive(std::uint64_t actor, const BossBsa& state) {
         e->queued_seq = state.seq;
     }
     e->drift = 0;
+    e->drift_fixes = 0;
     if (first) {
         Note(e->name + ": the owner's verbs came (brain " + std::to_string(state.brain_verb) +
              "): the copy's own brain is skipped from now");
@@ -373,7 +380,16 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
         return std::nullopt;
     }
     for (auto& [bsa, e] : by_bsa_) {
-        if (e.role != Role::copy || !e.wanted) {
+        if (e.role == Role::owner) {
+            // What we send as the brain now is what our game's boss is in
+            // (also right after we took the boss over from a copy).
+            std::int32_t own = 0;
+            if (guest.Read(bsa + addr::kBsaBrainVerb, &own, sizeof own)) {
+                e.mine.brain_verb = own;
+            }
+            continue;
+        }
+        if (!e.wanted) {
             continue;
         }
         std::int32_t now = 0;
@@ -431,8 +447,15 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
         // Nothing queued and the copy's phase is not the owner's: put back
         // after kDriftSteps (a change of its own that the game made where no
         // wrap sees it, or one of ours it refused).
+        if (e.drift_fixes >= kMaxDriftFixes) {
+            continue;  // the game keeps refusing it: left alone until the owner's next state
+        }
         if (++e.drift >= kDriftSteps) {
             e.drift = 0;
+            if (++e.drift_fixes == kMaxDriftFixes) {
+                Note(e.name + ": brain verb " + std::to_string(e.wanted->brain_verb) +
+                     " put back " + std::to_string(kMaxDriftFixes) + " times, refused: left until the owner's next state");
+            }
             ++counts_.drift_fixes;
             e.due.push_back({BossChange{e.wanted->seq, BossBrain{e.wanted->brain_verb, true}}, true});
         }

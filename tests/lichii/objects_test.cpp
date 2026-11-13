@@ -2787,6 +2787,24 @@ TEST_CASE("objects: a boss's brain and action verbs go with its samples, a new o
     CHECK(in[0].second.brain_verb == 3);
     CHECK(copy.Holds(1020 * kMs).empty());
 
+    // A new owner (player 3): the old owner's state is not handed on as the
+    // new owner's; the AI still runs; the new owner's first sample is taken,
+    // even with a lower seq (it lagged the old one).
+    Own(copy, id, 3, 5);
+    Tick(copy, 1100 * kMs, {c}, 2);
+    CHECK(copy.BossVerbsIn().empty());
+    CHECK(copy.Holds(1110 * kMs).empty());
+    s.player_number = 3;
+    s.epoch = 5;
+    s.state.bsa = proto::BossBsa{1, 7, std::nullopt, {}};
+    s.state.time = {1200 * kMs, 1};
+    copy.Receive(s);
+    Tick(copy, 1210 * kMs, {c}, 2);
+    const auto taken = copy.BossVerbsIn();
+    REQUIRE(taken.size() == 1);
+    CHECK(taken[0].second.brain_verb == 7);
+    CHECK(taken[0].second.seq == 1);
+
     // A plain enemy's samples carry no verbs.
     Sync plain;
     Seen p = Enemy(0x300, 0x33, 2, 0.0f, "Enemy_Stalchild");

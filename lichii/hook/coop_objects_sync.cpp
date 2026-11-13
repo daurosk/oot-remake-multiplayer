@@ -2074,8 +2074,10 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 continue;
             }
             // Another owner: its samples alone place the enemy from now on,
-            // none of the old owner's are blended in.
+            // none of the old owner's are blended in. Its boss verbs too: the
+            // new owner's first state is the one the copy starts from.
             o->received.clear();
+            o->bsa_in.reset();
             if (owner->owner == self) {
                 // Ours now, where it stands here: nothing pulls it. A hit of
                 // ours not yet sent is already in its life, and the others
@@ -2103,6 +2105,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             }
             if (sample->state.bsa) {
                 o->bsa_in = sample->state.bsa;  // native boss sync: the owner's boss verbs
+                o->boss_native = true;
             }
             if (sample->state.position && Finite(*sample->state.position)) {
                 const std::uint64_t t = sample->state.time.server_time_us;
@@ -2309,9 +2312,9 @@ std::vector<std::uint64_t> Sync::Holds(std::uint64_t now_us) const {
     std::vector<std::uint64_t> out;
     for (const PoseWrite& w : placed) {
         const auto o = objects_.find(w.address);
-        // Native boss sync: a boss copy that takes its owner's verbs (native boss sync)
-        // must run its own AI, so it is never held.
-        if (o != objects_.end() && o->second.reacts && !o->second.bsa_in) {
+        // Native boss sync: a boss copy that takes its owner's verbs must
+        // run its own AI, so it is never held (also between owners).
+        if (o != objects_.end() && o->second.reacts && !o->second.boss_native) {
             out.push_back(w.address);
         }
     }

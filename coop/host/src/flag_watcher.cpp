@@ -677,8 +677,45 @@ void FlagWatcher::add(FlagStore& store, const FlagEntry& delta) {
   restate_.insert(key);
 }
 
+const std::vector<FlagKey>& FlagWatcher::diff_keys() {
+  audit_from_ = static_cast<std::size_t>(-1);
+  const std::vector<FlagKey>& list = shared_.keys();
+  if (!events_) return list;
+  // The whole list: the first time (the baseline), when a flag joined the
+  // list, in a load window (a save load or a room load moves many flags, and
+  // the rules of the window look at each), and when events were lost.
+  if (!baselined_ || wrote_all_ || listed_ != list.size() || window_ || settling()) {
+    baselined_ = true;
+    wrote_all_ = false;
+    listed_ = list.size();
+    wrote_.clear();
+    ++stats_.full_reads;
+    return list;
+  }
+  visit_.clear();
+  for (const FlagKey& key : wrote_) {
+    if (shared_.contains(key)) visit_.push_back(key);
+  }
+  stats_.event_reads += visit_.size();
+  for (const FlagKey& key : restate_) {
+    if (!wrote_.contains(key) && shared_.contains(key)) visit_.push_back(key);
+  }
+  wrote_.clear();
+  audit_from_ = visit_.size();
+  if (!list.empty()) {
+    const std::size_t slice = (list.size() + kAuditFrames - 1) / kAuditFrames;
+    for (std::size_t i = 0; i < slice; ++i) {
+      audit_next_ = audit_next_ >= list.size() ? 0 : audit_next_;
+      visit_.push_back(list[audit_next_++]);
+    }
+  }
+  return visit_;
+}
+
 void FlagWatcher::diff(FlagStore& store, Table& changes) {
-  for (const FlagKey key : shared_.keys()) {
+  const std::vector<FlagKey>& keys = diff_keys();
+  for (std::size_t n = 0; n < keys.size(); ++n) {
+    const FlagKey key = keys[n];
     std::optional<FlagEntry> now = store.read(key);
     if (!now) {
       ++stats_.read_failures;
@@ -688,6 +725,8 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     const auto [it, first] = last_.try_emplace(key, *now);
     if (first) continue;  // the first read is the baseline
     if (it->second == *now && !restate_.contains(key)) continue;
+    // The audit's read of a flag found a change that no event had named.
+    if (n >= audit_from_ && it->second != *now) ++stats_.event_misses;
     if (window_ && loading_ && !moved_ && key.kind == FlagKeyKind::named && !one_way_.contains(key) &&
         went_back(it->second, *now)) {
       // The title screen (no scene) and saved progress going back: a save

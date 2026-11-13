@@ -34,6 +34,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -80,6 +81,45 @@ constexpr std::uint32_t HookWord() {
 
 // The nodes in one read of the ring (0 entries left out, each once).
 std::vector<std::uint64_t> RingNodes(const std::array<std::uint64_t, kRingNodes>& entries);
+
+// Hookshot (patch 0005, hookshot/src/hos_coop_world.h): the game's C hands
+// each started node to the module (HOS_COOP_WORLD_COUNTER_START), on
+// whichever game thread ran the start; it goes into this ring in our own
+// memory, the guest ring's layout: the count goes up, then the node goes
+// at count % kRingNodes. No lock, as the cave: the reader checks every
+// node itself, so a torn or lost entry costs nothing.
+class HostRing {
+public:
+    void Push(std::uint64_t node) noexcept {
+        if (node == 0) {
+            return;
+        }
+        const std::uint32_t n = count_.fetch_add(1, std::memory_order_acq_rel) + 1;
+        nodes_[n % kRingNodes].store(node, std::memory_order_release);
+    }
+    // The entries and the count (starts so far), as read from the guest ring.
+    std::uint32_t Read(std::array<std::uint64_t, kRingNodes>& out) const noexcept {
+        const std::uint32_t count = count_.load(std::memory_order_acquire);
+        for (std::size_t i = 0; i < kRingNodes; ++i) {
+            out[i] = nodes_[i].load(std::memory_order_acquire);
+        }
+        return count;
+    }
+    std::uint32_t Count() const noexcept { return count_.load(std::memory_order_acquire); }
+    void Clear() noexcept {  // (a new game boot: the old nodes are another heap's)
+        for (auto& n : nodes_) {
+            n.store(0, std::memory_order_relaxed);
+        }
+    }
+
+private:
+    std::atomic<std::uint32_t> count_{0};
+    std::array<std::atomic<std::uint64_t>, kRingNodes> nodes_{};
+};
+inline HostRing& TheHostRing() {
+    static HostRing ring;
+    return ring;
+}
 
 // The key a node has in every game: its actor's placement hash, its
 // length (x10, rounded) and where it sits in its graph (node - graph,

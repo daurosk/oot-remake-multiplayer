@@ -198,6 +198,10 @@ std::uint64_t LandHoldUs(Kind kind);
 // it is made (an AI root of one OneShotXLinkSearchAndEmit). None for kinds
 // without.
 std::vector<std::string_view> ImpactActors(Kind kind);
+// Issue 166, the native way: the key of the shootable's own ELink user that
+// its code emits where it hits (the spark), played on the copy through the
+// game's own emit where the copy lands (CoopSpawn::Director). Empty: none.
+std::string_view HitEffect(Kind kind);
 bool IsImpact(std::string_view actor);
 // How long an impact actor is kept before it is deleted: its effect and
 // sound are one-shots, over by then. Short, and at most kMaxImpacts live at

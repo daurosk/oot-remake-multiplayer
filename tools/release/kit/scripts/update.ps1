@@ -428,6 +428,51 @@ function Test-KitEmulator([string]$Exe) {
     return ''
 }
 
+# A co-op kit folder: an emulator kit (emulator\) or a Hookshot-only kit (make_kit_hookshot.ps1: hookshot\PIN and its launcher).
+function Test-KitFolder([string]$Dir) {
+    if (Test-Path -LiteralPath (Join-Path $Dir 'emulator')) { return $true }
+    return (Test-Path -LiteralPath (Join-Path $Dir 'hookshot\PIN')) -and (Test-Path -LiteralPath (Join-Path $Dir 'Start OoT Co-op.bat'))
+}
+
+# Why an unpacked release must not be installed, or ''. An emulator kit: its emulator (Test-KitEmulator).
+# A Hookshot-only kit: the co-op module, the Hookshot pin, the launcher and its script.
+function Test-KitNewKit([string]$Dir) {
+    if (Test-Path -LiteralPath (Join-Path $Dir 'emulator')) { return (Test-KitEmulator (Join-Path $Dir 'emulator\lichii.exe')) }
+    foreach ($f in 'hookshot\hookshot_coop.dll', 'hookshot\PIN', 'Start OoT Co-op.bat', 'scripts\start.ps1') {
+        if (-not (Test-Path -LiteralPath (Join-Path $Dir $f))) { return "it has no $f" }
+    }
+    return ''
+}
+
+# After an emulator kit became a Hookshot-only kit: the desktop shortcut to a launcher that is gone points at
+# "Start OoT Co-op.bat", and the player hears that emulator\user (theirs: saves, keys, settings) is kept.
+# Returns the lines to say.
+function Complete-KitHookshotOnly([string]$KitDir, [bool]$HadEmulator, [string]$Desktop = [Environment]::GetFolderPath('Desktop')) {
+    $start = Join-Path $KitDir 'Start OoT Co-op.bat'
+    if (-not (Test-Path -LiteralPath $start)) { return @() }
+    $lines = @()
+    try {
+        $link = Join-Path $Desktop 'Play OoT Co-op.lnk'
+        if ($Desktop -and (Test-Path -LiteralPath $link)) {
+            $shell = New-Object -ComObject WScript.Shell
+            $s = $shell.CreateShortcut($link)
+            $root = [System.IO.Path]::GetFullPath($KitDir).TrimEnd('\') + '\'
+            if ($s.TargetPath -and $s.TargetPath.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -and -not (Test-Path -LiteralPath $s.TargetPath)) {
+                $s.TargetPath = $start; $s.WorkingDirectory = $KitDir; $s.Save()
+                $lines += 'The desktop shortcut "Play OoT Co-op" now starts "Start OoT Co-op.bat".'
+            }
+        }
+    } catch { }
+    if ($HadEmulator -and -not (Test-Path -LiteralPath (Join-Path $KitDir 'emulator\lichii.exe'))) {
+        $lines += 'This version is Hookshot only: the emulator and its .bat files were removed (they are in the backup folder).'
+        if (Test-Path -LiteralPath (Join-Path $KitDir 'emulator\user')) {
+            $lines += 'Your emulator files (emulator\user: its saves, keys and settings) were kept; delete that folder when you no longer need them.'
+        }
+        $lines += 'From now on start the game with "Start OoT Co-op.bat".'
+    }
+    return $lines
+}
+
 # Where the emulator keeps its shader cache in a kit (Fritchii's portable user\ folder:
 # user\cache\shader\, a folder per game and vulkan_static_pipelines.bin).
 $ShaderCache = 'emulator\user\cache\shader'
@@ -443,7 +488,7 @@ function Test-KitEmulatorChanged([string]$OldExe, [string]$NewExe) {
 
 function Get-KitRunning([string]$KitDir) {
     $root = [System.IO.Path]::GetFullPath($KitDir).TrimEnd('\') + '\'
-    return @(Get-Process -Name lichii, coop_server -ErrorAction SilentlyContinue | Where-Object {
+    return @(Get-Process -Name lichii, coop_server, hookshot -ErrorAction SilentlyContinue | Where-Object {
         $_.Path -and $_.Path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)
     })
 }
@@ -578,8 +623,8 @@ function Invoke-KitUpdate {
     $dir = $Kit
     if (-not $dir) { $dir = Split-Path -Parent $PSScriptRoot }
     $dir = [System.IO.Path]::GetFullPath($dir)
-    if (-not (Test-Path -LiteralPath (Join-Path $dir 'emulator'))) {
-        throw "$dir is not a co-op kit (no emulator folder). Put Update.bat in the kit folder, beside Host.bat."
+    if (-not (Test-KitFolder $dir)) {
+        throw "$dir is not a co-op kit. Put Update.bat in the kit folder, beside ""Start OoT Co-op.bat"" (or Host.bat in an older kit)."
     }
     $mine = Get-KitVersion $dir
     $unfinished = Test-KitUnfinished $dir
@@ -677,8 +722,8 @@ function Invoke-KitUpdate {
             Expand-Archive -LiteralPath $zip -DestinationPath $unpacked
         }
         $newKit = Get-KitUnpackedRoot $unpacked
-        if (-not (Test-Path -LiteralPath (Join-Path $newKit 'emulator'))) { throw 'The release zip holds no kit. Nothing changed.' }
-        $why = Test-KitEmulator (Join-Path $newKit 'emulator\lichii.exe')
+        if (-not (Test-KitFolder $newKit)) { throw 'The release zip holds no kit. Nothing changed.' }
+        $why = Test-KitNewKit $newKit
         if ($why) { throw "The release zip is not a co-op kit ($why). Nothing changed." }
 
         # A stopped update may have written the new VERSION.txt already: the backup is named
@@ -687,7 +732,10 @@ function Invoke-KitUpdate {
         if (-not $from) { $from = $mine }
         $backup = Join-Path $dir ('backup-' + $(if ($from) { $from } else { 'old' }))
         if (Test-Path -LiteralPath $backup) { $backup += '-' + (Get-Date -Format 'yyyyMMdd-HHmmss') }
-        $newEmu = Test-KitEmulatorChanged (Join-Path $dir 'emulator\lichii.exe') (Join-Path $newKit 'emulator\lichii.exe')
+        # (a Hookshot-only kit has no emulator: the old emulator's cache stays in emulator\user, the player's)
+        $newEmu = (Test-Path -LiteralPath (Join-Path $newKit 'emulator\lichii.exe')) -and
+            (Test-KitEmulatorChanged (Join-Path $dir 'emulator\lichii.exe') (Join-Path $newKit 'emulator\lichii.exe'))
+        $hadEmu = Test-Path -LiteralPath (Join-Path $dir 'emulator\lichii.exe')
         $n = Install-KitFiles $newKit $dir $backup $newest.Tag $newEmu $from
         Write-Host "Updated to $($newest.Tag): $n files. The replaced files are in $backup (delete it once the new version works)."
         if ($script:ShadersMoved) {
@@ -698,6 +746,7 @@ function Invoke-KitUpdate {
                 Write-Host "The old shader cache, moved by the update that stopped, is in $s."
             }
         }
+        foreach ($l in Complete-KitHookshotOnly $dir $hadEmu) { Write-Host $l }
         if ($script:PackToolChanged) {
             Write-Host 'The puppet pack tool changed: run make-puppet-pack.cmd once more before you play, for the other players'' sounds and the latest puppet fixes.'
         }

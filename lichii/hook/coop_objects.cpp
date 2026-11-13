@@ -561,6 +561,14 @@ public:
                 std::exchange(npc_framed_, 0)};
     }
 
+    // The owner's animation a copy plays while its slot names its AI's one
+    // (empty: not aliased, the slot's name is what plays).
+    std::string AliasedPlay(std::uint64_t actor) {
+        std::lock_guard lock(mutex_);
+        const auto* entry = aliases_.Find(actor);
+        return entry ? entry->played : std::string();
+    }
+
     std::optional<CoopPuppet::Call> Step(CoopPuppet::Guest& guest, bool after_call,
                                          std::uint64_t result, std::uint64_t now_ms) {
         std::lock_guard lock(mutex_);
@@ -2628,10 +2636,15 @@ private:
                     continue;
                 }
                 const auto shown = AnimationAt(r, p.address, 0, false, CoopNpcAnim::kSlotPlayFrame);
+                // Under an alias the slot names the AI's animation, not the
+                // one playing: say which plays, so a working alias and the
+                // AI winning read differently in the log.
+                const std::string aliased = TheMover().AliasedPlay(p.address);
                 LOG_INFO(Core,
-                         "coop: npc-anim: copy {} shows '{}' frame {:.1f}; its owner '{}' frame "
+                         "coop: npc-anim: copy {} shows '{}'{} frame {:.1f}; its owner '{}' frame "
                          "{:.1f} rate {:.2f} running {:.2f} loop {:.1f}",
                          name->second.first, shown ? shown->name : std::string(),
+                         aliased.empty() ? std::string() : " (alias of '" + aliased + "')",
                          shown ? shown->frame : 0.0f, p.name, p.frame, p.rate, p.run, p.loop);
             }
             for (const auto& [a, name] : sync_.Owned()) {

@@ -93,6 +93,12 @@ public:
     std::vector<std::pair<std::uint64_t, Entry>> DropAllBut(
         const std::unordered_set<std::uint64_t>& wished);
 
+    // The copy's entry, if its slot names the AI's animation over ours.
+    const Entry* Find(std::uint64_t actor) const {
+        const auto it = entries_.find(actor);
+        return it == entries_.end() ? nullptr : &it->second;
+    }
+
     std::size_t Size() const { return entries_.size(); }
 
 private:

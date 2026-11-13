@@ -448,6 +448,7 @@ The fix (module only, no game patch, no new message):
 - Guards (issue 191) get no alias: their own AI's reaction must show for the hand-over.
 - Logs: every 5 s `coop: npc-anim: in 5 s N owner animations played under the copy's own AI's name, M names given back, K frames set`; with `LICHII_COOP_DEBUG_NPC=1` each copy's shown animation and frame next to its owner's, once a second.
 - Not proven in a game yet: that 0x37b5d70 sets the frame +0x10c shows (if not, the 5 s line's "frames set" climbs with every sample).
+- Not proven in a game yet: that the copy's AI makes its every-frame play request with skip-if-same (request +0x20), so a slot already naming its animation is left alone. If it plays without that, the alias does nothing: the copy shows its own AI's animation, the debug line shows no `(alias of ...)` match with the owner's name, and "frames set" climbs.
 
 ## Waiting for our event (issue 144)
 

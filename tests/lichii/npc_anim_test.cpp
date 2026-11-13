@@ -66,8 +66,12 @@ TEST_CASE("npc-anim: Aliases keep the owner's play while the slot shows the AI's
     constexpr std::uint64_t kAiName = 0x5000;
     // Nothing played yet: only the real name counts.
     CHECK_FALSE(book.Shows(kActor, "Run", kAiName, "Wait"));
+    CHECK(book.Find(kActor) == nullptr);
     book.Played(kActor, "Run", kAiName, "Wait");
     CHECK(book.Size() == 1);
+    // The debug line names the play hidden under the AI's name.
+    REQUIRE(book.Find(kActor) != nullptr);
+    CHECK(book.Find(kActor)->played == "Run");
     // The slot names the AI's "Wait" at the same pointer: our "Run" plays.
     CHECK(book.Shows(kActor, "Run", kAiName, "Wait"));
     // The owner went on to another animation: play it.

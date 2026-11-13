@@ -2,6 +2,7 @@
 // Local co-op's game side (coop_local_game.h).
 #include "coop_local_game.h"
 
+#include <algorithm>
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -42,6 +43,10 @@ bool Game::TakePad(int player, int slot) {
     }
     e.device = slot;
     e.serial = pad->serial;
+    e.pad = pad->name;
+    e.lost = false;
+    e.known.clear();
+    for (const Pad& p : deps_.pads()) e.known.push_back(p.serial);
     Say("player " + std::to_string(player + 1) + " plays with \"" + pad->name + "\" (Npad No." +
         std::to_string(NpadFor(player) + 1) + ")");
     return true;
@@ -52,6 +57,8 @@ void Game::GivePad(int player) {
     if (e.device >= 0 && e.device != kKeyboardSlot) deps_.take(e.device, e.serial, 0);
     e.device = -1;
     e.serial = 0;
+    e.pad.clear();
+    e.lost = false;
 }
 
 bool Game::Add(int player, const CoopLocal::Seat& seat) {
@@ -63,6 +70,7 @@ bool Game::Add(int player, const CoopLocal::Seat& seat) {
     if (!TakePad(player, seat.device)) return false;
     Extra& e = extra_[Index(player)];
     e.wanted = true;
+    e.asked = seat.device;
     e.name = seat.name.empty() ? "Player " + std::to_string(player + 1) : seat.name;
     e.color = seat.color;
     return true;
@@ -107,7 +115,9 @@ void Game::Apply(const CoopLocal::Status& status) {
         if (k >= status.players || !e.wanted) continue;
         const CoopLocal::Seat& seat = status.seat[static_cast<std::size_t>(k)];
         e.color = seat.color;
-        if (seat.device != e.device && seat.device != kKeyboardSlot) {
+        // Only a new pick takes a pad: e.device follows the pad's place, which moves when an earlier pad leaves.
+        if (seat.device != e.asked && seat.device != kKeyboardSlot) {
+            e.asked = seat.device;
             GivePad(k);
             TakePad(k, seat.device);
         }
@@ -124,19 +134,59 @@ std::vector<SeatNow> Game::Seats() const {
     return out;
 }
 
+// A seat keeps its pad by the pad's opening (serial), never by its place in SDL's list: the place moves when an
+// earlier pad leaves, and a pad that comes back is a new opening at whatever place is free. So: its serial at any
+// place = its pad (the place is followed, nothing taken). Its serial gone = lost; then only an opening never seen
+// while it had its pad, with the same name and in nobody's Npad, is taken: its own pad back, never a pad that was
+// already there (player 1's, which Hookshot keeps in its merged pad).
+void Game::Follow(int k, const std::vector<Pad>& pads) {
+    Extra& e = extra_[Index(k)];
+    if (!e.wanted || e.device < 0 || e.device == kKeyboardSlot) return;
+    const std::string who = "player " + std::to_string(k + 1) + "'s controller";
+    for (const Pad& pad : pads) {
+        if (pad.serial == 0 || pad.serial != e.serial) continue;
+        e.device = pad.slot;
+        e.lost = false;
+        e.known.clear();
+        for (const Pad& p : pads) e.known.push_back(p.serial);
+        if (pad.npad == NpadFor(k)) {
+            e.retake_failed = false;
+            return;
+        }
+        // (Hookshot let it go: take it back, said once while it fails)
+        const bool ok = deps_.take(pad.slot, pad.serial, NpadFor(k));
+        if (ok) Say(who + " was given back to player 1: taken again");
+        else if (!e.retake_failed) Say(who + " could not be taken again; trying each frame");
+        e.retake_failed = !ok;
+        return;
+    }
+    if (!e.lost) {
+        e.lost = true;
+        Say(who + " (\"" + e.pad + "\") is gone: waiting for it to come back");
+    }
+    for (const Pad& pad : pads) {
+        const bool fresh = std::find(e.known.begin(), e.known.end(), pad.serial) == e.known.end();
+        if (pad.serial == 0 || !fresh || pad.npad != 0 || pad.name != e.pad) continue;
+        if (deps_.take(pad.slot, pad.serial, NpadFor(k))) {
+            e.device = pad.slot;
+            e.serial = pad.serial;
+            e.lost = false;
+            e.known.clear();
+            for (const Pad& p : pads) e.known.push_back(p.serial);
+            e.retake_failed = false;
+            Say(who + " came back: taken again");
+        } else if (!e.retake_failed) {
+            e.retake_failed = true;
+            Say(who + " came back but could not be taken; trying each frame");
+        }
+        return;
+    }
+}
+
 void Game::See(const Facts& facts) {
     facts_ = facts;
-    // A pad that reconnected (or woke) into its slot is a new opening, which Hookshot gives back to player 1: the
-    // seat takes it again.
-    for (int k = 1; k <= CoopLocalInput::kMostExtra; k++) {
-        const Extra& e = extra_[Index(k)];
-        if (!e.wanted || e.device < 0 || e.device == kKeyboardSlot) continue;
-        const std::optional<Pad> pad = FindPad(e.device);
-        if (pad && (pad->serial != e.serial || pad->npad != NpadFor(k))) {
-            Say("player " + std::to_string(k + 1) + "'s controller came back: taken again");
-            TakePad(k, e.device);
-        }
-    }
+    const std::vector<Pad> pads = deps_.pads ? deps_.pads() : std::vector<Pad>{};
+    for (int k = 1; k <= CoopLocalInput::kMostExtra; k++) Follow(k, pads);
     // A scene change deletes and makes the Players again: the wraps follow the new actor.
     for (int k = 1; k <= CoopLocalInput::kMostExtra; k++)
         players_.Set(k, extra_[Index(k)].wanted ? ActorOf(k) : 0);

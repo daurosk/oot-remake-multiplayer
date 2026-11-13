@@ -115,13 +115,19 @@ private:
     struct Extra {
         bool wanted = false;
         std::string name;
-        int device = -1;
-        std::uint32_t serial = 0;   // the pad's opening when it was taken
+        int device = -1;            // its pad's place now (it moves when an earlier pad leaves)
+        int asked = -1;             // the device the menu asked for (a change of it is a new pick)
+        std::uint32_t serial = 0;   // the pad's opening when it was taken: the seat follows this
+        std::string pad;            // its name, to know it again when it comes back as a new opening
+        bool lost = false;          // its pad is gone: waiting for it (said once)
+        bool retake_failed = false; // a take in See failed (said once until it works)
+        std::vector<std::uint32_t> known;   // the openings seen while it had its pad: never taken for it
         std::optional<CoopPuppet::Vec3> spot;   // where it is made: beside the first Link when asked
         std::optional<std::uint32_t> color;
     };
     static std::size_t Index(int player) { return static_cast<std::size_t>(player - 1); }
     std::optional<Pad> FindPad(int slot) const;
+    void Follow(int player, const std::vector<Pad>& pads);
     bool TakePad(int player, int slot);
     void GivePad(int player);
     std::uint64_t ActorOf(int player) const;   // its Player once live, else 0

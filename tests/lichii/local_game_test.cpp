@@ -524,3 +524,78 @@ TEST_CASE("local game: an extra player's Player whose controller is missing gets
     w.memory.words[manager + 0x110] = 0x310000;                    // controller 1 is there
     CHECK(off(0x100000) == std::make_pair(0, std::uint64_t{0}));
 }
+
+TEST_CASE("local game: a seat follows its pad by its opening, not by its place in the list") {
+    World w;
+    w.pads = {{1, 11, "Pad A", 0}, {2, 12, "Pad B", 0}};   // player 1 on place 1, player 2 on place 2
+    CoopLocalGame::Game game(w.Deps());
+    game.See(InPlay());
+    REQUIRE(game.Add(1, SeatOn(2)));
+    REQUIRE(w.takes == std::vector<std::string>{"2->1"});
+    // (a) Player 1's pad sleeps: player 2's pad moves up to place 1. It is still player 2's; nothing is taken.
+    w.pads = {{1, 12, "Pad B", 1}};
+    game.See(InPlay());
+    game.See(InPlay());
+    CHECK(w.takes.size() == 1);
+    // (b) Player 1's pad wakes as a new opening at place 2 (the seat's old place): it is not taken.
+    w.pads = {{1, 12, "Pad B", 1}, {2, 21, "Pad A", 0}};
+    game.See(InPlay());
+    game.See(InPlay());
+    CHECK(w.takes.size() == 1);
+    CHECK(w.pads[1].npad == 0);
+    // A menu status that still names place 2 is not a new pick: nothing moves.
+    CoopLocal::Status status;
+    status.state = CoopLocal::State::On;
+    status.players = 2;
+    status.seat[0] = SeatOn(kKeyboardSlot);
+    status.seat[1] = SeatOn(2);
+    game.Apply(status);
+    CHECK(w.takes.size() == 1);
+    CHECK(w.pads[0].npad == 1);
+    // (c) The seat's own pad comes back as a new opening (another place): taken again, once.
+    w.pads = {{1, 21, "Pad A", 0}};
+    game.See(InPlay());
+    w.pads = {{1, 21, "Pad A", 0}, {2, 30, "Pad B", 0}};
+    game.See(InPlay());
+    game.See(InPlay());
+    CHECK(w.takes == std::vector<std::string>{"2->1", "2->1"});
+    CHECK(w.pads[1].npad == 1);
+    CHECK(w.pads[0].npad == 0);
+}
+
+TEST_CASE("local game: a pad that was already there is never taken for a lost seat, and a failing take is said once") {
+    World w;
+    w.pads = {{1, 11, "Pad", 0}, {2, 12, "Pad", 0}};   // two pads of the same name
+    CoopLocalGame::Game game(w.Deps());
+    game.See(InPlay());
+    REQUIRE(game.Add(1, SeatOn(2)));
+    w.pads = {{1, 11, "Pad", 0}};   // its pad leaves; player 1's (same name) stays
+    game.See(InPlay());
+    game.See(InPlay());
+    CHECK(w.takes.size() == 1);
+    CHECK(w.pads[0].npad == 0);
+    // Its pad comes back, but the exe refuses the take: said once, tried each frame, then taken.
+    bool refuse = true;
+    auto take = w.Deps().take;
+    CoopLocalGame::Deps d = w.Deps();
+    d.take = [&](int slot, std::uint32_t serial, int npad) { return !refuse && take(slot, serial, npad); };
+    CoopLocalGame::Game other(d);
+    other.See(InPlay());
+    w.pads = {{1, 11, "Pad", 0}, {2, 12, "Pad", 0}};
+    refuse = false;
+    REQUIRE(other.Add(1, SeatOn(2)));
+    other.See(InPlay());
+    w.pads = {{1, 11, "Pad", 0}};
+    other.See(InPlay());
+    refuse = true;
+    w.pads = {{1, 11, "Pad", 0}, {2, 40, "Pad", 0}};
+    const std::size_t said = w.log.size();
+    other.See(InPlay());
+    other.See(InPlay());
+    other.See(InPlay());
+    CHECK(w.log.size() == said + 1);
+    refuse = false;
+    other.See(InPlay());
+    CHECK(w.pads[1].npad == 1);
+    CHECK(w.log.back().find("came back: taken again") != std::string::npos);
+}

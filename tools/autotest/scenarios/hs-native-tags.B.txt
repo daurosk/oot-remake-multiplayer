@@ -1,0 +1,13 @@
+# hs-native-tags (Hookshot): B stays, then turns away and back (see hs-native-tags.A.txt).
+wait 300
+mark b-still
+stick -1 0 10           # face left
+press ZL                # camera behind B
+wait 60
+mark b-edge
+stick 1 0 20            # face right
+press ZL
+wait 60
+mark b-back
+wait 300
+mark b-end

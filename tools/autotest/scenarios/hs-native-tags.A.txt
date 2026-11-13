@@ -1,0 +1,24 @@
+# hs-native-tags (Hookshot): name tags on the game's own NPC balloons (docs/native-ui.md), plus the balloon probe.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-native-tags -Switches LICHII_COOP_PUPPET=1,LICHII_COOP_NATIVE_TAGS=1,LICHII_COOP_NATIVE_PROBE=1
+# (same moves as hs-panel: A walks off the cow, away and back; B turns away and back.)
+# Pass:
+# - both hookshot_log: "coop: native ui: name tags on the game's balloons (1 shown)"; no crash.
+# - shots near / mid / back (A) and b-still / b-back (B): the other player's name in the game's own balloon look
+#   (the NPC balloon frame and font) over the puppet's head; NO drawn tag there; the edge arrow (b-edge) still drawn.
+# - mid / far: the balloon follows the puppet; "far" past 60 units: no balloon.
+# Read back for the next step (the probe, every 3 s): "native probe: balloon screen ... requests:" (any NPC balloons
+# the game shows near the ranch, with their layout point and text), "native probe: parts" (16 part/root pane pairs,
+# flags, x,y: part 15 = ours), "native probe: tag ... -> layout x,y" (our point; compare with where it shows).
+stick 1 0 50            # off the cow at the save spot
+wait 120
+mark near
+wait 600                # B turns away and back
+stick 0 1 120           # walk away
+mark mid
+hold LSTICK_UP+A 240    # dash further
+mark far
+stick 0 -1 30           # turn back
+hold LSTICK_DOWN+A 240  # dash back
+mark back
+wait 120
+mark end

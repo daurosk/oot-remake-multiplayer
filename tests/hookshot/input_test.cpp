@@ -136,7 +136,7 @@ TEST_CASE("CoopInput: the exe's exports pick and name the pads") {
     CoopInput::CycleKeyboard();
     CHECK(g_keyboard == 2);
     CHECK(CoopInput::KeyboardRow() == "Keyboard + mouse: off");
-    CHECK(g_selects == 6);
+    CHECK(g_selects == 7);  // the first Apply, four controller presses, two keyboard ones
 
     // The chosen pad unplugged: the row says so, and the next press goes on to none.
     CoopInput::Apply({2, Keyboard::Focus});

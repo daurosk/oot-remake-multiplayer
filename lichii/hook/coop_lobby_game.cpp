@@ -276,6 +276,13 @@ bool VoiceHidden(std::uint8_t player) {
     return (g.OwnOf(player) & kVoice) != 0;
 }
 
+bool OwnChatMuted() {
+    Glue& g = TheGlue();
+    std::lock_guard lock(g.mutex);
+    const auto it = g.host_mutes.find(g.seen.self);
+    return g.seen.connected && it != g.host_mutes.end() && (it->second & kChat) != 0;
+}
+
 Seen Now() {
     Glue& g = TheGlue();
     std::lock_guard lock(g.mutex);

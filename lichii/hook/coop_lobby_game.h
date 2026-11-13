@@ -50,6 +50,9 @@ void SetOwnMute(std::uint8_t player, std::uint8_t what, bool on);
 // Any thread: whether our own mutes hide this player's chat lines, voice.
 bool ChatHidden(std::uint8_t player);
 bool VoiceHidden(std::uint8_t player);
+// Any thread: the host muted our own chat (the server drops it), so the chat
+// box says so instead of showing the line as sent.
+bool OwnChatMuted();
 
 // What the Lobby tab shows of the session. Any thread.
 struct PlayerSeen {

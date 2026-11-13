@@ -968,6 +968,10 @@ public:
         if (CoopLobby::OnChat(text, *session_)) {
             return true;  // /kick, /ban, /mute, /unmute (the Lobby): the same
         }
+        if (CoopLobby::OwnChatMuted()) {
+            chat_.Add("the host muted your chat: nobody sees it", true);
+            return true;
+        }
         const bool sent =
             session_->with_client([&](coop::net::Client& c) { return c.send_chat(text); });
         if (sent) {

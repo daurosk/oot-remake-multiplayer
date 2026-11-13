@@ -468,3 +468,245 @@ TEST_CASE("a gimmick event starts by distance alone where a room is not known") 
         CHECK(d.Next(held, "InsideTheDekuTree", false, link, &empty).has_value());
     }
 }
+TEST_CASE("live events: the game's own requests reach every reader once, the newest kept") {
+    CoopLiveEvents::GameRequests requests;
+    std::uint64_t a = 0, b = 0;
+    CHECK_FALSE(requests.Live());
+    CHECK(requests.Since(a).empty());
+    requests.Push("Dm_DekuTree_Ladder", true);
+    requests.Push("Dm_SY_BancChangeGo", false);
+    CHECK(requests.Live());
+    auto got = requests.Since(a);
+    REQUIRE(got.size() == 2);
+    CHECK(std::string(got[0].name) == "Dm_DekuTree_Ladder");
+    CHECK(got[0].taken);
+    CHECK(std::string(got[1].name) == "Dm_SY_BancChangeGo");
+    CHECK_FALSE(got[1].taken);
+    CHECK(requests.Since(a).empty());  // each once
+    requests.Push("Third", true);
+    got = requests.Since(b);  // the second reader gets all three
+    REQUIRE(got.size() == 3);
+    CHECK(std::string(got[2].name) == "Third");
+    got = requests.Since(a);
+    REQUIRE(got.size() == 1);
+    CHECK(std::string(got[0].name) == "Third");
+
+    // A name longer than the buffer is cut, and still ends.
+    requests.Push(std::string(300, 'x'), true);
+    got = requests.Since(a);
+    REQUIRE(got.size() == 1);
+    CHECK(std::string(got[0].name).size() == sizeof got[0].name - 1);
+    // A reader far behind gets the newest kKept only.
+    for (int round = 0; round < 3; ++round) {
+        for (int i = 0; i < 50; ++i) requests.Push("n" + std::to_string(round * 50 + i), true);
+        requests.Since(a);
+    }
+    got = requests.Since(b);
+    REQUIRE(got.size() == CoopLiveEvents::GameRequests::kKept);
+    CHECK(std::string(got.back().name) == "n149");
+    CHECK(std::string(got.front().name) == "n" + std::to_string(150 - CoopLiveEvents::GameRequests::kKept));
+}
+
+TEST_CASE("live events: the request that the manager took and that is one of ours names the start") {
+    std::vector<CoopLiveEvents::GameRequest> requests(3);
+    std::memcpy(requests[0].name, "Dm_Door", sizeof "Dm_Door");
+    requests[0].taken = true;
+    std::memcpy(requests[1].name, "Dm_DekuTree_Ladder", sizeof "Dm_DekuTree_Ladder");
+    requests[1].taken = false;  // refused: an event was running
+    std::memcpy(requests[2].name, "Dm_DekuTree_Web", sizeof "Dm_DekuTree_Web");
+    requests[2].taken = true;
+    const std::vector<std::string_view> names{"Dm_DekuTree_Ladder", "Dm_DekuTree_Web"};
+    CHECK(CoopLiveEvents::RequestedOf(requests, names) == "Dm_DekuTree_Web");
+    requests[1].taken = true;
+    CHECK(CoopLiveEvents::RequestedOf(requests, names) == "Dm_DekuTree_Ladder");
+    CHECK_FALSE(CoopLiveEvents::RequestedOf(requests, {"Dm_Other"}));
+    CHECK_FALSE(CoopLiveEvents::RequestedOf({}, names));
+}
+
+TEST_CASE("live events: a start is given once, by the request when the wrap is there, else by the search") {
+    using CoopLiveEvents::StartSource;
+    int looked = 0;
+    std::optional<std::string> in_session;
+    const auto find = [&] {
+        ++looked;
+        return in_session;
+    };
+    // No wrap (the emulator, an older Hookshot): the search, as StartWatch alone.
+    StartSource plain;
+    CHECK_FALSE(plain.Frame(std::nullopt, false, false, find));
+    in_session = "Ladder";
+    CHECK(plain.Frame(std::nullopt, false, true, find) == "Ladder");
+    CHECK_FALSE(plain.Frame(std::nullopt, false, true, find));
+    CHECK(plain.ScanOnly() == 0);
+
+    // The wrap: the request names it before the event runs; the search finding it then adds nothing.
+    StartSource s;
+    looked = 0;
+    in_session.reset();
+    CHECK(s.Frame(std::string("Ladder"), true, false, find) == "Ladder");
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    in_session = "Ladder";
+    for (int i = 0; i < 40; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
+    CHECK(looked >= 1);
+    CHECK(s.ScanOnly() == 0);
+    // The event ends; the same event asked again later is a new start.
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    CHECK(s.Frame(std::string("Ladder"), true, false, find) == "Ladder");
+    for (int i = 0; i < 5; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+
+    // An event that started some other way: no request, the search finds it; given, and counted.
+    in_session = "Web";
+    CHECK(s.Frame(std::nullopt, true, true, find) == "Web");
+    CHECK(s.ScanOnly() == 1);
+    CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+
+    // A request whose event never runs is forgotten, so a later start found by the search is given.
+    CHECK(s.Frame(std::string("Web"), true, false, find) == "Web");
+    for (int i = 0; i <= StartSource::kForgetFrames; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    CHECK(s.Frame(std::nullopt, true, true, find) == "Web");
+    CHECK(s.ScanOnly() == 2);
+}
+
+namespace {
+
+constexpr std::uint64_t kEntries = 0x9300000000;
+constexpr std::uint64_t kNames = 0x9400000000;
+
+// The build, with room for `capacity` arguments as the game's makes it: each entry's name buffer of 0x40 bytes.
+std::uint64_t RunWithArgs(Mem& m, const CoopPuppet::Call& c, std::uint32_t capacity) {
+    const std::uint64_t result = Run(m, c);
+    if (c.function == kMain + addr::kArgBuild) {
+        m.Put32(c.x[0] + addr::kArgCapacity, capacity);
+        m.Put64(c.x[0] + addr::kArgEntries, kEntries);
+        m.Put32(c.x[0] + addr::kArgCount, 0);
+        for (std::uint32_t i = 0; i < capacity; ++i) {
+            const std::uint64_t entry = kEntries + addr::kArgEntrySize * i;
+            for (std::uint64_t b = 0; b < addr::kArgEntrySize; ++b) m.bytes[entry + b] = 0;
+            for (std::uint64_t b = 0; b < 0x40; ++b) m.bytes[kNames + 0x40 * i + b] = 0;
+            m.Put64(entry + addr::kEntryName, kNames + 0x40 * i);
+            m.Put32(entry + addr::kEntryNameCap, 0x40);
+        }
+    }
+    return result;
+}
+
+std::uint32_t Get32(Mem& m, std::uint64_t a) {
+    std::uint32_t v = 0;
+    m.Read(a, &v, 4);
+    return v;
+}
+
+} // namespace
+
+TEST_CASE("live events: an event with arguments and a starter, as the game's map change is asked") {
+    using Arg = CoopLiveEvents::Requester::Arg;
+    Mem m;
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    CoopLiveEvents::Requester r;
+    constexpr std::uint64_t kLink = 0x9500000000;
+    r.WantWith("Dm_SY_BancChangeGo",
+               {Arg{"NextBanc", std::string("HyruleField_Child"), false},
+                Arg{"NextStartPos", std::string("HyruleField_FrontOfLostWoodBridge"), false},
+                Arg{"BootEventName", std::string("Dm_SY_BancChangeArrive"), false},
+                Arg{"IsCheckAir", std::nullopt, false}},
+               kLink);
+    // Asked again before it ran: one request, with the newer arguments.
+    r.WantWith("Dm_SY_BancChangeGo",
+               {Arg{"NextBanc", std::string("KokiriForest_Child"), false},
+                Arg{"NextStartPos", std::string("LostWoodBridge_FrontOfHyruleField"), false},
+                Arg{"BootEventName", std::string("Dm_SY_BancChangeArrive"), false},
+                Arg{"IsCheckAir", std::nullopt, true}},
+               kLink);
+    CHECK(r.Waiting() == 1);
+
+    std::vector<std::uint64_t> order;
+    auto call = r.Step(m, false, 0, kMain);
+    while (call) {
+        order.push_back(call->function - kMain);
+        if (call->function == kMain + addr::kMalloc) {
+            CHECK(call->x[0] == addr::kArgSize + addr::kStringsSize);  // room for the strings after the arg
+        }
+        if (call->function == kMain + addr::kSetLink) {
+            CHECK(call->x[0] == kBlock + addr::kArgMember2);
+            CHECK(call->x[1] == kLink);
+            CHECK(call->x[2] == 0);
+        }
+        if (call->function == kMain + addr::kRequest) {
+            CHECK(m.Str(m.Get64(kBlock + addr::kArgName)) == "Dm_SY_BancChangeGo");
+            REQUIRE(Get32(m, kBlock + addr::kArgCount) == 4);
+            const char* names[] = {"NextBanc", "NextStartPos", "BootEventName", "IsCheckAir"};
+            const char* texts[] = {"KokiriForest_Child", "LostWoodBridge_FrontOfHyruleField", "Dm_SY_BancChangeArrive"};
+            for (std::uint32_t i = 0; i < 4; ++i) {
+                const std::uint64_t entry = kEntries + addr::kArgEntrySize * i;
+                CHECK(m.Str(kNames + 0x40 * i) == names[i]);
+                if (i < 3) {
+                    CHECK(Get32(m, entry + addr::kEntryType) == addr::kTypeString);
+                    const std::uint64_t text = m.Get64(entry + addr::kEntryValue);
+                    CHECK(text >= kBlock + addr::kArgStrings);  // in our block, after the arg: it stays
+                    CHECK(text < kBlock + addr::kArgStrings + addr::kStringsSize);
+                    CHECK(m.Str(text) == texts[i]);
+                } else {
+                    CHECK(Get32(m, entry + addr::kEntryType) == addr::kTypeBool);
+                    CHECK(m.bytes[entry + addr::kEntryValue] == 1);
+                }
+            }
+        }
+        call = r.Step(m, true, RunWithArgs(m, *call, 8), kMain);
+    }
+    CHECK(order == std::vector<std::uint64_t>{addr::kMalloc, addr::kArgBuild, addr::kSetLink, addr::kRequest,
+                                              addr::kStringFree, addr::kStringFree});
+
+    // The next plain event carries nothing over: no link, no arguments.
+    r.Want("InsideTheDekuTree_Gimmick_FallingLadder");
+    order.clear();
+    call = r.Step(m, false, 0, kMain);
+    while (call) {
+        order.push_back(call->function - kMain);
+        if (call->function == kMain + addr::kRequest) CHECK(Get32(m, kBlock + addr::kArgCount) == 0);
+        call = r.Step(m, true, RunWithArgs(m, *call, 8), kMain);
+    }
+    CHECK(order == std::vector<std::uint64_t>{addr::kArgBuild, addr::kRequest, addr::kStringFree, addr::kStringFree});
+}
+
+TEST_CASE("live events: arguments that do not fit the request are not asked, and what was built is freed") {
+    using Arg = CoopLiveEvents::Requester::Arg;
+    Mem m;
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    for (int which = 0; which < 3; ++which) {
+        CoopLiveEvents::Requester r;
+        std::vector<Arg> args{Arg{"NextBanc", std::string("A"), false}, Arg{"NextStartPos", std::string("B"), false}};
+        if (which == 1) args[0].name = std::string(0x40, 'n');                 // a name past the entry's buffer
+        if (which == 2) args[1].text = std::string(addr::kStringsSize, 't');   // a text past our strings' room
+        r.WantWith("Dm_SY_BancChangeGo", args, 0);
+        std::vector<std::uint64_t> order;
+        auto call = r.Step(m, false, 0, kMain);
+        while (call) {
+            order.push_back(call->function - kMain);
+            call = r.Step(m, true, RunWithArgs(m, *call, which == 0 ? 1 : 8), kMain);  // 0: room for one argument only
+        }
+        CHECK(order == std::vector<std::uint64_t>{addr::kMalloc, addr::kArgBuild, addr::kStringFree, addr::kStringFree});
+        bool said = false;
+        for (const auto& n : r.TakeNotes()) said |= n.find("do not fit") != std::string::npos;
+        CHECK(said);
+    }
+}
+
+TEST_CASE("live events: with no reader the ring keeps the newest requests and never stays full") {
+    CoopLiveEvents::GameRequests requests;
+    for (int i = 0; i < 1000; ++i) requests.Push("e" + std::to_string(i), true);  // nobody calls Since
+    CHECK(requests.Seen() == 1000);
+    CHECK(requests.Dropped() == 1000 - 64);
+    std::uint64_t cursor = 0;
+    const auto got = requests.Since(cursor);
+    REQUIRE(got.size() == 64);
+    CHECK(std::string(got.front().name) == "e936");
+    CHECK(std::string(got.back().name) == "e999");
+    requests.Push("after", true);
+    const auto more = requests.Since(cursor);
+    REQUIRE(more.size() == 1);
+    CHECK(std::string(more[0].name) == "after");
+}

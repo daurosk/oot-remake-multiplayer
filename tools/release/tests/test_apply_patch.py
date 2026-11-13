@@ -110,6 +110,17 @@ class ApplyPatchTest(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "x")))
 
+    def test_file_added_then_removed_by_a_later_patch(self):
+        self.write_lift(LIFT)
+        later = os.path.join(self.tmp.name, "0002.patch")
+        with open(later, "w", newline="\n") as f:
+            f.write("diff --git a/host/new.c b/host/new.c\ndeleted file mode 100644\n--- a/host/new.c\n+++ /dev/null\n"
+                    "@@ -1,2 +0,0 @@\n-int x;\n-int y;\n")
+        r = run(self.root, self.patch, later)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertFalse(os.path.exists(os.path.join(self.root, "host", "new.c")))
+        self.assertIn("coop_hooks.install()", self.read("nx2", "lift.py"))
+
 
 PATCH2 = """diff --git a/nx2/lift.py b/nx2/lift.py
 --- a/nx2/lift.py

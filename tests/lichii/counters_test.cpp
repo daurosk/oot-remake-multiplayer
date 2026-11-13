@@ -136,6 +136,30 @@ TEST_CASE("counters: ring entries, keys and owners") {
     CHECK_FALSE(IsPlatformOwner("Player_Child"));
 }
 
+TEST_CASE("counters: Hookshot's world hook ring (patch 0005) reads as the guest ring") {
+    HostRing ring;
+    std::array<std::uint64_t, kRingNodes> e{};
+    CHECK(ring.Read(e) == 0);
+    ring.Push(0);  // (no node: nothing)
+    CHECK(ring.Count() == 0);
+    ring.Push(5);
+    ring.Push(7);
+    ring.Push(5);
+    CHECK(ring.Read(e) == 3);
+    CHECK(e[1] == 5);  // the count goes up, then the node goes at count % kRingNodes, as the cave
+    CHECK(e[2] == 7);
+    CHECK(RingNodes(e) == std::vector<std::uint64_t>{5, 7});
+    for (std::uint64_t i = 0; i < kRingNodes + 10; ++i) {
+        ring.Push(0x1000 + i);
+    }
+    CHECK(ring.Read(e) == 3 + kRingNodes + 10);
+    CHECK(e[(3 + kRingNodes + 10) % kRingNodes] == 0x1000 + kRingNodes + 9);  // the newest
+    ring.Clear();
+    ring.Read(e);
+    CHECK(RingNodes(e).empty());
+    CHECK(ring.Count() == 3 + kRingNodes + 10);  // (the count stays: the reader goes on from it)
+}
+
 TEST_CASE("counters: the gap the short way round the period") {
     CHECK(PhaseGap(10'500'000, 10'000'000, 3'000'000) == doctest::Approx(0.5f));
     CHECK(PhaseGap(10'000'000, 10'500'000, 3'000'000) == doctest::Approx(-0.5f));

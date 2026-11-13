@@ -592,7 +592,9 @@ class Player:
                         # "sent" is not "moved": a teleport asked while the arrival event of the save's load still
                         # plays is dropped by the game (Longshot rc.3: "result 0", Link stays where the save put
                         # him). So wait for the map, and ask again when it does not come.
-                        if self._arrived(b, to, deadline):
+                        # Not accepted: usually dropped, so ask again soon (the game refuses a teleport within 8 s
+                        # of the last one); the map may still come (seen once), so wait for it that long first.
+                        if self._arrived(b, to, deadline, 9.0 if r.get("accepted") is False else 30.0):
                             self.log("coop: test warp done (map %s)" % to)
                             return
                         why = "map %s not reached" % to
@@ -679,7 +681,11 @@ class Player:
             if s.kind == "timed":
                 t = self.timed(s, t)
             elif s.kind == "mark":
+                self._until(t)
                 self.mark(s.name)
+                # The mark waits for the module to take it (up to a quarter second): the next step starts after
+                # it, or a short press scheduled from before it would be let go at once (a title press lost).
+                t = max(t, self.clock())
             elif s.kind in ("goto", "toward"):
                 t = max(t, self.steer(s, max(t, self.clock())))
             elif s.kind == "warp":
@@ -805,7 +811,7 @@ def run(a):
             env = dict(os.environ, HOS_CONTROL=sock, HOS_CONTROL_MEM="ro", LICHII_COOP_TEST_COMMANDS=commands[x])
             if a.server:
                 env["LICHII_COOP_SERVER"] = "127.0.0.1:%d" % a.port
-                env["LICHII_COOP_NAME"] = "Hook" + x
+                env["LICHII_COOP_NAME"] = x   # "A", "B": the scripts type /teleport A, /teleport B
                 env["LICHII_COOP_PASSWORD"] = a.password
             for kv in a.env:
                 k, v = kv.split("=", 1)

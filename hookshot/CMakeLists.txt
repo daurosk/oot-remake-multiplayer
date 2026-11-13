@@ -47,6 +47,12 @@ target_link_libraries(hookshot_coop PRIVATE coop_voice)
 # Linux: the clipboard through the desktop's tools (wl-copy, xclip, xsel); Windows has its own.
 if(NOT WIN32)
   target_sources(hookshot_coop PRIVATE src/coop_clipboard_posix.cpp)
+  # The C++ runtime inside the module (none of its symbols exported), so it loads into the game on any
+  # distribution from the one it was built on (CI: Ubuntu 22.04, glibc 2.35, as Longshot's own) up,
+  # whatever libstdc++ that system has.
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_link_options(hookshot_coop PRIVATE -static-libstdc++ -static-libgcc -Wl,--exclude-libs,ALL -Wl,--no-undefined)
+  endif()
 endif()
 if(MSVC)
   # The emulator's own code builds with these off too (lichii/README.md).

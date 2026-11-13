@@ -1,5 +1,7 @@
 # Proximity voice on Hookshot (docs/voice.md, "Testing"): on, heard near and not far; off by default.
 # One group: the two scenarios play one after another on the same pair. Needs patch 0009's game build.
+# "no microphone opened": the real check is B's (log only, the real microphone backend); A's tone never
+# writes that line, so on A it only guards against a run that opened the real microphone instead of the tone.
 
 [g1]
 hs-voice      expect="A:coop: voice: test: a tone instead of the microphone"  expect="A:coop: voice: on \(ptt"  expect="A:coop: voice: test: ptt: sent [1-9]"  expect="B:(?s)test mark near.*voice: test: P\d+ heard at [0-4]\.\d m.*test mark away"  expect="B:(?s)test mark away(?:(?!voice: test: P\d+ heard).)*test mark far-end"  expect="B:(?s)test mark back.*voice: test: P\d+ heard at [0-4]\.\d m"  expect="A:(?s)\A(?:(?!microphone opened).)*\Z"  expect="B:(?s)\A(?:(?!microphone opened).)*\Z"

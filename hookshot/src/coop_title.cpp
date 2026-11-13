@@ -24,6 +24,7 @@
 #include "coop_runtime.h"
 #include "coop_save.h"
 #include "coop_title_menu.h"
+#include "coop_voice.h"
 #include "nat_codes.hpp"
 
 #ifdef _WIN32
@@ -597,6 +598,7 @@ void Save() {
     if (!g_coop_on) {
         SetCoopEnvironment(g_menu.options());   // co-op has not started: they count for this run
     }
+    CoopVoice::SetEnabled(g_menu.options().voice);   // voice chat on/off counts at once (ptt when on)
     LOG_INFO(Core, "coop: title menu: settings saved{}{}", ok ? "" : " (a file could not be written)",
              kit ? "" : " (no kit found: coop.ini only)");
     std::vector<std::string> status{ok ? "Settings saved." : "A settings file could not be written."};

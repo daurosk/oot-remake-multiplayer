@@ -320,9 +320,10 @@ Settings Get() {
     return g_settings;
 }
 
-void Set(const Settings& settings) {
-    std::lock_guard lock(g_mutex);
-    ReadSettingsOnce();
+namespace {
+
+// Under g_mutex, after ReadSettingsOnce.
+void SetLocked(const Settings& settings) {
     Settings next = settings;
     next.test = g_settings.test;  // the test switch is the start's, never the menu's
     if (next == g_settings) {
@@ -338,9 +339,21 @@ void Set(const Settings& settings) {
     }
 }
 
+} // namespace
+
+void Set(const Settings& settings) {
+    std::lock_guard lock(g_mutex);
+    ReadSettingsOnce();
+    SetLocked(settings);
+}
+
 bool Enabled() { return Get().mode != coop::voice::Mode::off; }
 
-void SetEnabled(bool on) { Set(WithEnabled(Get(), on)); }
+void SetEnabled(bool on) {
+    std::lock_guard lock(g_mutex);   // one step: a Set from another thread cannot slip in between
+    ReadSettingsOnce();
+    SetLocked(WithEnabled(g_settings, on));
+}
 
 void OnEvent(const coop::net::Event& event) {
     auto* e = g_engine.load();

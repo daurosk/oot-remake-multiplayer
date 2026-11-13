@@ -222,7 +222,7 @@ TEST_CASE("lobby tab: the host mutes for everyone, and Kick and Ban need a secon
     CHECK(r->action == coop::protocol::LobbyAction{LobbyActionKind::ban, 3});
 }
 
-TEST_CASE("lobby tab: a player who leaves takes their page with them; many places are one line") {
+TEST_CASE("lobby tab: a player who leaves takes their page with them, many places are one line") {
     Tab t;
     t.Show();
     t.Set(Game(true));

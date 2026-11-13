@@ -4580,7 +4580,7 @@ bool was_dropped(const Harness& h, ConnectionId id) {
 
 }  // namespace
 
-TEST_CASE("lobby: only the host may kick, ban or mute; others are told no") {
+TEST_CASE("lobby: only the host may kick, ban or mute, others are told no") {
   Harness h;
   h.join(1, "Link");
   h.join(2, "Zelda");
@@ -4677,7 +4677,7 @@ TEST_CASE("lobby: a ban never takes this PC's own address (relayed players share
   CHECK(h.session.player_count() == 2);
 }
 
-TEST_CASE("lobby: a player muted in chat is not relayed; everyone is told; unmute") {
+TEST_CASE("lobby: a player muted in chat is not relayed, everyone is told, unmute") {
   Harness h;
   h.join(1, "Link");
   h.join(2, "Zelda");
@@ -4710,7 +4710,7 @@ TEST_CASE("lobby: a player muted in chat is not relayed; everyone is told; unmut
   CHECK(all_to<Chat>(h, 1) == std::vector<Chat>{Chat{2, "sorry"}});
 }
 
-TEST_CASE("lobby: a muted player stays muted after leaving and coming back; joiners are told") {
+TEST_CASE("lobby: a muted player stays muted after leaving and coming back, joiners are told") {
   Harness h;
   h.join(1, "Link");
   h.join(2, "Zelda");

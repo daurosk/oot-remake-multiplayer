@@ -44,6 +44,10 @@ Two parts:
 
 A DLL keeps the patch to Hookshot small (it changes only when Hookshot moves) and keeps our C++20 out of Hookshot's C build.
 
+### Hosting from the game (in progress)
+
+A player hosts without the separate server window: the module runs the co-op server on a thread of its own. `server/host_service.hpp` (`HostService`) is coop_server's hosting loop as an object: the game server and, when the host asked, the router forward (UPnP), the relay and the invite code with its answer codes. `coop_server` itself is a loop around the same object, so a dedicated host keeps the standalone server and its window says the same lines. Every session has a join password (a new random one when the host gives none) and encrypted traffic; the router forward opens only when the host said yes. Status for the menu (`HostService::status`): the port, the players, the invite code or why there is none, the last problem in plain English. The title menu's calls into the module are agreed with the title-menu work (patch 0004); not in a build yet.
+
 ## For players: the kit
 
 Nothing of Hookshot or the game is in the kit. The kit's `Build-Hookshot-Coop.bat` (player steps in [setup.md, "Play on Hookshot"](setup.md#play-on-hookshot-experimental)) downloads Hookshot's builder parts and source for `hookshot/PIN` (each checked against its SHA-256), applies `hookshot/patches` without git, runs Hookshot's own `nx2/make_game.py` on the player's game file, and installs `hookshot_coop.dll`, `coop.ini` (beside `hookshot.exe`) and the puppet pack. `Host-Hookshot.bat` and `Join-Hookshot.bat` start it as `Host.bat` and `Join.bat` start the emulator.

@@ -1858,6 +1858,46 @@ TEST_CASE("bad down but not out messages are refused") {
   CHECK(decode(b, back) == Error::bad_value);
 }
 
+TEST_CASE("difficulty message: type 480, on the session channel, both ways") {
+  CHECK(static_cast<int>(MessageType::difficulty) == 480);
+  CHECK(channel_of(MessageType::difficulty) == kChannelSession);
+  CHECK(allowed_on_channel(MessageType::difficulty, kChannelSession));
+  CHECK_FALSE(allowed_on_channel(MessageType::difficulty, kChannelOwnership));
+  CHECK(may_send(Sender::client, MessageType::difficulty));
+  CHECK(may_send(Sender::server, MessageType::difficulty));
+
+  Message m = Difficulty{2, false, DifficultyPreset::hard, {200, 150, 150}};
+  CHECK_FALSE(sender_of(m));  // no player field: the server says who set it
+  Bytes b = must_encode(m);
+  REQUIRE(b.size() == kHeaderSize + 3 + 6);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == m);
+  m = Difficulty{};  // automatic, the game as it is
+  REQUIRE(decode(must_encode(m), back) == Error::none);
+  CHECK(back == m);
+
+  Bytes out;
+  CHECK(encode(Difficulty{kMaxPlayers + 1, true, DifficultyPreset::normal, {}}, out) == Error::bad_value);
+  CHECK(encode(Difficulty{0, false, static_cast<DifficultyPreset>(4), {}}, out) == Error::bad_value);
+  CHECK(encode(Difficulty{0, false, DifficultyPreset::custom, {24, 100, 100}}, out) == Error::bad_value);
+  CHECK(encode(Difficulty{0, false, DifficultyPreset::custom, {100, 401, 100}}, out) == Error::bad_value);
+  CHECK(encode(Difficulty{0, false, DifficultyPreset::custom, {100, 100, 99}}, out) == Error::bad_value);
+  b = must_encode(Difficulty{});
+  b[kHeaderSize + 1] = 2;  // neither automatic nor not
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(Difficulty{});
+  b[kHeaderSize + 2] = 4;  // no such preset
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(Difficulty{});
+  b[b.size() - 1] = 0;  // enemies 0%: under the slider
+  b[b.size() - 2] = 0;
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(Difficulty{});
+  b.pop_back();
+  CHECK(decode(b, back) != Error::none);
+}
+
 TEST_CASE("bad pvp messages are refused") {
   Bytes out;
   CHECK(encode(PvpMode{kMaxPlayers + 1, true}, out) == Error::bad_value);

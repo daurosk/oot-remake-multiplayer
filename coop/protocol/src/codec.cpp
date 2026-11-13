@@ -2163,6 +2163,41 @@ Error decode_body(Reader& r, PvpMode& m) {
   return Error::none;
 }
 
+// DIFFICULTY: u8 set by (0 nobody, else a player), u8 automatic (0 or 1),
+// u8 preset, u16 life, u16 damage, u16 count (percent, within the sliders).
+Error encode_body(const Difficulty& m, Writer& w) {
+  if (m.set_by > kMaxPlayers || static_cast<std::uint8_t>(m.preset) >= kDifficultyPresets ||
+      !valid_difficulty(m.values)) {
+    return Error::bad_value;
+  }
+  w.u8(m.set_by);
+  w.u8(m.auto_scale ? 1 : 0);
+  w.u8(static_cast<std::uint8_t>(m.preset));
+  w.u16(m.values.hp_pct);
+  w.u16(m.values.damage_pct);
+  w.u16(m.values.count_pct);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, Difficulty& m) {
+  m = Difficulty{};
+  std::uint8_t automatic = 0;
+  std::uint8_t preset = 0;
+  COOP_READ(r.u8(m.set_by));
+  COOP_READ(r.u8(automatic));
+  COOP_READ(r.u8(preset));
+  COOP_READ(r.u16(m.values.hp_pct));
+  COOP_READ(r.u16(m.values.damage_pct));
+  COOP_READ(r.u16(m.values.count_pct));
+  if (m.set_by > kMaxPlayers || automatic > 1 || preset >= kDifficultyPresets ||
+      !valid_difficulty(m.values)) {
+    return Error::bad_value;
+  }
+  m.auto_scale = automatic == 1;
+  m.preset = static_cast<DifficultyPreset>(preset);
+  return Error::none;
+}
+
 // PVP_HIT: u8 player, u8 victim (1 to 4, not the player), u8 cause, s32
 // amount (1 to 80), 3 x f32 at, 3 x f32 from (finite).
 Error encode_body(const PvpHit& m, Writer& w) {
@@ -2465,6 +2500,7 @@ MessageType type_of(const Message& message) {
       MessageType::platform_clock,
       MessageType::platform_counter,
       MessageType::dbno_mode,   MessageType::dbno_state, MessageType::dbno_revive,
+      MessageType::difficulty,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -2541,6 +2577,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::save_ask:
     case MessageType::save_part:
     case MessageType::pvp_mode:
+    case MessageType::difficulty:
     case MessageType::ocarina_note:
     case MessageType::dbno_mode:
     case MessageType::dbno_state:
@@ -2640,6 +2677,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::save_ask:
     case MessageType::save_part:
     case MessageType::pvp_mode:
+    case MessageType::difficulty:
     case MessageType::pvp_hit:
     case MessageType::pvp_hurt:
     case MessageType::ocarina_note:
@@ -2779,6 +2817,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::save_ask: return decode_as<SaveAsk>(body, out);
     case MessageType::save_part: return decode_as<SavePart>(body, out);
     case MessageType::pvp_mode: return decode_as<PvpMode>(body, out);
+    case MessageType::difficulty: return decode_as<Difficulty>(body, out);
     case MessageType::pvp_hit: return decode_as<PvpHit>(body, out);
     case MessageType::pvp_hurt: return decode_as<PvpHurt>(body, out);
     case MessageType::dbno_mode: return decode_as<DbnoMode>(body, out);

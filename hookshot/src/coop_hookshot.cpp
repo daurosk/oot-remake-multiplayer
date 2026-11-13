@@ -40,6 +40,7 @@
 #include "coop_save.h"
 #include "coop_hold.h"
 #include "coop_counters.h"
+#include "coop_difficulty.h"
 #include "coop_actor_events.h"
 #include "coop_boss_native.h"
 #include "coop_dbno_game.h"
@@ -935,7 +936,15 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         if (!CoopActorEvents::LifeStepSeen().exchange(true, std::memory_order_relaxed)) {
             LOG_INFO(Core, "coop: actors: the game's Life step calls the module (patch 0007): hits go in through it");
         }
-        *sum = CoopActorEvents::Step(CoopActorEvents::TheRing(), CoopActorEvents::TheLifeTable(), a, *sum);
+        // Difficulty (coop_difficulty.h): what the game takes of the frame's own damage. What another
+        // game's hit gives (the life table) was scaled where that hit was dealt.
+        const std::int32_t own = CoopDifficulty::TheKinds().Step(
+            a, *sum, CoopDifficulty::Now(), CoopDifficulty::SteadyMs(), [a] {
+                std::uint64_t attacker = 0;
+                return CoopRuntime::Read(a + CoopDifficulty::kHitAttacker, &attacker, sizeof attacker) ? attacker
+                                                                                                         : 0;
+            });
+        *sum = CoopActorEvents::Step(CoopActorEvents::TheRing(), CoopActorEvents::TheLifeTable(), a, own);
         // Down but not out (coop_dbno_game.h): our Link's last life is held back, after every other
         // change to the sum (difficulty, PvP), so the guard sees what would really be taken.
         if (a != 0 && a == CoopDbno::OurLifeComponent()) {

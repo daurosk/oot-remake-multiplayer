@@ -72,6 +72,15 @@ struct Harness {
   }
   // The REJOIN_TOKEN each connection was sent last (right after WELCOME).
   std::map<ConnectionId, RejoinTokenBytes> tokens;
+  // Every DIFFICULTY sent since the last clear(), in order (not in `sent`).
+  std::vector<std::pair<ConnectionId, Difficulty>> difficulties;
+  std::vector<Difficulty> difficulty_to(ConnectionId id) const {
+    std::vector<Difficulty> out;
+    for (const auto& [to, d] : difficulties) {
+      if (to == id) out.push_back(d);
+    }
+    return out;
+  }
   std::uint64_t now = 1'000'000;
 
   // Every session has a join password (there is no plain way in). A config
@@ -108,6 +117,13 @@ struct Harness {
         if (const auto* token = std::get_if<RejoinToken>(&m)) {
           CHECK(s->channel == kChannelSession);
           tokens[s->to] = token->token;
+          continue;
+        }
+        // Kept apart as well: every joiner is told the difficulty, and the
+        // others when a player more or less moves the automatic scaler.
+        if (const auto* difficulty = std::get_if<Difficulty>(&m)) {
+          CHECK(s->channel == kChannelSession);
+          difficulties.push_back({s->to, *difficulty});
           continue;
         }
         if (const auto* challenge = std::get_if<JoinChallenge>(&m)) {
@@ -172,6 +188,7 @@ struct Harness {
   void clear() {
     sent.clear();
     dropped.clear();
+    difficulties.clear();
   }
 };
 
@@ -3701,6 +3718,107 @@ TEST_CASE("pvp: --pvp on is told at join, and hits go to their victim only") {
   h.clear();
   h.receive(3, PvpHurt{0, 3, 4, 8, 0}, kChannelOwnership);
   CHECK(h.sent.empty());
+}
+
+TEST_CASE("difficulty: automatic by the number of players until the host chooses") {
+  Harness h;
+  h.join(1, "Link");
+  // Alone: the game as it is, and the joiner is told so.
+  CHECK(h.difficulty_to(1) == std::vector<Difficulty>{Difficulty{}});
+  CHECK(h.session.difficulty() == Difficulty{});
+  h.clear();
+  h.join(2, "Zelda");
+  const Difficulty two{0, true, DifficultyPreset::normal, auto_difficulty(2)};
+  CHECK(two.values == DifficultyValues{140, 120, 125});
+  CHECK(h.difficulty_to(1) == std::vector<Difficulty>{two});  // one more player
+  CHECK(h.difficulty_to(2) == std::vector<Difficulty>{two});  // once, not twice
+  h.clear();
+  h.join(3, "Saria");
+  const Difficulty three{0, true, DifficultyPreset::normal, auto_difficulty(3)};
+  for (ConnectionId id : {1u, 2u, 3u}) {
+    CHECK(h.difficulty_to(id) == std::vector<Difficulty>{three});
+  }
+  // A player leaves: back down, for those who stay.
+  h.clear();
+  h.session.disconnected(3, h.now);
+  h.collect();
+  CHECK(h.difficulty_to(1) == std::vector<Difficulty>{two});
+  CHECK(h.difficulty_to(2) == std::vector<Difficulty>{two});
+  CHECK(h.session.difficulty() == two);
+}
+
+TEST_CASE("difficulty: the host's choice is fixed, whoever joins or leaves") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  // A guest cannot: it is told what is in force, nobody else hears of it.
+  h.receive(2, Difficulty{0, false, DifficultyPreset::hard, {}}, kChannelSession);
+  const Difficulty two{0, true, DifficultyPreset::normal, auto_difficulty(2)};
+  CHECK(h.difficulty_to(2) == std::vector<Difficulty>{two});
+  CHECK(h.difficulty_to(1).empty());
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().difficulty_refused == 1);
+  // The host can, for everyone.
+  h.clear();
+  h.receive(1, Difficulty{0, false, DifficultyPreset::hard, {}}, kChannelSession);
+  const Difficulty hard{1, false, DifficultyPreset::hard, {200, 150, 150}};
+  CHECK(h.difficulty_to(1) == std::vector<Difficulty>{hard});
+  CHECK(h.difficulty_to(2) == std::vector<Difficulty>{hard});
+  CHECK(h.session.difficulty() == hard);
+  // The same again changes nothing: only the host hears back.
+  h.clear();
+  h.receive(1, Difficulty{0, false, DifficultyPreset::hard, {}}, kChannelSession);
+  CHECK(h.difficulty_to(1) == std::vector<Difficulty>{hard});
+  CHECK(h.difficulty_to(2).empty());
+  // A newcomer learns it at join; the others are told nothing, it did not change.
+  h.clear();
+  h.join(3, "Saria");
+  CHECK(h.difficulty_to(3) == std::vector<Difficulty>{hard});
+  CHECK(h.difficulty_to(1).empty());
+  CHECK(h.difficulty_to(2).empty());
+  // Nor does a leave change it, the host's own included: the next host keeps it.
+  h.clear();
+  h.session.disconnected(3, h.now);
+  h.session.disconnected(1, h.now);
+  h.collect();
+  CHECK(h.difficulty_to(2).empty());
+  CHECK(h.session.difficulty() == hard);
+  CHECK(h.session.host() == 2);
+  // The new host sets the sliders.
+  h.clear();
+  h.receive(2, Difficulty{0, false, DifficultyPreset::custom, {325, 75, 250}}, kChannelSession);
+  const Difficulty custom{2, false, DifficultyPreset::custom, {325, 75, 250}};
+  CHECK(h.difficulty_to(2) == std::vector<Difficulty>{custom});
+  h.clear();
+  h.join(4, "Darunia");
+  CHECK(h.difficulty_to(4) == std::vector<Difficulty>{custom});
+  CHECK(h.difficulty_to(2).empty());
+  // Back to the automatic scaler: the values follow the players again.
+  h.clear();
+  h.receive(2, Difficulty{0, true, DifficultyPreset::normal, {}}, kChannelSession);
+  const Difficulty automatic{2, true, DifficultyPreset::normal, auto_difficulty(2)};
+  CHECK(h.difficulty_to(2) == std::vector<Difficulty>{automatic});
+  CHECK(h.difficulty_to(4) == std::vector<Difficulty>{automatic});
+  h.clear();
+  h.join(5, "Ruto");
+  const Difficulty grown{2, true, DifficultyPreset::normal, auto_difficulty(3)};
+  CHECK(h.difficulty_to(2) == std::vector<Difficulty>{grown});
+  CHECK(h.difficulty_to(5) == std::vector<Difficulty>{grown});
+  // A preset after the sliders, then custom with new sliders.
+  h.clear();
+  h.receive(2, Difficulty{0, false, DifficultyPreset::easy, {500, 400, 300}}, kChannelSession);
+  CHECK(h.difficulty_to(5) == std::vector<Difficulty>{Difficulty{2, false, DifficultyPreset::easy, {75, 50, 100}}});
+  h.clear();
+  h.receive(2, Difficulty{0, false, DifficultyPreset::custom, {100, 100, 300}}, kChannelSession);
+  CHECK(h.difficulty_to(5) == std::vector<Difficulty>{Difficulty{2, false, DifficultyPreset::custom, {100, 100, 300}}});
+  // Everyone leaves: the next session starts automatic again.
+  for (ConnectionId id : {2u, 4u, 5u}) h.session.disconnected(id, h.now);
+  h.collect();
+  CHECK(h.session.difficulty() == Difficulty{});
+  h.clear();
+  h.join(6, "Nabooru");
+  CHECK(h.difficulty_to(6) == std::vector<Difficulty>{Difficulty{}});
 }
 
 TEST_CASE("pvp: only the host changes it, for everyone, and an empty session goes back") {

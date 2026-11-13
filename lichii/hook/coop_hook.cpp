@@ -70,6 +70,7 @@
 #include "coop_game_scan.h"
 #include "coop_pickups.h"
 #include "coop_fairy.h"
+#include "coop_difficulty.h"
 #include "coop_drops.h"
 #include "coop_every.h"
 #include "coop_dungeon.h"
@@ -299,6 +300,7 @@ public:
             CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
             CoopPvp::OnEvent(event, client);  // PvP (docs/play-online.md "PvP")
             CoopDbno::OnEvent(event, client);  // down but not out (docs/play-online.md)
+            CoopDifficulty::OnEvent(event, client);  // docs/play-online.md "Difficulty"
             CoopSave::OnEvent(event, client);  // the host's save for the guests (issue 167)
             CoopHud::OnEvent(event);  // the others' hearts for the HUD (PLAYER_LIFE)
             if (event.kind == coop::net::EventKind::message) {  // deku-dungeon-2
@@ -895,6 +897,11 @@ public:
         CoopDbno::Frame(view.scene, reading, report.connected ? session_.get() : nullptr,
                         report.server_now_us);
         for (auto& line : CoopDbno::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
+        // Difficulty (docs/play-online.md "Difficulty"): the host's choice goes out.
+        CoopDifficulty::Frame(report.connected ? session_.get() : nullptr);
+        for (auto& line : CoopDifficulty::TakeLines()) {
             chat_.Add(std::move(line), true);
         }
         Place(view);

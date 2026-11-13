@@ -75,6 +75,7 @@ add_executable(coop_tests
   lichii/teleport_test.cpp
   lichii/pvp_test.cpp
   lichii/dbno_test.cpp
+  lichii/difficulty_test.cpp
   lichii/live_events_test.cpp
   lichii/shared_scenes_test.cpp
   lichii/scrubs_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_scrubs.cpp
@@ -109,6 +110,7 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_teleport.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_pvp.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_dbno.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_difficulty.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_time_sync.cpp
 )
 target_include_directories(coop_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook)

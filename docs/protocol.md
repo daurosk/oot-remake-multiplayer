@@ -461,6 +461,20 @@ A player at no hearts is downed instead of dead and a teammate can revive them (
 - **Each game decides its own state** and sends `DBNO_STATE` when it changes, every 0.5 s while downed (0.1 s while the ring fills), and again when someone joins or it reconnects. The server relays it to everyone else and keeps the state: a player who is not up owns no enemy and is given none (the enemy goes to the nearest player still up, whose game's AI then chases that player's Link).
 - **A revive goes to its downed player only.** The reviver's game sends `DBNO_REVIVE` every 0.2 s while A is held beside them, and once with holding 0 when it lets go; the server passes it to the target alone while the mode is on (`dbno_revives_relayed`; to nobody, to itself or with the mode off: dropped, `dbno_revives_dropped`). The downed game counts the hold (a hold counts 0.7 s past its last message) and says who revives and how far in its `DBNO_STATE`, so both see the same ring.
 
+### Difficulty (protocol 11, `DIFFICULTY`)
+
+How hard the enemies are in a session ([play-online.md](play-online.md), "Difficulty"; `coop/protocol/difficulty.hpp` has the rules, `lichii/hook/coop_difficulty.h` the games' side). Types 480 to 489 are kept for it.
+
+| Type | Name | Channel | Sent by | Body |
+|---|---|---|---|---|
+| 480 | `DIFFICULTY` | 0 | both | `u8` set by (0 nobody, 1 to 16 the host who chose), `u8` automatic (0 or 1; others refused), `u8` preset (0 easy, 1 normal, 2 hard, 3 custom; others refused), `u16` enemy life, `u16` enemy damage, `u16` enemy count, each in percent of the game's own and within its slider (life 25 to 500, damage 25 to 400, count 100 to 300; outside refused). No player field |
+
+- **Three values, the server's.** Enemy life, the damage enemies deal to players, and how many enemies there are, in percent. The server decides them and every game applies the ones it was last sent; a game starts every connection with 100, 100, 100 (the game as it is).
+- **Automatic until the host chooses.** While nobody has chosen, the values follow the number of players in the session (`auto_difficulty`): 100 for one player, and 40 life, 20 damage and 25 enemies more for each further one, up to 300, 200 and 200 (reached with 6 players).
+- **The host's choice is fixed.** The host sends its own `DIFFICULTY` (set by 0): automatic on or off, a preset, and the three sliders, which are read only with the custom preset (easy is 75, 50, 100; normal 100, 100, 100; hard 200, 150, 150). From then on the values stay as set, whoever joins or leaves, also when the host leaves and another player hosts. Turning automatic on again makes them follow the players again. A `DIFFICULTY` from anyone else is not taken (counted in `difficulty_refused`); the server answers that player alone with what is in force, as it answers a host whose choice changes nothing.
+- **Who is told, and when.** Every player at join, after `HOST` (and after `PVP_MODE` when that is sent); everyone when the host chooses; and everyone else when a join or a leave moved the automatic values. The values in the message are always the ones in force, so a late joiner needs nothing more. With automatic on, the preset reads normal.
+- **An empty session forgets it.** The next session starts automatic. The host's game keeps its player's last choice (`coop-difficulty.ini` beside `coop.ini`) and sends it again when it hosts a session nobody has chosen for.
+
 ## Later stages (outline only)
 
 - **Stage 3:** `PLAYER_STATUS` decides whether puppets show during cutscenes. `JOIN_PARTNER` (above) asks for a warp to another player's scene.
@@ -504,6 +518,7 @@ A player at no hearts is downed instead of dead and a teammate can revive them (
 - Version 10 is this release's protocol: everything above marked version 10 ships in it. `main` before this release had an unreleased draft of version 10 (without keep-number, encrypt-always and the platform types); a build of that draft and one of this release both say 10 but do not work together (the draft's `HELLO` has no previous number and may have no key share, and its server lets a game in without a password). The draft was never released, so no player has it. These were briefly numbered 11 on the integration branch.
 - Version 11 (branch `native-host-b`, 2026-11-12): up to 16 players. Player numbers are 1 to 16 (`kMaxPlayers`), `WELCOME` lists up to 15 others, 12 more slot colours; a version 10 game refuses a `WELCOME` with 5 or more players, so the version goes up. The server takes `--max-players` (1 to 16, default 4 until the games' side takes 16) and sends `PLAYER_SAMPLE` and `PLAYER_POSE` by where the players are ("Who gets which stream"). No new type.
 - Protocol 11 also (branch `dbno`): `DBNO_MODE` (470), `DBNO_STATE` (471), `DBNO_REVIVE` (472); 470 to 479 kept. No bump of its own: a build without them never downs anyone (it gets no `DBNO_MODE`, so it plays with the game's own death), and a server without them does not relay them.
+- Version 11 also (branch `difficulty`): `DIFFICULTY` (480; 480 to 489 kept), sent by the server to every player at join. No earlier layout changed and no bump of its own: it ships with the first version 11 release. A version 11 build without it ignores the type and plays the game as it is.
 
 ## Who gets which stream
 

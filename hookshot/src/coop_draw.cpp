@@ -1,4 +1,4 @@
-    if (s.title && !s.title->prompt.empty()) {// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_draw.h"
 
 #include <algorithm>
@@ -525,7 +525,7 @@ static void DrawTitle(const HosCoopDraw& d, const TitleView& t, const Look* look
 }
 
 bool Wanted(const Scene& s) {
-    if (s.title && (s.title->menu || !s.title->prompt.empty())) {
+    if (s.title && !s.title->prompt.empty()) {
         return true;
     }
     return !s.chat.empty() || !s.hud.empty() || s.box.has_value() || s.cheats.has_value() || (s.markers && !s.markers->items.empty()) || s.players.has_value() ||

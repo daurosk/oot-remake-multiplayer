@@ -63,7 +63,7 @@ TEST_CASE("pause tab: the row kinds are hos_coop_menu.h's numbers") {
     CHECK(static_cast<int>(RowKind::kNote) == HOS_COOP_MENU_NOTE);
 }
 
-TEST_CASE("pause tab: the first page is Host, Join, Local co-op and Settings; Back there closes the menu") {
+TEST_CASE("pause tab: the first page is Host, Join, Local co-op and Settings, Back there closes the menu") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});
     CHECK(m.page() == Page::kMain);
@@ -211,7 +211,7 @@ TEST_CASE("pause tab: Join offers the last game again first, one press") {
     CHECK(m.view().rows[0].name == "Friend's code");
 }
 
-TEST_CASE("pause tab: a guest sees the friend's game and Leave; a blocked way in offers the answer code") {
+TEST_CASE("pause tab: a guest sees the friend's game and Leave, a blocked way in offers the answer code") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kJoin);
@@ -248,6 +248,9 @@ TEST_CASE("pause tab: co-op that came with the game's start is shown, not starte
     CHECK(m.view().rows[0].fixed);
     CHECK(m.view().rows[1].fixed);
     CHECK(m.view().gold == "Co-op is on");
+    s.players = 3;
+    m.SetSession(s);
+    CHECK(m.view().gold == "Co-op is on: 3 players");
     m.Press(Input::kDecide);
     CHECK(m.page() == Page::kMain);
     CHECK_FALSE(m.TakeRequest().has_value());
@@ -364,7 +367,7 @@ TEST_CASE("pause tab: the mouse selects a row and clicks a value's halves") {
     CHECK(Selected(m) == "Your name");
 }
 
-TEST_CASE("pause tab: the title's rows open their page; Host hosts at once") {
+TEST_CASE("pause tab: the title's rows open their page, Host hosts at once") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kHost);
@@ -381,7 +384,7 @@ TEST_CASE("pause tab: the title's rows open their page; Host hosts at once") {
     CHECK(Selected(m) == "Host a game");
 }
 
-TEST_CASE("pause tab: hiding it ends the typing and drops a half-typed name; the page stays") {
+TEST_CASE("pause tab: hiding it ends the typing and drops a half-typed name, the page stays") {
     Menu m;
     CoopTitleMenu::Options o;
     o.name = "Saria";

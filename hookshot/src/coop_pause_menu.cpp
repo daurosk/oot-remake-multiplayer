@@ -655,7 +655,7 @@ View Menu::view() const {
         v.hint = session_.code;
     }
     if (session_.by_launcher) {
-        v.gold = "Co-op is on";
+        v.gold = session_.players > 1 ? "Co-op is on: " + std::to_string(session_.players) + " players" : "Co-op is on";
     } else if (mine && session_.hosting) {
         v.gold = session_.state != State::kHosting ? "Starting your game..."
                  : session_.players > 1 ? "Hosting: " + std::to_string(session_.players) + " players"

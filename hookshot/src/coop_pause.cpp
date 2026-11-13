@@ -43,7 +43,7 @@ using CoopPauseMenu::Input;
 using CoopPauseMenu::Request;
 using State = CoopPauseMenu::Session::State;
 
-constexpr int kMultiplayerTab = 0;   // the strip's first; Mods (test11) comes after it
+constexpr int kMultiplayerTab = 0;   // the strip's first; a Mods tab can come after it
 
 std::uint64_t NowMs() {
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(

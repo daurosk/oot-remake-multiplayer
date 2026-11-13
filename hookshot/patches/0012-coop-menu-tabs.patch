@@ -1,4 +1,4 @@
-From e79ddf5589cd82578322d4115c468c9d16ebd53a Mon Sep 17 00:00:00 2001
+From 8cf37ce6e1c8f6d9a6feee06f6bf7e491588dfb6 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Fri, 13 Nov 2026 01:34:58 -0900
 Subject: [PATCH] Co-op menu tabs: the module's tabs lead the menu's strip
@@ -242,7 +242,7 @@ index 59acc4be..17c4cf0d 100644
 +
  }  // namespace mkwvk::coop
 diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
-index 10e332b9..bdd392ed 100644
+index 10e332b9..c720daef 100644
 --- a/gpu/vk/vk_menu.cpp
 +++ b/gpu/vk/vk_menu.cpp
 @@ -15,6 +15,9 @@
@@ -267,7 +267,7 @@ index 10e332b9..bdd392ed 100644
 +/// The place in the strip of the tab shown: the module's first, then Hookshot's (the Motion page under Controls)
 +int strip_at() { return coop_tab >= 0 ? coop_tab : coop_tabs + (cur_tab == TAB_MOTION ? TAB_CONTROLS : cur_tab); }
 +int strip_count() { return coop_tabs + TAB_COUNT; }
-+/// The tab at a place in the strip shown (a press or the module's HOS_COOP_MENU_SHOW follows from coop_tick's look at it)
++/// The tab at a place in the strip shown (the module is told by coop_tell, HOS_COOP_MENU_SHOW and _HIDE)
 +void show_strip(int at) {
 +    at = (at % strip_count() + strip_count()) % strip_count();
 +    if (at < coop_tabs) coop_tab = at;

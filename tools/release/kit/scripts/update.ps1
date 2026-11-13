@@ -447,7 +447,7 @@ function Test-KitNewKit([string]$Dir) {
 # After an emulator kit became a Hookshot-only kit: the desktop shortcut to a launcher that is gone points at
 # "Start OoT Co-op.bat", and the player hears that emulator\user (theirs: saves, keys, settings) is kept.
 # Returns the lines to say.
-function Complete-KitHookshotOnly([string]$KitDir, [bool]$HadEmulator, [string]$Desktop = [Environment]::GetFolderPath('Desktop')) {
+function Complete-KitHookshotOnly([string]$KitDir, [bool]$HadEmulator, [string]$Desktop = $(if ($env:OOT_COOP_DESKTOP) { $env:OOT_COOP_DESKTOP } else { [Environment]::GetFolderPath('Desktop') })) {
     $start = Join-Path $KitDir 'Start OoT Co-op.bat'
     if (-not (Test-Path -LiteralPath $start)) { return @() }
     $lines = @()

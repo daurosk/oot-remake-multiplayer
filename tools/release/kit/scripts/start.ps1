@@ -86,7 +86,8 @@ if ($reused) { Write-Host "Your game file (from the other kit): $reused" }
 
 # 6. The rest: update, game build, start (play.ps1). The desktop shortcut follows the kit started last.
 try {
-    $link = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Play OoT Co-op.lnk'
+    $desk = if ($env:OOT_COOP_DESKTOP) { $env:OOT_COOP_DESKTOP } else { [Environment]::GetFolderPath('Desktop') }   # (tests: a folder of their own)
+    $link = Join-Path $desk 'Play OoT Co-op.lnk'
     if (Test-Path -LiteralPath $link) {
         $shell = New-Object -ComObject WScript.Shell
         $s = $shell.CreateShortcut($link)

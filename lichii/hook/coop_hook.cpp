@@ -79,6 +79,8 @@
 #include "coop_story.h"
 #include "coop_quests.h"
 #include "coop_live_events.h"
+#include "coop_local_game.h"
+#include "coop_local_net.h"
 #include "coop_shared_scenes.h"
 #include "coop_objects.h"
 #include "coop_ocarina_sound.h"
@@ -318,6 +320,7 @@ public:
             }
             CoopRide::OnEvent(event);  // their horses (PLAYER_RIDE, issue 199)
             CoopVoice::OnEvent(event);  // their voices (VOICE_FRAME, docs/voice.md)
+            CoopLocalNet::OnEvent(event);  // split screen's seats in the session (coop_local_net.h)
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -543,6 +546,14 @@ public:
             session_->set_color(*color);
         }
         const auto report = session_->frame(reading, hold ? &*hold : nullptr);
+        if (memory) {  // split screen: each extra local player is a player of the session (coop_local_net.h)
+            CoopLocalNet::Online(
+                *memory, reading, report.connected, report.server_now_us,
+                [this](const coop::protocol::Message& m) {
+                    return session_->with_client([&m](coop::net::Client& client) { return client.send(m); });
+                },
+                [](const std::string& line) { LOG_INFO(Core, "coop: {}", line); });
+        }
         if (quests) {
             for (const auto& r : quests->take_raised()) {
                 LOG_INFO(Core, "coop: quests: {} {} -> {} (shared Threads of Time; issue 193)", r.quest,
@@ -840,6 +851,9 @@ public:
                 return shown;
             });
         }
+        // Local co-op (coop_local_game.h): the first Link this frame, then its Core's step, before the puppets are planned.
+        CoopLocalGame::Frame({view.game && view.scene.has_value(), view.position,
+                              view.age == coop::protocol::Age::adult});
         CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                             report.connected ? session_.get() : nullptr, report.server_now_us);
         // Proximity voice (docs/voice.md): our microphone out, theirs at their Links.

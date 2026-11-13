@@ -53,6 +53,10 @@ class PlayerReader {
 
   // This frame's reading, or nothing when the player cannot be read.
   std::optional<PlayerReading> read();
+  // Split screen: read this Player actor (another local player's Link)
+  // instead of the one the game's lookup finds; its place is the actor's own,
+  // never the GameUI copy (that one is the first Link's). 0: the lookup again.
+  void set_actor(std::uint64_t actor) { actor_ = actor; }
 
   // The parts, for tests and for the emulator's debug overlay.
   std::optional<Vec3> read_position();      // GameUI copy, else the actor's
@@ -82,6 +86,7 @@ class PlayerReader {
   GameMemory& memory_;
   DrawnState own_drawn_{};
   DrawnState& drawn_memo_;
+  std::uint64_t actor_ = 0;  // set_actor's
 };
 
 // A rotation matrix (row-major, v' = M v) to a unit quaternion with w >= 0.

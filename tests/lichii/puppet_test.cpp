@@ -1797,3 +1797,108 @@ TEST_CASE("puppet: up to 15 puppets (16 players) all get made, within the frame'
     }
     CHECK(coop::protocol::kMaxPlayers < 32);  // LiveMask: one bit per player number
 }
+
+// LICHII_COOP_NATIVE_PLAYER (coop_native_player.h): the game's own Player_<Age> is made as any
+// puppet is, then nothing of ours touches it.
+TEST_CASE("native player: Player_Child is created, then left alone and only watched") {
+    Game g;
+    std::vector<std::string> log;
+    Director d([&](const std::string& line) { log.push_back(line); });
+    d.SetInput(Wants({At(1, 3, 0, 0, "Player_Child")}));
+    auto calls = Frame(d, g, 100);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[1].function == kBase + addr::kCreate);
+    std::array<char, 32> name{};
+    g.guest.Read(kHeap + block::kNameText, name.data(), name.size());
+    CHECK(std::string(name.data()) == "Player_Child");
+    g.Spawn(calls[1].x[3]);
+    CHECK(Frame(d, g, 200).size() == 1);  // the take
+    CHECK(Frame(d, g, 210).empty());
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+
+    // The other player moves, wears things, plays an animation: no call, no write.
+    Target moved = At(1, 8, 2, -4, "Player_Child");
+    moved.anim = CoopPuppet::Anim{};
+    moved.anim->name = "Run";
+    moved.anim_serial = 1;
+    moved.gear[0] = "Weapon_Sword_001";
+    moved.drawn = std::uint8_t{1};
+    moved.color = 0xff0000u;
+    d.SetInput(Wants({moved}));
+    for (std::uint64_t t = 300; t < 3000; t += 33) {
+        CHECK(Frame(d, g, t).empty());
+    }
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 0, 0, 0);
+    CheckPosition(g.guest, kActor + addr::kActorPositionRequest, 0, 0, 0);
+    CHECK(d.LiveMask() == 0u);  // nothing of the puppets' follows it (fairy, pose copy)
+    const auto said = [&](const char* what) {
+        return std::any_of(log.begin(), log.end(),
+                           [&](const std::string& l) { return l.find(what) != std::string::npos; });
+    };
+    CHECK(said("native player: second 0x400002000 state 4"));
+    CHECK(said("first look"));
+
+    // Gone from the plan: deleted as any puppet.
+    d.SetInput(Wants({}));
+    bool deleted = false;
+    for (std::uint64_t t = 3000; t < 3000 + 2 * Director::kLeaveGraceMs && !deleted; t += 100) {
+        for (const Call& c : Frame(d, g, t)) {
+            deleted = deleted || c.function == kBase + addr::kRequestDelete;
+        }
+    }
+    CHECK(deleted);
+}
+
+TEST_CASE("native player: the planner asks for Player_<Age> only with the switch") {
+    CoopPuppet::PlannerSettings s;
+    CHECK(CoopPuppet::Planner(s).ActorFor(false, 0xff0000u) != "Player_Child");
+    s.native_player = true;
+    CHECK(CoopPuppet::Planner(s).ActorFor(false, 0xff0000u) == "Player_Child");
+    CHECK(CoopPuppet::Planner(s).ActorFor(true) == "Player_Adult");
+    s.actor = "CoopPuppet_Adult";  // LICHII_COOP_PUPPET_ACTOR still wins
+    CHECK(CoopPuppet::Planner(s).ActorFor(false) == "CoopPuppet_Adult");
+    CHECK(CoopNativePlayer::IsPlayerActor("Player_Adult"));
+    CHECK_FALSE(CoopNativePlayer::IsPlayerActor("CoopPuppet_Child"));
+    CHECK_FALSE(CoopNativePlayer::IsPlayerActor("Player_Child_Red"));
+}
+
+TEST_CASE("native player: the probe says when the second one moves, with the local Link or alone") {
+    FakeGuest guest;
+    const std::uint64_t second = 0x500000000, local = 0x500010000, parts = 0x500020000;
+    guest.Map(second, 0x400);
+    guest.Map(local, 0x400);
+    guest.Map(parts, 0x400);
+    guest.Set(second + 0x2c, std::uint32_t{4});
+    guest.Set(second + 0x270, parts);
+    guest.Set(parts + 0x358, std::uint64_t{0x77000});
+    const CoopNativePlayer::ReadFn read = [&](std::uint64_t a, void* out, std::size_t n) {
+        return guest.Read(a, out, n);
+    };
+    const auto put = [&](std::uint64_t actor, float x) {
+        guest.Set(actor + 0x31c, std::array<float, 3>{x, 0, 0});
+    };
+    CoopNativePlayer::Probe probe;
+    auto line = probe.Step(read, kBase, second, local, 0);
+    REQUIRE(line);
+    CHECK(line->find("player 0x77000") != std::string::npos);
+    CHECK(line->find("preload lists -1/-1") != std::string::npos);  // not readable here
+    CHECK_FALSE(probe.Step(read, kBase, second, local, 2000));      // nothing changed, not due
+    line = probe.Step(read, kBase, second, local, 5000);
+    REQUIRE(line);
+    CHECK(line->find("no change") != std::string::npos);
+    put(second, 1.0f);  // alone
+    line = probe.Step(read, kBase, second, local, 6500);
+    REQUIRE(line);
+    CHECK(line->find("the second one moved") != std::string::npos);
+    CHECK(line->find("WITH") == std::string::npos);
+    put(second, 2.0f);  // both, the same way: it reads the local pad
+    put(local, 1.0f);
+    line = probe.Step(read, kBase, second, local, 8000);
+    REQUIRE(line);
+    CHECK(line->find("moved WITH the local Link") != std::string::npos);
+    CHECK(line->find("2.00 m from where it was made") != std::string::npos);
+    // The game's own lookup now gives the second one: the worst case, said loudly.
+    line = probe.Step(read, kBase, second, second, 9500);
+    REQUIRE(line);
+    CHECK(line->find("THE GAME'S PLAYER IS NOW THE SECOND ONE") != std::string::npos);
+}

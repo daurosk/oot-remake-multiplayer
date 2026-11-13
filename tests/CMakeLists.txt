@@ -42,6 +42,7 @@ add_executable(coop_tests
   lichii/settings_test.cpp
   lichii/puppet_test.cpp
   lichii/puppet_config_test.cpp
+  lichii/player_input_test.cpp
   lichii/callers_test.cpp
   lichii/fairy_test.cpp
   lichii/rooms_test.cpp
@@ -65,6 +66,9 @@ add_executable(coop_tests
   lichii/story_test.cpp
   lichii/quests_test.cpp
   lichii/pose_test.cpp
+  lichii/local_test.cpp
+  lichii/local_game_test.cpp
+  lichii/local_view_test.cpp
   lichii/world_test.cpp
   lichii/ocarina_test.cpp
   lichii/ocarina_sound_test.cpp
@@ -98,6 +102,8 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_quests.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_live_events.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_live_places.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_local_game.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_local_net.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_shared_scenes.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_fairy.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_rooms.cpp

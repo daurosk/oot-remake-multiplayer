@@ -1,4 +1,4 @@
-# epona-own (test10.1, epona-b), A: every adult rides their own Epona, and each sees the other's.
+# epona-own, A: every adult rides their own Epona, and each sees the other's.
 # Both games load into Hyrule Field as adults; each game has its own Epona at -100.47 150.60 264.55
 # (she is never a shared object). B (epona-own.B.txt) is the first rider; A watches from 10 m, then
 # gets on its own Epona while B rides again.

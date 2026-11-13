@@ -52,6 +52,10 @@ if ($Hookshot) {
     if ($exe) { $emu = Split-Path -Parent $exe; $ini = Join-Path $emu 'coop.ini' }
 }
 if (-not $Hookshot -and -not (Test-Path $exe)) { Write-Host "Not found: $exe"; exit 1 }
+# A Hookshot-only kit (make_kit_hookshot.ps1) has one launcher and no Build-Hookshot-Coop.bat or Host/Join .bat files.
+$hsOnly = Test-Path -LiteralPath (Join-Path $kit 'Start OoT Co-op.bat')
+$hsRetry = if ($hsOnly) { 'Start "Start OoT Co-op.bat" again' } else { 'Run Build-Hookshot-Coop.bat' }
+if ($hsOnly) { $script:KitPackRemake = 'Start "Start OoT Co-op.bat" again: it makes the pack again.' }
 
 # Yes or no, yes when no key comes in $Seconds (an unattended start still updates).
 function Read-YesNo([string]$Question, [int]$Seconds) {
@@ -160,17 +164,17 @@ if ($Hookshot) {
         exit 1
     }
     if ($need) {
-        Write-Host (Get-KitHookshotNeedText $need $hsGame)
+        Write-Host (Get-KitHookshotNeedText $need $hsGame $hsOnly)
         # The long builds ask first (yes by itself after a minute, so an unattended start still builds).
         $question = Get-KitHookshotNeedQuestion $need
         if ($question -and -not (Read-YesNo "$question (then the game starts; closing this window cancels)" 60)) {
-            Write-Host 'Not now. Build-Hookshot-Coop.bat sets it up (SETUP.md, "Play on Hookshot"); then start this again.'
+            Write-Host $(if ($hsOnly) { 'Not now. Start "Start OoT Co-op.bat" again when you want to set it up.' } else { 'Not now. Build-Hookshot-Coop.bat sets it up (SETUP.md, "Play on Hookshot"); then start this again.' })
             exit 1
         }
         $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
         & $ps -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'hookshot-build.ps1')
         if ($LASTEXITCODE -ne 0) {
-            Write-Host 'The Hookshot game could not be brought up to date (above: why). Run Build-Hookshot-Coop.bat to try again.'
+            Write-Host "The Hookshot game could not be brought up to date (above: why). $hsRetry to try again."
             Wait-AnyKey 60
             exit 1
         }
@@ -178,7 +182,7 @@ if ($Hookshot) {
         $exe = Get-KitHookshotExe $hsGame
     }
     if (-not $exe) {
-        Write-Host "Hookshot isn't set up yet: no Hookshot game in $hsGame. Run Build-Hookshot-Coop.bat and let it finish (SETUP.md, ""Play on Hookshot"")."
+        Write-Host "Hookshot isn't set up yet: no Hookshot game in $hsGame. $(if ($hsOnly) { 'Start ""Start OoT Co-op.bat"" again and let it finish (SETUP.md).' } else { 'Run Build-Hookshot-Coop.bat and let it finish (SETUP.md, ""Play on Hookshot"").' })"
         exit 1
     }
     if (-not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $exe) 'hookshot_coop.dll'))) {
@@ -201,11 +205,11 @@ if ($Mode -eq 'title') {
     }
     [void](Use-KitPuppetPack (Join-Path $emu 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') (Join-Path $kit 'tools\puppet_pack') @(
         'Puppet pack: not in the Hookshot game, so the other players show only as markers.',
-        '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").'))
+        $(if ($hsOnly) { '  It is made from your game file (the one hookshot\game-files.txt names): put that file back, then start again.' } else { '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").' })))
     [void](Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru)
     Write-Host 'Hookshot started. Host or Join on the title screen (Host, Join and Co-op Settings under the game''s own rows;'
     Write-Host 'if they are not there, Minus opens them). Same house or a VPN: Host, then "Same network or VPN".'
-    Write-Host 'Host-Hookshot.bat and Join-Hookshot.bat still host or join from a window like this one instead.'
+    if (-not $hsOnly) { Write-Host 'Host-Hookshot.bat and Join-Hookshot.bat still host or join from a window like this one instead.' }
     exit 0
 }
 
@@ -457,7 +461,7 @@ if ($Hookshot) {
     # Hookshot indexes its mod files once at start: this runs before Start-Process.
     [void](Use-KitPuppetPack (Join-Path $emu 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') (Join-Path $kit 'tools\puppet_pack') @(
         'Puppet pack: not in the Hookshot game, so the other players show only as markers.',
-        '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").'))
+        $(if ($hsOnly) { '  It is made from your game file (the one hookshot\game-files.txt names): put that file back, then start again.' } else { '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").' })))
     $started = Get-Date
     $game = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru
     Write-Host "Hookshot started. Its hookshot_log.txt (beside the game) says 'coop: module loaded', then 'coop: connected'."

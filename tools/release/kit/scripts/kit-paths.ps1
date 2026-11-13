@@ -524,7 +524,7 @@ function Use-KitPuppetPack([string]$Manifest, [string]$ToolDir, [string[]]$Missi
         }
         elseif ($env:LICHII_COOP_SELF_TUNIC) { Remove-Item env:LICHII_COOP_SELF_TUNIC }
         if ($want -and -not $self -and (Get-KitTunic $want) -ne 'green') {
-            Write-Host 'Your Link stays green: the puppet pack has no tunic of your colour. Run make-puppet-pack.cmd again.'
+            Write-Host "Your Link stays green: the puppet pack has no tunic of your colour. $script:KitPackRemake"
         }
         return $true
     }
@@ -626,7 +626,10 @@ function Test-KitPuppetPackStale([string]$Manifest, [string]$ToolDir) {
 # The line said before Build-Hookshot-Coop runs for that need ('game', 'moved' and 'pin' ask first:
 # Get-KitHookshotNeedQuestion). A tester read the old "No co-op Hookshot game" as "couldn't find Hookshot"
 # and stopped: these say what is missing and that the kit sets it up.
-function Get-KitHookshotNeedText([string]$Need, [string]$Game = '') {
+# $HsOnly: a Hookshot-only kit ("Start OoT Co-op.bat"), which has no emulator and no Build-Hookshot-Coop.bat.
+function Get-KitHookshotNeedText([string]$Need, [string]$Game = '', [bool]$HsOnly = $false) {
+    if ($HsOnly -and $Need -eq 'game') { return 'The game isn''t set up yet. The kit builds the co-op game on this PC from your own game file, once (about 20 to 40 minutes; the PC stays usable).' }
+    if ($HsOnly -and $Need -eq 'moved') { return "The co-op game this kit built is not in $Game any more (moved or deleted). Moved it? Answer n, move it back there, then start again. Otherwise it is built again (about 20 to 40 minutes)." }
     switch ($Need) {
         # (the tester behind this was an emulator player joining a Hookshot host with Join-Hookshot.bat)
         'game' { 'Playing on the emulator? Use Join.bat (or Host.bat): emulator and Hookshot players can be in the same game.' + "`n" + 'Hookshot isn''t set up yet. The kit builds the co-op Hookshot game on this PC from your own game, once (about 20 to 40 minutes; the PC stays usable).' }
@@ -683,23 +686,27 @@ function Get-KitHostPort([string]$Kit, [int[]]$Listening, [int]$Default) {
     return $Default
 }
 
+# How to make the puppet pack again. A Hookshot-only kit has no make-puppet-pack.cmd: its launcher's build step
+# makes the pack (play.ps1 sets this there).
+$script:KitPackRemake = 'Run make-puppet-pack.cmd again.'
+
 function Get-PuppetPackHint([string]$Manifest, [string]$ToolDir) {
     try {
         $json = [System.IO.File]::ReadAllText($Manifest) | ConvertFrom-Json -ErrorAction Stop
         if ($json.sound -ne $true) {
-            return 'Puppet pack: made without the other players'' sounds. Run make-puppet-pack.cmd again to hear their footsteps, sword and voice.'
+            return "Puppet pack: made without the other players' sounds. $script:KitPackRemake to hear their footsteps, sword and voice."
         }
         # No tunic models (a pack from before the colours, or a game without the
         # tunic textures): every other player shows in the green tunic (#202).
         $tunics = $json.tunics
         if ($json.tunics_off -ne $true -and (-not $tunics -or @($tunics.PSObject.Properties).Count -eq 0)) {
-            return 'Puppet pack: made without the tunic colours, so the other players show in green. Run make-puppet-pack.cmd again.'
+            return "Puppet pack: made without the tunic colours, so the other players show in green. $script:KitPackRemake"
         }
         $tool = Get-PuppetToolHash $ToolDir
         if ($tool -and $json.tool_sha256 -and $json.tool_sha256 -ne $tool) {
-            return 'Puppet pack: made by another version of the pack tool. Run make-puppet-pack.cmd again for the latest puppet fixes.'
+            return "Puppet pack: made by another version of the pack tool. $script:KitPackRemake (for the latest puppet fixes)"
         }
     } catch {
-        return 'Puppet pack: coop_puppet.json could not be read. Run make-puppet-pack.cmd again.'
+        return "Puppet pack: coop_puppet.json could not be read. $script:KitPackRemake"
     }
 }

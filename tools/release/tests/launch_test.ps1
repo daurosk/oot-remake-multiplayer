@@ -5,6 +5,7 @@
 # release in a local folder (no network). Then starts play.ps1 the way play.cmd does, for:
 # a newer release (asked, yes), declined, auto_update = yes and = no, none newer, no network,
 # a damaged download (the update fails, the old kit starts) and an update that did not finish.
+# Then "Start OoT Co-op.bat" (start.ps1) and each check it makes before the game starts.
 # Exits 1 when a check fails.
 $ErrorActionPreference = 'Stop'
 $release = Split-Path -Parent $PSScriptRoot
@@ -199,6 +200,13 @@ try {
     Write-File $man '{ not json'
     Check ((Get-PuppetPackHint $man $tool) -match 'could not be read') 'a broken coop_puppet.json: a line, no throw'
     Check ((Get-PuppetPackHint (Join-Path $ph 'none.json') $tool) -match 'could not be read') 'a missing coop_puppet.json: a line, no throw'
+    # A Hookshot-only kit has no make-puppet-pack.cmd: play.ps1 points the hints at the launcher.
+    $packRemake = $script:KitPackRemake
+    $script:KitPackRemake = 'Start "Start OoT Co-op.bat" again: it makes the pack again.'
+    Write-File $man '{"actors": [], "sound": true}'
+    $h = Get-PuppetPackHint $man $tool
+    Check ($h -match 'Start OoT Co-op\.bat' -and $h -notmatch 'make-puppet-pack') "a Hookshot-only kit: the pack hint names the launcher [$h]"
+    $script:KitPackRemake = $packRemake
     # Your own Link in your colour (#202): the nearest preset, as coop_colors.cpp TunicOf.
     Check ((Get-KitTunic 'red') -eq 'red') 'tunic: red'
     Check ((Get-KitTunic ' Blue ') -eq 'blue') 'tunic: a name, any case'
@@ -671,6 +679,9 @@ try {
     Check ((Get-KitHookshotNeedText 'quarantine') -match 'Antivirus' -and (Get-KitHookshotNeedText 'quarantine') -match 'Exclusions') 'hookshot need text: quarantine says antivirus and the exclusion steps'
     Check ((Get-KitHookshotNeedText 'pin') -match 'about 15 minutes') 'hookshot need text: a pin move says about 15 minutes'
     Check (-not (Get-KitHookshotNeedText '')) 'hookshot need text: nothing to say when nothing is needed'
+    $g1 = Get-KitHookshotNeedText 'game' '' $true; $m1 = Get-KitHookshotNeedText 'moved' 'D:\Old\game' $true
+    Check ($g1 -match "isn't set up yet" -and $g1 -notmatch 'emulator|Join\.bat') "hookshot need text, Hookshot-only kit: game names no emulator [$g1]"
+    Check ($m1 -match 'D:\\Old\\game' -and $m1 -notmatch 'Build-Hookshot|-Out') "hookshot need text, Hookshot-only kit: moved names no Build-Hookshot-Coop.bat [$m1]"
 
     # check-hosting's port (Revirie's bug: Host-Hookshot.bat writes the Hookshot game's coop.ini, not the emulator's)
     Remove-Item -LiteralPath (Join-Path $hk 'hookshot\game-folder.txt')
@@ -687,6 +698,162 @@ try {
 } finally {
     Remove-Item -LiteralPath $hk -Recurse -Force -ErrorAction SilentlyContinue
 }
+# --- "Start OoT Co-op.bat" (start.ps1, start-checks.ps1): the one entry point of the Hookshot-only kit and each
+# thing that could go wrong before the game starts. play.ps1 is a stub here: it writes what it was given.
+. (Join-Path $kitSrc 'scripts\start-checks.ps1')
+$sk = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-start-test-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+try {
+    # Still in the zip: Windows' temp copy of an open zip, a folder named like the zip, anywhere under TEMP.
+    Check (Test-KitInZip 'C:\Users\x\AppData\Local\Temp\Temp1_oot-coop-v1.zip\oot-coop-v1' '') 'in zip: Temp1_<zip> folder'
+    Check (Test-KitInZip 'C:\Downloads\oot-coop-v1.zip\oot-coop-v1' '') 'in zip: a folder named .zip'
+    Check (Test-KitInZip 'C:\Users\x\AppData\Local\Temp\abc\oot-coop' 'C:\Users\x\AppData\Local\Temp') 'in zip: under TEMP'
+    Check (-not (Test-KitInZip 'C:\OoT-Coop' 'C:\Users\x\AppData\Local\Temp')) 'not in zip: C:\OoT-Coop'
+    # Places the game build cannot use; spaces are fine.
+    Check ((Get-KitPathProblem 'C:\Users\x\OneDrive\Desktop\oot-coop' @('C:\Users\x\OneDrive')) -eq 'onedrive') 'path: inside OneDrive'
+    Check ((Get-KitPathProblem 'C:\Users\x\OneDrive - Contoso\oot-coop' @()) -eq 'onedrive') 'path: a business OneDrive folder'
+    Check ((Get-KitPathProblem "C:\Spiele\Zelda $([char]0x00DC)berall" @()) -eq 'unicode') 'path: a letter outside ASCII'
+    Check ((Get-KitPathProblem "C:\Users\x\$([char]0x5C71)$([char]0x7530)\oot-coop" @()) -eq 'unicode') 'path: a user folder in Japanese'
+    Check ((Get-KitPathProblem ('C:\' + ('a' * 90)) @()) -eq 'long') 'path: too long'
+    Check ((Get-KitPathProblem 'C:\My Games\OoT Co-op' @()) -eq '') 'path: spaces are fine'
+    foreach ($p in 'onedrive', 'unicode', 'long', 'readonly') { Check ([bool](Get-KitPathProblemText $p)) "path: '$p' has a plain-words text" }
+    # The folder a kit is copied to: free, else the next name.
+    $mt = Join-Path $sk 'move'
+    Check ((Get-KitMoveTarget @("$mt\OoT-Coop")) -eq "$mt\OoT-Coop") 'move target: a free folder'
+    Write-File "$mt\OoT-Coop\x.txt" 'taken'
+    Check ((Get-KitMoveTarget @("$mt\OoT-Coop")) -eq "$mt\OoT-Coop-2") 'move target: taken -> the next name'
+    # No admin rights: a folder this user cannot write is found (an ACL deny of this user's write).
+    $ro = Join-Path $sk 'readonly'
+    New-Item -ItemType Directory -Force -Path $ro | Out-Null
+    Check (Test-KitWritable $ro) 'writable: a normal folder'
+    & icacls.exe $ro /deny "$($env:USERNAME):(OI)(CI)(W,AD)" | Out-Null
+    try { Check (-not (Test-KitWritable $ro)) 'writable: a folder this user may not write is said' }
+    finally { & icacls.exe $ro /remove:d "$env:USERNAME" | Out-Null }
+    # Missing kit files (MANIFEST.txt): an antivirus (.exe/.dll) or a broken unzip.
+    $mk = Join-Path $sk 'manifest'
+    Write-File "$mk\MANIFEST.txt" "# Files`r`nMANIFEST.txt`r`nhookshot\hookshot_coop.dll`r`ndocs\SETUP.md`r`n"
+    Write-File "$mk\docs\SETUP.md" 'x'
+    $miss = @(Get-KitMissingFiles $mk)
+    Check ($miss.Count -eq 1 -and $miss[0] -eq 'hookshot\hookshot_coop.dll') "missing: the module is found missing [$miss]"
+    Check (((Get-KitMissingFilesText $miss) -join ' ') -match 'antivirus') 'missing: a .dll -> the antivirus text'
+    Check (((Get-KitMissingFilesText @('docs\SETUP.md')) -join ' ') -match 'unzip') 'missing: another file -> unzip again'
+    # The Visual C++ runtime: in the kit's hookshot\ or in Windows.
+    $rk = Join-Path $sk 'runtime'
+    New-Item -ItemType Directory -Force -Path "$rk\sys", "$rk\kit\hookshot" | Out-Null
+    Check (@(Get-KitMissingRuntime "$rk\kit" "$rk\sys").Count -eq 3) 'runtime: none -> all three named'
+    foreach ($d in 'vcruntime140.dll', 'vcruntime140_1.dll') { Write-File "$rk\kit\hookshot\$d" 'x' }
+    Write-File "$rk\sys\msvcp140.dll" 'x'
+    Check (@(Get-KitMissingRuntime "$rk\kit" "$rk\sys").Count -eq 0) 'runtime: in the kit and in Windows -> fine'
+    # A built game an antivirus took files from: said, not built again.
+    $qg = Join-Path $sk 'qgame'
+    Write-File "$qg\coop-built-from.txt" 'stamp'
+    Check ((Get-KitGameQuarantined $qg) -eq 'hookshot.exe') 'quarantine: the game exe gone'
+    Write-File "$qg\bin\hookshot.exe" 'x'
+    Check ((Get-KitGameQuarantined $qg) -eq 'hookshot_coop.dll') 'quarantine: the module gone'
+    Write-File "$qg\bin\hookshot_coop.dll" 'x'
+    Check ((Get-KitGameQuarantined $qg) -eq '') 'quarantine: all there'
+    Check ((Get-KitGameQuarantined (Join-Path $sk 'nogame')) -eq '') 'quarantine: no game built yet is not one'
+    # Other kits on this PC: listed, and the game file of an older one reused.
+    $list = Join-Path $sk 'appdata\kits.txt'
+    $old = Join-Path $sk 'old kit'; $new = Join-Path $sk 'new kit'
+    Write-File "$old\VERSION.txt" "kit: oot-coop-v1`r`n"; Write-File "$new\VERSION.txt" "kit: oot-coop-v2`r`n"
+    $nup = Join-Path $sk 'game.nup'; Write-File $nup 'x'
+    Write-File "$old\hookshot\game-files.txt" "$nup`n"
+    Check (@(Register-KitFolder $list $old).Count -eq 0) 'kits: the first kit has no others'
+    $others = @(Register-KitFolder $list $new)
+    Check ($others.Count -eq 1 -and $others[0] -eq $old) 'kits: the second sees the first'
+    Check ((Get-KitName $old) -eq 'oot-coop-v1') 'kits: the name from VERSION.txt'
+    Check ((Copy-KitGameFilesFrom $new $others) -eq $nup -and (Get-Content "$new\hookshot\game-files.txt") -eq $nup) 'kits: the new kit takes the old one''s game file (no question)'
+    Check ((Copy-KitGameFilesFrom $new $others) -eq '') 'kits: a kit with its own game file keeps it'
+
+    # Whole starts of a Hookshot-only kit, with a stub play.ps1.
+    function New-StartKit([string]$Dir) {
+        Copy-KitFile (Join-Path $kitSrc 'Start OoT Co-op.bat') (Join-Path $Dir 'Start OoT Co-op.bat')
+        foreach ($f in 'start.ps1', 'start-checks.ps1', 'kit-paths.ps1') { Copy-KitFile (Join-Path $kitSrc "scripts\$f") (Join-Path $Dir "scripts\$f") }
+        Write-File "$Dir\scripts\play.ps1" ("param([string]`$Mode, [switch]`$Hookshot, [switch]`$NoUpdate)`r`n" +
+            "[System.IO.File]::WriteAllText((Join-Path (Split-Path -Parent `$PSScriptRoot) 'played.txt'), `"`$Mode `$Hookshot `$NoUpdate `$env:OOT_COOP_KIT`")`r`n" +
+            "if (`$env:OOT_TEST_PLAY_MS) { Start-Sleep -Milliseconds ([int]`$env:OOT_TEST_PLAY_MS) }`r`nexit 0`r`n")
+        foreach ($d in 'vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll') { Write-File "$Dir\hookshot\$d" 'x' }
+        Write-File "$Dir\VERSION.txt" "kit: oot-coop-v2`r`n"
+        Write-File "$Dir\MANIFEST.txt" "# Files`r`nMANIFEST.txt`r`nVERSION.txt`r`nscripts\start.ps1`r`nhookshot\vcruntime140.dll`r`n"
+    }
+    $tmpFor = Join-Path $sk 'tmp'
+    New-Item -ItemType Directory -Force -Path $tmpFor, "$sk\desk", "$sk\appdata" | Out-Null
+    function Set-StartEnv([bool]$On) {
+        if ($On) {
+            $script:keepEnv = @($env:TEMP, $env:TMP, $env:LOCALAPPDATA)
+            $env:TEMP = $tmpFor; $env:TMP = $tmpFor; $env:LOCALAPPDATA = "$sk\appdata"; $env:OOT_COOP_DESKTOP = "$sk\desk"
+        } else {
+            $env:TEMP = $script:keepEnv[0]; $env:TMP = $script:keepEnv[1]; $env:LOCALAPPDATA = $script:keepEnv[2]
+            Remove-Item env:OOT_COOP_DESKTOP -ErrorAction SilentlyContinue
+        }
+    }
+    function Start-Kit([string]$Kit, [string]$Answer = '') {
+        $in = Join-Path $sk 'answer.txt'
+        [System.IO.File]::WriteAllText($in, "$Answer`r`n")
+        Set-StartEnv $true
+        try { $o = (cmd /c "call `"$Kit\Start OoT Co-op.bat`" -NoUpdate < `"$in`"" 2>&1) -join '|'; $c = $LASTEXITCODE }
+        finally { Set-StartEnv $false }
+        return @($c, $o)
+    }
+    $k = Join-Path $sk 'kits\OoT Co-op'
+    New-StartKit $k
+    $r = Start-Kit $k
+    Check ($r[0] -eq 0 -and (Read-File "$k\played.txt") -eq "choose True True $k") "start: a good kit hands over to play.ps1 choose -Hookshot with the kit named [$($r[1])] [$(Read-File "$k\played.txt")]"
+    # A desktop shortcut to another kit is moved to the kit started last.
+    $sh = New-Object -ComObject WScript.Shell
+    $l = $sh.CreateShortcut("$sk\desk\Play OoT Co-op.lnk"); $l.TargetPath = "$old\Start OoT Co-op.bat"; $l.Save()
+    [void](Start-Kit $k)
+    Check ($sh.CreateShortcut("$sk\desk\Play OoT Co-op.lnk").TargetPath -ieq "$k\Start OoT Co-op.bat") 'start: the desktop shortcut follows the kit started last'
+    # Started from inside the zip (only the .bat unpacked to a temp folder): the .bat itself says so.
+    $z = Join-Path $sk 'Temp1_oot-coop.zip'
+    Copy-KitFile (Join-Path $kitSrc 'Start OoT Co-op.bat') (Join-Path $z 'Start OoT Co-op.bat')
+    $r = Start-Kit $z
+    Check ($r[0] -ne 0 -and $r[1] -match 'still inside its zip' -and $r[1] -match 'Extract All') "start: only the .bat (from an open zip): says unzip first [$($r[1])]"
+    # The whole kit run from Windows' temp copy of the zip.
+    $zk = Join-Path $tmpFor 'Temp1_oot-coop.zip\oot-coop'
+    New-StartKit $zk
+    $r = Start-Kit $zk
+    Check ($r[0] -ne 0 -and $r[1] -match 'still inside its zip' -and -not (Test-Path "$zk\played.txt")) "start: the kit in TEMP: says unzip first, no game [$($r[1])]"
+    # An antivirus took a kit file.
+    Remove-Item -LiteralPath "$k\hookshot\vcruntime140.dll", "$k\played.txt"
+    $r = Start-Kit $k
+    Check ($r[0] -ne 0 -and $r[1] -match 'antivirus' -and $r[1] -match 'vcruntime140\.dll' -and -not (Test-Path "$k\played.txt")) "start: a kit file quarantined: says so, no game [$($r[1])]"
+    Write-File "$k\hookshot\vcruntime140.dll" 'x'
+    # No Visual C++ runtime anywhere (not in the kit; a test cannot take Windows' own away, so only when Windows has none).
+    # The game an antivirus emptied: said, not built again.
+    Write-File "$k\hookshot\game\coop-built-from.txt" 'stamp'
+    $r = Start-Kit $k
+    Check ($r[0] -ne 0 -and $r[1] -match 'antivirus' -and $r[1] -match 'hookshot\.exe' -and $r[1] -match 'not built again') "start: the game's exe quarantined: says so [$($r[1])]"
+    Remove-Item -LiteralPath "$k\hookshot\game" -Recurse
+    # A second double-click while the first start is busy.
+    Remove-Item -LiteralPath "$k\played.txt" -ErrorAction SilentlyContinue
+    $env:OOT_TEST_PLAY_MS = '6000'
+    Set-StartEnv $true
+    try { $first = Start-Process -FilePath $ps -PassThru -WindowStyle Hidden -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$k\scripts\start.ps1`"", '-NoUpdate') }
+    finally { Set-StartEnv $false }
+    try {
+        for ($i = 0; $i -lt 100 -and -not (Test-Path "$k\played.txt"); $i++) { Start-Sleep -Milliseconds 100 }
+        $r = Start-Kit $k
+        Check ($r[0] -ne 0 -and $r[1] -match 'already starting in another window') "start: a double start is refused while the first runs [$($r[1])]"
+    } finally { $first.WaitForExit(15000) | Out-Null; Remove-Item env:OOT_TEST_PLAY_MS }
+    $r = Start-Kit $k
+    Check ($r[0] -eq 0) "start: after the first window ends, a start works again [$($r[1])]"
+    # A folder the build cannot use (letters outside ASCII), no game yet: asked once; no -> what to do, no game.
+    $uk = Join-Path $sk "kits\Zelda $([char]0x00DC)ber"
+    New-StartKit $uk
+    $r = Start-Kit $uk 'n'
+    Check ($r[0] -ne 0 -and $r[1] -match 'letters the game build cannot handle' -and $r[1] -match 'yourself' -and -not (Test-Path "$uk\played.txt")) "start: a unicode path, answer no: says where to move it [$($r[1])]"
+    # A game built there already: no question (it works there).
+    Write-File "$uk\hookshot\game\bin\hookshot.exe" 'x'; Write-File "$uk\hookshot\game\bin\hookshot_coop.dll" 'x'
+    $r = Start-Kit $uk
+    Check ($r[0] -eq 0 -and (Test-Path "$uk\played.txt")) "start: a unicode path with the game built: starts [$($r[1])]"
+} finally {
+    Remove-Item -LiteralPath $sk -Recurse -Force -ErrorAction SilentlyContinue
+}
+# The one entry point: one command line (an update may replace it while it runs); the kit README is ten lines at most.
+$startLine = @(Get-Content (Join-Path $kitSrc 'Start OoT Co-op.bat') | Where-Object { $_ -and $_ -notmatch '^(@echo off|rem )' })
+Check ($startLine.Count -eq 1 -and $startLine[0] -match 'scripts\\start\.ps1" %\*' -and $startLine[0] -match '& exit /b 0$') 'Start OoT Co-op.bat: start.ps1, one line'
+Check (@(Get-Content (Join-Path $kitSrc 'README.txt')).Count -le 10) 'README.txt: ten lines at most'
 # --- hs-missing: Host-/Join-Hookshot.bat with no co-op Hookshot game say why in plain words and offer the build ---
 $hm = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-hs-missing-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 try {

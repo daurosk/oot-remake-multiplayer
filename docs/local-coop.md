@@ -110,7 +110,8 @@ The game sets a layer's viewport itself, with its AI node `OneShotLayerViewport`
 max y at +0x38. On the layer's projection (+0x80) it writes the ratio w / h at +0xb0 and 1 at +0x8,
 which makes the projection again. The module does the same write each frame for the world layer
 while local co-op is on, so player 1's view is its rect of the split. It writes only when the rect
-is not the one wanted, and gives the whole picture back once when local co-op stops. Tests:
+is not the one wanted, and gives the whole picture back once when local co-op stops.
+`LICHII_COOP_LOCAL_VIEWS=2` (tests) splits the picture with no second player. Tests:
 `tests/lichii/local_view_test.cpp`.
 
 ### The other players' views (step 3b, not built yet)

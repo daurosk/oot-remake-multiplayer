@@ -981,6 +981,10 @@ void UseLocalPads() {
     if (const char* slot = std::getenv("LICHII_COOP_LOCAL"); slot && *slot) {
         CoopLocalGame::AutoStart(std::atoi(slot));
     }
+    if (const char* views = std::getenv("LICHII_COOP_LOCAL_VIEWS"); views && *views) {   // (tests: the split alone)
+        CoopLocalGame::ForceViews(std::atoi(views));
+        LOG_INFO(Core, "coop: local co-op: LICHII_COOP_LOCAL_VIEWS={}: the views split with no second player", views);
+    }
 }
 
 }  // namespace CoopHookshot

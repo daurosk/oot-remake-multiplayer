@@ -114,6 +114,8 @@ public:
     // The extra players asked for (calc thread).
     std::vector<SeatNow> Seats() const;
     void Note(const std::string& line) const { Say(line); }
+    // Tests (LICHII_COOP_LOCAL_VIEWS=<2 to 4>): the views split for that many players with no second player.
+    void ForceViews(int players) { forced_views_ = players; }
 
 private:
     struct Extra {
@@ -145,6 +147,7 @@ private:
     Deps deps_;
     CoopLocalView::Views views_;
     CoopLocalView::Want want_;   // from the last Apply
+    int forced_views_ = 0;
     Facts facts_;
     std::array<Extra, CoopLocalInput::kMostExtra> extra_{};
     CoopLocalInput::Players players_;
@@ -166,5 +169,7 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x);
 // Tests (LICHII_COOP_LOCAL=<slot>): at the first frame in play, local co-op
 // starts with the keyboard for player 1 and pad `slot` for player 2.
 void AutoStart(int slot);
+// Tests: the views split for 2 to 4 players with no second player (LICHII_COOP_LOCAL_VIEWS).
+void ForceViews(int players);
 
 }  // namespace CoopLocalGame

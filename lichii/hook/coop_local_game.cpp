@@ -189,7 +189,11 @@ void Game::See(const Facts& facts) {
     facts_ = facts;
     const std::vector<Pad> pads = deps_.pads ? deps_.pads() : std::vector<Pad>{};
     for (int k = 1; k <= CoopLocalInput::kMostExtra; k++) Follow(k, pads);
-    if (deps_.write && facts.game) views_.Step(want_);
+    if (deps_.write && facts.game) {
+        CoopLocalView::Want want = want_;
+        if (CoopLocalLayout::ValidCount(forced_views_) && forced_views_ >= 2) want.players = forced_views_;
+        views_.Step(want);
+    }
     // A scene change deletes and makes the Players again: the wraps follow the new actor.
     for (int k = 1; k <= CoopLocalInput::kMostExtra; k++)
         players_.Set(k, extra_[Index(k)].wanted ? ActorOf(k) : 0);
@@ -313,6 +317,10 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x) {
 }
 
 void AutoStart(int slot) { g_auto_slot = slot; }
+
+void ForceViews(int players) {
+    if (Game* game = Installed()) game->ForceViews(players);
+}
 
 std::vector<SeatNow> Seats() {
     Game* game = Installed();

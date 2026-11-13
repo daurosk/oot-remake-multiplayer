@@ -44,7 +44,7 @@ input routing, with no game code (`tests/lichii/local_game_test.cpp`).
   too. A taken pad leaves the first player's merged pad (and its motion), its rumble stops, and the
   game's reads of Npad No.(k+1) get it (with the menu's button binds). The keyboard and mouse stay the
   first player's. Without the patch, local co-op is not offered. Patch 0017 is native-puppets-b2's
-  wraps alone (its draft 0010, renumbered so 0010 stays b2's number; after 0005 and 0007). A pad that reconnects (a new opening) goes back to the first
+  wraps alone (its draft 0010, renumbered so 0010 stays b2's number; after 0005 and 0007). On the Longshot pin (hookshot/PIN) 0016 is ported (only its context: Longshot's comments and 0015's HD-rumble block); 0001-0005, 0007-0009, 0012, 0015, 0016 and 0017 apply there in number order. A pad that reconnects (a new opening) goes back to the first
   player in Hookshot; the seat takes it again at the next frame.
 - **The read.** The Player's two pad reads (wraps 16 and 17) ask the controller manager's
   getController (main+0x3b25e00, wrap 19) for controller 0. While the Player of local player k

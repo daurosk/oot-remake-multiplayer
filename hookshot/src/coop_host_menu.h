@@ -48,6 +48,10 @@ struct Hooks {
     std::uint64_t direct_ms = 3000;
 };
 
+// Most players at once for a server the title menu's Host starts: the options' number (1 to 16, more taken as 16),
+// or with 0 the server's own default (coop::server::kDefaultMaxPlayers, as coop_server without --max-players).
+std::uint8_t HostMaxPlayers(std::uint8_t asked);
+
 class Menu {
 public:
     explicit Menu(Hooks hooks);
@@ -69,7 +73,7 @@ private:
         std::string name, password, relay_via, relay_key;
         std::uint16_t port = 0;
         bool upnp = false, invite = false, pvp = false;
-        std::uint8_t max_players = 4;  // the server default (kDefaultMaxPlayers) until the game side takes 16
+        std::uint8_t max_players = 0;  // HostMaxPlayers'
         std::uint32_t pose_upload_kbps = 0;
     };
     struct JoinJob {

@@ -15,8 +15,16 @@
 #include "join_helper.hpp"
 #include "nat_net.hpp"
 #include "options.hpp"
+#include "session.hpp"
 
 namespace CoopHostMenu {
+
+std::uint8_t HostMaxPlayers(std::uint8_t asked) {
+    if (asked == 0) {
+        return coop::server::kDefaultMaxPlayers;
+    }
+    return asked < coop::protocol::kMaxPlayers ? asked : coop::protocol::kMaxPlayers;
+}
 
 namespace nat = coop::server::nat;
 
@@ -164,9 +172,7 @@ int Menu::HostStart(const HosCoopHostOptions* o) {
     job.pvp = COOP_HAS(o, HosCoopHostOptions, pvp) && o->pvp != 0;
     job.relay_via = Trim(COOP_HAS(o, HosCoopHostOptions, relay_via) ? Text(o->relay_via) : std::string());
     job.relay_key = COOP_HAS(o, HosCoopHostOptions, relay_key) ? Text(o->relay_key) : std::string();
-    if (COOP_HAS(o, HosCoopHostOptions, max_players) && o->max_players != 0) {
-        job.max_players = o->max_players < coop::protocol::kMaxPlayers ? o->max_players : coop::protocol::kMaxPlayers;
-    }
+    job.max_players = HostMaxPlayers(COOP_HAS(o, HosCoopHostOptions, max_players) ? o->max_players : 0);
     if (COOP_HAS(o, HosCoopHostOptions, pose_upload_kbps)) {
         job.pose_upload_kbps = o->pose_upload_kbps;
     }

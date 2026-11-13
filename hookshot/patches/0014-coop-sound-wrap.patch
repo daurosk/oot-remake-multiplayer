@@ -1,0 +1,59 @@
+From 754bd04fcb900f7bd86ed15004d79b474b1ab9a7 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Fri, 13 Nov 2026 01:29:09 -0900
+Subject: [PATCH] Co-op sound wrap: the sounds the game starts, to the module
+
+One more wrapped game function in patch 0005's table
+(nx2/coop_world_wraps.py WRAPS; its id in host/hos_coop_sound.h), for the
+other Links' sounds (oot-remake-multiplayer's docs/puppet.md "Link sounds"):
+- 24: main+0x440630, xlink2's searchAndEmit (user, &asset, &handle, 0).
+The module keeps the names the game starts on the local Link's own sound
+user and sends them; the other games start the same assets on that
+player's puppet with the game's own calls. Phase 0 only reads. Nothing
+else changes: the wrap machinery, the checks (build id, first words) and
+the hello's bits are 0005's.
+---
+ host/hos_coop_sound.h   | 17 +++++++++++++++++
+ nx2/coop_world_wraps.py |  5 +++++
+ 2 files changed, 22 insertions(+)
+ create mode 100644 host/hos_coop_sound.h
+
+diff --git a/host/hos_coop_sound.h b/host/hos_coop_sound.h
+new file mode 100644
+index 0000000..2cbc9b9
+--- /dev/null
++++ b/host/hos_coop_sound.h
+@@ -0,0 +1,17 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later
++   The other Links' sounds on Hookshot (oot-remake-multiplayer, docs/puppet.md "Link sounds").
++
++   One wrapped game function more in the one wrap table (patch 0005's nx2/coop_world_wraps.py WRAPS; the ids are in
++   the one wrap space of hos_coop_world.h). Patch 0014 adds its row and this file (Hookshot's host/hos_coop_sound.h is
++   the same file). The module's hos_coop_wrap gets it; Hookshot announces it in HOS_COOP_WORLD_HELLO's bits. The row:
++     (24, 0x440630, (0xd503237f, 0xa9bb7bfd, 0xa90167fa, 0xa9025ff8)),  # pacibsp; stp x29, x30; stp x26, x25; stp x24, x23
++   Phase 0 only reads (never skips): x0 the xlink2 user (an actor's SLink or ELink user), x1 the asset cell (8 bytes:
++   the asset, whose first word is its name's char*), x2 the handle. Plain C. */
++#ifndef HOS_COOP_SOUND_H
++#define HOS_COOP_SOUND_H
++
++/* main+0x440630, xlink2's searchAndEmit (48 callers: the AI node OneShotXLinkSearchAndEmit, the player's and the
++   actors' own code): every named sound or effect the game starts on a user. */
++#define HOS_COOP_WRAP_SOUND_EMIT 24u
++
++#endif
+diff --git a/nx2/coop_world_wraps.py b/nx2/coop_world_wraps.py
+index 8877d6c..e01eda7 100644
+--- a/nx2/coop_world_wraps.py
++++ b/nx2/coop_world_wraps.py
+@@ -14,6 +14,11 @@ import os
+ MAIN = 0x80020000
+ BUILD_ID = "e0f3ccfaf50065ae4ea01eb5aeb13b1a45da3348"
+ WRAPS = (
++    # HOS_COOP_WRAP_SOUND_EMIT (patch 0014): xlink2's searchAndEmit, every named sound or effect the game starts on a
++    # user (48 callers: the AI node OneShotXLinkSearchAndEmit, the player's and the actors' own code). x0 the user, x1
++    # the asset cell. The module keeps the names started on our own Link and the other games start them on its puppet
++    # (oot-remake-multiplayer's docs/puppet.md "Link sounds"). Phase 0 reads only, never skips
++    (24, 0x440630, (0xd503237f, 0xa9bb7bfd, 0xa90167fa, 0xa9025ff8)),  # pacibsp; stp x29, x30; stp x26, x25; stp x24, x23
+     # HOS_COOP_WRAP_FLAG_APPLY: the game applies its queued flag writes (the save load's too); the module counts them
+     (1, 0xb99980, (0xd503237f, 0xd10243ff, 0xfd0013e8, 0xa9037bfd)),   # pacibsp; sub sp; str d8; stp x29, x30
+     # HOS_COOP_WRAP_TIME_SET: the game sets its clock (the AI node's set, the Sun's Song, a night's sleep, a save's

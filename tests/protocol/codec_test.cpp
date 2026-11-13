@@ -102,7 +102,7 @@ TEST_CASE("an unknown sample component is skipped by its length") {
 
 TEST_CASE("an unknown message type is reported, not decoded") {
   Bytes b;
-  put_u16(b, 500);
+  put_u16(b, 60000);  // no type there (500 is LINK_SOUND)
   put_u16(b, 2);
   b.push_back(1);
   b.push_back(2);
@@ -1226,6 +1226,34 @@ TEST_CASE("an ocarina note has its number, channel and layout") {
   CHECK(encode(OcarinaNote{17, 1}, out) == Error::bad_value);
   Bytes bad = must_encode(OcarinaNote{0, 1});
   bad[kHeaderSize + 1] = 20;  // past the last note
+  Message m;
+  CHECK(decode(bad, m) == Error::bad_value);
+}
+
+TEST_CASE("a Link sound has its number, channel and layout, and only the game's own names pass") {
+  CHECK(static_cast<int>(MessageType::link_sound) == 500);
+  CHECK(channel_of(MessageType::link_sound) == kChannelSession);
+  CHECK_FALSE(allowed_on_channel(MessageType::link_sound, kChannelPlayerSamples));
+  CHECK(may_send(Sender::client, MessageType::link_sound));
+  CHECK(may_send(Sender::server, MessageType::link_sound));
+  Message n = LinkSound{0, "Ocarina_D"};
+  CHECK(check_received(n, Sender::client, kChannelSession) == Error::none);
+  CHECK(set_sender(n, 16));
+  CHECK(sender_of(n) == 16);
+  const std::string longest(kMaxLinkSoundChars, 'a');
+  const Bytes b = must_encode(LinkSound{0, longest});
+  REQUIRE(b.size() == kHeaderSize + 1 + 2 + kMaxLinkSoundChars);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<LinkSound>(back).name == longest);
+  Bytes out;
+  CHECK(encode(LinkSound{0, ""}, out) == Error::bad_value);
+  CHECK(encode(LinkSound{0, longest + "a"}, out) == Error::bad_value);
+  CHECK(encode(LinkSound{0, "Pl Voice"}, out) == Error::bad_value);
+  CHECK(encode(LinkSound{0, "a/b"}, out) == Error::bad_value);
+  CHECK(encode(LinkSound{17, "Ocarina_D"}, out) == Error::bad_value);
+  Bytes bad = must_encode(LinkSound{0, "Ocarina_D"});
+  bad[kHeaderSize + 1 + 2] = '%';  // a name the game never has
   Message m;
   CHECK(decode(bad, m) == Error::bad_value);
 }

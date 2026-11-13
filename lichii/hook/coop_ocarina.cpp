@@ -416,6 +416,13 @@ void HandBind::Restore(const WriteWord& write) {
     block_ = 0;
 }
 
+std::uint64_t HandBind::HandFor(std::uint64_t belt_bone) {
+    if (belt_bone == kBeltBone) {
+        return kHandBone;
+    }
+    return belt_bone == kAdultBeltBone ? kAdultHandBone : 0;
+}
+
 std::string HandBind::Step(const ReadWord& read, const WriteWord& write, std::uint64_t actor,
                            bool playing) {
     if (actor != actor_) {
@@ -433,7 +440,7 @@ std::string HandBind::Step(const ReadWord& read, const WriteWord& write, std::ui
         }
         // Only put back what is still ours: the same Ocarina, still in hand.
         const auto bone = read(block_ + kBindBone);
-        if (Find(read, actor) == block_ && bone && ((*bone >> 16) & 0xffff) == kHandBone) {
+        if (Find(read, actor) == block_ && bone && ((*bone >> 16) & 0xffff) == hand_bone_) {
             Restore(write);
             return "ocarina back on the belt";
         }
@@ -448,7 +455,7 @@ std::string HandBind::Step(const ReadWord& read, const WriteWord& write, std::ui
         const std::uint64_t block = Find(read, actor);
         const auto bone = block ? read(block + kBindBone) : std::nullopt;
         const auto name = block ? read(block + kBindName) : std::nullopt;
-        if (!bone || !name || *name != kBeltName || ((*bone >> 16) & 0xffff) != kBeltBone) {
+        if (!bone || !name || *name != kBeltName || HandFor((*bone >> 16) & 0xffff) == 0) {
             refused_ = true;
             char buf[96];
             std::snprintf(buf, sizeof buf, "ocarina not moved: bind 0x%llx bone 0x%llx name 0x%llx",
@@ -466,6 +473,7 @@ std::string HandBind::Step(const ReadWord& read, const WriteWord& write, std::ui
             saved_matrix_[i] = *w;
         }
         saved_bone_ = *bone;
+        hand_bone_ = HandFor((*bone >> 16) & 0xffff);
         block_ = block;
         just = true;
     }
@@ -481,7 +489,7 @@ std::string HandBind::Step(const ReadWord& read, const WriteWord& write, std::ui
         block_ = 0;
         return "ocarina bind unreadable; let go";
     }
-    const std::uint64_t hand = (*bone & ~(0xffffull << 16)) | (kHandBone << 16);
+    const std::uint64_t hand = (*bone & ~(0xffffull << 16)) | (hand_bone_ << 16);
     static constexpr std::uint64_t kIdentity[kMatrixWords] = {
         0x3f800000ull, 0, 0x3f800000ull << 32, 0, 0, 0x3f800000ull};
     write(block_ + kBindBone, hand);

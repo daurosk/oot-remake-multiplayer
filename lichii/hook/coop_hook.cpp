@@ -78,6 +78,7 @@
 #include "coop_live_events.h"
 #include "coop_shared_scenes.h"
 #include "coop_objects.h"
+#include "coop_link_sound.h"
 #include "coop_ocarina_sound.h"
 #include "coop_pose.h"
 #include "coop_puppet.h"
@@ -837,6 +838,11 @@ public:
                                     ? std::optional<std::string>(reading->animation->name)
                                     : std::nullopt,
                                 report.connected ? session_.get() : nullptr);
+        // The sounds the game starts on our own Link, for the other games (coop_link_sound.h).
+        CoopLinkSound::Frame(report.connected ? session_.get() : nullptr,
+                             static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                            std::chrono::steady_clock::now().time_since_epoch())
+                                                            .count()));
         CoopFairy::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                            report.connected ? session_.get() : nullptr, report.server_now_us);
         // Issue 199: our horse sent while we ride; a copy of theirs under each

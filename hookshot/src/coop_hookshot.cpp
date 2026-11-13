@@ -42,6 +42,7 @@
 #include "coop_hook.h"
 #include "coop_hud.h"
 #include "coop_hud_hearts.h"
+#include "coop_link_sound.h"
 #include "coop_live_events.h"
 #include "coop_png.h"
 #include "coop_puppet.h"
@@ -55,6 +56,7 @@
 #include "coop_host_menu.h"
 #include "hos_coop_api.h"
 #include "hos_coop_host.h"
+#include "hos_coop_sound.h"
 #include "hos_coop_world.h"
 
 #ifdef _WIN32
@@ -716,6 +718,7 @@ bool Start(const HosCoopApi* api) {
         CoopPuppetConfig::Configure();  // as the emulator's cave (coop_puppet_config.h)
     }
     g_hold = EnvOn("LICHII_COOP_OBJECTS_AI_HOLD");
+    CoopLinkSound::SetProbe(EnvOn("LICHII_COOP_DEBUG_SOUND"));  // every user's sounds named once in the log
     // Flags through the game's own functions (coop_flag_native.h): its writes as events from the applier's wrap, ours
     // through its setters on the calc thread. LICHII_COOP_FLAG_EVENTS=0 / LICHII_COOP_FLAG_SETTERS=0: as on the
     // emulator (the table diff, writes into the game's queues).
@@ -777,6 +780,9 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
             LOG_INFO(Core, "coop: world hooks: hookshot.exe has level {} (this module {}), wraps {:#x}{}", level.version,
                      HOS_COOP_WORLD_VERSION, level.wraps,
                      level.version < HOS_COOP_WORLD_VERSION ? ": an older Hookshot build, some hooks are missing" : "");
+            if ((level.wraps >> HOS_COOP_WRAP_SOUND_EMIT & 1) == 0) {
+                LOG_INFO(Core, "coop: this Hookshot has no sound wrap (patch 0014): our Link's sounds are not sent");
+            }
         }
         return 1;
     }
@@ -804,6 +810,15 @@ bool HasWrap(std::uint32_t id) {
 // The wrapped game functions (patch 0005, nx2/coop_world_wraps.py). The game's function always runs (0 at phase 0).
 int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
     if (!g_on || x == nullptr) {
+        return 0;
+    }
+    if (id == HOS_COOP_WRAP_SOUND_EMIT) {
+        // A sound the game starts (patch 0014): kept when it is on our own Link (coop_link_sound.h). Reads only.
+        if (phase == 0) {
+            CoopLinkSound::OnEmit(x[0], x[1], [](std::uint64_t a, void* out, std::size_t n) {
+                return CoopRuntime::Read(a, out, n);
+            });
+        }
         return 0;
     }
     if (id == HOS_COOP_WRAP_EVENT_REQUEST) {

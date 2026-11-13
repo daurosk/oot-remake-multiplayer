@@ -140,6 +140,7 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 355 | `DUNGEON_EVENT` | 0 | both | `u8` player field, scene (string, 1 to 64), event name (string, 1 to 96, no `HavePlayedEvent.`): a room gimmick's event started in the sender's game. Relayed to the others in that scene (only while the sender is in it), never kept (protocol 10, branch `deku-dungeon-2`; 356 to 359 kept; [dungeon.md](dungeon.md), "Live events") |
 | 385 | `PLAYER_RIDE` | 3 | both | `u8` player field, `u8` flags (bit 0 riding; other bits refused), horse actor name (string, up to 64 characters; not empty when riding), offset 3 x f32 (each within 10 m), rotation 4 x f32 quaternion, `u8` 1 when an animation follows (string name up to 64 characters, f32 frame, f32 rate) else 0. Relayed (protocol 10, issue 199; 385 to 389 are for riding, [Riding](#riding-player_ride)) |
 | 401 | `PLATFORM_COUNTER` | 4 | both | `u8` player field, scene (string, 1 to 64), `u64` server time (microseconds), `u8` count (1 to 32), then per looping pause counter `u64` key (not 0, no key twice), `u32` period (microseconds, at least 100,000), `u32` time since its last start (microseconds), `u32` starts seen (at least 1). Relayed to the others in the sender's scene, never kept (protocol 10, branch `platforms-b2`; [Moving platforms](#moving-platforms-platform_clock)) |
+| 500 | `LINK_SOUND` | 0 | both | `u8` player field, name (string, 1 to 55: letters, digits and `_`): a sound the game itself started on the sender's own Link, by its asset name. Relayed to everyone else like `CHAT` (protocol 11, branch `ocarina-sound-b`; 501 to 509 kept; [Link sounds](#link-sounds-link_sound)) |
 | 400 | `PLATFORM_CLOCK` | 4 | both | `u8` player field, scene (string, 1 to 64), `u64` server time (microseconds) the words were read at, `u8` count (1 to 16), then per platform `u64` placement hash of its driver, `u64` key (region << 32 or byte offset: region 0 the actor, offset under 0x600; 2 + n the component in table entry n, under 0x200; 0xffff the AS slot 0 frame, offset 0; offsets a multiple of 4), `f32` value, `f32` rate a second (not 0, at most 10,000 either way), `f32` cycle (0 to 10^7, 0: not seen); finite floats, no hash twice. Relayed to the others in the sender's scene, never kept (protocol 10, branch `platforms-b`; 401 to 404 kept; [Moving platforms](#moving-platforms-platform_clock)) |
 | 16 | `HOST` | 1 | server | `u8` the hosting player's number (1 to 16) |
 | 17 | `PLAYER_EQUIP` | 0 | both | `u8` player field, then the components below |
@@ -327,6 +328,14 @@ The other players hear a player's Ocarina from that player's puppet (issue 152; 
 - The server relays it to everyone else like `CHAT`, with the sender's number in the player field.
 - Only the sound: a song played this way has no effect in the other games (no warp, no rain, no door); the song itself is checked only in the game that played it.
 
+### Link sounds (`LINK_SOUND`, protocol 11)
+
+The other players hear every sound the game itself starts on a player's Link, from that player's puppet (issues 131 and 152; [puppet.md](puppet.md), "Link sounds").
+
+- On Hookshot, patch 0014 wraps xlink2's `searchAndEmit` (main+0x440630). When the game starts a named asset on our own Link's sound user, the module keeps its name and the next frame sends `LINK_SOUND` with it: voice, footsteps, sword, shield, items, water, the Ocarina's notes if the game starts them there. The same name again within 80 ms is not sent, and at most 20 go out in a second.
+- The server relays it to everyone else like `CHAT`, with the sender's number in the player field.
+- A game starts the asset on that player's puppet with the game's own calls (the asset found once with 0x43db00, then 0x440630 on the puppet's own sound user) when the puppet is shown and within 30 m of its own Link; at most 24 starts a second for all puppets; a sound older than 0.4 s when it could start is dropped; one the puppet's animation already plays is not started twice.
+
 ### Field grass (`GRASS_CUT`)
 
 One cut of the field grass the foliage module draws (no actor; [world.md](world.md), "Field grass"), as the sender's game queued it.
@@ -489,6 +498,7 @@ Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hoo
 - Version 10 also (branch `encrypt-always-b`, 2026-11-12): every session has a join password and is encrypted; the plain path is gone both ways (a server refuses a `HELLO` without a key share and every `HELLO` when it has no password, and `coop_server` does not start without one; a game refuses a `WELCOME` without keys). No new type, no format change.
 - Version 10 is this release's protocol: everything above marked version 10 ships in it. `main` before this release had an unreleased draft of version 10 (without keep-number, encrypt-always and the platform types); a build of that draft and one of this release both say 10 but do not work together (the draft's `HELLO` has no previous number and may have no key share, and its server lets a game in without a password). The draft was never released, so no player has it. These were briefly numbered 11 on the integration branch.
 - Version 11 (branch `native-host-b`, 2026-11-12): up to 16 players. Player numbers are 1 to 16 (`kMaxPlayers`), `WELCOME` lists up to 15 others, 12 more slot colours; a version 10 game refuses a `WELCOME` with 5 or more players, so the version goes up. The server takes `--max-players` (1 to 16, default 4 until the games' side takes 16) and sends `PLAYER_SAMPLE` and `PLAYER_POSE` by where the players are ("Who gets which stream"). No new type.
+- Version 11 also (branch `ocarina-sound-b`): `LINK_SOUND` (500); 500 to 509 kept for Link's sounds. A build without it ignores the type (no sounds from that player).
 
 ## Who gets which stream
 

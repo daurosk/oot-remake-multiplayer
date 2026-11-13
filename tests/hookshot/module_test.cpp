@@ -15,6 +15,7 @@
 #include "coop_counters.h"
 #include "coop_hold.h"
 #include "coop_hookshot.h"
+#include "hos_coop_sound.h"
 #include "hos_coop_world.h"
 #include "coop_svc.h"
 
@@ -417,4 +418,20 @@ TEST_CASE("hookshot: the world hooks (patch 0005) hand the pause counter starts 
     // The time set's wrap: the function every time change of the game goes through.
     std::snprintf(wrap, sizeof wrap, "(%u, 0xeee640, (0xd503237f,", HOS_COOP_WRAP_TIME_SET);
     CHECK(NewFile(patch, "nx2/coop_world_wraps.py").find(wrap) != std::string::npos);
+}
+
+TEST_CASE("hookshot: the sound wrap (patch 0014) is one row in 0005's table, its header hookshot/src's") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0014-coop-sound-wrap.patch");
+    CHECK(NewFile(patch, "host/hos_coop_sound.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_sound.h"));
+    char row[64];
+    std::snprintf(row, sizeof row, "+    (%u, 0x440630, (0xd503237f, 0xa9bb7bfd, 0xa90167fa, 0xa9025ff8)),",
+                  HOS_COOP_WRAP_SOUND_EMIT);
+    CHECK(patch.find(row) != std::string::npos);
+    // At the table's head, so 0013's rows after row 3 and this one apply in either order.
+    CHECK(patch.find(" WRAPS = (\n+    # HOS_COOP_WRAP_SOUND_EMIT") != std::string::npos);
+    // The id is free in the one wrap space (0005: 1-3, 0013: 4-5, 0010: 16-23).
+    CHECK(HOS_COOP_WRAP_SOUND_EMIT > HOS_COOP_WRAP_EVENT_REQUEST);
+    CHECK(HOS_COOP_WRAP_SOUND_EMIT < 64);
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("if (id == HOS_COOP_WRAP_SOUND_EMIT) {") != std::string::npos);
 }

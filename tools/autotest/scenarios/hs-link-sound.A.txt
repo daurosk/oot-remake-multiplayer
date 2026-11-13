@@ -1,0 +1,56 @@
+# hs-link-sound (Hookshot, issues 131 and 152, branch ocarina-sound-b): the sounds the game starts on
+# A's own Link reach B's puppet of A, from the game's own calls (docs/puppet.md "Link sounds").
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-link-sound (child save, Fairy Ocarina).
+# Needs Hookshot built with patches 0005 and 0014 (A's log has no "no sound wrap (patch 0014)" line).
+# The autotest has no audio: the proof is in the logs. A's log: "coop: sound probe: user 0x...
+# (our Link) emits '...'" lines (what the game starts on A's Link: steps, swings, voice, the
+# Ocarina's notes if they go there) and "coop: link sound '...' sent". B's log (DEBUG_ANIM):
+# "P1 sound '...'" for the same names while A is near, none while A is far (mark far).
+# B only waits.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_DEBUG_SOUND=1
+mark start
+wait 120
+mark walk
+stick 0 0.8 90
+stick 0 -0.8 90
+wait 30
+mark sword
+press Y 12
+wait 40
+press Y 12
+wait 40
+press Y 12
+wait 60
+mark roll
+stick 0 0.8 10
+press A 8
+wait 60
+press B 12
+wait 60
+mark ocarina-out
+press DLEFT 12
+wait 240
+# The first Ocarina use may show an "Ocarina Audio Input" note; A closes it.
+press A 12
+wait 120
+mark notes
+hold L 30
+wait 60
+hold R 30
+wait 60
+hold Y 30
+wait 60
+hold X 30
+wait 60
+hold A 30
+wait 90
+press B 12
+wait 120
+press B 12
+wait 90
+mark far
+# 45 m away: B hears nothing of A's steps (no "P1 sound" in B's log from here on)
+stick 0 0.9 600
+press Y 12
+wait 60
+mark end

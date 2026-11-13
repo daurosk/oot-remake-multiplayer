@@ -287,13 +287,32 @@ TEST_CASE("boss scenes: one heart container for all, never two") {
         // C's raise is not a pickup of its own.
         CHECK(c.Tick(with(3, 16), {}, 2'200'000).claims.empty());
     }
-    SUBCASE("B picks it up after the answer came: put back, no second heart") {
-        a.Tick(with(1, 16), {}, 2'000'000);
+    SUBCASE("in the beaten boss's area our own maximum is capped at one container, then at the answer") {
+        // Before any answer: our maximum when the boss died + one container (the flag watcher holds it).
+        CHECK(b.Tick(with(2, 12), {}, 1'500'000).max_life_cap == std::optional<std::int32_t>(16));
+        CHECK(a.Tick(with(1, 16), {}, 2'000'000).max_life_cap == std::optional<std::int32_t>(16));
         b.Receive(proto::BossHeart{1, kGohma, true, 16});
-        CHECK(b.Tick(with(2, 12), {}, 2'100'000).set_max_life == std::optional<std::int32_t>(16));
-        Actions ob = b.Tick(with(2, 20), {}, 2'200'000);  // its game's own pickup on top
+        Actions ob = b.Tick(with(2, 12), {}, 2'100'000);
         CHECK(ob.set_max_life == std::optional<std::int32_t>(16));
+        CHECK(ob.max_life_cap == std::optional<std::int32_t>(16));  // a second pickup can't pass it
         CHECK(ob.claims.empty());
+        // Outside the area: no cap (no container there), the answer still raises.
+        CHECK_FALSE(c.Tick(with(3, 12, kFar), {}, 2'100'000).max_life_cap);
+        // A diverged save above the winner's: never capped below its own maximum.
+        Director d;
+        d.Receive(Scene(1, kGohma, proto::BossSceneKind::outro_start, kInRoom));
+        d.Tick(with(4, 24), {}, 1'000'000);
+        d.Tick(with(4, 24), {}, 1'100'000);
+        d.Receive(proto::BossHeart{1, kGohma, true, 16});
+        Actions od = d.Tick(with(4, 24), {}, 1'200'000);
+        CHECK(od.max_life_cap == std::optional<std::int32_t>(24));
+        CHECK_FALSE(od.set_max_life);
+    }
+    SUBCASE("a claim past what the message carries is not sent") {
+        Director d;
+        d.Receive(Scene(1, kGohma, proto::BossSceneKind::outro_start, kInRoom));
+        d.Tick(with(4, 80), {}, 1'000'000);
+        CHECK(d.Tick(with(4, 84), {}, 2'000'000).claims.empty());
     }
     SUBCASE("a rise before the boss is beaten is no claim") {
         Director d;
@@ -333,4 +352,19 @@ TEST_CASE("boss scenes: in a boss rush stage the area is near the starter, and n
     Actions out = b.Tick(At(Vec{10.0f, 0.0f, 0.0f}, 2, false, "GohmaStage"), {}, 1'000'000);
     CHECK(out.play == std::optional<std::string>("Dm_Deku_BossIn"));
     CHECK_FALSE(out.move_to);
+}
+
+TEST_CASE("boss scenes: the door's event ending as our game takes the intro does not end the intro") {
+    Director a;
+    a.Tick(At(kInRoom, 1, true), {}, 500'000);  // the boss door's own event runs
+    // Our game takes the intro on the tick the door's event ended, before the intro runs.
+    Actions out = a.Tick(At(kInRoom, 1, false), Took("Dm_Deku_BossIn"), 1'000'000);
+    REQUIRE(out.send.size() == 1);
+    CHECK(out.send[0].kind == proto::BossSceneKind::intro_start);
+    CHECK(a.phase(kGohma) == Phase::intro);
+    a.Tick(At(kInRoom, 1, true), {}, 1'100'000);  // the intro runs
+    CHECK(a.phase(kGohma) == Phase::intro);
+    out = a.Tick(At(kInRoom, 1, false), {}, 20'000'000);  // and ends: now it counts
+    REQUIRE(out.send.size() == 1);
+    CHECK(out.send[0].kind == proto::BossSceneKind::intro_end);
 }

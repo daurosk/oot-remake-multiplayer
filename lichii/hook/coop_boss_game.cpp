@@ -169,6 +169,7 @@ struct Glue {
     std::uint64_t requests_cursor = 0;
     std::optional<std::int32_t> max_life;          // set by the hook (SetMaxLife)
     std::optional<std::int32_t> max_life_write;    // for the hook (TakeMaxLifeWrite)
+    std::optional<std::int32_t> max_life_cap;      // for the hook (MaxLifeCap)
     std::vector<std::string> wanted;               // events for the live-event requester (TakeWantedEvents)
     std::vector<std::string> lines;                // chat lines (TakeLines)
 
@@ -239,6 +240,7 @@ struct Glue {
             if (connected) {
                 sync.Reset();
                 scenes.Reset();
+                max_life_cap.reset();
                 connected = false;
             }
             return;
@@ -307,6 +309,7 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
                   coop::host::Session* session, std::uint64_t now_us) {
     auto& requests = CoopLiveEvents::TheGameRequests();
     if (!scenes_on || !requests.Live()) {
+        max_life_cap.reset();
         return false;
     }
     if (!scenes_live) {
@@ -340,6 +343,12 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
     if (a.set_max_life) {
         max_life_write = a.set_max_life;
     }
+    if (a.max_life_cap != max_life_cap) {
+        LOG_INFO(Core, "coop: boss: our maximum life {}", a.max_life_cap
+                     ? "may not rise past " + std::to_string(*a.max_life_cap) + " here (the boss's one heart container)"
+                     : std::string("cap lifted"));
+    }
+    max_life_cap = a.max_life_cap;
     session->with_client([&](coop::net::Client& c) {
         for (auto& m : a.send) {
             const bool sent = c.send(coop::protocol::Message{m});
@@ -405,6 +414,10 @@ void SetMaxLife(std::optional<std::int32_t> max_life) {
 
 std::optional<std::int32_t> TakeMaxLifeWrite() {
     return std::exchange(TheGlue().max_life_write, std::nullopt);
+}
+
+std::optional<std::int32_t> MaxLifeCap() {
+    return TheGlue().max_life_cap;
 }
 
 std::vector<std::string> TakeWantedEvents() {

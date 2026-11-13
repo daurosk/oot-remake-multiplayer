@@ -831,6 +831,10 @@ public:
             const bool known = max_life && max_life->kind == coop::protocol::FlagKind::int32;
             CoopBoss::SetMaxLife(known ? std::optional<std::int32_t>(static_cast<std::int32_t>(max_life->value))
                                        : std::nullopt);
+            // A second pickup of that container is put back by the flag watcher, never sent.
+            if (session_) {
+                session_->cap_max(coop::protocol::FlagKey{0xfbe01da1u, 0}, CoopBoss::MaxLifeCap());
+            }
             if (const auto to = CoopBoss::TakeMaxLifeWrite(); to && known) {
                 auto set = *max_life;
                 set.value = static_cast<std::uint32_t>(*to);

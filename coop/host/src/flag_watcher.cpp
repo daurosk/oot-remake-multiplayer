@@ -832,6 +832,24 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       ++stats_.pickup_resets;  // the game reset it (a scene change): ours only
       continue;
     }
+    if (const auto cap = max_caps_.find(key);
+        cap != max_caps_.end() && !restate_.contains(key) && before.kind == protocol::FlagKind::int32 &&
+        now->kind == protocol::FlagKind::int32 && as_int(now->value) > as_int(before.value) &&
+        as_int(now->value) > cap->second && store.is_max(key)) {
+      // Past the cap (cap_max: a second pickup of a boss's one heart
+      // container): put back, never sent.
+      FlagEntry back = before;
+      back.key = key;
+      back.value = as_bits((std::max)(as_int(before.value), std::int64_t{cap->second}));
+      if (store.write_exact(back)) {  // exact: the max rule would keep the higher
+        ++stats_.max_caps_kept;
+        ++stats_.applied;
+        it->second = back;
+        pending_.erase(key);
+        continue;
+      }
+      ++stats_.write_failures;  // sent as any rise
+    }
     if (!restate_.contains(key) && before.kind == protocol::FlagKind::int32 &&
         now->kind == protocol::FlagKind::int32 && as_int(now->value) < as_int(before.value) &&
         store.is_max(key)) {

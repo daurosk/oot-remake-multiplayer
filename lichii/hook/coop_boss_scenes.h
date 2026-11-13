@@ -31,8 +31,13 @@
 //   line; the progress comes by the shared flags.
 // - Heart container (one for all): our maximum life rising in a beaten boss's
 //   area is a pickup: a BOSS_HEART claim. The server's answer (the first claim
-//   it got) raises every game to that maximum, once. A rise after that answer
-//   (a pickup of a container the winner had already taken) is put back.
+//   it got) raises every game to that maximum, once. While in that area our
+//   own maximum may not rise past (our maximum when the boss died + one
+//   container, or the answer once known): the flag watcher puts such a rise
+//   back unsent (FlagWatcher::cap_max), so a second pickup never reaches the
+//   others through the max rule.
+// - A boss beaten in this session: another game's new intro of it is not
+//   joined (a refight on another save in the same session plays alone).
 // - The starter leaving during the intro, or no end heard for kIntroMaxUs:
 //   nobody waits for it (each intro plays to its own end).
 #pragma once
@@ -107,7 +112,10 @@ struct Actions {
     std::optional<std::string> play;       // ask our game for this event (by name)
     std::optional<Vec> move_to;            // put our Link here (in the boss room)
     bool skip = false;                     // the game's own skip of the event that runs
-    std::optional<std::int32_t> set_max_life;  // write our maximum life
+    std::optional<std::int32_t> set_max_life;  // write our maximum life (the server's answer)
+    // While we are in a beaten boss's area: our maximum may not rise past this by our own game
+    // (FlagWatcher::cap_max); nothing: no cap.
+    std::optional<std::int32_t> max_life_cap;
     std::vector<ChatLine> chat;
     std::vector<std::string> log;
 };
@@ -120,6 +128,7 @@ public:
     static constexpr std::uint64_t kSkipForUs = 6'000'000;
     static constexpr std::uint64_t kMoveEveryUs = 3'000'000;
     static constexpr unsigned kMoveTries = 3;
+    static constexpr std::int32_t kContainer = 4;  // one heart container: 4 quarter hearts
     static constexpr float kNearStart = 6.0f;  // during the intro a joiner this near its spot is not moved
 
     // Network thread: BOSS_SCENE, BOSS_HEART, PLAYER_LEFT. Taken on the next Tick.
@@ -145,7 +154,8 @@ private:
         bool chatted = false;
         unsigned moves = 0;
         std::uint64_t moved_at = 0;
-        bool claimed = false;      // we sent our heart claim
+        bool claimed = false;      // we sent our heart claim (or our pickup was seen)
+        std::int32_t base = 0;     // our maximum when the boss died in our area (0: not yet)
         std::int32_t heart = 0;    // the server's answer (0: none yet)
         std::uint8_t heart_by = 0;
     };
@@ -153,6 +163,7 @@ private:
         std::uint8_t boss = 0;
         Kind kind = Kind::intro;
         bool skip = false;
+        bool seen = false;  // our game has run it (its end counts only then)
         std::uint64_t skip_since = 0, skip_at = 0;
     };
     void Take(const coop::protocol::Message& m, const Local& local, std::uint64_t now_us, Actions& out);

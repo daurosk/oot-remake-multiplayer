@@ -2190,6 +2190,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     grass_.clear();
     world_.clear();
     dead_.clear();
+    boss_hearts_.clear();  // as the flags: a new group (a new save) has its own containers
   } else if (host_ == id) {
     // The remaining player with the lowest number takes over. Everyone is
     // told on the progress channel, so the new host learns it hosts before

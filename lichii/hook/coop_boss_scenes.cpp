@@ -318,10 +318,11 @@ Actions Director::Tick(const Local& local, const std::vector<Request>& ours, std
         Ours(r, local, now_us, out);
     }
 
-    // Our boss event ended.
+    // Our boss event ended. Only once it was seen running: the door's own event can end on the very
+    // tick our game takes the intro, before the intro runs.
     const bool fell = event_ && !local.event;
     event_ = local.event;
-    if (fell && playing_) {
+    if (fell && playing_ && playing_->seen) {
         const std::uint8_t b = playing_->boss;
         Fight& f = fights_[b];
         if (playing_->kind == Kind::intro) {
@@ -341,6 +342,9 @@ Actions Director::Tick(const Local& local, const std::vector<Request>& ours, std
             f.phase = Phase::done;
         }
         playing_.reset();
+    }
+    if (playing_ && local.event) {
+        playing_->seen = true;
     }
 
     for (std::size_t i = 0; i < fights_.size(); ++i) {
@@ -373,17 +377,23 @@ Actions Director::Tick(const Local& local, const std::vector<Request>& ours, std
                                   std::to_string(f.moves) + ")");
             }
         }
-        // The one heart container: our maximum life rose in its beaten boss's area.
-        if (local.max_life && max_life_ && *local.max_life > *max_life_ &&
-            (f.phase == Phase::outro || f.phase == Phase::done) && Here(b, local)) {
-            if (f.heart != 0 && !f.claimed && *max_life_ >= f.heart) {
-                // Already given to us by the winner's claim: this pickup gives nothing more.
-                out.set_max_life = f.heart;
-                out.log.push_back(std::string(kBosses[b].name) + "'s heart container: player " +
-                                  std::to_string(f.heart_by) + " took it first: our pickup is put back to " +
-                                  std::to_string(f.heart));
-            } else if (!f.claimed) {
-                f.claimed = true;
+        // The one heart container, in its beaten boss's area.
+        const bool beaten_here = (f.phase == Phase::outro || f.phase == Phase::done) && Here(b, local);
+        if (beaten_here && f.base == 0 && max_life_) {
+            f.base = *max_life_;  // our maximum when the boss died, before any pickup
+        }
+        if (beaten_here && f.base != 0 && !out.max_life_cap) {
+            // The flag watcher puts back, unsent, any rise of our own past this (a second pickup of
+            // the container: the max rule would give it to everyone): one container on our maximum when
+            // the boss died, or the server's answer once known, never below that maximum of ours.
+            out.max_life_cap = f.heart != 0 ? std::max(f.heart, f.base) : f.base + kContainer;
+        }
+        if (beaten_here && local.max_life && max_life_ && *local.max_life > *max_life_ && !f.claimed) {
+            f.claimed = true;
+            if (*local.max_life > proto::kMaxBossHeartLife) {
+                out.log.push_back(std::string(kBosses[b].name) + "'s heart container: our maximum " +
+                                  std::to_string(*local.max_life) + " is past what a claim carries: none sent");
+            } else {
                 out.claims.push_back(proto::BossHeart{0, b, false, *local.max_life});
                 out.log.push_back(std::string(kBosses[b].name) + "'s heart container: our pickup (maximum " +
                                   std::to_string(*local.max_life) + "): asking the server");

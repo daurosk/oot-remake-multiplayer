@@ -763,8 +763,9 @@ class Session {
   // it when the session empties.
   protocol::DbnoMode dbno_;
   // Each boss's one heart container (BOSS_HEART): the first claim the server
-  // got, by boss. Kept for the server's run (as the flags), so a claim that
-  // comes late, or after the winner left, gets the same answer.
+  // got, by boss. Kept while anyone is in (as the flags), so a claim that
+  // comes late, or after the winner left, gets the same answer; forgotten
+  // when the session empties.
   std::map<std::uint8_t, protocol::BossHeart> boss_hearts_;
   // Difficulty (protocol/difficulty.hpp): automatic, by the number of
   // players, until the host chooses; the host's choice then stays whoever

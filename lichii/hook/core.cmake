@@ -35,6 +35,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_hud.cpp"
     "${_coop_hook}/coop_objects.cpp"
     "${_coop_hook}/coop_objects_sync.cpp"
+    "${_coop_hook}/coop_npc_anim.cpp"
     "${_coop_hook}/coop_pose.cpp"
     "${_coop_hook}/coop_save.cpp"
     "${_coop_hook}/coop_enemy_shots.cpp"

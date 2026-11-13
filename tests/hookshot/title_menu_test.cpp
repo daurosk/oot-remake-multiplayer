@@ -220,6 +220,12 @@ TEST_CASE("title menu: Host asks the module to host, OK closes the dialog") {
     m.Press(Input::kDown);
     CHECK(m.Press(Input::kDecide) == Sound::kDecide);
     CHECK(m.TakeRequest()->kind == Request::Kind::kPasteAnswer);
+    REQUIRE(m.view().rows.size() == 4);
+    CHECK(m.view().rows[3].label == "Same network or VPN");
+    m.Press(Input::kDown);
+    CHECK(m.Press(Input::kDecide) == Sound::kDecide);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kCopyLan);
+    CHECK(m.page() == Page::kHosting);
     CHECK(m.page() == Page::kHosting);   // (the dialog stays: the result shows in it)
     m.Press(Input::kDown);
     CHECK(m.Press(Input::kDecide) == Sound::kBack);
@@ -569,4 +575,54 @@ TEST_CASE("title menu: with no Continue under the cursor AutoLoad presses nothin
     a.Step(10, true, true, false);
     a.Step(AutoLoad::kLoadMs + 20, true, true, false);
     CHECK(a.Line() == "Press Continue to play Saria's save.");
+}
+
+TEST_CASE("Same network or VPN: the addresses a friend can use, and the line Join takes") {
+    using namespace CoopTitleMenu;
+    CHECK(LanLabel("192.168.1.20") == "home network");
+    CHECK(LanLabel("10.0.0.5") == "home network");
+    CHECK(LanLabel("172.16.4.4") == "home network");
+    CHECK(LanLabel("172.32.4.4").empty());
+    CHECK(LanLabel("26.12.34.56") == "Radmin VPN");
+    CHECK(LanLabel("25.1.2.3") == "Hamachi");
+    CHECK(LanLabel("100.100.1.2") == "Tailscale");
+    CHECK(LanLabel("100.128.1.2").empty());
+    CHECK(LanLabel("127.0.0.1").empty());
+    CHECK(LanLabel("169.254.3.3").empty());
+    CHECK(LanLabel("8.8.8.8").empty());
+    CHECK(LanLabel("192.168.1").empty());
+    CHECK(LanLabel("192.168.1.999").empty());
+    CHECK(LanLabel("fe80::1").empty());
+    // VPN addresses first, nothing twice, the unusable ones dropped.
+    const auto a = LanAddresses({"127.0.0.1", "192.168.1.20", "26.12.34.56", "192.168.1.20", "8.8.8.8"});
+    REQUIRE(a.size() == 2);
+    CHECK(a[0].address == "26.12.34.56");
+    CHECK(a[1].address == "192.168.1.20");
+    // The copied line is what Join's field reads as an address with its password.
+    const std::string line = LanJoinText(a[0].address, 27510, "abcdefghijklmnopqrst");
+    CHECK(line == "26.12.34.56:27510 abcdefghijklmnopqrst");
+    const JoinTarget t = ReadJoin(line, CodeResult{});
+    REQUIRE(std::holds_alternative<JoinAddress>(t));
+    CHECK(std::get<JoinAddress>(t).server == "26.12.34.56:27510");
+    CHECK(std::get<JoinAddress>(t).password == "abcdefghijklmnopqrst");
+    const auto lines = LanLines(a, 27510, "abcdefghijklmnopqrst", true);
+    REQUIRE(lines.size() == 5);
+    CHECK(lines[0].find("Radmin VPN") != std::string::npos);
+    CHECK(lines[1] == line);
+    CHECK(lines[2].find("copied") != std::string::npos);
+    CHECK(lines[3].find("192.168.1.20 (home network)") != std::string::npos);
+    // No usable address: say what to do.
+    const auto none = LanLines({}, 27510, "x", false);
+    REQUIRE(none.size() == 2);
+    CHECK(none[1].find("VPN program") != std::string::npos);
+}
+
+TEST_CASE("Join says what to paste on a home network or VPN until something else is said") {
+    using namespace CoopTitleMenu;
+    Menu m;
+    m.Open(Options{}, Page::kJoin);
+    REQUIRE(m.view().status.size() == 2);
+    CHECK(m.view().status[0].find("home network or VPN") != std::string::npos);
+    m.SetStatus({"Joining..."});
+    CHECK(m.view().status == std::vector<std::string>{"Joining..."});
 }

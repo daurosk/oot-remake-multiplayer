@@ -4,6 +4,19 @@ For players on the same home network (the same router, wired or Wi-Fi). Every pl
 
 One player is the **host**: their PC runs the server, and they play on it too. The others **join**.
 
+## On Hookshot's title screen
+
+With Host and Join on the title screen (no `.bat` file):
+
+1. **The host** opens **Host** on the title screen, then chooses **Same network or VPN**. The game shows one line, for example `192.168.1.20:27510 abcdefghijklmnopqrst` (this PC's address and port, a space, the session's join password), and has copied it. With a VPN program running, its address comes first (Radmin VPN `26.x.x.x`, Hamachi `25.x.x.x`, Tailscale `100.x.x.x`).
+2. The host pastes that line into a chat with the friends (Ctrl+V). It holds the join password, so keep it among friends.
+3. **The others** open **Join** on the title screen and paste the line where the invite code goes (A on the field, or Ctrl+V), then **OK**. Nothing else to type.
+4. If Windows asks about the firewall on the host's PC, allow the game on private networks.
+
+The invite code is for friends over the internet: it holds the host's internet address, which often does not work from inside the same house. **Copy the code again** on the Host screen brings the invite code back.
+
+The rest of this page is for `Host.bat` / `Join.bat` (and `Host-Hookshot.bat` / `Join-Hookshot.bat`).
+
 ## Host
 
 1. Double-click `Host.bat`. The first time it asks for your player name.

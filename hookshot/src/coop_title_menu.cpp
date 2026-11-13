@@ -423,6 +423,89 @@ JoinTarget ReadJoin(std::string_view typed, const CodeResult& code) {
     return std::string("That is not an invite code or a server address.");
 }
 
+std::string LanLabel(std::string_view ipv4) {
+    int part[4] = {0, 0, 0, 0};
+    int n = 0;
+    bool digit = false;
+    for (const char c : ipv4) {
+        if (c >= '0' && c <= '9') {
+            part[n] = part[n] * 10 + (c - '0');
+            digit = true;
+            if (part[n] > 255) {
+                return {};
+            }
+        } else if (c == '.' && digit && n < 3) {
+            ++n;
+            digit = false;
+        } else {
+            return {};
+        }
+    }
+    if (n != 3 || !digit) {
+        return {};
+    }
+    if (part[0] == 26) {
+        return "Radmin VPN";
+    }
+    if (part[0] == 25) {
+        return "Hamachi";
+    }
+    if (part[0] == 100 && part[1] >= 64 && part[1] <= 127) {
+        return "Tailscale";
+    }
+    if (part[0] == 10 || (part[0] == 172 && part[1] >= 16 && part[1] <= 31) || (part[0] == 192 && part[1] == 168)) {
+        return "home network";
+    }
+    return {};
+}
+
+std::vector<LanAddress> LanAddresses(const std::vector<std::string>& ipv4s) {
+    std::vector<LanAddress> vpn;
+    std::vector<LanAddress> home;
+    for (const std::string& a : ipv4s) {
+        const std::string label = LanLabel(a);
+        const auto same = [&a](const LanAddress& x) { return x.address == a; };
+        if (label.empty() || std::any_of(vpn.begin(), vpn.end(), same) || std::any_of(home.begin(), home.end(), same)) {
+            continue;
+        }
+        (label == "home network" ? home : vpn).push_back(LanAddress{a, label});
+    }
+    vpn.insert(vpn.end(), home.begin(), home.end());
+    return vpn;
+}
+
+std::string LanJoinText(std::string_view address, std::uint16_t port, std::string_view password) {
+    std::string t(address);
+    t += ":" + std::to_string(port);
+    if (!password.empty()) {
+        t += " ";
+        t += password;
+    }
+    return t;
+}
+
+std::vector<std::string> LanLines(const std::vector<LanAddress>& addresses, std::uint16_t port,
+                                  std::string_view password, bool copied) {
+    if (addresses.empty()) {
+        return {"No home-network or VPN address was found on this PC.",
+                "On a VPN? Start your VPN program (Radmin VPN, Hamachi), then press this again."};
+    }
+    std::vector<std::string> out = {
+        "Friends on your " + addresses.front().label + " paste this line in Join (address and password):",
+        LanJoinText(addresses.front().address, port, password),
+        copied ? "It is copied: paste it into your chat with them (Ctrl+V)."
+               : "Type it into your chat with them, exactly as it is."};
+    if (addresses.size() > 1) {
+        std::string other = "Or with another address in front:";
+        for (std::size_t i = 1; i < addresses.size() && i < 4; ++i) {
+            other += " " + addresses[i].address + " (" + addresses[i].label + ")";
+        }
+        out.push_back(other);
+    }
+    out.push_back("If Windows asks about the firewall, allow the game on private networks.");
+    return out;
+}
+
 std::vector<std::string> PlainStatus(const HostView& v) {
     std::vector<std::string> out;
     if (v.host && v.problem == HOS_COOP_PROBLEM_BAD_CODE && !v.invite.empty()) {   // the friend's answer code
@@ -485,7 +568,8 @@ std::vector<std::string> PlainStatus(const HostView& v) {
         return {"Connected! Choose your file and play."};
     case HOS_COOP_FAILED:
         return {"Your friend could not be reached.",
-                "Check that they are hosting right now and that the code is their newest one."};
+                "Check that they are hosting right now and that the code is their newest one.",
+                "Same home network or VPN as them? Ask for the line from \"Same network or VPN\" on their Host screen."};
     default:
         return {};
     }
@@ -612,7 +696,7 @@ std::size_t Menu::RowCount() const {
     case Page::kSettings:
         return kSettingsRows;
     case Page::kHosting:
-        return 3;   // OK, Copy the code again, Paste friend's answer
+        return 4;   // OK, Copy the code again, Paste friend's answer, Same network or VPN
     case Page::kJoining:
         return 1;   // OK
     case Page::kClosed:
@@ -755,6 +839,10 @@ Sound Menu::Decide() {
             request_ = Request{Request::Kind::kPasteAnswer, {}};
             return Sound::kDecide;
         }
+        if (selected_ == 3) {
+            request_ = Request{Request::Kind::kCopyLan, {}};
+            return Sound::kDecide;
+        }
         Close();
         return Sound::kBack;
     case Page::kJoining:
@@ -853,6 +941,10 @@ bool Menu::Paste(std::string_view text) {
 View Menu::view() const {
     View v;
     v.status = status_;
+    if (page_ == Page::kJoin && status_.empty()) {
+        v.status = {"On the same home network or VPN as your friend? Paste the line from",
+                    "\"Same network or VPN\" on their Host screen here instead (address and password)."};
+    }
     auto add = [&](std::string label, std::string value = {}, bool arrows = false) {
         Row r;
         r.label = std::move(label);
@@ -901,6 +993,7 @@ View Menu::view() const {
         add("OK");
         add("Copy the code again");
         add("Paste friend's answer");
+        add("Same network or VPN");
         v.hint = "A: choose    B: close";
         break;
     case Page::kJoining:

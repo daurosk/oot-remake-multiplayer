@@ -141,6 +141,22 @@ struct HostView {
 };
 std::vector<std::string> PlainStatus(const HostView& v);
 
+// Friends on the host's home network or on a VPN (Radmin VPN, Hamachi, Tailscale) join by address, not by the
+// invite code (the code holds the host's internet address). The Host dialog's "Same network or VPN" row copies
+// one line for them, "address:port password", which Join's code field takes as it is.
+struct LanAddress {
+    std::string address;   // IPv4, dotted
+    std::string label;     // "Radmin VPN", "Hamachi", "Tailscale", "home network"
+};
+// "" for an address no friend can use (loopback, link-local, a public one).
+std::string LanLabel(std::string_view ipv4);
+// This PC's addresses a friend can use, VPN ones first; the rest dropped, no address twice.
+std::vector<LanAddress> LanAddresses(const std::vector<std::string>& ipv4s);
+std::string LanJoinText(std::string_view address, std::uint16_t port, std::string_view password);
+// The Host dialog's lines for it: the first address's join text (copied: it is on the clipboard), the others.
+std::vector<std::string> LanLines(const std::vector<LanAddress>& addresses, std::uint16_t port,
+                                  std::string_view password, bool copied);
+
 // After Join connects: the host's save (lichii/hook/coop_save.h, the co-op
 // folder) is loaded in one step, with no Continue to find. Wait until the
 // host's save is in this game's co-op folder, then show the title's Continue
@@ -202,7 +218,7 @@ struct Request {
     // session's invite code on the clipboard.
     // kPasteAnswer: the host hands the module's host the friend's ANSWER CODE from
     // the clipboard (when the friend's game could not reach this one directly).
-    enum class Kind { kHost, kJoin, kSave, kPaste, kCopyInvite, kPasteAnswer };
+    enum class Kind { kHost, kJoin, kSave, kPaste, kCopyInvite, kPasteAnswer, kCopyLan };
     Kind kind = Kind::kHost;
     std::string text;
 };

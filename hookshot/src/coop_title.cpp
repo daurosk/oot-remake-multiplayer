@@ -34,6 +34,12 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <netinet/in.h>
 #endif
 
 namespace CoopTitle {
@@ -355,6 +361,50 @@ constexpr std::uint64_t kBtnNumName = 0x83e3e439;  // "BtnNum" in the game's rea
 constexpr float kRowsWithContinue = 3.0f;          // New Game, Options, Continue
 bool g_join_saved = false;
 
+// The Host dialog's "Same network or VPN" lines while they are shown ("Copy the code again" brings the code back).
+std::vector<std::string> g_lan_lines;
+
+// This PC's IPv4 addresses, as text (CoopTitleMenu::LanAddresses picks the ones a friend can use).
+std::vector<std::string> LocalIpv4s() {
+    std::vector<std::string> out;
+    const auto add = [&out](const in_addr& a) {
+        char text[INET_ADDRSTRLEN] = {};
+        if (inet_ntop(AF_INET, &a, text, sizeof text) != nullptr) {
+            out.emplace_back(text);
+        }
+    };
+#ifdef _WIN32
+    WSADATA wsa{};
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+        return out;
+    }
+    char name[256] = {};
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    addrinfo* list = nullptr;
+    if (gethostname(name, sizeof name - 1) == 0 && getaddrinfo(name, nullptr, &hints, &list) == 0) {
+        for (const addrinfo* i = list; i != nullptr; i = i->ai_next) {
+            if (i->ai_family == AF_INET && i->ai_addr != nullptr && i->ai_addrlen >= sizeof(sockaddr_in)) {
+                add(reinterpret_cast<const sockaddr_in*>(i->ai_addr)->sin_addr);
+            }
+        }
+        freeaddrinfo(list);
+    }
+    WSACleanup();
+#else
+    ifaddrs* list = nullptr;
+    if (getifaddrs(&list) == 0) {
+        for (const ifaddrs* i = list; i != nullptr; i = i->ifa_next) {
+            if (i->ifa_addr != nullptr && i->ifa_addr->sa_family == AF_INET) {
+                add(reinterpret_cast<const sockaddr_in*>(i->ifa_addr)->sin_addr);
+            }
+        }
+        freeifaddrs(list);
+    }
+#endif
+    return out;
+}
+
 // What the module's host is doing, in plain words (CoopTitleMenu::PlainStatus). The invite code goes on the
 // clipboard by itself, once, as soon as there is one: the host has nothing to copy or type.
 std::vector<std::string> HostStatusLines() {
@@ -397,6 +447,9 @@ std::vector<std::string> HostStatusLines() {
             said = st.message;
             LOG_INFO(Core, "coop: title menu: {}", said);   // (the English detail, for the log)
         }
+    }
+    if (v.host && v.state == HOS_COOP_HOSTING && !g_lan_lines.empty()) {
+        return g_lan_lines;
     }
     std::vector<std::string> lines = CoopTitleMenu::PlainStatus(v);
     if (!g_answer_note.empty() && v.problem != HOS_COOP_PROBLEM_BAD_CODE) {
@@ -479,6 +532,7 @@ void Host() {
     LOG_INFO(Core, "coop: title menu: host: started (up to {} players)", o.max_players);
     g_doing = "hosting";
     g_copied = false;
+    g_lan_lines.clear();
     g_answer_note.clear();
     g_menu.ShowPage(Page::kHosting);
     g_menu.SetStatus(HostStatusLines());
@@ -570,9 +624,29 @@ void Act(const Request& r) {
         g_menu.Paste(ClipboardText());
         break;
     case Request::Kind::kPasteAnswer:
+        g_lan_lines.clear();
         PasteAnswer();
         break;
+    case Request::Kind::kCopyLan: {
+        // The address and the join password for a friend on the host's home network or VPN (never logged).
+        HosCoopStatus st{};
+        st.size = sizeof st;
+        CoopHookshot::HostMenu().Status(&st);
+        if (st.state != HOS_COOP_HOSTING || st.port == 0) {
+            g_menu.SetStatus({"The server is not running yet."});
+            break;
+        }
+        const auto addresses = CoopTitleMenu::LanAddresses(LocalIpv4s());
+        const bool copied = !addresses.empty() &&
+                            SetClipboardText(CoopTitleMenu::LanJoinText(addresses.front().address, st.port, st.password));
+        g_lan_lines = CoopTitleMenu::LanLines(addresses, st.port, st.password, copied);
+        LOG_INFO(Core, "coop: title menu: host: same network or VPN: {} address(es){}", addresses.size(),
+                 copied ? ", the join line is on the clipboard" : "");
+        g_menu.SetStatus(g_lan_lines);
+        break;
+    }
     case Request::Kind::kCopyInvite: {
+        g_lan_lines.clear();
         const std::string invite = HostInvite();
         if (invite.empty()) {
             g_menu.SetStatus({"No invite code yet."});

@@ -102,6 +102,13 @@ struct Copy {
     // The owner's animation where the copy is shown (the bomb's fuse): played
     // on the copy when its slot 0 shows another, its frame set when off.
     std::optional<coop::protocol::Animation> animation;
+    // Issue 166: not empty: a key of the actor's own ELink user that the
+    // director emits once on it with the game's own search and emit, where
+    // it is.
+    std::string effect;
+    // Always the game's own actor of that name, never the pack's stand-in:
+    // the shootable the game makes has the effect user the key belongs to.
+    bool real = false;
 };
 
 class Sync {
@@ -175,6 +182,20 @@ public:
     // a copy landed, as it reaches the spot. LICHII_COOP_SHOT_IMPACTS=0: none.
     void SetImpacts(bool on) { impacts_on_ = on; }
     std::size_t Impacts() const { return impacts_made_; }
+    // Issue 166, the native way: where a copy lands, the shootable's own hit
+    // effect is played through the game's own emit (Copy::effect).
+    // - copy (the default): on the copy itself, which is the stand-in that
+    //   keeps the shootable's effect users (EffectStandIn). It has no attack,
+    //   sensor or physics component, so it can hit nothing.
+    // - real (LICHII_COOP_SHOT_EFFECTS=real, for a test run only): on the
+    //   game's own shootable of that name, made at the spot (Copy::real; not
+    //   drawn) and deleted after. No pack needed, but it is the game's real
+    //   shot standing where the owner's hit: until a run shows it deals no
+    //   hit and trips no switch there, it is not the default.
+    // - off (LICHII_COOP_SHOT_EFFECTS=0).
+    enum class HitEffectMode : std::uint8_t { off, copy, real };
+    void SetHitEffects(HitEffectMode mode) { hit_effects_ = mode; }
+    std::size_t HitEffects() const { return hit_effects_asked_; }
 
     // A shot's flight when the game's place does not show it (issue 158).
     // The seed and the arrow are made when they are nocked and sit in the
@@ -266,6 +287,8 @@ private:
         bool blasted = false;         // added to TheBlasts once
         bool landed = false;          // counted in landed_ once (issue 166)
         bool impacted = false;        // its impacts asked for once (issue 166)
+        bool effect_asked = false;    // its hit effect was asked for once (issue 166)
+        std::string effect;           // ... and, in copy mode, the key its copy plays from then on
         bool live = false;            // the director had it on the list
         // Issue 169: in the owner's hands (shown as the held stand-in, along
         // `held_path` kHeldBehindUs late), and the owner's animation.
@@ -307,7 +330,24 @@ private:
         std::uint64_t until_us = 0;
     };
     std::vector<Impact> impacts_;
+    // Issue 166: the game's own shootables made where copies land, to play
+    // their hit effect. Asked for when the owner's remove comes (the copy is
+    // shown reaching the spot kBehindUs later, which gives the game time to
+    // make the actor); the effect is asked at `effect_us`, and the actor goes
+    // at `until_us`.
+    struct Carrier {
+        std::uint64_t key = 0;
+        std::string actor;
+        Vec3 position{};
+        std::string effect;
+        std::uint64_t effect_us = 0;
+        std::uint64_t until_us = 0;
+        std::uint64_t address = 0;  // once the director made it (never taken for a shot of ours)
+    };
+    std::vector<Carrier> carriers_;
     bool impacts_on_ = true;
+    HitEffectMode hit_effects_ = HitEffectMode::copy;
+    std::size_t hit_effects_asked_ = 0;
     std::size_t impacts_made_ = 0;
     std::vector<Flight> flights_;
     std::vector<MadeUp> made_up_;
@@ -356,6 +396,13 @@ std::string_view HeldStandIn(std::string_view actor);
 // Axis `axis` of a turn (0 to 2: +x +y +z columns of its matrix, 3 to 5 the
 // same reversed), as a made-up shot flies along it (Sync::SetShots).
 Vec3 ShotAxis(const coop::protocol::Quat& rotation, int axis);
+
+// Issue 166: the stand-in that also keeps the shootable's own xlink users
+// (its ELink and SLink params and names; still no AI, physics, sensor or
+// attack), so the game's own emit can play the shootable's effects on the
+// copy. Asked for first when the pack has it; after kStandInTries failures
+// in a row the plain stand-in is used again. Empty for an actor with none.
+std::string_view EffectStandIn(std::string_view actor);
 
 // The stand-ins a puppet pack has: the CoopShot_* names its coop_puppet.json
 // lists (build.py writes them under "shots"). A pack built before the
@@ -424,9 +471,11 @@ private:
         // Made from the stand-in pack (StandIn): placed as the puppet is
         // (place and the pending transform), with no setter call.
         bool stand_in = false;
+        bool effects = false;   // the EffectStandIn: it has the shootable's ELink user
+        bool emitted = false;   // Copy::effect was played (or could not be) once
         std::string copy_of;  // the shared actor's name (Copy::actor)
     };
-    enum class Pending { none, malloc, create, take, drop, remove };
+    enum class Pending { none, malloc, create, take, drop, remove, search, emit };
 
     void NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms);
     std::optional<CoopPuppet::Call> Next(CoopPuppet::Guest& guest, std::uint64_t now_ms);
@@ -436,6 +485,12 @@ private:
     // Issue 169: the copy's animation (Copy::animation). Not counted in
     // kMaxCallsPerFrame either: one play or one frame set per copy a frame.
     std::optional<CoopPuppet::Call> NextPlay(CoopPuppet::Guest& guest);
+    // Issue 166: the game's own xlink search, then (EmitCall) its emit, for a
+    // live copy with a Copy::effect not played yet.
+    std::optional<CoopPuppet::Call> NextEmit(CoopPuppet::Guest& guest);
+    std::optional<CoopPuppet::Call> EmitCall(CoopPuppet::Guest& guest, std::size_t i);
+    std::uint64_t NameCellOf(CoopPuppet::Guest& guest, const std::string& name);
+    std::uint64_t ELinkUser(CoopPuppet::Guest& guest, std::uint64_t actor) const;
     std::uint64_t SlotBase(std::size_t i) const { return block_ + i * kSlotSize; }
     const Copy* Wanted(std::uint64_t key) const;
     void Say(const std::string& text) const;
@@ -471,6 +526,12 @@ private:
     int calls_ = 0;
     std::vector<std::size_t> setters_;  // slots placed this frame
     std::vector<std::size_t> plays_;    // slots with an animation this frame
+    std::vector<std::size_t> emits_;    // slots with an effect to play this frame
+    bool emit_found_ = false;           // the search found the key: emit next
+    std::map<std::string, int> effect_fails_;  // EffectStandIn failures in a row, by shared actor
+    std::set<std::string> no_effects_;         // ... kStandInTries times: the plain stand-in again
+    std::size_t emits_done_ = 0;
+    std::size_t emit_notes_ = 0;
     std::map<std::string, std::size_t> name_cells_;  // animation name to its cell
     std::set<std::string> stand_ins_;            // guarded: what the pack has
     // Shared actors whose stand-in failed kStandInTries times in a row:

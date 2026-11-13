@@ -40,6 +40,7 @@ add_library(coop_host STATIC
   host/src/flags.cpp
   host/src/flag_watcher.cpp
   host/src/game_flags.cpp
+  host/src/game_flag_events.cpp
   host/src/game_items.cpp
   host/src/notify.cpp
   host/src/game_memory.cpp

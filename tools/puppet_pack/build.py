@@ -147,8 +147,20 @@ STAND_INS = (
     # made here would run on her own AI; the stand-in is her model and animations only, placed
     # and played by the hook (lichii/hook/coop_ride.h).
     ("Animal_Epona_Adult", "CoopRide_Epona"),
+    # Issue 166: the seed and the arrow once more, as stand-ins that also keep the shootable's own
+    # effect and sound users (STAND_IN_XLINK). The hook asks for these first and plays the
+    # shootable's hit effect on the copy with the game's own xlink search and emit, where the copy
+    # lands; no AI and no extra actor. A game that will not make one gets the plain stand-in above.
+    ("Shootable_DekuSeed", "CoopShotFx_Seed"),
+    ("NormalArrow", "CoopShotFx_Arrow"),
 )
 STAND_IN_COMPONENTS = ("ModelInfoRef", "LODRef")
+# Issue 166: these keep the shootable's ELink, SLink and XLink params (in place of the shared
+# ActorBasic XLink param) and its ELinkUserName / SLinkUserName in the ActorInfo row, as the puppet
+# keeps the player's for its sounds. Still no physics, sensor, attack or AI: nothing plays by
+# itself; the hook's CoopSpawn::EffectStandIn has the same names.
+STAND_IN_XLINK = ("CoopShotFx_Seed", "CoopShotFx_Arrow")
+STAND_IN_XLINK_COMPONENTS = ("ELinkRef", "SLinkRef", "XLinkRef")
 # Components some stand-ins keep beyond the model (by stand-in name): the animation set, so the
 # hook can play the owner's animation on it (the bomb's Bomb_Blink; the hookshot tip's chain, whose
 # length is its animation set's ChainExtend, issue 85).
@@ -157,6 +169,8 @@ STAND_IN_EXTRA_COMPONENTS = {
     "CoopShot_Hook": ("ASRef", "ASInfoRef", "AnimationRef"),
     "CoopShot_HookLong": ("ASRef", "ASInfoRef", "AnimationRef"),
     "CoopRide_Epona": ("ASRef", "ASInfoRef", "AnimationRef"),
+    "CoopShotFx_Seed": STAND_IN_XLINK_COMPONENTS,
+    "CoopShotFx_Arrow": STAND_IN_XLINK_COMPONENTS,
 }
 # ActorInfo fields of the shootable that a model-only actor must not take over.
 STAND_IN_DROP_INFO = ("ActorName", "ELinkUserName", "SLinkUserName")
@@ -407,6 +421,9 @@ def make_stand_in_param(components, extra=()):
         raise BuildError("the shootable's ActorParam has no ModelInfoRef")
     comps = {k: components[k] for k in STAND_IN_COMPONENTS + tuple(extra) if k in components}
     comps.update(FIXED_COMPONENTS)
+    for k in extra:  # a kept component wins over the shared default (the shootable's own XLinkRef)
+        if k in components:
+            comps[k] = components[k]
     return {"Components": comps}
 
 
@@ -476,7 +493,9 @@ def impact_row(source_row, name, elink_user, slink_user):
 def stand_in_row(source_row, name, with_effect=False):
     """The stand-in's ActorInfo row: the shootable's, less its effect, sound and name fields, with
     the puppet's INFO_OVERRIDES (and its STAND_IN_EFFECTS ELink user when `with_effect`)."""
-    row = {k: v for k, v in source_row.items() if k not in STAND_IN_DROP_INFO}
+    # (issue 166: a STAND_IN_XLINK one keeps the shootable's effect and sound user names)
+    drop = ("ActorName",) if name in STAND_IN_XLINK else STAND_IN_DROP_INFO
+    row = {k: v for k, v in source_row.items() if k not in drop}
     if with_effect and name in STAND_IN_EFFECTS:
         row["ELinkUserName"] = STAND_IN_EFFECTS[name][0]
     row.update(INFO_OVERRIDES)  # calculated wherever it is, as the puppet (a far shot)

@@ -12,8 +12,11 @@
 #include <string>
 #include <vector>
 
+#include "coop_counters.h"
 #include "coop_hold.h"
 #include "coop_hookshot.h"
+#include "hos_coop_world.h"
+#include "hos_coop_actors.h"
 #include "coop_svc.h"
 
 namespace {
@@ -372,3 +375,86 @@ TEST_CASE("hookshot: the game's camera reaches the module for the name tags (no 
           std::string::npos);
 }
 
+
+TEST_CASE("hookshot: the world hooks (patch 0005) hand the pause counter starts to the module") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0005-coop-world-hooks.patch");
+    CHECK(NewFile(patch, "host/hos_coop_world.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_world.h"));
+    // The lift hook calls the world hook with the counter start's number, at the start function the cave patches.
+    char call[64];
+    std::snprintf(call, sizeof call, "hos_coop_world_event(%uu, c->x[0], 0)", HOS_COOP_WORLD_COUNTER_START);
+    CHECK(patch.find(call) != std::string::npos);
+    const std::string lift = ReadFile(kRepo / "hookshot" / "patches" / "0003-coop-platforms.patch");
+    char word[48];
+    std::snprintf(word, sizeof word, "((0x%llx, 0x%08x),", static_cast<unsigned long long>(CoopCounters::kStartOffset),
+                  CoopCounters::kStartOriginal);
+    CHECK(lift.find(word) != std::string::npos);
+    // The guest ring is gone on Hookshot; the bridge keeps the export only once the module says it is on.
+    CHECK(patch.find("deleted file mode 100644") != std::string::npos);
+    CHECK(patch.find("--- a/host/coop_platform_ring.c") != std::string::npos);
+    CHECK(patch.find("w(HOS_COOP_WORLD_HELLO, HOS_COOP_WORLD_VERSION, hos_coop_wrap_mask) != 1") != std::string::npos);
+    // The hello's level: the first patch sent 0, 0 and had the flag applier's wrap; later ones their version and wraps.
+    CHECK(CoopHookshot::HelloLevel(0, 0).version == 1);
+    CHECK(CoopHookshot::HelloLevel(0, 0).wraps == 1ull << HOS_COOP_WRAP_FLAG_APPLY);
+    CHECK(CoopHookshot::HelloLevel(HOS_COOP_WORLD_VERSION, 0x6).version == HOS_COOP_WORLD_VERSION);
+    CHECK(CoopHookshot::HelloLevel(HOS_COOP_WORLD_VERSION, 0x6).wraps == 0x6);
+    // Only a function the lift made is wrapped, a wrapped one stays hot, and the build's wraps go out as bits.
+    CHECK(patch.find("the lift made no function there") != std::string::npos);
+    CHECK(patch.find("+            if hot and \"f_%08x\" % e in hot:") != std::string::npos);
+    CHECK(patch.find("const uint64_t hos_coop_wrap_mask = %#xull;") != std::string::npos);
+    // The wraps: every call reaches the wrapper, the emit workers get the table, and the first wrap's id is the header's.
+    CHECK(patch.find("return \"hos_coop_w_%08x\" % t") != std::string::npos);
+    CHECK(patch.find("\"wraps\")   # (oot-remake-multiplayer's patch 0005)") != std::string::npos);
+    char wrap[48];
+    std::snprintf(wrap, sizeof wrap, "(%u, 0xb99980, (0xd503237f,", HOS_COOP_WRAP_FLAG_APPLY);
+    CHECK(NewFile(patch, "nx2/coop_world_wraps.py").find(wrap) != std::string::npos);
+    CHECK(patch.find("+    coop_world_wraps.install(lifter, img, build_id)") != std::string::npos);
+    // Its install is not at the end of coop_hooks.py's install(), where each later patch adds its own line (0004, 0006,
+    // 0007): the patches then apply in any order.
+    CHECK(patch.find("+    coop_world_wraps.install(lifter, img, build_id)\n     import coop_puppet_guard") !=
+          std::string::npos);
+    // The event request's wrap, although Hookshot edits that function's head: only a call looked for by name bars a wrap.
+    std::snprintf(wrap, sizeof wrap, "(%u, 0xd7a820, (0xb940b808,", HOS_COOP_WRAP_EVENT_REQUEST);
+    CHECK(NewFile(patch, "nx2/coop_world_wraps.py").find(wrap) != std::string::npos);
+    CHECK(patch.find("(\"f_%08x(c)\", \"TAILCALL(f_%08x)\")") != std::string::npos);
+    // The time set's wrap: the function every time change of the game goes through.
+    std::snprintf(wrap, sizeof wrap, "(%u, 0xeee640, (0xd503237f,", HOS_COOP_WRAP_TIME_SET);
+    CHECK(NewFile(patch, "nx2/coop_world_wraps.py").find(wrap) != std::string::npos);
+}
+
+TEST_CASE("hookshot: the actor events (patch 0007) use the world hook with the module's event numbers") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0007-coop-actor-events.patch");
+    const std::string lift = NewFile(patch, "nx2/coop_actor_lift.py");
+    REQUIRE(!lift.empty());
+    char call[160];
+    std::snprintf(call, sizeof call, "hos_coop_world_event(%uu, c->x[30], c->x[2]); hos_coop_world_event(%uu, c->x[1], c->x[3])",
+                  HOS_COOP_WORLD_CREATE_FROM, HOS_COOP_WORLD_CREATE_REQUEST);
+    CHECK(lift.find(call) != std::string::npos);
+    // A refused create leaves through the game's own "no creates now" exit, whose words are checked too.
+    std::snprintf(call, sizeof call,
+                  "hos_coop_world_event(%uu, (uint64_t)(uintptr_t)&coop_stop, 0); if (coop_stop) goto L_80392c88;",
+                  HOS_COOP_WORLD_CREATE_STOP);
+    CHECK(lift.find(call) != std::string::npos);
+    CHECK(lift.find("(0x372a9c, 0x37080f68)") != std::string::npos);  // tbnz w8, #1, main+0x372c88
+    CHECK(lift.find("(0x372c88, 0xb4000137)") != std::string::npos);
+    CHECK(HOS_COOP_WORLD_CREATE_STOP <= HOS_COOP_WORLD_ACTOR_LAST);
+    // The shoot code names the shooter before its create (its x1 holds the actor first).
+    std::snprintf(call, sizeof call, "hos_coop_world_event(%uu, c->x[1], c->x[0])", HOS_COOP_WORLD_SHOOT_FROM);
+    CHECK(lift.find(call) != std::string::npos);
+    CHECK(lift.find("(0xc16d24, 0xaa0103f6)") != std::string::npos);
+    CHECK(lift.find("(0xc172fc, 0x97dd6ddd)") != std::string::npos);  // its create call: the module's kShootCreateReturn - 4
+    CHECK(HOS_COOP_WORLD_SHOOT_FROM <= HOS_COOP_WORLD_ACTOR_LAST);
+    std::snprintf(call, sizeof call, "hos_coop_world_event(%uu, c->x[19], c->x[20])", HOS_COOP_WORLD_DELETE_REQUEST);
+    CHECK(lift.find(call) != std::string::npos);
+    std::snprintf(call, sizeof call,
+                  "hos_coop_world_event(%uu, c->x[19], (uint64_t)(uintptr_t)&coop_sum); c->x[9] = (uint32_t)coop_sum;",
+                  HOS_COOP_WORLD_LIFE_STEP);
+    CHECK(lift.find(call) != std::string::npos);
+    // The three sites, each after its checked word; the install is called from coop_hooks.py.
+    CHECK(lift.find("(0x372a94, 0xf94037b7)") != std::string::npos);
+    CHECK(lift.find("(\"delete request\", 0xa65d0,") != std::string::npos);  // (where the request is accepted)
+    CHECK(lift.find("(0xa65d0, 0xf94002c0)") != std::string::npos);
+    CHECK(lift.find("(0x49dcb0, 0x0b090149)") != std::string::npos);
+    CHECK(patch.find("+    coop_actor_lift.install(lifter, img, build_id)") != std::string::npos);
+    // New numbers follow the world hook's own (0 hello, 1 counter start).
+    CHECK(HOS_COOP_WORLD_CREATE_REQUEST > HOS_COOP_WORLD_COUNTER_START);
+}

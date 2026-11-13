@@ -834,8 +834,8 @@ void Frame(void* ctx, int site) {
         return;
     }
     if (site == HOS_COOP_SITE_FRAME) {
-        CoopPause::Tick();   // the Multiplayer tab's follow-ups, also while the menu is closed
         CoopModsRuntime::Frame();
+        CoopPause::Tick();   // the Multiplayer tab's follow-ups, also while the menu is closed
     }
     if (site == HOS_COOP_SITE_PRESENT && !g_present_seen.exchange(true)) {
         LOG_INFO(Core, "coop: Hookshot calls co-op at each present (loads and pause included)");

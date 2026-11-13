@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "mod_temp.h"
 #include "coop_mods.h"
 #include "coop_mods_tab.h"
 
@@ -26,7 +27,7 @@ void Put(const fs::path& p, const std::string& text) {
 }
 
 struct Mods {
-    fs::path root = fs::temp_directory_path() / "coop-mods-tab-test";
+    fs::path root = ModTestDir("coop-mods-tab-test");
     std::unique_ptr<CoopMods::Loader> loader;
     Mods() {
         std::error_code ec;
@@ -174,7 +175,7 @@ TEST_CASE("mods tab: the host's value is locked, and co-op and the randomizer ha
 }
 
 TEST_CASE("mods tab: an empty folder says where mods go") {
-    const fs::path root = fs::temp_directory_path() / "coop-mods-tab-empty";
+    const fs::path root = ModTestDir("coop-mods-tab-empty");
     std::error_code ec;
     fs::remove_all(root, ec);
     fs::create_directories(root);

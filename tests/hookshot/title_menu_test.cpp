@@ -344,8 +344,7 @@ TEST_CASE("title menu: voice chat is off unless turned on: on writes ptt, off ta
     Options o;
     CHECK_FALSE(o.voice);
     CHECK_FALSE(Options::Read("", "").voice);
-    std::string c, opt = "LICHII_COOP_VOICE=ptt
-";
+    std::string c, opt = "LICHII_COOP_VOICE=ptt\n";
     o.Write(c, opt);
     CHECK_FALSE(IniGet(opt, "LICHII_COOP_VOICE").has_value());
     CHECK_FALSE(Options::Read("", opt).voice);
@@ -354,14 +353,11 @@ TEST_CASE("title menu: voice chat is off unless turned on: on writes ptt, off ta
     CHECK(IniGet(opt, "LICHII_COOP_VOICE") == "ptt");
     CHECK(Options::Read("", opt).voice);
     // a mode written by hand stays as it is while voice stays on
-    std::string open = "LICHII_COOP_VOICE=open
-";
+    std::string open = "LICHII_COOP_VOICE=open\n";
     Options::Read("", open).Write(c, open);
     CHECK(IniGet(open, "LICHII_COOP_VOICE") == "open");
-    CHECK(Options::Read("", "LICHII_COOP_VOICE=on
-").voice);
-    CHECK_FALSE(Options::Read("", "LICHII_COOP_VOICE=off
-").voice);
+    CHECK(Options::Read("", "LICHII_COOP_VOICE=on\n").voice);
+    CHECK_FALSE(Options::Read("", "LICHII_COOP_VOICE=off\n").voice);
     // this run's variable: ptt when on, unset (off) when off
     const auto env = [](const Options& x) {
         for (const auto& [k, v] : x.Environment()) {

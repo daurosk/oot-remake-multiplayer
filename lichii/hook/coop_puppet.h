@@ -25,6 +25,7 @@
 #include <utility>
 #include <vector>
 
+#include "coop/protocol/messages.hpp"
 #include "coop_ocarina.h"
 #include "coop_snap.h"
 #include "coop_puppet_sound.h"
@@ -351,6 +352,7 @@ public:
     // shown or held (not parked for a hide), as of the last calc frame. The
     // fairies follow it, so a Navi never shows without her puppet (issue 145).
     std::uint32_t LiveMask() const { return live_mask_.load(std::memory_order_relaxed); }
+    static_assert(coop::protocol::kMaxPlayers < 32, "LiveMask has one bit per player number");
     std::uint64_t Frames() const { return frames_; }
     void Note(const std::string& text) const { Say(text); }  // any thread
 
@@ -510,6 +512,7 @@ private:
     Pending pending_ = Pending::none;
     std::uint8_t pending_slot_ = 0;
     int calls_ = 0;  // this frame
+    std::size_t first_slot_ = 0;  // where this frame's Step starts (round robin)
     std::uint64_t frames_ = 0;
     std::atomic<std::uint32_t> live_mask_{0};  // LiveMask(); written by the calc thread
     std::uint64_t frames_at_status_ = 0;

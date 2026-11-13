@@ -348,7 +348,7 @@ public:
     // HANDOVER_STATE, DAMAGE. Others are ignored. Applied on the next Tick.
     void Receive(const coop::protocol::Message& message);
 
-    // Present thread, once per walk. `self` is our player number (1 to 4),
+    // Present thread, once per walk. `self` is our player number (1 to kMaxPlayers),
     // `now_us` the server time. A new scene forgets every object.
     void Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_us,
               const std::vector<Seen>& seen, std::vector<coop::protocol::Message>& send,

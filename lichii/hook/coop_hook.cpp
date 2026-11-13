@@ -1782,15 +1782,18 @@ std::mutex g_mutex;
 bool g_started = false;
 bool g_shut_down = false;
 std::atomic<bool> g_mod_refused{false};  // a game mod patches where co-op does (Start)
-std::unique_ptr<Coop> g_coop;  // set once by Start, cleared by Shutdown
+std::unique_ptr<Coop> g_coop;  // set by Start or Begin, cleared by End or Shutdown
+std::vector<std::unique_ptr<Coop>> g_ended;  // End's: kept until Shutdown (see End)
 
 // Joins the thread if the program ends without Shutdown.
 void Stop(bool quiet) {
     std::unique_ptr<Coop> coop;
+    std::vector<std::unique_ptr<Coop>> ended;
     {
         std::lock_guard lock(g_mutex);
         g_shut_down = true;
         coop = std::move(g_coop);
+        ended.swap(g_ended);
     }
     if (coop) {
         coop->End(quiet);
@@ -1856,7 +1859,8 @@ void OnFrame(Core::System& system) {
     CoopObjects::OnFrame(system);
     CoopTestInput::OnFrame(system);
     Start();
-    // g_coop only changes in Start (before this) and Shutdown (after
+    // g_coop only changes in Start (before this), End (which keeps the old
+    // one alive until Shutdown) and Shutdown (after
     // emulation has stopped), so it stays valid for this frame.
     auto* coop = Get();
     // The game's main may be patched (or refused for a code mod) after co-op
@@ -1877,6 +1881,37 @@ void OnFrame(Core::System& system) {
 
 void Shutdown() {
     Stop(false);
+}
+
+bool Begin(Settings settings) {
+    std::lock_guard lock(g_mutex);
+    if (g_shut_down || g_coop || g_mod_refused || settings.server.empty()) {
+        return false;
+    }
+    g_started = true;  // Start() then reads no coop.ini
+    LOG_INFO(Core, "coop: on (from the menu), server {}:{}, name '{}', join password {}", settings.server,
+             settings.port, settings.name, settings.password.empty() ? "none" : "set");
+    auto coop = std::make_unique<Coop>(std::move(settings));
+    if (!coop->Begin()) {
+        return false;
+    }
+    g_coop = std::move(coop);
+    return true;
+}
+
+void End() {
+    std::unique_ptr<Coop> coop;
+    {
+        std::lock_guard lock(g_mutex);
+        coop = std::move(g_coop);
+    }
+    if (!coop) {
+        return;
+    }
+    coop->End(false);
+    LOG_INFO(Core, "coop: off (left from the menu)");
+    std::lock_guard lock(g_mutex);
+    g_ended.push_back(std::move(coop));
 }
 
 std::vector<OverlayLine> OverlayLines() {

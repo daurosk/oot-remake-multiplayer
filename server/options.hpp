@@ -20,6 +20,8 @@ struct CommandLine {
   std::optional<std::uint32_t> owner_hold_ms;
   // Connections one address may hold before HELLO; 0: no limit.
   std::uint32_t max_half_open = 4;
+  std::uint32_t max_players = 16;           // --max-players, 1 to 16
+  std::uint32_t pose_upload_kbps = 0;       // --pose-upload-kbps, 0: no cap
   // --bind: listen on this one IPv4 address only (a VPN adapter's); none: all.
   std::optional<std::uint32_t> bind;
   // --allow: only these addresses may connect; empty: any.

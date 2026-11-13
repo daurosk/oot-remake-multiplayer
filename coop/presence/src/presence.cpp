@@ -66,7 +66,7 @@ std::optional<Quat> rotation_up_to(const std::deque<Sample>& samples, std::size_
   return std::nullopt;
 }
 
-bool valid_number(std::uint8_t n) { return n >= 1 && n <= 4; }
+bool valid_number(std::uint8_t n) { return n >= 1 && n <= coop::protocol::kMaxPlayers; }
 
 }  // namespace
 

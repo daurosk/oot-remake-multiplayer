@@ -881,7 +881,10 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
         if (tick.focus_continue) {
             g_focus_continue = true;   // (made at the title's next step, with its game context)
         }
-        if (tick.press_a) {
+        // Only on Continue: if the title kept it hidden (no save when it opened), the cursor stays elsewhere
+        // (New Game) and no A goes in; the give-up line then says to press Continue.
+        const bool title = TitleUp();
+        if (tick.press_a && (!title || FocusedIndex(g_screen.load()) == kContinueButton)) {
             buttons |= kA;
         }
         if (!g_autoload.active()) {

@@ -9,8 +9,6 @@
 
 namespace CoopTitleMenu {
 
-namespace {
-
 std::string_view Trim(std::string_view s) {
     while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) {
         s.remove_prefix(1);
@@ -20,6 +18,60 @@ std::string_view Trim(std::string_view s) {
     }
     return s;
 }
+
+// Code points in UTF-8 text (a stray continuation byte counts as one).
+std::size_t CodePoints(std::string_view s) {
+    std::size_t n = 0;
+    for (const char ch : s) {
+        if ((static_cast<unsigned char>(ch) & 0xC0) != 0x80) {
+            ++n;
+        }
+    }
+    return n;
+}
+
+void PopCodePoint(std::string& s) {
+    while (!s.empty()) {
+        const unsigned char c = static_cast<unsigned char>(s.back());
+        s.pop_back();
+        if ((c & 0xC0) != 0x80) {
+            break;
+        }
+    }
+}
+
+std::string Utf8(std::uint32_t cp) {
+    std::string out;
+    if (cp < 0x80) {
+        out += static_cast<char>(cp);
+    } else if (cp < 0x800) {
+        out += static_cast<char>(0xC0 | (cp >> 6));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        if (cp >= 0xD800 && cp <= 0xDFFF) {
+            return {};
+        }
+        out += static_cast<char>(0xE0 | (cp >> 12));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else if (cp <= 0x10FFFF) {
+        out += static_cast<char>(0xF0 | (cp >> 18));
+        out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    }
+    return out;
+}
+
+std::string OneLine(std::string_view text) {
+    std::string out;
+    for (const char c : text) {
+        out += (c == '\r' || c == '\n' || c == '\t') ? ' ' : c;
+    }
+    return std::string(Trim(out));
+}
+
+namespace {
 
 // The file's lines without their ends, and whether it uses CRLF.
 std::vector<std::string> Lines(std::string_view text, bool& crlf) {
@@ -83,50 +135,6 @@ std::string Line(std::string_view key, std::string_view value, bool spaced) {
     return l;
 }
 
-// Code points in UTF-8 text (a stray continuation byte counts as one).
-std::size_t CodePoints(std::string_view s) {
-    std::size_t n = 0;
-    for (const char ch : s) {
-        if ((static_cast<unsigned char>(ch) & 0xC0) != 0x80) {
-            ++n;
-        }
-    }
-    return n;
-}
-
-void PopCodePoint(std::string& s) {
-    while (!s.empty()) {
-        const unsigned char c = static_cast<unsigned char>(s.back());
-        s.pop_back();
-        if ((c & 0xC0) != 0x80) {
-            break;
-        }
-    }
-}
-
-std::string Utf8(std::uint32_t cp) {
-    std::string out;
-    if (cp < 0x80) {
-        out += static_cast<char>(cp);
-    } else if (cp < 0x800) {
-        out += static_cast<char>(0xC0 | (cp >> 6));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    } else if (cp < 0x10000) {
-        if (cp >= 0xD800 && cp <= 0xDFFF) {
-            return {};
-        }
-        out += static_cast<char>(0xE0 | (cp >> 12));
-        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    } else if (cp <= 0x10FFFF) {
-        out += static_cast<char>(0xF0 | (cp >> 18));
-        out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
-        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    }
-    return out;
-}
-
 bool Off(const std::optional<std::string>& v) {
     if (!v) {
         return false;
@@ -141,32 +149,6 @@ bool On(const std::optional<std::string>& v) {
         return false;
     }
     return !Off(v);
-}
-
-// The Settings page's rows, in order.
-// Co-op Settings shows only what a player needs (Caleb: hosting as simple as a child can do it); the other
-// settings stay in the files as they are.
-enum SettingsRow : std::size_t { kName, kColour, kMaxPlayersRow, kVoice, kSave, kSettingsBack, kSettingsRows };
-enum MainRow : std::size_t { kHost, kJoin, kSettings, kMainBack, kMainRows };
-enum JoinRow : std::size_t { kField, kJoinNow, kJoinBack, kJoinRows };
-
-const char* OnOff(bool on) {
-    return on ? "On" : "Off";
-}
-
-template <typename T>
-std::size_t IndexOf(const std::vector<T>& list, const T& v) {
-    const auto it = std::find(list.begin(), list.end(), v);
-    return it == list.end() ? 0 : static_cast<std::size_t>(it - list.begin());
-}
-
-// Text from the clipboard as one line.
-std::string OneLine(std::string_view text) {
-    std::string out;
-    for (const char c : text) {
-        out += (c == '\r' || c == '\n' || c == '\t') ? ' ' : c;
-    }
-    return std::string(Trim(out));
 }
 
 }  // namespace
@@ -297,7 +279,7 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     }
     o.debug_panel = On(IniGet(options_ini, "LICHII_COOP_DEBUG_PANEL"));
     o.cheats = On(IniGet(options_ini, "LICHII_COOP_CHEATS"));
-    o.voice = !Off(IniGet(options_ini, "LICHII_COOP_VOICE"));
+    o.voice = On(IniGet(options_ini, "LICHII_COOP_VOICE"));
     if (const auto v = IniGet(options_ini, "max_players"); v && !v->empty() && v->size() <= 2 &&
         std::all_of(v->begin(), v->end(), [](char c) { return c >= '0' && c <= '9'; })) {
         o.max_players = std::clamp(std::stoi(*v), kMinPlayers, kMaxPlayers);
@@ -320,7 +302,12 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     o = password.empty() ? IniUnset(o, "server_password") : IniSet(o, "server_password", password, true);
     o = debug_panel ? IniSet(o, "LICHII_COOP_DEBUG_PANEL", "1", false) : IniUnset(o, "LICHII_COOP_DEBUG_PANEL");
     o = cheats ? IniSet(o, "LICHII_COOP_CHEATS", "1", false) : IniUnset(o, "LICHII_COOP_CHEATS");
-    o = voice ? IniUnset(o, "LICHII_COOP_VOICE") : IniSet(o, "LICHII_COOP_VOICE", "off", false);
+    // (voip-101: ptt = on, the line gone = off, the default; "open" written by hand stays as it is)
+    if (!voice) {
+        o = IniUnset(o, "LICHII_COOP_VOICE");
+    } else if (!On(IniGet(o, "LICHII_COOP_VOICE"))) {
+        o = IniSet(o, "LICHII_COOP_VOICE", "ptt", false);
+    }
     o = IniSet(o, "max_players", std::to_string(std::clamp(max_players, kMinPlayers, kMaxPlayers)), true);
     options_ini = std::move(o);
 }
@@ -334,7 +321,7 @@ std::vector<std::pair<std::string, std::string>> Options::Environment() const {
         {"LICHII_COOP_SHOW_PLAYERS", show_players ? "1" : ""},
         {"LICHII_COOP_DEBUG_PANEL", debug_panel ? "1" : ""},
         {"LICHII_COOP_CHEATS", cheats ? "1" : ""},
-        {"LICHII_COOP_VOICE", voice ? "" : "off"},
+        {"LICHII_COOP_VOICE", voice ? "ptt" : ""},
     };
 }
 
@@ -526,7 +513,7 @@ std::vector<std::string> PlainStatus(const HostView& v) {
     case HOS_COOP_PROBLEM_INTERNAL:
         return {"Co-op could not start.", "Check that this PC is online, then try again. If it keeps failing, restart the game."};
     case HOS_COOP_PROBLEM_BAD_NAME:
-        return {"Your name is too long.", "Pick a shorter one in Co-op Settings."};
+        return {"Your name is too long.", "Pick a shorter one in Multiplayer, Settings."};
     default:
         break;
     }
@@ -569,7 +556,7 @@ std::vector<std::string> PlainStatus(const HostView& v) {
     case HOS_COOP_FAILED:
         return {"Your friend could not be reached.",
                 "Check that they are hosting right now and that the code is their newest one.",
-                "Same home network or VPN as them? Ask for the line from \"Same network or VPN\" on their Host screen."};
+                "Same home network or VPN as them? Ask for the line from \"Same network or VPN\" on their Host page."};
     default:
         return {};
     }
@@ -639,372 +626,6 @@ std::string AutoLoad::Line() const {
     default:
         return {};
     }
-}
-
-// ---------------------------------------------------------------------------
-
-void Menu::Open(const Options& options, Page page) {
-    options_ = saved_ = options;
-    status_.clear();
-    request_.reset();
-    direct_ = page != Page::kMain && page != Page::kClosed;
-    join_.clear();   // (a code from an earlier try: the player pastes the newest)
-    rejoin_host_.clear();
-    rejoin_code_.clear();
-    Go(page == Page::kClosed ? Page::kMain : page);
-}
-
-void Menu::Close() {
-    page_ = Page::kClosed;
-    editing_ = false;
-}
-
-void Menu::Go(Page page) {
-    page_ = page;
-    selected_ = 0;
-    editing_ = false;
-}
-
-void Menu::ShowPage(Page page) {
-    Go(page);
-}
-
-void Menu::SetRejoin(std::string host, std::string code) {
-    rejoin_host_ = Trim(host).empty() ? std::string("your friend") : std::string(Trim(host));
-    rejoin_code_ = std::string(Trim(code));
-    if (page_ == Page::kJoin) {
-        selected_ = 0;
-    }
-}
-
-void Menu::SetStatus(std::vector<std::string> lines) {
-    status_ = std::move(lines);
-}
-
-std::optional<Request> Menu::TakeRequest() {
-    auto r = std::move(request_);
-    request_.reset();
-    return r;
-}
-
-std::size_t Menu::RowCount() const {
-    switch (page_) {
-    case Page::kMain:
-        return kMainRows;
-    case Page::kJoin:
-        return kJoinRows + JoinOffset();
-    case Page::kSettings:
-        return kSettingsRows;
-    case Page::kHosting:
-        return 4;   // OK, Copy the code again, Paste friend's answer, Same network or VPN
-    case Page::kJoining:
-        return 1;   // OK
-    case Page::kClosed:
-        break;
-    }
-    return 0;
-}
-
-std::string* Menu::EditedText() {
-    if (page_ == Page::kJoin) {
-        return &join_;
-    }
-    if (page_ == Page::kSettings && editing_) {
-        return selected_ == kName ? &options_.name : nullptr;
-    }
-    return nullptr;
-}
-
-Sound Menu::Press(Input input) {
-    if (!open()) {
-        return Sound::kNone;
-    }
-    const std::size_t rows = RowCount();
-    switch (input) {
-    case Input::kUp:
-    case Input::kDown:
-        editing_ = false;
-        if (rows < 2) {
-            return Sound::kNone;
-        }
-        selected_ = input == Input::kUp ? (selected_ + rows - 1) % rows : (selected_ + 1) % rows;
-        return Sound::kMove;
-    case Input::kLeft:
-    case Input::kRight:
-        if (editing_) {
-            return Sound::kNone;
-        }
-        return Change(input == Input::kLeft ? -1 : 1);
-    case Input::kDecide:
-        if (editing_) {
-            editing_ = false;
-            return Sound::kDecide;
-        }
-        return Decide();
-    case Input::kBack:
-        if (editing_) {
-            editing_ = false;
-            return Sound::kBack;
-        }
-        if (page_ == Page::kSettings || page_ == Page::kJoin) {
-            return Leave(page_ == Page::kSettings ? kSettings : kJoin);
-        }
-        Close();
-        return Sound::kBack;
-    case Input::kPaste:
-        if (page_ == Page::kJoin || (page_ == Page::kSettings && editing_)) {
-            request_ = Request{Request::Kind::kPaste, {}};
-            return Sound::kDecide;
-        }
-        return Sound::kNone;
-    case Input::kErase:
-        if (std::string* t = EditedText(); t && !t->empty()) {
-            PopCodePoint(*t);
-            return Sound::kMove;
-        }
-        return Sound::kNone;
-    }
-    return Sound::kNone;
-}
-
-Sound Menu::Decide() {
-    switch (page_) {
-    case Page::kMain:
-        switch (selected_) {
-        case kHost:
-            status_ = {"Starting the server..."};
-            request_ = Request{Request::Kind::kHost, {}};
-            return Sound::kStart;
-        case kJoin:
-            status_.clear();
-            Go(Page::kJoin);
-            return Sound::kOpen;
-        case kSettings:
-            status_.clear();
-            options_ = saved_;
-            Go(Page::kSettings);
-            return Sound::kOpen;
-        default:
-            Close();
-            return Sound::kBack;
-        }
-    case Page::kJoin:
-        if (JoinOffset() != 0 && selected_ == 0) {   // Join <host> again: the last code, one press
-            status_ = {"Joining..."};
-            request_ = Request{Request::Kind::kJoin, rejoin_code_};
-            return Sound::kStart;
-        }
-        switch (selected_ - JoinOffset()) {
-        case kField:   // A on the code: paste it
-            request_ = Request{Request::Kind::kPaste, {}};
-            return Sound::kDecide;
-        case kJoinNow:
-            if (Trim(join_).empty()) {
-                status_ = {"Paste your friend's code first: copy it from their message, then press A on it."};
-                return Sound::kRefuse;
-            }
-            status_ = {"Joining..."};
-            request_ = Request{Request::Kind::kJoin, join_};
-            return Sound::kStart;
-        default:
-            return Leave(kJoin);
-        }
-    case Page::kSettings:
-        switch (selected_) {
-        case kName:
-            editing_ = true;
-            return Sound::kDecide;
-        case kSave: {
-            if (!NameOk(options_.name)) {
-                status_ = {"Your name: 1 to 16 characters."};
-                return Sound::kRefuse;
-            }
-            saved_ = options_;
-            request_ = Request{Request::Kind::kSave, {}};
-            const Sound s = Leave(kSettings);
-            status_ = {"Settings saved."};
-            return s == Sound::kBack ? Sound::kDecide : s;
-        }
-        case kSettingsBack:
-            return Leave(kSettings);
-        default:
-            return Change(1);
-        }
-    case Page::kHosting:
-        if (selected_ == 1) {
-            request_ = Request{Request::Kind::kCopyInvite, {}};
-            return Sound::kDecide;
-        }
-        if (selected_ == 2) {
-            request_ = Request{Request::Kind::kPasteAnswer, {}};
-            return Sound::kDecide;
-        }
-        if (selected_ == 3) {
-            request_ = Request{Request::Kind::kCopyLan, {}};
-            return Sound::kDecide;
-        }
-        Close();
-        return Sound::kBack;
-    case Page::kJoining:
-        Close();
-        return Sound::kBack;
-    case Page::kClosed:
-        break;
-    }
-    return Sound::kNone;
-}
-
-// Back from Join or Settings: closed when the title's own row opened it, else the main page on that row.
-Sound Menu::Leave(std::size_t main_row) {
-    options_ = saved_;
-    status_.clear();
-    if (direct_) {
-        Close();
-        return Sound::kBack;
-    }
-    Go(Page::kMain);
-    selected_ = main_row;
-    return Sound::kBack;
-}
-
-Sound Menu::Change(int step) {
-    if (page_ != Page::kSettings) {
-        return Sound::kNone;
-    }
-    auto cycle = [step](const std::vector<std::string>& list, std::string& v) {
-        const std::size_t n = list.size();
-        const std::size_t i = IndexOf(list, v);
-        v = list[(i + n + static_cast<std::size_t>(step < 0 ? n - 1 : 1)) % n];
-    };
-    switch (selected_) {
-    case kColour:
-        cycle(Colours(), options_.colour);
-        return Sound::kMove;
-    case kVoice:
-        options_.voice = !options_.voice;
-        return Sound::kMove;
-    case kMaxPlayersRow: {
-        const int span = kMaxPlayers - kMinPlayers + 1;
-        options_.max_players = kMinPlayers + (options_.max_players - kMinPlayers + step % span + span) % span;
-        return Sound::kMove;
-    }
-    default:
-        return Sound::kNone;
-    }
-}
-
-bool Menu::Char(std::uint32_t cp) {
-    std::string* t = EditedText();
-    if (t == nullptr || cp < 0x20 || cp == 0x7F) {
-        return false;
-    }
-    const std::string add = Utf8(cp);
-    if (add.empty()) {
-        return true;
-    }
-    if (t == &options_.name && CodePoints(*t) >= kMaxNameChars) {
-        return true;
-    }
-    if (t == &join_ && t->size() >= 300) {
-        return true;
-    }
-    *t += add;
-    return true;
-}
-
-bool Menu::Paste(std::string_view text) {
-    std::string* t = EditedText();
-    if (t == nullptr) {
-        return false;
-    }
-    const std::string line = OneLine(text);
-    if (t == &join_) {
-        join_ = line.substr(0, 300);
-        selected_ = kJoinNow + JoinOffset();
-        status_.clear();
-        return true;
-    }
-    for (std::size_t i = 0; i < line.size();) {   // character by character, so the limits hold
-        const unsigned char c = static_cast<unsigned char>(line[i]);
-        std::size_t n = c < 0x80 ? 1 : (c >> 5) == 6 ? 2 : (c >> 4) == 14 ? 3 : (c >> 3) == 30 ? 4 : 1;
-        n = std::min(n, line.size() - i);
-        const std::string piece = line.substr(i, n);
-        if (t == &options_.name && CodePoints(*t) >= kMaxNameChars) {
-            break;
-        }
-        *t += piece;
-        i += n;
-    }
-    return true;
-}
-
-View Menu::view() const {
-    View v;
-    v.status = status_;
-    if (page_ == Page::kJoin && status_.empty()) {
-        v.status = {"On the same home network or VPN as your friend? Paste the line from",
-                    "\"Same network or VPN\" on their Host screen here instead (address and password)."};
-    }
-    auto add = [&](std::string label, std::string value = {}, bool arrows = false) {
-        Row r;
-        r.label = std::move(label);
-        r.value = std::move(value);
-        r.arrows = arrows;
-        r.selected = v.rows.size() == selected_;
-        v.rows.push_back(std::move(r));
-    };
-    switch (page_) {
-    case Page::kMain:
-        v.title = "Multiplayer";
-        add("Host a game");
-        add("Join a game");
-        add("Settings");
-        add("Back");
-        v.hint = "A: choose    B: back";
-        break;
-    case Page::kJoin:
-        v.title = "Join";
-        if (JoinOffset() != 0) {
-            add("Join " + rejoin_host_ + " again");
-        }
-        add(JoinOffset() != 0 ? "Or a new code" : "Your friend's code",
-            join_.empty() ? std::string("(press A to paste it)") : join_);
-        v.rows.back().editing = true;
-        add("OK");
-        add("Cancel");
-        v.hint = "A on the code or Ctrl+V: paste    B: cancel";
-        break;
-    case Page::kSettings: {
-        v.title = "Co-op Settings";
-        add("Your name", options_.name);
-        add("Your colour", options_.colour.empty() ? std::string("By player number") : options_.colour, true);
-        add("Players when you host", std::to_string(options_.max_players), true);
-        add("Voice chat", OnOff(options_.voice), true);
-        add("Save");
-        add("Back");
-        if (editing_ && selected_ < v.rows.size()) {
-            v.rows[selected_].editing = true;
-        }
-        v.hint = editing_ ? "Type with the keyboard    Enter: done" : "Left/Right: change    A: edit    B: back";
-        break;
-    }
-    case Page::kHosting:
-        v.title = "Host";
-        add("OK");
-        add("Copy the code again");
-        add("Paste friend's answer");
-        add("Same network or VPN");
-        v.hint = "A: choose    B: close";
-        break;
-    case Page::kJoining:
-        v.title = "Join";
-        add("OK");
-        v.hint = "A or B: close";
-        break;
-    case Page::kClosed:
-        break;
-    }
-    return v;
 }
 
 }  // namespace CoopTitleMenu

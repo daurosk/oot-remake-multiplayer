@@ -372,3 +372,31 @@ TEST_CASE("hookshot: the game's camera reaches the module for the name tags (no 
           std::string::npos);
 }
 
+
+TEST_CASE("hookshot: the Multiplayer tab leads Hookshot's menu (patch 0012, hos_coop_menu.h)") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0012-coop-menu-tabs.patch");
+    REQUIRE_FALSE(patch.empty());
+    // The table in our patch is hookshot/src's.
+    CHECK(NewFile(patch, "gpu/vk/hos_coop_menu.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_menu.h"));
+    // Hookshot looks for the module's five exports (four, or no tabs) and leads its strip with the tabs.
+    for (const char* name : {"\"hos_coop_menu_tabs\"", "\"hos_coop_menu_tab_name\"", "\"hos_coop_menu_page\"",
+                             "\"hos_coop_menu_input\"", "\"hos_coop_menu_wanted\""}) {
+        CHECK(patch.find(name) != std::string::npos);
+    }
+    CHECK(patch.find("+        draw_coop_page(c, hh);") != std::string::npos);
+    CHECK(patch.find("+        coop_tick(press, tab_left, tab_right, mouse ? &ptr : nullptr, mx, my, moved, changed);") !=
+          std::string::npos);
+    // Only the Vulkan back end's files: no game rebuild (no lift), the same Hookshot build as the other patches.
+    for (std::size_t at = patch.find("diff --git a/"); at != std::string::npos; at = patch.find("diff --git a/", at + 1)) {
+        CHECK(patch.compare(at, 20, "diff --git a/gpu/vk/") == 0);
+    }
+    // The module has the exports.
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    for (const char* name : {"COOP_HOOKSHOT_EXPORT int hos_coop_menu_tabs(void)",
+                             "COOP_HOOKSHOT_EXPORT const char* hos_coop_menu_tab_name(int tab)",
+                             "COOP_HOOKSHOT_EXPORT int hos_coop_menu_page(int tab, HosCoopMenuPage* out)",
+                             "COOP_HOOKSHOT_EXPORT int hos_coop_menu_input(int tab, int event, int arg, int arg2)",
+                             "COOP_HOOKSHOT_EXPORT int hos_coop_menu_wanted(void)"}) {
+        CHECK(module.find(name) != std::string::npos);
+    }
+}

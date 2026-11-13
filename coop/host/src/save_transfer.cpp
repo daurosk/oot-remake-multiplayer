@@ -309,9 +309,25 @@ WriteResult write_coop_save(const fs::path& coop_dir, const SaveSlot& slot, cons
   return WriteResult::written;
 }
 
+int clear_coop_slots(const fs::path& coop_dir) {
+  if (!is_coop_dir(coop_dir)) return -1;
+  std::error_code ec;
+  if (!fs::is_directory(coop_dir, ec)) return 0;
+  std::vector<fs::path> gone;
+  for (fs::directory_iterator it(coop_dir, ec), end; !ec && it != end; it.increment(ec)) {
+    if (slot_name(it->path().filename().string()) && it->is_directory(ec)) gone.push_back(it->path());
+  }
+  int n = 0;
+  for (const auto& d : gone) {
+    std::error_code rec;
+    fs::remove_all(d, rec);
+    if (!rec) ++n;
+  }
+  return n;
+}
+
 FolderChoice folder_choice(std::optional<bool> env, bool can_switch, bool connected, bool is_host, bool in_game) {
-  if (env) return *env ? FolderChoice::coop : FolderChoice::own;
-  if (!can_switch) return FolderChoice::own;
+  if (!can_switch) return env && *env ? FolderChoice::coop : FolderChoice::own;
   if (!connected) return FolderChoice::wait;
   if (is_host || in_game) return FolderChoice::own;
   return FolderChoice::coop;

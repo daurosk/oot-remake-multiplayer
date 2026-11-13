@@ -261,10 +261,14 @@ TEST_CASE("save transfer: the host's slot goes only into the co-op folder, never
 TEST_CASE("save transfer: which save folder a game plays from (issue 167)") {
   using coop::host::save::folder_choice;
   using coop::host::save::FolderChoice;
-  // LICHII_COOP_HOST_SAVE (play.ps1: 1 for a join by address or invite code, 0 for a host) decides, everywhere
+  // a fixed folder (the emulator): LICHII_COOP_HOST_SAVE (play.ps1: 1 for a join by address or invite code, 0 for
+  // a host) decides
   CHECK(folder_choice(true, false, false, false, false) == FolderChoice::coop);
-  CHECK(folder_choice(true, true, true, true, false) == FolderChoice::coop);
-  CHECK(folder_choice(false, true, true, false, false) == FolderChoice::own);
+  CHECK(folder_choice(false, false, true, false, false) == FolderChoice::own);
+  // switchable (Hookshot): the session's role, never the variable (the title menu may Host or Join after any start)
+  CHECK(folder_choice(true, true, true, true, false) == FolderChoice::own);    // started as a join, then hosted
+  CHECK(folder_choice(false, true, true, false, false) == FolderChoice::coop); // started as a host, then joined
+  CHECK(folder_choice(true, true, false, false, false) == FolderChoice::wait);
   // a fixed folder (the emulator) without it: the player's own saves, whatever coop.ini says
   CHECK(folder_choice(std::nullopt, false, true, false, false) == FolderChoice::own);
   // switchable (Hookshot): the session decides, once connected to a host
@@ -273,4 +277,25 @@ TEST_CASE("save transfer: which save folder a game plays from (issue 167)") {
   CHECK(folder_choice(std::nullopt, true, true, true, false) == FolderChoice::own);     // the host, even with an old
                                                                                          // friend's address in coop.ini
   CHECK(folder_choice(std::nullopt, true, true, false, true) == FolderChoice::own);     // joined with a save loaded
+}
+
+TEST_CASE("save transfer: a co-op folder is emptied of slots before the host's save comes (issue 167)") {
+  namespace fs = std::filesystem;
+  const fs::path base = fs::temp_directory_path() / "coop-clear-slots-test";
+  std::error_code ec;
+  fs::remove_all(base, ec);
+  const fs::path coop = base / "0123-coop", own = base / "0123";
+  for (const char* d : {"slot_00", "slot_03", "other"}) fs::create_directories(coop / d);
+  std::ofstream(coop / "slot_00" / "progress.sav") << "an older host's save";
+  std::ofstream(coop / "option.sav") << "settings";
+  fs::create_directories(own / "slot_00");
+  CHECK(coop::host::save::clear_coop_slots(coop) == 2);
+  CHECK_FALSE(fs::exists(coop / "slot_00"));
+  CHECK_FALSE(fs::exists(coop / "slot_03"));
+  CHECK(fs::exists(coop / "other"));       // not a slot: left
+  CHECK(fs::exists(coop / "option.sav"));  // the player's settings stay
+  CHECK(coop::host::save::clear_coop_slots(own) == -1);   // never the player's own folder
+  CHECK(fs::exists(own / "slot_00"));
+  CHECK(coop::host::save::clear_coop_slots(base / "none-coop") == 0);
+  fs::remove_all(base, ec);
 }

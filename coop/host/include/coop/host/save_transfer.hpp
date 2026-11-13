@@ -178,12 +178,18 @@ WriteResult write_coop_save(const std::filesystem::path& coop_dir, const SaveSlo
 
 // Which save folder a game plays from (issue 167). Never from coop.ini's address: an invite join is 127.0.0.1
 // (the join helper) and an old address may be a friend's while this player now hosts.
-// - `env`: LICHII_COOP_HOST_SAVE when set (play.ps1: 1 for a join, by address or invite; 0 for a host): it decides.
-// - Else, where the save folder can be switched while the game runs (Hookshot's patch 0008): the session decides at
-//   the first connection that has a host: a guest (not the host) plays from the co-op folder, the host from its own.
-//   A game that already has a save loaded (Link in the game) keeps its own: a switch then would mix two saves.
-// - Else (the emulator, its folder fixed when the game starts): its own.
+// - Where the save folder can be switched while the game runs (Hookshot's patch 0008): the session decides at the
+//   first connection that has a host, whatever the start was (the title menu can Host or Join after any start): a guest
+//   plays from the co-op folder, the host from its own. A game that already has a save loaded (Link in the game) keeps
+//   its own: a switch then would mix two saves. `env` is not used there.
+// - Where it is fixed when the game starts (the emulator): `env`, LICHII_COOP_HOST_SAVE when set (play.ps1: 1 for a
+//   join, by address or invite; 0 for a host; or coop-options.ini), else its own.
 enum class FolderChoice { wait, own, coop };
 FolderChoice folder_choice(std::optional<bool> env, bool can_switch, bool connected, bool is_host, bool in_game);
+
+// The slot_NN folders of a co-op save folder taken away, so it holds nothing until the host's save comes (a guest
+// switching to it must not find an older host's save and load that). Refuses a folder that is not a co-op one.
+// Returns the folders removed, or -1.
+int clear_coop_slots(const std::filesystem::path& coop_dir);
 
 }  // namespace coop::host::save

@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "mod_temp.h"
 #include "coop_mod_library.h"
 #include "coop_mods.h"
 #include "coop_rando.h"
@@ -35,7 +36,7 @@ CoopMods::Row RowNamed(const std::string& name, bool on) {
 
 // A mods folder and a game folder, and an OOTRR that writes what the real one writes for a Hookshot build.
 struct World {
-    fs::path base = fs::temp_directory_path() / "coop-rando-test";
+    fs::path base = ModTestDir("coop-rando-test");
     fs::path mods = base / "mods";
     fs::path game = base / "romfs";
     fs::path ootrr = base / "ootrr.exe";

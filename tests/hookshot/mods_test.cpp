@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "mod_temp.h"
 #include "coop_mod_json.h"
 #include "coop_mod_library.h"
 #include "coop_mods.h"
@@ -42,7 +43,7 @@ void Put(const fs::path& p, const std::string& text) {
 
 struct TempMods {
     fs::path root;
-    explicit TempMods(const char* name) : root(fs::temp_directory_path() / name) {
+    explicit TempMods(const char* name) : root(ModTestDir(name)) {
         std::error_code ec;
         fs::remove_all(root, ec);
         fs::create_directories(root);

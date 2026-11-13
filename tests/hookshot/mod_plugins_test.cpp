@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "mod_temp.h"
 #include "coop_mod_plugins.h"
 #include "coop_mods.h"
 
@@ -129,7 +130,7 @@ Library FakeLibrary() {
 }
 
 struct Folder {
-    fs::path root = fs::temp_directory_path() / "coop-mod-plugins-test";
+    fs::path root = ModTestDir("coop-mod-plugins-test");
     Folder() {
         std::error_code ec;
         fs::remove_all(root, ec);
@@ -363,7 +364,24 @@ TEST_CASE("mod plugins: a library that crashes while it is loaded is skipped, th
     Run r([](Run& run) { run.folder.Code("3-boom", "boom", "boom.dll"); });
     CHECK(r.host->Running() == std::vector<std::string>{"alpha", "bee", "crash"});
     CHECK(r.Logged("mod boom: crashed while its code was loaded"));
-    CHECK(r.Note("3-boom") == "crashed while its code was loaded");
+    CHECK(r.Note("3-boom").find("crashed while its code was loaded") == 0);
+}
+
+TEST_CASE("mod plugins: after a crash inside a library's load no other library is opened, and it is off next start") {
+    Run r([](Run& run) { run.folder.Code("z-boom", "boom", "boom.dll"); });  // sorts last: the first row
+    CHECK(r.host->Running().empty());
+    CHECK(r.Logged("mod alpha: not loaded: another mod crashed while its code was loaded"));
+    const auto marker = CoopMods::LoadStarting(r.folder.root);
+    REQUIRE(marker);
+    CHECK(marker->name == "z-boom");
+    std::vector<std::string> log;
+    CoopMods::Loader next(r.folder.root, {[&](const std::string& l) { log.push_back(l); }, 2, nullptr});
+    next.Start();
+    bool off = false;
+    for (const auto& row : next.Rows()) {
+        if (row.name == "z-boom") off = !row.on;
+    }
+    CHECK(off);
 }
 
 TEST_CASE("mod plugins: coop-mods.starting text") {
@@ -379,7 +397,7 @@ TEST_CASE("mod plugins: coop-mods.starting text") {
 }
 
 TEST_CASE("mod plugins: the sample mod (hookshot/samples/hello-mod) through the system's loader") {
-    const fs::path root = fs::temp_directory_path() / "coop-mod-plugins-sample";
+    const fs::path root = ModTestDir("coop-mod-plugins-sample");
     std::error_code ec;
     fs::remove_all(root, ec);
     fs::create_directories(root / "hello-mod");

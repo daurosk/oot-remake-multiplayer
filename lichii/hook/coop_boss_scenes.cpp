@@ -107,6 +107,11 @@ void Director::Reset() {
     inbox_.clear();
 }
 
+std::int32_t Director::Base(const Local& local) const {
+    // Last tick's reading (before anything this tick), else this tick's; 0: unread.
+    return max_life_.value_or(local.max_life.value_or(0));
+}
+
 bool Director::Here(std::uint8_t b, const Local& local) const {
     const Fight& f = fights_[b];
     return local.scene && local.position && InArea(kBosses[b], f.scene, f.starter_at, *local.scene, *local.position);
@@ -242,6 +247,7 @@ void Director::Take(const proto::Message& m, const Local& local, std::uint64_t n
                 f.starter_at = at;
             }
             f.at = now_us;
+            f.base = Base(local);  // our maximum when the boss died, wherever we are
             Join(s->boss, Kind::outro, local, now_us, out);
         }
         break;
@@ -294,6 +300,7 @@ void Director::Ours(const Request& r, const Local& local, std::uint64_t now_us, 
             f.starter_at = local.position;
         }
         f.at = now_us;
+        f.base = Base(local);
         Say(out, b, proto::BossSceneKind::outro_start, local);
         out.log.push_back(r.name + ": our game started the death: the others in the area play it too");
     } else {
@@ -379,10 +386,10 @@ Actions Director::Tick(const Local& local, const std::vector<Request>& ours, std
         }
         // The one heart container, in its beaten boss's area.
         const bool beaten_here = (f.phase == Phase::outro || f.phase == Phase::done) && Here(b, local);
-        if (beaten_here && f.base == 0 && max_life_) {
-            f.base = *max_life_;  // our maximum when the boss died, before any pickup
+        if (beaten_here && f.base == 0 && f.heart == 0 && max_life_) {
+            f.base = *max_life_;  // the death was not heard (our maximum was unread then): from now
         }
-        if (beaten_here && f.base != 0 && !out.max_life_cap) {
+        if (beaten_here && (f.base != 0 || f.heart != 0) && !out.max_life_cap) {
             // The flag watcher puts back, unsent, any rise of our own past this (a second pickup of
             // the container: the max rule would give it to everyone): one container on our maximum when
             // the boss died, or the server's answer once known, never below that maximum of ours.

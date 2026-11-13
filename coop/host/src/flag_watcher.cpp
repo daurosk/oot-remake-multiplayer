@@ -848,7 +848,11 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
         pending_.erase(key);
         continue;
       }
-      ++stats_.write_failures;  // sent as any rise
+      // Not put back now: still never sent. The value before stays the one
+      // seen, so the next frame sees the rise again and tries again.
+      ++stats_.write_failures;
+      it->second = before;
+      continue;
     }
     if (!restate_.contains(key) && before.kind == protocol::FlagKind::int32 &&
         now->kind == protocol::FlagKind::int32 && as_int(now->value) < as_int(before.value) &&

@@ -155,7 +155,7 @@ private:
         unsigned moves = 0;
         std::uint64_t moved_at = 0;
         bool claimed = false;      // we sent our heart claim (or our pickup was seen)
-        std::int32_t base = 0;     // our maximum when the boss died in our area (0: not yet)
+        std::int32_t base = 0;     // our maximum when the boss's death was heard or started (0: unread)
         std::int32_t heart = 0;    // the server's answer (0: none yet)
         std::uint8_t heart_by = 0;
     };
@@ -170,6 +170,7 @@ private:
     void Ours(const Request& r, const Local& local, std::uint64_t now_us, Actions& out);
     void Join(std::uint8_t b, Kind kind, const Local& local, std::uint64_t now_us, Actions& out);
     bool Here(std::uint8_t b, const Local& local) const;
+    std::int32_t Base(const Local& local) const;
     void Say(Actions& out, std::uint8_t b, coop::protocol::BossSceneKind kind, const Local& local) const;
     void Skip(const char* why, std::uint64_t now_us, Actions& out);
 

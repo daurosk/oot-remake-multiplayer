@@ -1604,3 +1604,31 @@ TEST_CASE("flag watcher: a second pickup of a boss's heart container never raise
   exchange(3);
   CHECK(host_game.get(kMaxLife) == 20u);
 }
+
+TEST_CASE("flag watcher: a capped rise whose put-back fails is still never sent, and is tried again") {
+  constexpr FlagKey kMaxLife{0xfbe01da1u, 0};
+  FakeStore host_game, player_game;
+  host_game.values[kMaxLife] = entry(kMaxLife, 16, proto::FlagKind::int32);
+  player_game.values[kMaxLife] = entry(kMaxLife, 16, proto::FlagKind::int32);
+  ItemFlagStore host_store(host_game), player_store(player_game);
+  FlagWatcher h(SharedFlags({kMaxLife}), FlagRole::host);
+  FlagWatcher p(SharedFlags({kMaxLife}), FlagRole::player);
+  h.frame(host_store);
+  p.frame(player_store);
+  p.cap_max(kMaxLife, 16);
+  player_game.values[kMaxLife] = entry(kMaxLife, 20, proto::FlagKind::int32);  // a second pickup
+  player_game.unwritable.insert(kMaxLife);                                     // and the game takes no write
+  for (int i = 0; i < 3; ++i) {
+    for (const auto& o : p.frame(player_store)) CHECK(h.receive(o.bytes));
+    for (const auto& o : h.frame(host_store)) CHECK(p.receive(o.bytes));
+  }
+  CHECK(host_game.get(kMaxLife) == 16u);
+  CHECK(p.stats().write_failures >= 3);
+  CHECK(p.stats().max_caps_kept == 0);
+  // The game takes writes again: put back on the next frame, still nothing sent.
+  player_game.unwritable.clear();
+  CHECK(p.frame(player_store).empty());
+  CHECK(player_game.get(kMaxLife) == 16u);
+  CHECK(p.stats().max_caps_kept == 1);
+  CHECK(host_game.get(kMaxLife) == 16u);
+}

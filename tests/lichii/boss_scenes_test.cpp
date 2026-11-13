@@ -368,3 +368,21 @@ TEST_CASE("boss scenes: the door's event ending as our game takes the intro does
     REQUIRE(out.send.size() == 1);
     CHECK(out.send[0].kind == proto::BossSceneKind::intro_end);
 }
+
+TEST_CASE("boss scenes: the cap's base is our maximum when the death was heard, wherever we were") {
+    // A player outside the area hears the death at 12, then the winner's 16 comes by the shared flag,
+    // then it walks in before the server's answer: one container on 12, not on 16.
+    Director e;
+    auto with = [](std::int32_t max, const Vec& p) {
+        Local l = At(p, 5);
+        l.max_life = max;
+        return l;
+    };
+    e.Tick(with(12, kFar), {}, 500'000);
+    e.Receive(Scene(1, kGohma, proto::BossSceneKind::outro_start, kInRoom));
+    CHECK_FALSE(e.Tick(with(12, kFar), {}, 1'000'000).max_life_cap);  // outside: no cap
+    CHECK(e.Tick(with(16, kFar), {}, 2'000'000).claims.empty());     // the flag's 16, outside
+    Actions out = e.Tick(with(16, kInRoom), {}, 3'000'000);
+    CHECK(out.max_life_cap == std::optional<std::int32_t>(16));
+    CHECK(out.claims.empty());
+}

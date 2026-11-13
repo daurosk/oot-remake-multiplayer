@@ -1,0 +1,50 @@
+# hs-barinade-native (Hookshot, branch bosses): Barinade (Jabu-Jabu) with native boss sync (docs/dungeons-boss.md,
+# "Native boss sync"). A owns the boss; B's copy takes A's brain and action changes, each once, in order,
+# through the game's own functions. Same mechanism as hs-gohma-native; this run proves it for this boss.
+# NEEDS a hookshot.exe with patch 0013 (wraps 4 and 5); without them the log says "native sync off ... not
+# wrapped" and the run is INCONCLUSIVE.
+# Route: both warp into the boss rush's BarinadeStage (it places its own boss; no kit save is from before it).
+# Both stand, then lock on and swing the sword now and then: the run proves the sync, not a win.
+# PASS (proof lines):
+#  1. Both: "coop: bosses: native sync on (brain verbs wrapped, action verbs wrapped)".
+#  2. A: "coop: bosses: Enemy_DungeonBoss_Barinade: native boss sync on (BSA 0x..., ours)"; B the same with "a copy".
+#  3. B: "Enemy_DungeonBoss_Barinade: the owner's verbs came (brain N): the copy's own brain is skipped from now".
+#  4. Every 10 s: A "ours sent N brain + N action verbs" growing; B "N brain + N action verbs put in" growing
+#     by about as much; B never "started again from the owner's state" (no lag in a local run).
+#  5. Screenshots a-1..3 / b-1..3 (the same moment): the same phase and the same move on both screens.
+#  6. A hit by B on the copy: "share damage" in B and A's life for the boss falls (one life on both).
+#  7. No two of any shot or minion at one spot on B's screen (only A's game makes them).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 600
+mark start
+warp BarinadeStage BarinadeStage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-in
+wait 1800               # the intro, then the fight
+press ZL 10             # lock on
+mark a-1
+hold ZL+LSTICK_UP 60
+hold ZL+Y 8             # the sword is Y
+wait 12
+hold ZL+Y 8
+wait 1500
+mark a-2
+hold ZL+LSTICK_UP 60
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+wait 1500
+mark a-3
+wait 1800
+mark end

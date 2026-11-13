@@ -14,7 +14,7 @@
 #  - B's pushes ("b-push1", "b-push2"): the block moves on from where A left it in both games, no
 #    snap of B's Link or the block back to the start (shots "b-push1", "b-push2", "end"; B's log
 #    "moved here: sending" from the new place; A "moved by another player" and its own "old rest").
-#  - Non-owner grab, pull, push (Caleb: boxes still teleport back a bit when ANOTHER player grabs
+#  - Non-owner grab, pull, push (Alex: boxes still teleport back a bit when ANOTHER player grabs
 #    them): B (who did not move it last) grabs it at "b-grab" (A held 1.5 s; shots "b-reach" and
 #    "b-grab" show the block at the same place in B, and A's copy still), pulls it one step toward
 #    +z at "b-pull", pushes it at "b-push1" (A held) and "b-push2" (walking). Each B shot vs the one

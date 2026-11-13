@@ -677,7 +677,7 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
 
 // Whether a create now would be drawn. Made while the game loads a scene
 // (the scene is readable, the camera is gone), a puppet reaches state 4 but
-// never shows until it is made again (Caleb's two-player run, 2026-11-09:
+// never shows until it is made again (Alex's two-player run, 2026-11-09:
 // B created P1 at 37.1 s, its loading screen ran 36.8 to 40.2 s).
 bool Director::Drawn(const Slot& slot, std::uint64_t now_ms) const {
     if (!input_.camera) {

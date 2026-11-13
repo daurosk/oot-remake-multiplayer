@@ -43,7 +43,7 @@ function Get-KitLoadDir([string]$User) {
 
 # Code and cheat mods the emulator would load for Ocarina of Time, which co-op does not allow
 # (issue 136: a mod's code patches can sit where co-op's own go, and cheats change the game under
-# the sync). Mods that only replace game files (romfs: textures, models) are allowed (Caleb,
+# the sync). Mods that only replace game files (romfs: textures, models) are allowed (Alex,
 # 2026-11-10: texture fixes). Looked at the way Fritchii's Add-Ons list does: each folder in
 # <load>\0400486024DEC000 with a non-empty exefs or cheats folder, loose cheat_* files there,
 # and the SD card's atmosphere\contents\0400486024DEC000\exefs (called "SDMC" there). A mod turned off in the game's

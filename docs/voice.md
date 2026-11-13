@@ -2,18 +2,20 @@
 
 Players hear each other talk as if their Links were speaking: the voice comes from where that player's Link stands, louder up close, duller and quieter further off, silent past the range, and never from another scene. It plays in the game's own sound, so the game's volume, its effects and the speaker layout (stereo or 5.1) apply to it as to any other sound. Up to 16 players. Hookshot only for now (the emulator has no voice).
 
+**Voice chat is off until you turn it on.** Off means off both ways: your microphone is never opened and you hear nobody's voice. Turn it on with the Voice chat row of the co-op settings in the game, or with the line `LICHII_COOP_VOICE=ptt` in the kit's `coop-options.ini`. Then hold **V** to talk (push to talk); let go and you are silent. Everyone who wants to talk or listen turns it on in their own game.
+
 ## For players
 
 | Setting | `coop-options.ini` | Default |
 |---|---|---|
-| How you talk | `LICHII_COOP_VOICE` = `ptt` (push to talk), `open` (open mic: sends when you speak), `off` | `ptt` |
+| Voice chat | `LICHII_COOP_VOICE` = `off`, `ptt` or `on` (push to talk), `open` (open mic: sends when you speak) | `off` |
 | Push-to-talk key | `LICHII_COOP_VOICE_KEY` = a letter or digit, or a Windows key code (`0x14`) | `V` |
 | The others' volume | `LICHII_COOP_VOICE_VOLUME` = 0 to 200 (percent) | 100 |
 | How far you hear | `LICHII_COOP_VOICE_RANGE` = 5 to 100 (metres) | 30 |
 
-The microphone is the one chosen in Hookshot's Insert menu (Gameplay: Microphone), the same the Ocarina's voice mode uses. Off there means the others hear nothing. The co-op settings screen in the game sets the same (title-menu, `CoopVoice::Set`). Typing in the chat box is never push to talk; the key only counts while the game's window is in front.
+The microphone is the one chosen in Hookshot's Insert menu (Gameplay: Microphone), the same the Ocarina's voice mode uses. Off there means the others hear nothing. The co-op settings' Voice chat row in the game turns it on (push to talk) and off, at once and for the next starts (`CoopVoice::SetEnabled`; it keeps that one line of `coop-options.ini`). Typing in the chat box is never push to talk; the key only counts while the game's window is in front.
 
-The microphone is opened only when you talk: with push to talk when you press the key (and closed again 100 ms after you let go), with open mic for as long as you are connected and in the game. Muted, voice off or not connected: it is never opened. A player who never presses the key never has a live microphone (Windows' "microphone in use" icon stays off).
+The microphone is opened only when you talk: with push to talk when you press the key (and closed again 100 ms after you let go), with open mic for as long as you are connected and in the game. Voice off (the default), muted or not connected: it is never opened. A player who never presses the key never has a live microphone (Windows' "microphone in use" icon stays off).
 
 ## How it works
 
@@ -27,7 +29,21 @@ The microphone is opened only when you talk: with push to talk when you press th
 
 ## Switches
 
-`HOS_COOP_VOICE=0` (Hookshot): the module is never handed voice. `LICHII_COOP_VOICE=off`: no microphone opened.
+`HOS_COOP_VOICE=0` (Hookshot): the module is never handed voice. No `LICHII_COOP_VOICE` line, or `off`: no microphone opened and nobody heard (the server still relays the others' voices to this game, which drops them unplayed). The game's log says which at start: `coop: voice: off (the default: ...)` or `coop: voice: on (ptt, key 0x56, ...)`, and `coop: voice: now ptt` / `now off` when the settings row changes it.
+
+## Testing
+
+Two test games on one PC have one microphone, one pair of ears and one window in front, so voice has a test source and a test log (`LICHII_COOP_VOICE_TEST`, read at start):
+
+- `tone`: instead of the microphone, a 440 Hz tone at a quarter of full scale, sent as if the push-to-talk key were held 2 s and let go 2 s, whichever window is in front. The real microphone is never opened. It goes the whole way a voice goes: gate, Opus, `VOICE_FRAME`, the server's range relay, the listener's jitter buffer, placement and the game's mix. Voice must be on (`LICHII_COOP_VOICE=ptt`); with voice off the tone goes nowhere.
+- `log` (and `tone`): the log says who is heard here whenever that changes, `coop: voice: test: P1 heard at 2.4 m`, `P1 not heard (quiet, 2.4 m)`, `P1 not heard (out of range: 24.5 m, range 10 m)`, `P1 not heard (not shown here)`, and every 2 s while they change the counts, `coop: voice: test: ptt: sent 100 received 0 decoded 0 concealed 0 unplaced 0`. "Heard" is the mixer's own word: a frame of that voice went into the game's mix, audibly, within the last 250 ms.
+
+The autotest scenarios (`tools/autotest/groups/hookshot-voice.txt`, a Hookshot game built with patch 0009):
+
+- `hs-voice`: voice on in both, hearing range 10 m. A beeps at the load spot; B stands beside A (heard), is put 24.5 m away (not heard) and back (heard again). A person at the PC hears the beep come and go too.
+- `hs-voice-off`: the same two games with no `LICHII_COOP_VOICE` line: nothing sent, nothing heard, no microphone opened.
+
+Not covered by these, to check once with a real microphone: Windows' "microphone in use" icon appears only while V is held (the log's `coop: voice: microphone opened` line is its witness), and the first word after pressing V is not clipped.
 
 ## Later
 

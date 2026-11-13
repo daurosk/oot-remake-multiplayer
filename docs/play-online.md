@@ -194,6 +194,8 @@ Online it works as the emulator kit does: the host double-clicks `Host-Hookshot.
 
 On Hookshot you see the other players as Link once Build-Hookshot-Coop has built Hookshot with this release's co-op patches (an older build shows them as their fairy: run it again). Emulator players see Hookshot players as Link too. The co-op features are drawn over the game's picture: chat with **T**, the player list with **F6**, the panel with **F7**, the item cheats with **F8** (off unless the host's kit turns them on, `LICHII_COOP_CHEATS=1`); the HUD, your own tunic colour and your ocarina notes as on the emulator ([Co-op on Hookshot](setup.md#co-op-on-hookshot)). Name tags and edge arrows show over the other players there too. Hookshot's own problems (crashes outside Kokiri Forest on some PCs, AMD crashes) are listed on its page.
 
+**Voice chat** (Hookshot only) is off until you turn it on: the Voice chat row in the game's co-op settings, or the line `LICHII_COOP_VOICE=ptt` in `coop-options.ini`. Then hold **V** to talk; the others hear you from where your Link stands, up to about 30 m in the same scene, and only players who turned it on hear or talk. Your microphone is the one chosen in Hookshot's Insert menu (Gameplay: Microphone) and is opened only while you hold V. More in [voice.md](voice.md).
+
 ## When you are done
 
 Our programs change no firewall rule. The router forward Host.bat asks for (UPnP) ends when the server window closes (after a crash, within 10 minutes; a router that only takes permanent forwards keeps it until you remove it on its page, and the server window says so). The invite code stops working when the window closes, and nothing listens then. What you opened by hand stays open until you close it:

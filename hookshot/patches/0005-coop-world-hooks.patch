@@ -1,0 +1,403 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Thu, 12 Nov 2026 13:00:23 -0900
+Subject: [PATCH] Co-op world hooks: game events and wrapped game functions to
+ the module
+
+One hook layer for co-op on Hookshot (hos_coop_world.h, host/coop_world.c):
+- events after one instruction: hos_coop_world_event -> the module's
+  hos_coop_world. First one: the AI pause counter start (main+0x5e6778,
+  nx2/coop_platform_lift.py) goes to the module as
+  HOS_COOP_WORLD_COUNTER_START instead of into a ring in the game's heap,
+  so host/coop_platform_ring.c, the game malloc and the ring pointer at
+  main+0x3c46780 are not used any more.
+- wrapped game functions: Lifter.wraps (a64_lift.py, sent to the emit
+  workers through chunks.py EMIT_TABLES) makes every call of f_<entry>,
+  and the indirect table, reach hos_coop_w_<entry> in a64_hooks.c, which
+  calls hos_coop_wrap before and after the unchanged f_<entry>, to the
+  module's hos_coop_wrap with the registers. nx2/coop_world_wraps.py
+  lists them (build id and words checked, never one Hookshot hooks or
+  edits by name). First one: the flag applier at main+0xb99980.
+The exports are kept once the module answers HOS_COOP_WORLD_HELLO.
+---
+ host/coop_platform_ring.c            | 19 -------
+ host/coop_world.c                    | 62 ++++++++++++++++++++++
+ host/hos_coop_world.h                | 49 ++++++++++++++++++
+ nx2/chunks.py                        |  3 +-
+ nx2/coop_hooks.py                    |  5 ++
+ nx2/coop_platform_lift.py            | 15 +++---
+ nx2/coop_world_wraps.py              | 77 ++++++++++++++++++++++++++++
+ third_party/a64-kit/lift/a64_lift.py | 26 +++++++++-
+ 8 files changed, 228 insertions(+), 28 deletions(-)
+ delete mode 100644 host/coop_platform_ring.c
+ create mode 100644 host/coop_world.c
+ create mode 100644 host/hos_coop_world.h
+ create mode 100644 nx2/coop_world_wraps.py
+
+diff --git a/host/coop_platform_ring.c b/host/coop_platform_ring.c
+deleted file mode 100644
+index b241703..0000000
+--- a/host/coop_platform_ring.c
++++ /dev/null
+@@ -1,19 +0,0 @@
+-/* (oot-remake-multiplayer's patch 0003, nx2/coop_platform_lift.py) A started AI pause counter goes into co-op's ring.
+-
+-   The same ring the emulator's cave fills (lichii/hook/coop_counter.s): its address is the u64 at main+0x3c46780,
+-   0 until the co-op module made it with the game's malloc (lichii/hook/coop_counters.h). Ring: +0 a u32 count, +8 256
+-   u64 nodes; the node goes at (count + 1) % 256 and the count goes up. The module reads it a few times a second and
+-   checks every node itself (vtable, actor), so a lost or doubled entry costs nothing; no lock, as on the emulator. */
+-#include "hos.h"
+-
+-enum { COOP_RING_NODES = 256 };
+-#define COOP_MAIN 0x80020000ull
+-#define COOP_RING_POINTER (COOP_MAIN + 0x3c46780ull)
+-
+-void hos_coop_counter(uint64_t node) {
+-    const uint64_t ring = G64(COOP_RING_POINTER);
+-    if (!ring || !node) return;
+-    const uint32_t n = G32(ring) + 1;
+-    G32(ring) = n;
+-    *(uint64_t *)GP(ring + 8 + 8ull * (n % COOP_RING_NODES)) = node;
+-}
+diff --git a/host/coop_world.c b/host/coop_world.c
+new file mode 100644
+index 0000000..ffea5b0
+--- /dev/null
++++ b/host/coop_world.c
+@@ -0,0 +1,62 @@
++/* Co-op (oot-remake-multiplayer, GPL-3.0; its docs/hookshot.md "World hooks", patch 0005): the game's world events
++   straight to the co-op module, through the game's own functions.
++
++   Two kinds of hook, both made when Hookshot is built (nx2/coop_world_wraps.py):
++   - an event after one instruction (Lifter.after): hos_coop_world_event, to the module's hos_coop_world;
++   - a wrapped game function (Lifter.wraps): every call of f_<entry> and the indirect table reach hos_coop_w_<entry>
++     (a64_hooks.c), which calls hos_coop_wrap before (phase 0: 1 = the module did the call's work, the game's function
++     is not run) and after (phase 1) the game's function, to the module's hos_coop_wrap with the registers.
++   The bridge (coop_bridge.c) loads the module at the first frame hook; until then, without it, or with a module that has
++   no such export, a hook costs a load and a counter. The exports are kept only once the module says it is on
++   (HOS_COOP_WORLD_HELLO answers 1): a module the bridge refused and unloads never answers 1, and one that is on stays
++   loaded until exit. */
++#if !defined(_WIN32) && !defined(_GNU_SOURCE)
++#define _GNU_SOURCE   /* (RTLD_DEFAULT) */
++#endif
++#include "hos.h"
++#include "hos_coop_world.h"
++#include <stddef.h>
++#ifdef _WIN32
++#define WIN32_LEAN_AND_MEAN
++#include <windows.h>
++#else
++#include <dlfcn.h>
++#endif
++
++extern const uint64_t hos_coop_wrap_mask;   /* (gen/a64_hooks.c, a64_lift.py: bit id for each wrap this build has) */
++
++static hos_coop_world_fn world;   /* (atomic) the module's exports, once it said it is on */
++static hos_coop_wrap_fn wrap;
++static int found;                 /* (atomic) 1 once both were looked up with the module on */
++static uint32_t wait;             /* (atomic) hooks until the next look */
++
++static int find(void) {
++    if (__atomic_load_n(&found, __ATOMIC_ACQUIRE)) return 1;
++    if (__atomic_fetch_add(&wait, 1, __ATOMIC_RELAXED) % 256 != 0) return 0;   /* (a look per 256 hooks) */
++#ifdef _WIN32
++    HMODULE m = GetModuleHandleA("hookshot_coop.dll");
++    if (!m) return 0;
++    hos_coop_world_fn w = (hos_coop_world_fn)(void *)GetProcAddress(m, "hos_coop_world");
++    hos_coop_wrap_fn p = (hos_coop_wrap_fn)(void *)GetProcAddress(m, "hos_coop_wrap");
++#else
++    void *m = dlopen("hookshot_coop.so", RTLD_NOW | RTLD_NOLOAD);
++    hos_coop_world_fn w = (hos_coop_world_fn)(m ? dlsym(m, "hos_coop_world") : dlsym(RTLD_DEFAULT, "hos_coop_world"));
++    hos_coop_wrap_fn p = (hos_coop_wrap_fn)(m ? dlsym(m, "hos_coop_wrap") : dlsym(RTLD_DEFAULT, "hos_coop_wrap"));
++#endif
++    /* (a = this file's level, b = the wrap ids this build has, as bits: gen/a64_hooks.c) */
++    if (!w || w(HOS_COOP_WORLD_HELLO, HOS_COOP_WORLD_VERSION, hos_coop_wrap_mask) != 1) return 0;
++    __atomic_store_n(&wrap, p, __ATOMIC_RELAXED);   /* (may stay NULL: a module with events and no wraps) */
++    __atomic_store_n(&world, w, __ATOMIC_RELAXED);
++    __atomic_store_n(&found, 1, __ATOMIC_RELEASE);
++    return 1;
++}
++
++void hos_coop_world_event(uint32_t event, uint64_t a, uint64_t b) {
++    if (find()) __atomic_load_n(&world, __ATOMIC_RELAXED)(event, a, b);
++}
++
++int hos_coop_wrap(uint32_t id, int phase, Ctx *A64_NOESC c) {
++    if (!find()) return 0;
++    hos_coop_wrap_fn p = __atomic_load_n(&wrap, __ATOMIC_RELAXED);
++    return p ? p(id, phase, c->x, c) : 0;
++}
+diff --git a/host/hos_coop_world.h b/host/hos_coop_world.h
+new file mode 100644
+index 0000000..486456f
+--- /dev/null
++++ b/host/hos_coop_world.h
+@@ -0,0 +1,49 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later
++   Co-op's world hooks on Hookshot (oot-remake-multiplayer, docs/hookshot.md "World hooks"; our patch 0005).
++
++   On the emulator co-op learns what the game does in its world through code caves patched into the game (the pause
++   counters' cave, lichii/hook/coop_counter.s, fills a ring in the game's heap). On Hookshot the game is C: a lift-time
++   hook at the game function calls hos_coop_world_event (Hookshot's host/coop_world.c), which hands the event to the
++   module's optional export hos_coop_world. No guest memory, no cave, no game call.
++
++   The same file is in Hookshot's host/ through our patch 0005 and in our repository (hookshot/src): keep them equal
++   (tests/hookshot/module_test.cpp checks it). Plain C. */
++#ifndef HOS_COOP_WORLD_H
++#define HOS_COOP_WORLD_H
++#include <stdint.h>
++
++/* The level of the hooks in this file: one more with every change of the events or the wraps. Hookshot tells the module
++   at HOS_COOP_WORLD_HELLO, so a module knows what the Hookshot it runs in has (1, the first, sent 0 there). */
++#define HOS_COOP_WORLD_VERSION 4u
++
++/* Events. a and b as listed; a new event takes the next number, an old module answers 0 to one it does not know. */
++#define HOS_COOP_WORLD_HELLO 0u           /* asked by Hookshot before it keeps the exports: 1 once the module is on.
++                                             a = HOS_COOP_WORLD_VERSION, b = this build's wraps (bit id for each) */
++#define HOS_COOP_WORLD_COUNTER_START 1u   /* main+0x5e6760 started an AI ExecuteGenericCounter: a = the node */
++/* The event numbers are one space over two headers: 0-1 above; 2-15 are the actor events' (hos_coop_actors.h, patch
++   0007); the world's next ones here are 16-63. */
++#define HOS_COOP_WORLD_ACTOR_FIRST 2u
++#define HOS_COOP_WORLD_ACTOR_LAST 15u
++#define HOS_COOP_WORLD_NEXT_FIRST 16u
++#define HOS_COOP_WORLD_NEXT_LAST 63u
++
++/* Wrapped game functions (nx2/coop_world_wraps.py WRAPS: id, main offset, first words). A new wrap takes the next id. */
++#define HOS_COOP_WRAP_FLAG_APPLY 1u   /* main+0xb99980: the game applies its queued flag writes (the save load's too) */
++#define HOS_COOP_WRAP_TIME_SET 2u     /* main+0xeee640: the game sets its clock (x0 the time object, w1 seconds since
++                                         midnight, w2 a mode, w3 days or -1); every time change goes through it */
++#define HOS_COOP_WRAP_EVENT_REQUEST 3u /* main+0xd7a820: the game asks its event manager for an event (x0 the manager,
++                                         x1 the request: the event's name is the char* at +0x1a90; returns x0 not 0
++                                         when taken): cutscenes, story scenes, a dungeon room's events */
++
++/* The module's exports (extern "C"), both optional. Called on the game thread that ran the hooked function (not always
++   the calc thread): quick, no lock the game waits on, no game call. hos_coop_world returns 1 when taken.
++   hos_coop_wrap: phase 0 before the game's function, phase 1 after it; x = the guest registers x0-x31 (x[31] is SP),
++   read and written in place (arguments at phase 0, x0 the result at phase 1); ctx = the game's context (for later
++   use with HosCoopApi::call, not yet allowed here). Phase 0 returning 1 means the module did the call's work and the
++   game's function is not run (phase 1 still comes); return 0 to let the game run it, as nearly always.
++   The first call can be a phase 1 without its phase 0: the exports are looked up while the game runs, and a function
++   that was running then ends with them found. */
++typedef int (*hos_coop_world_fn)(uint32_t event, uint64_t a, uint64_t b);
++typedef int (*hos_coop_wrap_fn)(uint32_t id, int phase, uint64_t *x, void *ctx);
++
++#endif
+diff --git a/nx2/chunks.py b/nx2/chunks.py
+index de52777..d9ca299 100644
+--- a/nx2/chunks.py
++++ b/nx2/chunks.py
+@@ -199,7 +199,8 @@ def parallel_emit(emit, order, texts, counters, jobs, run=2000):
+ 
+ # What the emit reads of the lifter besides the bodies of the functions it emits (a64_lift.Lifter.emit_function and the
+ # methods it calls): sent once to each new process
+-EMIT_TABLES = ("entries", "plt", "jt", "devirt", "after", "no_local", "setjmp_owner", "comments", "names")
++EMIT_TABLES = ("entries", "plt", "jt", "devirt", "after", "no_local", "setjmp_owner", "comments", "names",
++               "wraps")   # (oot-remake-multiplayer's patch 0005)
+ _view = None   # (a new process's view: a lifter with the tables only, and its counters)
+ 
+ 
+diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
+index 52a19bc..a866e76 100644
+--- a/nx2/coop_hooks.py
++++ b/nx2/coop_hooks.py
+@@ -58,6 +58,11 @@ def install(lifter, img, build_id):
+     _add(lifter, MAIN + HOLD_CALL + 4, HOLD_TEXT)
+     print("co-op hooks: frame hook at main+%#x and main+%#x, AI hold at main+%#x" % (
+         FRAME_SITES[0][0], FRAME_SITES[1][0], HOLD_CALL + 4))
++    # (patch 0005: wrapped game functions, host/coop_world.c. Here and not at the end, where each later patch adds
++    # its line: a wrap is left out for what the game image hooks and what nx2/oot_*.py edit, not for what the
++    # installs below add, so its place among them does not matter)
++    import coop_world_wraps
++    coop_world_wraps.install(lifter, img, build_id)
+     import coop_puppet_guard   # (patch 0002: the other players' Link)
+     coop_puppet_guard.install(lifter, img, build_id)
+     import coop_platform_lift   # (patch 0003: looping platforms' pause counters)
+diff --git a/nx2/coop_platform_lift.py b/nx2/coop_platform_lift.py
+index 9c9944b..4d5c73f 100644
+--- a/nx2/coop_platform_lift.py
++++ b/nx2/coop_platform_lift.py
+@@ -3,10 +3,10 @@ counters"; method and addresses from Hot Onion).
+ 
+ main+0x5e6760 starts an AI ExecuteGenericCounter node (x0 = the node), the timer of each pause between two moves of a
+ looping platform (Dodongo's Cavern's lifts), each time the AI graph enters it. On the emulator co-op patches its first
+-word into a jump to a small cave (lichii/hook/coop_counter.s) that puts the node into a ring in the game's heap. Here:
+-C after `mov x19, x0` (main+0x5e6778, the end of the prologue) puts x0 into that same ring through
+-host/coop_platform_ring.c. The co-op module makes the ring (the game's malloc) and writes its address at
+-main+0x3c46780; until then, and without the module, nothing is written.
++word into a jump to a small cave (lichii/hook/coop_counter.s) that puts the node into a ring in the game's heap. Here
++(patch 0005, the world hooks): C after `mov x19, x0` (main+0x5e6778, the end of the prologue) hands x0 to the co-op
++module through host/coop_world.c (hos_coop_world.h, HOS_COOP_WORLD_COUNTER_START); the module keeps the node in a ring
++of its own. No guest ring, no game malloc. Without the module nothing is done.
+ 
+ The words are checked and the build id; another game version leaves the hook out.
+ """
+@@ -19,8 +19,9 @@ WORDS = ((0x5e6760, 0xd503237f),   # pacibsp
+          (0x5e6774, 0xf9400008),   # ldr x8, [x0]
+          (0x5e6778, 0xaa0003f3),   # mov x19, x0
+          (0x5e677c, 0xf940a108))   # ldr x8, [x8, #0x140]: the base length getter
+-TEXT = ("{ extern void hos_coop_counter(uint64_t node); hos_coop_counter(c->x[0]); }   "
+-        "/* (nx2/coop_platform_lift.py: co-op's pause counters, host/coop_platform_ring.c) */")
++TEXT = ("{ extern void hos_coop_world_event(uint32_t event, uint64_t a, uint64_t b); "
++        "hos_coop_world_event(1u, c->x[0], 0); }   "
++        "/* (nx2/coop_platform_lift.py: co-op's pause counters, host/coop_world.c: 1 = HOS_COOP_WORLD_COUNTER_START) */")
+ 
+ 
+ def _word(img, pc):
+@@ -42,5 +43,5 @@ def install(lifter, img, build_id):
+             return 0
+     pc = MAIN + SITE
+     lifter.after[pc] = (lifter.after[pc] + "\n" if pc in lifter.after else "") + TEXT
+-    print("co-op platforms: pause counter hook at main+%#x" % SITE)
++    print("co-op platforms: pause counter hook at main+%#x (world hook)" % SITE)
+     return 1
+diff --git a/nx2/coop_world_wraps.py b/nx2/coop_world_wraps.py
+new file mode 100644
+index 0000000..8877d6c
+--- /dev/null
++++ b/nx2/coop_world_wraps.py
+@@ -0,0 +1,77 @@
++"""Co-op's wrapped game functions (oot-remake-multiplayer's patch 0005, its docs/hookshot.md "World hooks").
++
++A wrap is the native way for co-op to see and take part in what the game does in its world: every call of the game's
++function (direct, tail and through the indirect table) reaches hos_coop_w_<entry> in a64_hooks.c, which calls the
++co-op module (host/coop_world.c -> hos_coop_wrap) before and after the game's own function. The function's lifted C is
++not changed, so Hookshot's own edits of it (nx2/oot_patches.py) still find it.
++
++WRAPS: (id as in host/hos_coop_world.h, main offset, its first words). Build id and words are checked; a wrap whose
++words differ, an address Hookshot already hooks, a function whose calls Hookshot's own edits look for by name, or
++another game version leaves it out.
++"""
++import os
++
++MAIN = 0x80020000
++BUILD_ID = "e0f3ccfaf50065ae4ea01eb5aeb13b1a45da3348"
++WRAPS = (
++    # HOS_COOP_WRAP_FLAG_APPLY: the game applies its queued flag writes (the save load's too); the module counts them
++    (1, 0xb99980, (0xd503237f, 0xd10243ff, 0xfd0013e8, 0xa9037bfd)),   # pacibsp; sub sp; str d8; stp x29, x30
++    # HOS_COOP_WRAP_TIME_SET: the game sets its clock (the AI node's set, the Sun's Song, a night's sleep, a save's
++    # time: its three callers main+0x34522e0, 0x3cd5cc, 0x34250f4); the module sends the jump to the other games
++    (2, 0xeee640, (0xd503237f, 0xa9bd7bfd, 0xf9000bfc, 0xa9024ff4)),   # pacibsp; stp x29, x30; str x28; stp x20, x19
++    # HOS_COOP_WRAP_EVENT_REQUEST: the game asks its event manager for an event (9 callers, the AI node
++    # SeqOneShotRequestEvent among them); the module learns which event started, by name, at the request. Hookshot's
++    # oot_patches.py adds a line at this function's head (the opening skip): that edits the function's own text, which
++    # a wrap leaves as it is, so both hold
++    (3, 0xd7a820, (0xb940b808, 0x37580808, 0xd503237f, 0xd10103ff)),   # ldr w8, [x0, #0xb8]; tbnz; pacibsp; sub sp
++)
++
++
++def _word(img, pc):
++    try:
++        return img.word(pc)
++    except Exception:
++        return None
++
++
++def _patched_by_name():
++    """The functions Hookshot's own C edits find by their name (nx2/oot_*.py: oot_patches.py's heads and call sites):
++    never wrapped"""
++    here = os.path.dirname(os.path.abspath(__file__))
++    text = []
++    try:
++        for name in sorted(os.listdir(here)):
++            if name.startswith("oot_") and name.endswith(".py"):
++                with open(os.path.join(here, name), encoding="utf-8") as f:
++                    text.append(f.read())
++    except OSError:
++        pass
++    return " ".join(text)
++
++
++def install(lifter, img, build_id, wraps=WRAPS):
++    """The wraps into lifter.wraps; returns how many went in."""
++    if build_id != BUILD_ID:
++        return 0
++    if not hasattr(lifter, "wraps"):
++        print("co-op wraps: this lifter has no wraps (patch 0005's a64_lift.py): left out")
++        return 0
++    named = _patched_by_name()
++    n = 0
++    for wid, off, words in wraps:
++        pc = MAIN + off
++        bad = next(((pc + 4 * i, w) for i, w in enumerate(words) if _word(img, pc + 4 * i) != w), None)
++        if bad:
++            have = _word(img, bad[0])
++            print("co-op wraps: %d at main+%#x: main+%#x holds %s, not %08x: left out" % (
++                wid, off, bad[0] - MAIN, "?" if have is None else "%08x" % have, bad[1]))
++            continue
++        # (a call of it that Hookshot's edits look for by its text would no longer be found, as the call sites of a
++        # wrapped function name the wrapper. Its head, "void f_<entry>(Ctx", is the function's own text: left as it is)
++        if pc in lifter.hooks or any(t % pc in named for t in ("f_%08x(c)", "TAILCALL(f_%08x)")):
++            print("co-op wraps: %d at main+%#x: Hookshot hooks or edits that function: left out" % (wid, off))
++            continue
++        lifter.wraps[pc] = wid
++        n += 1
++    print("co-op wraps: %d of %d game functions wrapped" % (n, len(wraps)))
++    return n
+diff --git a/third_party/a64-kit/lift/a64_lift.py b/third_party/a64-kit/lift/a64_lift.py
+index 3b44835..6816c21 100644
+--- a/third_party/a64-kit/lift/a64_lift.py
++++ b/third_party/a64-kit/lift/a64_lift.py
+@@ -969,6 +969,9 @@ class Lifter:
+         # (hookshot) C emitted right after the instruction at a guest address ({pc: text}): a game patch that adds to an
+         # instruction instead of replacing a function (nx2/oot_wide.py). Only after plain instructions (kind "op")
+         self.after = {}
++        # (oot-remake-multiplayer's patch 0005, nx2/coop_world_wraps.py) wrapped functions ({entry: wrap id}): every call and
++        # the indirect table reach hos_coop_w_<entry> (a64_hooks.c), which calls the co-op module before and after f_<entry>
++        self.wraps = {}
+         self.funcs = {}       # entry -> (body {pc: kind}, labels set)
+         self.jt = {}          # br pc -> [targets]
+         self.jt_missing = {}      # br pc -> its register, for BRs whose table address was not found
+@@ -1008,6 +1011,15 @@ class Lifter:
+             if t is not None:
+                 self.plt[e] = t
+         self.find_setjmp_owners()   # (after the PLT stubs: their callees are resolved through them)
++        # (patch 0005) only a function the discovery made can be wrapped: for any other entry there is no f_<entry> for the
++        # wrapper in a64_hooks.c to call. Not a PLT stub (its callers skip it, callee()) and not a function that calls
++        # setjmp (its callers call it in a way of their own). From here on self.wraps is what fname(), the table and
++        # a64_hooks.c use
++        for a in sorted(getattr(self, "wraps", ())):
++            why = ("the lift made no function there" if a not in self.funcs else "a PLT stub" if a in self.plt
++                   else "it calls setjmp" if a in self.setjmp_owner else None)
++            if why:
++                print("co-op wraps: %d at %#x: %s: left out" % (self.wraps.pop(a), a, why))
+ 
+     SETJMP_NAMES = ("__setjmp", "setjmp", "_setjmp")
+ 
+@@ -1479,6 +1491,8 @@ class Lifter:
+     def fname(self, t):
+         # Hooked addresses keep their f_ name too (a64_hooks.c defines it as a tail call of the hook), so hooking
+         # or unhooking a function changes one small file instead of every call site in the lifted code.
++        if t in getattr(self, "wraps", ()):   # (patch 0005: the wrapper; the function itself keeps its f_ name and text)
++            return "hos_coop_w_%08x" % t
+         return "f_%08x" % t
+ 
+     # ---- emission ------------------------------------------------------------------------------------
+@@ -1776,7 +1790,7 @@ class Lifter:
+         nhot = 0
+         for e in sorted(self.funcs):
+             text, refs = self.emit_function(e, texts)
+-            if hot and self.fname(e) in hot:
++            if hot and "f_%08x" % e in hot:   # (patch 0005: the function's own name, a wrapped one stays hot)
+                 text = hot_text(text)
+                 nhot += 1
+                 if hot_chunk is not None:
+@@ -1823,6 +1837,16 @@ class Lifter:
+             f.write('#include "a64.h"\n')
+             f.write("".join("void %s(Ctx *A64_NOESC);\n" % n for n in sorted(set(self.hooks.values()))))
+             f.write("".join("void f_%08x(Ctx *A64_NOESC c) { TAILCALL(%s); }\n" % (a, n) for a, n in sorted(self.hooks.items())))
++            # (patch 0005, host/coop_world.c) the wrap ids of this build as bits, for the module's HOS_COOP_WORLD_HELLO; each
++            # wrapper calls the module before (1: it did the call's work) and after the game's function. Only for a function
++            # the lift made (discover() drops the others; a lifter filled by hand is checked here again)
++            wraps = {a: w for a, w in getattr(self, "wraps", {}).items() if a in self.funcs}
++            f.write("const uint64_t hos_coop_wrap_mask = %#xull;\n" % sum(1 << w for w in set(wraps.values())))
++            if wraps:
++                f.write("int hos_coop_wrap(uint32_t id, int phase, Ctx *A64_NOESC c);\n")
++                f.write("".join("void f_%08x(Ctx *A64_NOESC);\nvoid hos_coop_w_%08x(Ctx *A64_NOESC c) { "
++                                "if (!hos_coop_wrap(%du, 0, c)) f_%08x(c); hos_coop_wrap(%du, 1, c); }\n" % (a, a, w, a, w)
++                                for a, w in sorted(wraps.items())))
+ 
+     def report(self):
+         nins = sum(len(b) for b, _ in self.funcs.values())
+-- 
+2.56.0.windows.4
+

@@ -238,12 +238,15 @@ std::optional<CoopPuppet::Call> CounterRingStep(CoopPuppet::Guest& guest, bool a
     if (after_call || box.main == 0 || box.ring != 0 || box.asked) {
         return std::nullopt;
     }
-    u32 word = 0;  // only when the loader put the cave in (Hookshot: patch 0003's lift hook, not checkable here)
 #ifdef COOP_HOOKSHOT
-    word = CoopCounters::HookWord();
+    // Hookshot: no guest ring; the game's C hands each start to the module
+    // (patch 0005's world hook, hos_coop_world -> CoopCounters::TheHostRing).
+    box.asked = true;
+    LOG_INFO(Core, "coop: platforms: pause counters from hookshot.exe's world hook (patch 0005), no guest ring");
+    return std::nullopt;
 #else
+    u32 word = 0;  // only when the loader put the cave in
     guest.Read(box.main + CoopCounters::kStartOffset, &word, 4);
-#endif
     if (word != CoopCounters::HookWord()) {
         box.asked = true;
         LOG_INFO(Core, "coop: platforms: no counter cave (main+{:#x} holds {:#010x}): pause counters off",
@@ -256,6 +259,7 @@ std::optional<CoopPuppet::Call> CounterRingStep(CoopPuppet::Guest& guest, bool a
     c.function = box.main + kMalloc;
     c.x[0] = CoopCounters::kRingBytes;
     return c;
+#endif
 }
 constexpr u64 kPlayLogMs = 1000;  // a copy's replays of one name: one log line a second
 // LICHII_COOP_OBJECTS_HIT_REPLAY=1 (experiment): a life a copy must lose is
@@ -1877,6 +1881,10 @@ private:
                 counter_nodes_.clear();
                 counter_others_.Clear();
                 ring_count_seen_ = 0;
+#ifdef COOP_HOOKSHOT
+                CoopCounters::TheHostRing().Clear();
+                ring_count_seen_ = CoopCounters::TheHostRing().Count();
+#endif
             }
             box.main = main_;
             ring = box.ring;
@@ -1909,13 +1917,23 @@ private:
             return mid ? r.Get<u64>(mid + CoopCounters::kOwnerActor).value_or(0) : 0;
         };
         std::size_t named_new = 0;
-        if (ring != 0) {
+#ifdef COOP_HOOKSHOT
+        const bool have_ring = true;  // (the world hook's, in our memory)
+        (void)ring;
+#else
+        const bool have_ring = ring != 0;
+#endif
+        if (have_ring) {
             std::array<u64, CoopCounters::kRingNodes> entries{};
+#ifdef COOP_HOOKSHOT
+            const u32 count = CoopCounters::TheHostRing().Read(entries);
+#else
             for (std::size_t i = 0; i < entries.size(); ++i) {
                 entries[i] = r.Get<u64>(ring + 8 + 8 * i).value_or(0);
             }
-            // Starts since the last look: more than the ring holds and some were lost.
             const u32 count = r.Get<u32>(ring).value_or(0);
+#endif
+            // Starts since the last look: more than the ring holds and some were lost.
             const u32 since = count - ring_count_seen_;
             ring_count_seen_ = count;
             ring_starts_ += since;
@@ -1959,7 +1977,7 @@ private:
         }
         // What the ring caught, every 10 s while a platform counter is near
         // (the 2026-11-12 run had no counter line at all; this says why).
-        if (ring != 0 && counter_lines_ < 60 &&
+        if (have_ring && counter_lines_ < 60 &&
             (counter_said_us_ == 0 || server_now_us >= counter_said_us_ + 10'000'000)) {
             counter_said_us_ = server_now_us;
             ++counter_lines_;

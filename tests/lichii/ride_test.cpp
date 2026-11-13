@@ -228,7 +228,7 @@ TEST_CASE("ride: the highest player number rides too (16 players), one past it i
     horse.address = 0x1;
     horse.position = {0.0f, -1.0f, 0.0f};
     horse.rotation = CoopPuppet::QuatToMatrix(Yaw(0.0f));
-    auto sent = rider.Tick(true, {0.0f, 0.0f, 0.0f}, Yaw(0.0f), {horse}, 5'000'000);
+    auto sent = rider.Tick(true, CoopRide::Vec3{0.0f, 0.0f, 0.0f}, Yaw(0.0f), {horse}, 5'000'000);
     REQUIRE(sent);
     const std::uint8_t top = proto::kMaxPlayers;
     for (const std::uint8_t n : {top, static_cast<std::uint8_t>(top + 1)}) {

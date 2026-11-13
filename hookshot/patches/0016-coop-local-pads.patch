@@ -1,6 +1,6 @@
-From 366d8ff388b0e9e8d7a226f4a665359ae6ea9dca Mon Sep 17 00:00:00 2001
+From cf27a61e48a0772c170654f928b4ede04321367b Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
-Date: Fri, 13 Nov 2026 03:29:16 -0900
+Date: Fri, 13 Nov 2026 12:26:46 -0900
 Subject: [PATCH] Co-op local pads: split-screen players get Npads 2 to 4
 
 oot-remake-multiplayer's patch 0016 (host only, no lift), on top of patch 0015. A pad the co-op module hands to a second, third or fourth player on this PC is left out of player 1's merged pad (and its motion and rumble) and answers the game's reads of Npad No.2 to No.4. Pads are named as patch 0015 names them, by their place in SDL's list; 0015's filter keeps a taken pad as this game's. host/pad_sdl.c keeps each pad's own state; host/nn_hid.c gives those Npads their style and states (no keyboard, script or Ocarina note keys; still while the Insert menu has the pads and after it until the pad is let go) and logs once which Npads the game supports. Three exports of the exe for the module, found by name: hos_coop_pad_info, hos_coop_pad_read and hos_coop_pad_take. Nothing changes until the module takes a pad.
@@ -10,7 +10,7 @@ oot-remake-multiplayer's patch 0016 (host only, no lift), on top of patch 0015. 
  2 files changed, 182 insertions(+), 13 deletions(-)
 
 diff --git a/host/nn_hid.c b/host/nn_hid.c
-index 9ac30649..ad219d3f 100644
+index 51861870..94e40cd1 100644
 --- a/host/nn_hid.c
 +++ b/host/nn_hid.c
 @@ -687,6 +687,23 @@ static uint64_t bound_pad_buttons(uint64_t raw) {
@@ -37,7 +37,7 @@ index 9ac30649..ad219d3f 100644
  static volatile LONG pad_raw_now;   /* the gamepads' inputs at the last read, 1 << HOS_PAD_* */
  static int pad_after_menu;          /* (the menu just closed: the pads wait until they are let go; oc_pad_word too) */
  uint32_t hos_pad_raw(void) { return (uint32_t)pad_raw_now; }
-@@ -1077,6 +1094,26 @@ static void npad_states(Ctx *c) {
+@@ -1089,6 +1106,26 @@ static void npad_states(Ctx *c) {
      uint64_t buttons = 0;
      int32_t stick[4] = {0};
      int connected = id == NPAD_NO1;
@@ -64,7 +64,7 @@ index 9ac30649..ad219d3f 100644
      {
          static int64_t last_read;
          static uint32_t seen_ids[16];
-@@ -1092,7 +1129,8 @@ static void npad_states(Ctx *c) {
+@@ -1104,7 +1141,8 @@ static void npad_states(Ctx *c) {
          for (int i = 0; i < nseen; i++) known |= seen_ids[i] == id;
          if (!known && nseen < 16) {
              seen_ids[nseen++] = id;
@@ -74,7 +74,7 @@ index 9ac30649..ad219d3f 100644
                      (unsigned long long)c->x[30]);
          }
      }
-@@ -1129,7 +1167,8 @@ static void npad_states(Ctx *c) {
+@@ -1141,7 +1179,8 @@ static void npad_states(Ctx *c) {
      uint64_t hos_coop_pad_filter(uint64_t buttons, int32_t stick[4]);   /* (oot-remake-multiplayer, coop_bridge.c: the title menu) */
      if (connected) buttons = hos_coop_pad_filter(buttons, stick);
      int64_t s = ++sampling;
@@ -84,7 +84,7 @@ index 9ac30649..ad219d3f 100644
      if (connected) __atomic_store_n(&hos_coop_pad, word, __ATOMIC_RELAXED);
      for (int i = 0; i < count; i++) {
          uint64_t e = out + (uint64_t)i * STATE_SIZE;
-@@ -1137,7 +1176,7 @@ static void npad_states(Ctx *c) {
+@@ -1149,7 +1188,7 @@ static void npad_states(Ctx *c) {
          G64(e) = (uint64_t)(s - i);
          G64(e + 8) = word;
          memcpy(GP(e + 16), stick, 16);
@@ -93,7 +93,7 @@ index 9ac30649..ad219d3f 100644
      }
      RET(count);
  }
-@@ -1147,14 +1186,27 @@ HLE(_ZN2nn3hid13GetNpadStatesEPNS0_16NpadJoyDualStateEiRKj) { npad_states(c); }
+@@ -1159,14 +1198,27 @@ HLE(_ZN2nn3hid13GetNpadStatesEPNS0_16NpadJoyDualStateEiRKj) { npad_states(c); }
  HLE(_ZN2nn3hid13GetNpadStatesEPNS0_16NpadJoyLeftStateEiRKj) { npad_states(c); }
  HLE(_ZN2nn3hid13GetNpadStatesEPNS0_17NpadJoyRightStateEiRKj) { npad_states(c); }
  /* GetNpadStyleSet(unsigned int const&) -> BitFlagSet<32, NpadStyleTag> */
@@ -123,7 +123,7 @@ index 9ac30649..ad219d3f 100644
  HLE(_ZN2nn3hid24SetSupportedNpadStyleSetENS_4util10BitFlagSetILi32ENS0_12NpadStyleTagEEE) {}
  HLE(_ZN2nn3hid18StartSixAxisSensorERKNS0_19SixAxisSensorHandleE) {}
  
-@@ -1343,3 +1395,30 @@ HLE(_ZN2nn3hid20GetTouchScreenStatesILm16EEEiPNS0_16TouchScreenStateIXT_EEEi) {
+@@ -1359,3 +1411,30 @@ HLE(_ZN2nn3hid20GetTouchScreenStatesILm16EEEiPNS0_16TouchScreenStateIXT_EEEi) {
      G64(ARG(0)) = (uint64_t)InterlockedIncrement64(&sampling);
      RET(1);
  }
@@ -155,7 +155,7 @@ index 9ac30649..ad219d3f 100644
 +}
 +HOS_COOP_HID_EXPORT int hos_coop_pad_take(int n, uint32_t serial, int npad) { return hos_sdl_pad_take(n, serial, npad); }
 diff --git a/host/pad_sdl.c b/host/pad_sdl.c
-index 1e2069f1..fb713acc 100644
+index 1c76f4ff..5116a403 100644
 --- a/host/pad_sdl.c
 +++ b/host/pad_sdl.c
 @@ -66,6 +66,22 @@ static uint64_t state_buttons;
@@ -181,7 +181,7 @@ index 1e2069f1..fb713acc 100644
  static volatile LONG rumble_low, rumble_high;   /* 0..65535, set by the vibration HLE */
  /* the game's own vibration values per side (0 left, 1 right: {amp_low, freq_low, amp_high, freq_high}), for the pads
     that play HD rumble; silence until the game sends one */
-@@ -239,7 +255,8 @@ static void motion_poll(int64_t now, int count) {
+@@ -241,7 +257,8 @@ static void motion_poll(int64_t now, int count) {
                  pads[i].motion_retry_ns = 0;
              }
          }
@@ -191,10 +191,10 @@ index 1e2069f1..fb713acc 100644
      }
      InterlockedExchange(&gyro_status, any ? 2 : count ? 1 : 0);
      float a[3], g[3];
-@@ -433,11 +450,14 @@ static void pads_poll(void) {
+@@ -440,11 +457,14 @@ static void pads_poll(void) {
              hd_rumble_encode(felt[2], strength, side[2]);
          }
-         int stand_in = 0;   /* (hookshot) a Steam stand-in pad open (host/steam_pads.h) */
+         int stand_in = 0;   /* (longshot) a Steam stand-in pad open (host/steam_pads.h) */
 +        uint64_t raw_now[MAX_PADS] = {0};   /* (patch 0016) each pad's own buttons and sticks this poll */
 +        int32_t stick_now[MAX_PADS][4] = {{0}};
          for (int i = 0; i < MAX_PADS; i++) stand_in |= pads[i].gc && pads[i].steam;
@@ -206,14 +206,14 @@ index 1e2069f1..fb713acc 100644
 +            if (!pad_counts(i) && !taken) {   /* (patch 0015) another game's pad on this PC: still, and not this game's */
                  if (pads[i].rumble_lo || pads[i].rumble_hi) hos_sdl_pad_rumble(gc, 0, 0, 0);
                  pads[i].rumble_lo = pads[i].rumble_hi = 0;
-                 continue;
-@@ -469,12 +489,12 @@ static void pads_poll(void) {
+                 static const uint8_t still[3][4] = {{0x00, 0x01, 0x40, 0x40}, {0x00, 0x01, 0x40, 0x40},
+@@ -479,12 +499,12 @@ static void pads_poll(void) {
              /* The paddle buttons follow MISC1 in SDL, and the triggers in HOS_PAD_*. */
              for (int k = BTN_RPADDLE1; k <= BTN_LPADDLE2; k++)
                  if (hos_sdl_pad_button(gc, k)) sig |= 1ULL << (HOS_PAD_RPADDLE1 + k - BTN_RPADDLE1);
 -            b |= sig;
 +            uint64_t pb = sig;   /* (patch 0016: this pad's alone, merged below unless a local player took it) */
-             /* (hookshot) a DualShock 4's or DualSense's touchpad click: it opens the Insert menu as F1 does (vk_menu.cpp).
+             /* (longshot) a DualShock 4's or DualSense's touchpad click: it opens the Insert menu as F1 does (vk_menu.cpp).
                 SDL numbers it 20, past the buttons above; an SDL without it answers 0 */
 -            if (hos_sdl_pad_button(gc, BTN_TOUCHPAD)) b |= 1ULL << HOS_PAD_TOUCHPAD;
 -            if (hos_sdl_pad_axis(gc, AX_LT) > 8000) b |= 1ULL << HOS_PAD_LTRIGGER;
@@ -224,7 +224,7 @@ index 1e2069f1..fb713acc 100644
              const int inv_x = rx_option(16, 0);
              const int inv_y = rx_option(17, 0);
              const int z = rx_option(11, 0);   /* (the menu's Stick dead zone) */
-@@ -506,12 +526,22 @@ static void pads_poll(void) {
+@@ -516,12 +536,22 @@ static void pads_poll(void) {
                 toggling the setting admits a held phantom axis, which stays admitted after the setting is restored (#2273). */
              if (inv_x) v[2] = -v[2];
              if (inv_y) v[3] = -v[3];
@@ -249,7 +249,7 @@ index 1e2069f1..fb713acc 100644
              if (hd_poll(i, side, now)) continue;
              if (rumble_due(lo, hi, pads[i].rumble_lo, pads[i].rumble_hi, now, pads[i].rumble_ns)) {
                  hos_sdl_pad_rumble(gc, lo, hi, lo || hi ? 1000 : 0);
-@@ -532,6 +562,13 @@ static void pads_poll(void) {
+@@ -542,6 +572,13 @@ static void pads_poll(void) {
                  snprintf(state_name, sizeof state_name, "%s", name ? name : "");
                  break;
              }
@@ -263,7 +263,7 @@ index 1e2069f1..fb713acc 100644
          ReleaseSRWLockExclusive(&state_lock);
  }
  
-@@ -604,6 +641,59 @@ void hos_sdl_pad_first_name(char *out, size_t cap) {
+@@ -614,6 +651,59 @@ void hos_sdl_pad_first_name(char *out, size_t cap) {
      ReleaseSRWLockShared(&state_lock);
  }
  
@@ -323,6 +323,3 @@ index 1e2069f1..fb713acc 100644
  /* Vibration from the game (0..1 amplitudes of the low and high bands), for the pads that rumble. */
  void hos_sdl_rumble(float low, float high) {
      if (low < 0) low = 0;
--- 
-2.56.0.windows.4
-

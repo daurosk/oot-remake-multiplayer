@@ -298,7 +298,7 @@ $cut = $testing.IndexOf('<!-- kit: TESTING.md ends here -->')
 if ($cut -lt 0) { throw 'docs\testing.md has no "<!-- kit: TESTING.md ends here -->" line.' }
 $testing = $testing.Substring(0, $cut).TrimEnd() + "`r`n`r`nHow the kit is made, and the automatic tests: docs/testing.md in the co-op repo (SOURCE.txt).`r`n"
 [System.IO.File]::WriteAllText((Join-Path $kit 'TESTING.md'), $testing, [System.Text.UTF8Encoding]::new($false))
-foreach ($doc in @(@('setup.md', 'SETUP.md'), @('play-lan.md', 'PLAY-LAN.md'), @('play-online.md', 'PLAY-ONLINE.md'), @('known-issues.md', 'KNOWN-ISSUES.md'))) {
+foreach ($doc in @(@('setup-emulator.md', 'SETUP.md'), @('play-lan.md', 'PLAY-LAN.md'), @('play-online.md', 'PLAY-ONLINE.md'), @('known-issues.md', 'KNOWN-ISSUES.md'))) {
     Copy-Text (Join-Path $repo "docs\$($doc[0])") (Join-Path $kit $doc[1])
 }
 Copy-Item (Join-Path $repo 'LICENSE') (Join-Path $kit 'LICENSE.txt')
@@ -339,11 +339,11 @@ $source = @(
 )
 if ($hookshotNote) {
     $source += @(
-        'Hookshot (experimental): NotRexed''s static recompilation, GPL-3.0. Not in this kit:',
+        'Longshot (experimental): Team MagicBean''s static recompilation (it continues Hookshot), GPL-3.0. Not in this kit:',
         'Build-Hookshot-Coop.bat downloads it and builds it on your PC from your own game:',
-        "  https://github.com/NotRexed/Hookshot/tree/$hookshotNote",
+        "  https://git.magicbean.dev/MagicBeanDev/Longshot/src/commit/$hookshotNote",
         '  with the patches in hookshot\patches (also hookshot/patches in the co-op repo), and',
-        '  the build tools of the Hookshot release named in hookshot\TOOLS.txt.',
+        '  the build tools of the Longshot release named in hookshot\TOOLS.txt.',
         '  hookshot\hookshot_coop.dll is built from the co-op repo above (CMake target hookshot_coop).',
         ''
     )

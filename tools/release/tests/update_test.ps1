@@ -494,6 +494,52 @@ try {
         Check (-not $emuP.HasExited) 'emulator running: it is not stopped'
         Check ((Get-KitVersion $k9) -eq 'v0.1.0-beta2') 'emulator running: nothing changed'
     } finally { Stop-Process -Id $emuP.Id -Force -ErrorAction SilentlyContinue; $emuP.WaitForExit(5000) | Out-Null }
+    # --- An emulator kit updated to a Hookshot-only kit (make_kit_hookshot.ps1): the emulator and its .bat files go
+    # (to the backup), the player's emulator\user stays and is named, the desktop shortcut follows the new launcher.
+    $hsSrc = Join-Path $tmp 'hsrc\oot-coop-v0.1.0-beta4'
+    Write-File "$hsSrc\VERSION.txt" "kit: oot-coop-v0.1.0-beta4 (release v0.1.0-beta4)`r`nkind: hookshot`r`n"
+    Write-File "$hsSrc\Start OoT Co-op.bat" 'new launcher'
+    Write-File "$hsSrc\scripts\start.ps1" 'new start'
+    Write-File "$hsSrc\hookshot\PIN" "repo=https://github.com/NotRexed/Hookshot`r`ncommit=$('a' * 40)`r`n"
+    Write-File "$hsSrc\hookshot\hookshot_coop.dll" 'module'
+    Write-File "$hsSrc\scripts\verify_kit.ps1" 'exit 0'
+    Write-File "$hsSrc\coop-options.ini" "LICHII_COOP_PUPPET=1`r`n"
+    Write-File "$hsSrc\MANIFEST.txt" "# Files`r`nStart OoT Co-op.bat`r`nscripts\start.ps1`r`nhookshot\PIN`r`nhookshot\hookshot_coop.dll`r`nVERSION.txt`r`n"
+    $hsZip = Join-Path $assets 'oot-coop-v0.1.0-beta4.zip'
+    & "$env:SystemRoot\System32\tar.exe" -a -c -f $hsZip -C (Join-Path $tmp 'hsrc') 'oot-coop-v0.1.0-beta4'
+    if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
+    [System.IO.File]::WriteAllText("$hsZip.sha256", "$((Get-FileHash -LiteralPath $hsZip -Algorithm SHA256).Hash.ToLowerInvariant())  oot-coop-v0.1.0-beta4.zip`n")
+    $hsList = Join-Path $tmp 'releases-hs.json'
+    [System.IO.File]::WriteAllText($hsList, (ConvertTo-Json -Depth 5 @(
+        @{ tag_name = 'v0.1.0-beta4'; draft = $false; html_url = 'local'; assets = @(
+            @{ name = 'oot-coop-v0.1.0-beta4.zip'; browser_download_url = $hsZip; size = (Get-Item $hsZip).Length },
+            @{ name = 'oot-coop-v0.1.0-beta4.zip.sha256'; browser_download_url = "$hsZip.sha256"; size = 80 }) })))
+    Check (Test-KitFolder $hsSrc) 'a Hookshot-only kit is a kit folder'
+    Check (-not (Test-KitFolder (Join-Path $tmp 'hsrc'))) 'its parent is not'
+    Check ((Test-KitNewKit $hsSrc) -eq '') 'a Hookshot-only kit may be installed'
+    Remove-Item -LiteralPath "$hsSrc\hookshot\hookshot_coop.dll"
+    Check ((Test-KitNewKit $hsSrc) -match 'hookshot_coop\.dll') 'a Hookshot-only kit without the module is refused'
+    Write-File "$hsSrc\hookshot\hookshot_coop.dll" 'module'
+    $hk = Join-Path $tmp 'kit-to-hs'; New-OldKit $hk
+    Write-File "$hk\Play-OoT-Coop.bat" 'old launcher'
+    Write-File "$hk\MANIFEST.txt" "# Files`r`nHost.bat`r`nPlay-OoT-Coop.bat`r`nemulator\lichii.exe`r`ntools\gone.txt`r`nVERSION.txt`r`n"
+    $desk = Join-Path $tmp 'desktop'
+    New-Item -ItemType Directory -Force -Path $desk | Out-Null
+    $sh = New-Object -ComObject WScript.Shell
+    $lnk = $sh.CreateShortcut((Join-Path $desk 'Play OoT Co-op.lnk')); $lnk.TargetPath = "$hk\Play-OoT-Coop.bat"; $lnk.Save()
+    $env:OOT_COOP_DESKTOP = $desk
+    try { $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $hk -Yes -Api $hsList 2>&1 } finally { Remove-Item env:OOT_COOP_DESKTOP }
+    $text = $out -join ' '
+    Check ($LASTEXITCODE -eq 0 -and (Get-KitVersion $hk) -eq 'v0.1.0-beta4') "emulator kit -> Hookshot kit: updated [$(($out | Select-Object -Last 3) -join ' / ')]"
+    Check (-not (Test-Path "$hk\emulator\lichii.exe") -and -not (Test-Path "$hk\Host.bat") -and -not (Test-Path "$hk\Play-OoT-Coop.bat")) 'emulator kit -> Hookshot kit: lichii.exe, Host.bat and Play-OoT-Coop.bat removed'
+    Check ((Read-File "$hk\backup-v0.1.0-beta2\emulator\lichii.exe") -eq 'old exe') 'emulator kit -> Hookshot kit: the emulator is in the backup'
+    Check ((Read-File "$hk\Start OoT Co-op.bat") -eq 'new launcher') 'emulator kit -> Hookshot kit: the new launcher is there'
+    Test-PlayerKept $hk 'emulator kit -> Hookshot kit'
+    Check ((Read-File "$hk\emulator\user\cache\shader\0100F2C0115B6000\vulkan.bin") -eq 'old shaders') 'emulator kit -> Hookshot kit: the shader cache is the player''s, left alone'
+    Check ($text -match 'Longshot only' -and $text -match 'emulator.user' -and $text -match 'Start OoT Co-op\.bat') "emulator kit -> Longshot kit: says what went and what stayed [$text]"
+    Check ($sh.CreateShortcut((Join-Path $desk 'Play OoT Co-op.lnk')).TargetPath -ieq "$hk\Start OoT Co-op.bat") 'emulator kit -> Hookshot kit: the desktop shortcut starts the new launcher'
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $hk -Check -Api $hsList 2>&1
+    Check ($LASTEXITCODE -eq 0 -and ($out -join ' ') -notmatch 'not a co-op kit') "a Hookshot-only kit can be updated again [$($out -join ' ')]"
 } finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }

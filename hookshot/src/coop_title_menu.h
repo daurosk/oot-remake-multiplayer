@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The Multiplayer menu on Hookshot's title screen (docs/hookshot.md, "The
-// title menu"): Host, Join and the co-op settings, worked from the pad or the
-// keyboard, so nobody edits files or runs a .bat to play together. This file
-// is the menu's logic only (no game, no files, no processes), so the tests
-// drive it: the module (coop_hookshot.cpp) feeds it the player's presses,
-// plays the game's own UI sounds it names, carries out its requests (start
-// the server, the join helper, write the settings) and draws its View.
-// Not thread-safe: the module guards it.
+// What the Multiplayer tab of Hookshot's menu works with (coop_pause_menu.h,
+// docs/hookshot.md "The Multiplayer tab"): the settings files, what the Join
+// field may hold, Host's and Join's status in plain words, the addresses for
+// friends on the same network, and the host's save loaded in one step at the
+// title after a join (AutoLoad). Logic only (no game, no files, no
+// processes), so the tests drive it. The name is from the title screen's
+// menu, where all of it began.
 #pragma once
 
 #include <cstddef>
@@ -20,7 +19,7 @@
 namespace CoopTitleMenu {
 
 // ---------------------------------------------------------------------------
-// Settings files: `key = value` lines (coop.ini beside hookshot.exe, the kit's
+// Settings files: `key = value` lines (coop.ini beside longshot.exe, the kit's
 // coop-options.ini). Comments and everything else are kept as they are.
 
 // The value of the last line `key = value` without a '#' or ';' in front (the
@@ -76,7 +75,8 @@ struct Options {
     bool debug_panel = false;      // LICHII_COOP_DEBUG_PANEL
     bool cheats = false;           // LICHII_COOP_CHEATS
     int max_players = 4;           // max_players (the host's: 2 to kMaxPlayers)
-    bool voice = true;             // LICHII_COOP_VOICE (off: no voice chat)
+    bool voice = false;            // LICHII_COOP_VOICE (ptt or open: proximity voice chat; unset, the default: off)
+    std::string voice_in_file;     // that line's value as read ("open" written by hand stays open while voice is on)
 
     // From the two files' texts (a missing file: "").
     static Options Read(std::string_view coop_ini, std::string_view options_ini);
@@ -86,6 +86,8 @@ struct Options {
     // launcher sets them from coop-options.ini (name, "" = not set), so they
     // count for this run when co-op has not started yet.
     std::vector<std::pair<std::string, std::string>> Environment() const;
+    // LICHII_COOP_VOICE's value while voice is on: "open" when the file said so, else "ptt" (V to talk).
+    std::string VoiceMode() const;
 };
 
 // coop.ini with what joining a server needs: server ("host:port"), name and
@@ -175,7 +177,16 @@ public:
 
     void Start(std::uint64_t now_ms, std::string host);
     void Stop() { phase_ = Phase::kOff; }
+    // The host has no save yet (a new game): stop waiting, say so (the title's own New Game / Continue stay).
+    void NoSave() {
+        if (phase_ == Phase::kWait) phase_ = Phase::kHostNone;
+    }
     bool active() const { return phase_ == Phase::kWait || phase_ == Phase::kLoad; }
+    bool waiting() const { return phase_ == Phase::kWait; }   // (for the host's save; nothing pressed yet)
+    // The player picked a file on the title while it waited: AutoLoad stops, with no line (their choice).
+    void PlayerChose() {
+        if (phase_ == Phase::kWait) phase_ = Phase::kDone;
+    }
     // One look: whether A is held now, and whether the cursor should go to Continue (once).
     struct Tick {
         bool press_a = false;           // (the module sends it only while the cursor is on Continue)
@@ -191,9 +202,15 @@ public:
     // Whether AutoLoad's A may go in: on the title only with the cursor on Continue (never New Game, never a row
     // the title hides); once the title has gone (the file list, its question) every press.
     static bool PressAllowed(bool title_up, int focused_button) { return !title_up || focused_button == kContinue; }
+    // Whether an A that went in is the player picking a file (or a new game, or the title's options) on the title
+    // itself: not AutoLoad's own press, a title button focused, and not one of the co-op rows (Host, Join, Settings:
+    // they open our menu). A guest's pending switch to the host's save is dropped then (CoopSave).
+    static bool PlayerPicksFile(bool title_up, bool autoload_pressed, int focused_button, bool on_coop_row) {
+        return title_up && !autoload_pressed && focused_button >= 0 && !on_coop_row;
+    }
 
 private:
-    enum class Phase { kOff, kWait, kLoad, kDone, kNoSave, kStuck };
+    enum class Phase { kOff, kWait, kLoad, kDone, kNoSave, kHostNone, kStuck };
     Phase phase_ = Phase::kOff;
     std::string host_;
     std::uint64_t since_ = 0;
@@ -203,90 +220,17 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// The menu.
+// Text, for the menu's fields (coop_pause_menu.h).
 
-enum class Input { kUp, kDown, kLeft, kRight, kDecide, kBack, kPaste, kErase };
-// The game's UI sounds the module plays by name (docs/hookshot.md): the cursor,
-// a choice, opening, going back, starting to play, a refusal.
-enum class Sound { kNone, kMove, kDecide, kOpen, kBack, kStart, kRefuse };
-enum class Page { kClosed, kMain, kJoin, kSettings, kHosting, kJoining };
-
-struct Request {
-    // kHost: start the server and join it. kJoin: `text` is the Join page's
-    // field (ReadJoin says what it is). kSave: write options() to the files.
-    // kPaste: hand the clipboard's text to Paste. kCopyInvite: put the
-    // session's invite code on the clipboard.
-    // kPasteAnswer: the host hands the module's host the friend's ANSWER CODE from
-    // the clipboard (when the friend's game could not reach this one directly).
-    enum class Kind { kHost, kJoin, kSave, kPaste, kCopyInvite, kPasteAnswer, kCopyLan };
-    Kind kind = Kind::kHost;
-    std::string text;
-};
-
-struct Row {
-    std::string label;
-    std::string value;      // "" for a plain button
-    bool selected = false;
-    bool editing = false;   // the keyboard types into it (a caret shows)
-    bool arrows = false;    // Left and Right change it
-};
-struct View {
-    std::string title;
-    std::vector<Row> rows;
-    std::vector<std::string> status;   // lines under the rows (what Host or Join is doing, an error)
-    std::string hint;                  // the controls, at the bottom
-};
-
-class Menu {
-public:
-    bool open() const { return page_ != Page::kClosed; }
-    Page page() const { return page_; }
-    // Opens with these settings to edit, on the main page or another (the title's
-    // own Join and Co-op Settings rows open theirs).
-    void Open(const Options& options, Page page = Page::kMain);
-    void Close();
-    // One press; the sound to play for it. A request may be waiting after it.
-    Sound Press(Input input);
-    // A typed character (Unicode) into the field being edited, or the Join
-    // page's field; false when no field takes it.
-    bool Char(std::uint32_t cp);
-    // Text from the clipboard into the field (the Join page's code: the whole
-    // field; a field being edited: added at its end). Line ends and tabs
-    // become spaces; false when no field takes it.
-    bool Paste(std::string_view text);
-    std::optional<Request> TakeRequest();
-    // What Host or Join is doing, shown under the rows; the module sets it.
-    void SetStatus(std::vector<std::string> lines);
-    // The module moves to the Hosting or Joining page once it started that.
-    void ShowPage(Page page);
-    // The last code this game joined with, offered first on the Join page as
-    // "Join <host> again" (one press). An empty code: no such row.
-    void SetRejoin(std::string host, std::string code);
-    const Options& options() const { return options_; }
-    const std::string& join_text() const { return join_; }
-    std::size_t selected() const { return selected_; }
-    bool editing() const { return editing_; }
-    View view() const;
-
-private:
-    std::size_t RowCount() const;
-    Sound Decide();
-    Sound Change(int step);
-    Sound Leave(std::size_t main_row);
-    void Go(Page page);
-    std::string* EditedText();
-
-    Page page_ = Page::kClosed;
-    std::size_t selected_ = 0;
-    bool editing_ = false;
-    bool direct_ = false;   // opened on a page by the title's own row: Back and Cancel close it
-    std::string rejoin_host_, rejoin_code_;
-    std::size_t JoinOffset() const { return rejoin_code_.empty() ? 0 : 1; }
-    Options options_;
-    Options saved_;   // what the files hold: Back on Settings goes back to it
-    std::string join_;
-    std::vector<std::string> status_;
-    std::optional<Request> request_;
-};
+// Without the spaces, tabs and line ends at its two ends.
+std::string_view Trim(std::string_view s);
+// Its characters (UTF-8 code points).
+std::size_t CodePoints(std::string_view s);
+// Without its last character.
+void PopCodePoint(std::string& s);
+// A character as UTF-8; "" for what is not one.
+std::string Utf8(std::uint32_t cp);
+// On one line: line ends and tabs become spaces.
+std::string OneLine(std::string_view text);
 
 }  // namespace CoopTitleMenu

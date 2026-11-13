@@ -129,6 +129,15 @@ TEST_CASE("hookshot: the title menu needs patch 0004's table and can be turned o
     CHECK_FALSE(CoopHookshot::TitleMenuPossible(nullptr, ""));
 }
 
+TEST_CASE("hookshot: the voice header in patch 0009 is hookshot/src's") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0009-coop-voice.patch");
+    CHECK(NewFile(patch, "host/hos_coop_voice.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_voice.h"));
+    // The mixer's hunk and the module's exports it looks for.
+    CHECK(patch.find("hos_coop_voice_mix(ch, vn, FRAME);") != std::string::npos);
+    CHECK(patch.find("\"hos_coop_voice_attach\"") != std::string::npos);
+    CHECK(patch.find("\"hos_coop_voice_render\"") != std::string::npos);
+}
+
 TEST_CASE("hookshot: the patch's hook sites are the emulator cave's") {
     const std::string hooks = NewFile(Patch(), "nx2/coop_hooks.py");
     // The frame hook goes after the `mov x0, x20` before each of the cave's calls.
@@ -170,7 +179,7 @@ TEST_CASE("hookshot: Link-model puppets are not made (they crash Hookshot's game
     CHECK_FALSE(CoopHookshot::RefuseCreate("CoopPuppet_Child_Red", true));
 }
 
-TEST_CASE("hookshot: Link puppets follow the puppet guard in hookshot.exe") {
+TEST_CASE("hookshot: Link puppets follow the puppet guard in longshot.exe") {
     // Unset: on with patch 0002's guard in the exe, off without it.
     CHECK(CoopHookshot::AllowLinkPuppets("", true));
     CHECK_FALSE(CoopHookshot::AllowLinkPuppets("", false));
@@ -417,4 +426,32 @@ TEST_CASE("hookshot: the world hooks (patch 0005) hand the pause counter starts 
     // The time set's wrap: the function every time change of the game goes through.
     std::snprintf(wrap, sizeof wrap, "(%u, 0xeee640, (0xd503237f,", HOS_COOP_WRAP_TIME_SET);
     CHECK(NewFile(patch, "nx2/coop_world_wraps.py").find(wrap) != std::string::npos);
+}
+
+TEST_CASE("hookshot: the Multiplayer tab leads Hookshot's menu (patch 0012, hos_coop_menu.h)") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0012-coop-menu-tabs.patch");
+    REQUIRE_FALSE(patch.empty());
+    // The table in our patch is hookshot/src's.
+    CHECK(NewFile(patch, "gpu/vk/hos_coop_menu.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_menu.h"));
+    // Hookshot looks for the module's five exports (four, or no tabs) and leads its strip with the tabs.
+    for (const char* name : {"\"hos_coop_menu_tabs\"", "\"hos_coop_menu_tab_name\"", "\"hos_coop_menu_page\"",
+                             "\"hos_coop_menu_input\"", "\"hos_coop_menu_wanted\""}) {
+        CHECK(patch.find(name) != std::string::npos);
+    }
+    CHECK(patch.find("+        draw_coop_page(c, hh);") != std::string::npos);
+    CHECK(patch.find("+        coop_tick(press, tab_left, tab_right, mouse ? &ptr : nullptr, mx, my, moved, changed);") !=
+          std::string::npos);
+    // Only the Vulkan back end's files: no game rebuild (no lift), the same Hookshot build as the other patches.
+    for (std::size_t at = patch.find("diff --git a/"); at != std::string::npos; at = patch.find("diff --git a/", at + 1)) {
+        CHECK(patch.compare(at, 20, "diff --git a/gpu/vk/") == 0);
+    }
+    // The module has the exports.
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    for (const char* name : {"COOP_HOOKSHOT_EXPORT int hos_coop_menu_tabs(void)",
+                             "COOP_HOOKSHOT_EXPORT const char* hos_coop_menu_tab_name(int tab)",
+                             "COOP_HOOKSHOT_EXPORT int hos_coop_menu_page(int tab, HosCoopMenuPage* out)",
+                             "COOP_HOOKSHOT_EXPORT int hos_coop_menu_input(int tab, int event, int arg, int arg2)",
+                             "COOP_HOOKSHOT_EXPORT int hos_coop_menu_wanted(void)"}) {
+        CHECK(module.find(name) != std::string::npos);
+    }
 }

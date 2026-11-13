@@ -82,7 +82,7 @@ for f in "$repo"/tools/puppet_pack/*.py; do
     case ${f##*/} in *test*.py | start_points.py) continue ;; esac
     text "$f" "$kit/tools/puppet_pack/${f##*/}"
 done
-for pair in setup.md:SETUP.md play-lan.md:PLAY-LAN.md play-online.md:PLAY-ONLINE.md known-issues.md:KNOWN-ISSUES.md; do
+for pair in setup-emulator.md:SETUP.md play-lan.md:PLAY-LAN.md play-online.md:PLAY-ONLINE.md known-issues.md:KNOWN-ISSUES.md; do
     text "$repo/docs/${pair%%:*}" "$kit/${pair#*:}"
 done
 cp "$repo/LICENSE" "$kit/LICENSE.txt"

@@ -42,6 +42,16 @@ $picked += @((Join-Path $kit 'VERSION.txt'), 'VERSION.txt')
 $picked += @((Join-Path $kit 'coop-options.ini'), 'coop-options.ini')
 # What the puppet pack was built from (file names and hashes only, no game data).
 $picked += @((Join-Path $user 'load\0400486024DEC000\coop-puppet\coop_puppet.json'), 'emulator\coop_puppet.json')
+# The Hookshot game (Hookshot kits): its log, coop.ini and pack manifest beside longshot.exe, and the build's logs.
+. (Join-Path $PSScriptRoot 'kit-paths.ps1')
+$hsExe = Get-KitHookshotExe (Get-KitHookshotGame $kit)
+if ($hsExe) {
+    $hsDir = Split-Path -Parent $hsExe
+    $picked += Get-ChildItem (Join-Path $hsDir '*') -Include 'longshot_log*.txt', 'hookshot_log*.txt' -File -ErrorAction SilentlyContinue | ForEach-Object { @($_.FullName, "hookshot\$($_.Name)") }
+    $picked += @((Join-Path $hsDir 'coop.ini'), 'hookshot\coop.ini')
+    $picked += @((Join-Path $hsDir 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json'), 'hookshot\coop_puppet.json')
+}
+$picked += Get-ChildItem (Join-Path $kit 'hookshot') -Filter '*.log' -File -ErrorAction SilentlyContinue | ForEach-Object { @($_.FullName, "hookshot\build\$($_.Name)") }
 if ($WithCrashDumps) {
     $picked += Get-ChildItem (Join-Path $user 'crash_dumps') -File -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending | Select-Object -First 2 | ForEach-Object { @($_.FullName, "emulator\crash_dumps\$($_.Name)") }

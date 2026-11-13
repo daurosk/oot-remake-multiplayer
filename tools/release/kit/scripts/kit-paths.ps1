@@ -524,7 +524,7 @@ function Use-KitPuppetPack([string]$Manifest, [string]$ToolDir, [string[]]$Missi
         }
         elseif ($env:LICHII_COOP_SELF_TUNIC) { Remove-Item env:LICHII_COOP_SELF_TUNIC }
         if ($want -and -not $self -and (Get-KitTunic $want) -ne 'green') {
-            Write-Host 'Your Link stays green: the puppet pack has no tunic of your colour. Run make-puppet-pack.cmd again.'
+            Write-Host "Your Link stays green: the puppet pack has no tunic of your colour. $script:KitPackRemake"
         }
         return $true
     }
@@ -546,9 +546,9 @@ function Get-KitHookshotGame([string]$Kit) {
     return (Join-Path $Kit 'hookshot\game')
 }
 
-# hookshot.exe of a game folder (a builder's game folder has it in bin\), or $null.
+# longshot.exe of a game folder (a builder's game folder has it in bin\), or $null.
 function Get-KitHookshotExe([string]$Game) {
-    foreach ($p in (Join-Path $Game 'bin\hookshot.exe'), (Join-Path $Game 'hookshot.exe')) {
+    foreach ($p in (Join-Path $Game 'bin\longshot.exe'), (Join-Path $Game 'longshot.exe')) {
         if (Test-Path -LiteralPath $p) { return $p }
     }
     return $null
@@ -570,7 +570,11 @@ function Get-KitHookshotStamp([string]$Kit) {
 }
 
 # What the kit's Hookshot game needs before it starts:
+#   'quarantine' the co-op module is in neither the kit nor the game (antivirus took it, as a false alarm):
+#             a build cannot help, the player restores it (Get-KitHookshotQuarantineText)
 #   'game'    no game built yet (the first build, 10 to 45 minutes)
+#   'moved'   game-folder.txt names a game that is not there any more (moved or deleted): built again,
+#             or found with Build-Hookshot-Coop.bat -Out <its new folder>
 #   'pin'     the kit moved to another Hookshot release or pin (a full game build, about 15 minutes)
 #   'patches' the co-op patches changed (the game built again, only what changed: a few minutes)
 #   'module'  the co-op module changed, or the puppet pack is missing or stale (co-op and the pack put in
@@ -579,7 +583,15 @@ function Get-KitHookshotStamp([string]$Kit) {
 function Get-KitHookshotNeed([string]$Kit) {
     $game = Get-KitHookshotGame $Kit
     $exe = Get-KitHookshotExe $game
-    if (-not $exe) { return 'game' }
+    # (a kit always carries hookshot\hookshot_coop.dll; with the game's copy gone too, nothing can put co-op in)
+    $gameHas = $exe -and (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $exe) 'hookshot_coop.dll'))
+    # (only a kit with the Hookshot part: one made without it has no module to lose and no game to start)
+    if (-not $gameHas -and (Test-Path -LiteralPath (Join-Path $Kit 'hookshot\PIN')) -and
+        -not (Test-Path -LiteralPath (Join-Path $Kit 'hookshot\hookshot_coop.dll'))) { return 'quarantine' }
+    if (-not $exe) {
+        if (Test-Path -LiteralPath (Join-Path $Kit 'hookshot\game-folder.txt')) { return 'moved' }
+        return 'game'
+    }
     $stampFile = Join-Path $game 'coop-built-from.txt'
     $have = if (Test-Path -LiteralPath $stampFile) { [System.IO.File]::ReadAllText($stampFile) } else { '' }
     $want = Get-KitHookshotStamp $Kit
@@ -611,15 +623,47 @@ function Test-KitPuppetPackStale([string]$Manifest, [string]$ToolDir) {
     return [bool](Get-PuppetPackHint $Manifest $ToolDir)
 }
 
-# The line said before Build-Hookshot-Coop runs by itself for that need.
-function Get-KitHookshotNeedText([string]$Need) {
+# The line said before Build-Hookshot-Coop runs for that need ('game', 'moved' and 'pin' ask first:
+# Get-KitHookshotNeedQuestion). A tester read the old "No co-op Hookshot game" as "couldn't find Hookshot"
+# and stopped: these say what is missing and that the kit sets it up.
+# $HsOnly: a Hookshot-only kit ("Start OoT Co-op.bat"), which has no emulator and no Build-Hookshot-Coop.bat.
+function Get-KitHookshotNeedText([string]$Need, [string]$Game = '', [bool]$HsOnly = $false) {
+    if ($HsOnly -and $Need -eq 'game') { return 'The game isn''t set up yet. The kit builds the co-op game on this PC from your own game file, once (about 20 to 40 minutes; the PC stays usable).' }
+    if ($HsOnly -and $Need -eq 'moved') { return "The co-op game this kit built is not in $Game any more (moved or deleted). Moved it? Answer n, move it back there, then start again. Otherwise it is built again (about 20 to 40 minutes)." }
     switch ($Need) {
-        'game' { 'The Hookshot game is not built yet: building it now from your game (10 to 45 minutes, once; the PC stays usable).' }
-        'pin' { 'This update moves to a new Hookshot: updating the game (about 15 minutes; the PC stays usable).' }
+        # (the tester behind this was an emulator player joining a Hookshot host with Join-Hookshot.bat)
+        'game' { 'Playing on the emulator? Use Join.bat (or Host.bat): emulator and Hookshot players can be in the same game.' + "`n" + 'Hookshot isn''t set up yet. The kit builds the co-op Hookshot game on this PC from your own game, once (about 20 to 40 minutes; the PC stays usable).' }
+        'moved' { "The co-op Hookshot game this kit built is not in $Game any more (moved or deleted). Moved it? Answer n, then run Build-Hookshot-Coop.bat -Out ""<its new folder>"" (seconds). Otherwise it is built again (about 20 to 40 minutes)." }
+        'pin' { 'Your Hookshot game was built for another Hookshot version than this kit uses: it is built again (about 15 minutes; the PC stays usable).' }
         'patches' { 'This update changes the Hookshot game a little: updating it (a few minutes).' }
         'module' { 'Putting the updated co-op and the puppet pack into the Hookshot game (seconds to a minute).' }
+        'quarantine' { Get-KitHookshotQuarantineText }
         default { '' }
     }
+}
+
+# The question before a long build ('' = none: short steps just run, and 'quarantine' cannot be built away).
+function Get-KitHookshotNeedQuestion([string]$Need) {
+    switch ($Need) {
+        'game' { 'Set it up now?' }
+        'moved' { 'Build it again now?' }
+        'pin' { 'Update it now?' }
+        default { '' }
+    }
+}
+
+# The co-op module gone with the game there (or the kit's copy gone too): almost always antivirus, which
+# takes a new unsigned DLL away as a false alarm. Rebuilding cannot fix it; restoring it does.
+function Get-KitHookshotQuarantineText {
+    @(
+        'The co-op module hookshot_coop.dll is missing, so co-op cannot start.',
+        'Antivirus most likely took it away as a false alarm. To get it back (SETUP.md, "Antivirus took hookshot_coop.dll"):',
+        '  1. Windows Security > Virus & threat protection > Protection history: the hookshot_coop.dll entry > Actions > Restore.',
+        '  2. Add an exclusion so it stays: Virus & threat protection settings > Exclusions > Add or remove exclusions >',
+        '     Add an exclusion > Folder: this kit''s folder (and the Hookshot game''s folder if it is elsewhere).',
+        '  Another antivirus: restore it from its quarantine and allow the kit folder the same way, or unzip the kit again.',
+        'Then start this again.'
+    ) -join "`n"
 }
 
 # The UDP port check-hosting.cmd checks: the one this kit's server listens on when it is running (Host.bat or
@@ -642,23 +686,27 @@ function Get-KitHostPort([string]$Kit, [int[]]$Listening, [int]$Default) {
     return $Default
 }
 
+# How to make the puppet pack again. A Hookshot-only kit has no make-puppet-pack.cmd: its launcher's build step
+# makes the pack (play.ps1 sets this there).
+$script:KitPackRemake = 'Run make-puppet-pack.cmd again.'
+
 function Get-PuppetPackHint([string]$Manifest, [string]$ToolDir) {
     try {
         $json = [System.IO.File]::ReadAllText($Manifest) | ConvertFrom-Json -ErrorAction Stop
         if ($json.sound -ne $true) {
-            return 'Puppet pack: made without the other players'' sounds. Run make-puppet-pack.cmd again to hear their footsteps, sword and voice.'
+            return "Puppet pack: made without the other players' sounds. $script:KitPackRemake to hear their footsteps, sword and voice."
         }
         # No tunic models (a pack from before the colours, or a game without the
         # tunic textures): every other player shows in the green tunic (#202).
         $tunics = $json.tunics
         if ($json.tunics_off -ne $true -and (-not $tunics -or @($tunics.PSObject.Properties).Count -eq 0)) {
-            return 'Puppet pack: made without the tunic colours, so the other players show in green. Run make-puppet-pack.cmd again.'
+            return "Puppet pack: made without the tunic colours, so the other players show in green. $script:KitPackRemake"
         }
         $tool = Get-PuppetToolHash $ToolDir
         if ($tool -and $json.tool_sha256 -and $json.tool_sha256 -ne $tool) {
-            return 'Puppet pack: made by another version of the pack tool. Run make-puppet-pack.cmd again for the latest puppet fixes.'
+            return "Puppet pack: made by another version of the pack tool. $script:KitPackRemake (for the latest puppet fixes)"
         }
     } catch {
-        return 'Puppet pack: coop_puppet.json could not be read. Run make-puppet-pack.cmd again.'
+        return "Puppet pack: coop_puppet.json could not be read. $script:KitPackRemake"
     }
 }

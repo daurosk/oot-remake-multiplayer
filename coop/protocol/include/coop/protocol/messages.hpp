@@ -47,7 +47,10 @@ inline constexpr std::uint8_t kChannelProgress = 1;
 inline constexpr std::uint8_t kChannelOwnership = 2;
 inline constexpr std::uint8_t kChannelPlayerSamples = 3;
 inline constexpr std::uint8_t kChannelObjectSamples = 4;
-inline constexpr std::uint8_t kChannelCount = 5;
+// Proximity voice chat (VOICE_FRAME), unreliable: its own channel, so a late
+// voice packet never holds up or drops a pose or object sample.
+inline constexpr std::uint8_t kChannelVoice = 5;
+inline constexpr std::uint8_t kChannelCount = 6;
 // The largest UDP payload ENet puts in one datagram (its MTU), on the server
 // and in every game; ENet takes the smaller of the two sides, so either side
 // alone is enough. ENet's default of 1392 makes 1420-byte IP packets, more
@@ -123,6 +126,7 @@ enum class MessageType : std::uint16_t {
   local_leave = 462,
   local_sample = 463,
   local_message = 464,
+  voice_frame = 420,  // 420 to 424: proximity voice chat (docs/protocol.md, "Voice")
 };
 
 // PLAYER_SAMPLE component ids.
@@ -1359,6 +1363,26 @@ struct LocalMessage {
   bool operator==(const LocalMessage&) const = default;
 };
 
+// VOICE_FRAME (protocol 11, branch proximity-voip): 20 ms of the sender's
+// microphone as one Opus packet (48 kHz mono), or an empty packet with
+// voice::end that closes a talk spurt (the gate closed). Channel 5,
+// unreliable. The server writes the sender's number and relays it to the
+// players in the sender's scene whose Link is within the voice range of the
+// sender's (docs/protocol.md, "Voice"); never kept.
+// A ceiling, not the size: at 24 kbit/s a frame is about 60 bytes.
+inline constexpr std::size_t kMaxVoiceBytes = 400;
+namespace voice {
+inline constexpr std::uint8_t end = 1u << 0;  // the talk spurt ends here; no audio
+}  // namespace voice
+
+struct VoiceFrame {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, the sender relayed
+  std::uint16_t sequence = 0;                // +1 per 20 ms frame, wraps
+  std::uint8_t flags = 0;                    // voice::end
+  std::vector<std::uint8_t> opus;            // 1 to kMaxVoiceBytes; empty with voice::end
+  bool operator==(const VoiceFrame&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
@@ -1371,7 +1395,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              JoinChallenge, JoinProof, SaveAsk, SavePart, PlayerLife,
                              PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim, DungeonEvent, PlayerRide,
                              OcarinaNote, PlatformClock, PlatformCounter, LocalJoin, LocalJoined,
-                             LocalLeave, LocalSample, LocalMessage>;
+                             LocalLeave, LocalSample, LocalMessage, VoiceFrame>;
 
 MessageType type_of(const Message& message);
 

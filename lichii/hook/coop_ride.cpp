@@ -93,7 +93,10 @@ std::optional<proto::PlayerRide> Rider::Tick(bool riding, const std::optional<Ve
     if (riding) {
         tried_us_ = now_us;  // a walk was made for this Tick
     }
-    if (riding && position && Finite(*position)) {
+    if (riding && !(position && Finite(*position))) {
+        return std::nullopt;  // our place unread this frame: not a dismount (no off, no new mount)
+    }
+    if (riding) {
         if (last_us_ != 0 && now_us < last_us_ + kEveryUs && riding_) {
             return std::nullopt;
         }
@@ -207,9 +210,14 @@ std::vector<CoopSpawn::Copy> Rides::Plan(const std::optional<std::string>& scene
             r.scene ? std::optional<std::string_view>(*r.scene) : std::nullopt;
         const std::optional<std::string_view> anim =
             r.anim ? std::optional<std::string_view>(r.anim->name) : std::nullopt;
-        if (coop::host::visibility(std::string_view(*scene), local_event, theirs, r.status, anim) !=
-            coop::host::Visibility::ride) {
-            continue;  // got off (its command says so first), elsewhere, or our cutscene
+        // The rider's own game says when it rides (its fresh PLAYER_RIDE). The
+        // puppet's command is a sample that can trail it or miss a frame, and
+        // waiting for it to name a horse left the rider seated on nothing.
+        // Here only: are they in our place, and is no cutscene of ours on.
+        if (coop::host::visibility(std::string_view(*scene), local_event, theirs, r.status, anim) ==
+                coop::host::Visibility::hide ||
+            !r.adult) {
+            continue;  // elsewhere, our cutscene, or a child (only an adult rides Epona)
         }
         const Mat3 frame = r.rotation ? CoopPuppet::QuatToMatrix(*r.rotation) : kIdentity;
         CoopSpawn::Copy c;
@@ -257,7 +265,10 @@ std::vector<std::string> Rides::Changes() {
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <unordered_map>
+
+#include <fmt/format.h>
 
 #include "common/logging.h"
 #include "core/core.h"
@@ -281,6 +292,7 @@ constexpr u64 kActorNode = 0x538;
 constexpr u64 kActorName = 0x260;
 constexpr u64 kAsSlotRate = 0xd4;
 constexpr std::size_t kMaxWalk = 8192;
+constexpr float kLookM = 6.0f;  // the log's "what is around us" when no horse is found
 
 bool Off() {
     const char* v = std::getenv("LICHII_COOP_RIDE");
@@ -371,15 +383,29 @@ public:
             if (auto m = rider_.Tick(riding, own_position, own_rotation, horses, now_us)) {
                 const bool sent = session->with_client([&](coop::net::Client& c) { return c.send(*m); });
                 if (rider_.Riding() != was || (!was && !rider_.Riding() && !logged_off_)) {
-                    LOG_INFO(Core, "coop: ride: we {} ({} horse{} seen){}",
+                    if (rider_.Riding()) {
+                        mounted_us_ = now_us;
+                    }
+                    LOG_INFO(Core, "coop: ride: we {} ({} horse{} seen, '{}'{}){}",
                              rider_.Riding() ? "ride Animal_Epona_Adult, sending PLAYER_RIDE"
                                              : "got off, riding off sent",
-                             horses.size(), horses.size() == 1 ? "" : "s", sent ? "" : " (not sent)");
+                             horses.size(), horses.size() == 1 ? "" : "s",
+                             own_animation ? own_animation->name : std::string("no command"),
+                             rider_.Riding() ? std::string()
+                                             : fmt::format(", after {:.1f} s",
+                                                           double(now_us - mounted_us_) / 1e6),
+                             sent ? "" : " (not sent)");
                     logged_off_ = !rider_.Riding();
                 }
-            } else if (riding && !rider_.Riding() && !logged_none_) {
-                LOG_INFO(Core, "coop: ride: we ride ('{}') but no {} within {:.0f} m on the list ({} seen)",
-                         own_animation->name, kHorse, Rider::kNear, horses.size());
+            } else if (riding && !rider_.Riding() && !logged_none_ && own_position) {
+                std::string near;
+                std::vector<HorseSeen> again;
+                Walk(system.ApplicationMemory(), again, own_position, &near);
+                LOG_INFO(Core,
+                         "coop: ride: we ride ('{}') but no {} within {:.0f} m on the list ({} seen); "
+                         "within {:.0f} m: {}",
+                         own_animation->name, kHorse, Rider::kNear, horses.size(), kLookM,
+                         near.empty() ? "nothing" : near);
                 logged_none_ = true;
             }
             if (rider_.Riding()) {
@@ -415,7 +441,10 @@ public:
 
 private:
     // The horses on our actor list (name cached by address).
-    void Walk(Core::Memory::Memory& memory, std::vector<HorseSeen>& out) {
+    // `near` set: also the names of the actors within kLookM of `own`, for
+    // the log line of a ride with no horse found.
+    void Walk(Core::Memory::Memory& memory, std::vector<HorseSeen>& out,
+              const std::optional<Vec3>& own = std::nullopt, std::string* near = nullptr) {
         const auto manager = Get<u64>(memory, main_ + CoopPuppet::addr::kActorManagerPtr);
         const auto lists =
             manager && *manager != 0 ? Get<u64>(memory, *manager + kManagerLists) : std::nullopt;
@@ -433,6 +462,16 @@ private:
                 const u64 a = *owner;
                 auto it = names_.find(a);
                 std::string name = it != names_.end() ? it->second : Name(memory, a);
+                if (near != nullptr && own && near->size() < 400) {
+                    Vec3 at{};
+                    for (std::size_t i = 0; i < 3; ++i) {
+                        at[i] = Get<float>(memory, a + CoopPuppet::addr::kActorPosition + 4 * i)
+                                    .value_or(std::numeric_limits<float>::infinity());
+                    }
+                    if (const float d = Distance(at, *own); d <= kLookM) {
+                        *near += fmt::format("{}{} {:.1f} m", near->empty() ? "" : ", ", name, d);
+                    }
+                }
                 if (IsHorse(name)) {
                     HorseSeen h;
                     h.address = a;
@@ -460,6 +499,7 @@ private:
     bool drawing_ = false;
     bool logged_none_ = false;
     bool logged_off_ = true;
+    u64 mounted_us_ = 0;  // for the log: how long the ride was
     std::unordered_map<u64, std::string> names_;
 };
 

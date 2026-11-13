@@ -84,6 +84,7 @@
 #include "coop_pose.h"
 #include "coop_puppet.h"
 #include "coop_ride.h"
+#include "coop_voice.h"
 #include "coop_settings.h"
 #include "coop_spawn.h"
 #include "coop_scrub_talk.h"
@@ -313,6 +314,7 @@ public:
             }
             CoopRide::OnEvent(event);  // their horses (PLAYER_RIDE, issue 199)
             CoopLocalNet::OnEvent(event);  // split screen's seats in the session (coop_local_net.h)
+            CoopVoice::OnEvent(event);  // their voices (VOICE_FRAME, docs/voice.md)
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -845,6 +847,9 @@ public:
                               view.age == coop::protocol::Age::adult});
         CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                             report.connected ? session_.get() : nullptr, report.server_now_us);
+        // Proximity voice (docs/voice.md): our microphone out, theirs at their Links.
+        CoopVoice::Frame(view.game ? view.position : std::nullopt, view.others, view.hidden,
+                         report.connected ? session_.get() : nullptr);
         // Our Ocarina's notes for the other games (issue 152, coop_ocarina_sound.h).
         CoopOcarinaSound::Frame(system,
                                 reading && reading->animation

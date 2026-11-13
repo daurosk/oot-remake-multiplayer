@@ -221,3 +221,24 @@ TEST_CASE("ride: the ridable horse is never a shared object (one horse per game)
     CHECK(CoopRide::IsHorse(CoopRide::kHorse));
     CHECK_FALSE(CoopObjects::IsShared(CoopRide::kHorse));
 }
+
+TEST_CASE("ride: the highest player number rides too (16 players), one past it is ignored") {
+    CoopRide::Rider rider;
+    HorseSeen horse;
+    horse.address = 0x1;
+    horse.position = {0.0f, -1.0f, 0.0f};
+    horse.rotation = CoopPuppet::QuatToMatrix(Yaw(0.0f));
+    auto sent = rider.Tick(true, {0.0f, 0.0f, 0.0f}, Yaw(0.0f), {horse}, 5'000'000);
+    REQUIRE(sent);
+    const std::uint8_t top = proto::kMaxPlayers;
+    for (const std::uint8_t n : {top, static_cast<std::uint8_t>(top + 1)}) {
+        CoopRide::Rides rides;
+        proto::PlayerRide m = Relayed(*sent);
+        m.player_number = n;
+        rides.Receive(m, 5'000'000);
+        CoopPuppet::Remote r = Rider({0.0f, 0.0f, 0.0f}, Yaw(0.0f));
+        r.number = n;
+        const auto copies = rides.Plan(std::string("HyruleField"), false, {r}, 1u << n, 5'010'000);
+        CHECK(copies.size() == (n == top ? 1u : 0u));
+    }
+}

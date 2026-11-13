@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 
+#include "coop_dbno_game.h"
 #include "coop_hook.h"
 #include "coop_title_menu.h"
 #include "hos_coop_draw.h"
@@ -130,6 +131,7 @@ struct Scene {
     std::optional<CoopHook::Markers> markers;
     std::optional<std::vector<CoopHook::PlayerRow>> players;  // the player list key is held
     std::optional<std::vector<CoopHook::OverlayLine>> panel;  // the panel is on
+    std::optional<CoopDbno::View> dbno;  // down but not out: we are down, or beside someone who is
     // The game look: players' colours (Lifted, alpha 255) by what tags and
     // chat lines call them: their names, "P1".."P4", "you". Nobody here: white.
     std::map<std::string, std::uint32_t, std::less<>> colours;

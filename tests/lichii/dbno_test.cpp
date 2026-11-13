@@ -769,3 +769,15 @@ TEST_CASE("dbno texts: the clock, the rules, our own notices and the others'") {
     CHECK_FALSE(CoopDbno::TheirLine(out, up, "Saria", ""));
     CHECK_FALSE(CoopDbno::TheirLine(std::nullopt, up, "Saria", ""));
 }
+
+TEST_CASE("dbno: the rules lower the life through the game's own step, never less than it takes") {
+    using CoopDbno::Lowered;
+    CHECK(Lowered(5, 0, -1) == 0);   // nothing wanted
+    CHECK(Lowered(5, 2, -1) == 2);
+    CHECK(Lowered(5, 0, 1) == 4);    // a downed Link healed to 5: back to a quarter
+    CHECK(Lowered(5, 0, 0) == 5);    // out: all of it, the game's death
+    CHECK(Lowered(5, 5, 0) == 5);
+    CHECK(Lowered(5, 8, 1) == 8);    // the game takes more already
+    CHECK(Lowered(1, 0, 1) == 0);    // already there
+    CHECK(Lowered(1, 0, 3) == 0);    // a raise is not this step's (it is written)
+}

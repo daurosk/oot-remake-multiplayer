@@ -5,6 +5,7 @@
 #include <cmath>
 #include <string_view>
 
+#include "coop_dbno_draw.h"
 #include "coop_hud_hearts.h"
 #include "coop_hud_layout.h"
 
@@ -584,7 +585,7 @@ bool Wanted(const Scene& s) {
         return true;
     }
     return !s.chat.empty() || !s.hud.empty() || s.box.has_value() || s.cheats.has_value() || (s.markers && !s.markers->items.empty()) || s.players.has_value() ||
-           (s.panel && !s.panel->empty());
+           (s.panel && !s.panel->empty()) || s.dbno.has_value();
 }
 
 bool GameLook(const HosCoopDraw& d, const Look& look) {
@@ -605,6 +606,10 @@ void Draw(const HosCoopDraw& d, const Scene& s, const Look& look) {
     if (s.panel) {
         Font(d, 0);
         DrawPanel(d, *s.panel);
+    }
+    if (s.dbno) {
+        Font(d, game ? game->regular : 0);
+        CoopDbnoDraw::Draw(d, *s.dbno);
     }
     DrawChat(d, s.chat, DrawBox(d, s.box, game), s, game);
     if (s.players) {

@@ -447,6 +447,20 @@ Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hoo
 - **Hits go to their victim only, and only while PvP is on.** The server passes a `PVP_HIT` to the victim alone, with the attacker's number written in, and drops it while PvP is off (counted in `pvp_hits_dropped`), so a game with PvP off never gets one, whatever an attacker's game believes.
 - **The victim decides.** Its game takes the hit (or not, by the rules in play-online.md) and sends `PVP_HURT`, which the server relays to everyone else. A `PVP_HURT` naming its own sender as the attacker is dropped.
 
+### Down but not out (protocol 11, `DBNO_MODE`, `DBNO_STATE`, `DBNO_REVIVE`)
+
+A player at no hearts is downed instead of dead and a teammate can revive them ([play-online.md](play-online.md), "Down but not out"; `lichii/hook/coop_dbno.h` has the rules, `coop_dbno_game.h` the games' side). On unless the server or the host turns it off. Types 470 to 479 are kept for it.
+
+| Type | Name | Channel | Sent by | Body |
+|---|---|---|---|---|
+| 470 | `DBNO_MODE` | 0 | both | `u8` set by (0 the server's start, 1 to 16 the host who changed it), `u8` mode (0 off, 1 on; others refused), `u8` bleed-out seconds (10 to 240), `u8` revive hold in tenths of a second (5 to 100), `u8` life a revived player gets, quarter hearts (1 to 80); outside refused. No player field |
+| 471 | `DBNO_STATE` | 0 | both | `u8` player field, `u8` state (0 up, 1 downed, 2 out; others refused), `u16` bleed-out left in tenths (0 to 2400), `u8` reviver (0 nobody, 1 to 16, not the player), `u8` revive progress (0 to 255). Not downed: left, reviver and progress are 0; no reviver: progress 0 (else refused) |
+| 472 | `DBNO_REVIVE` | 0 | both | `u8` player field (the reviver), `u8` target (1 to 16, not the reviver), `u8` holding (0 let go, 1 held; others refused) |
+
+- **The session's value is the server's**, as `PVP_MODE`: `coop_server --dbno on|off` (on by default) sets it, the server sends `DBNO_MODE` to each player at join (on or off), and only the host may change it (`/dbno` in the chat, or the Host settings page through `CoopDbno::Change`); anyone else is answered alone with the value as it is (`dbno_mode_refused`). An empty session goes back to the start value. A game starts each connection with the mode off, so with a server that does not know it, death is the game's own.
+- **Each game decides its own state** and sends `DBNO_STATE` when it changes, every 0.5 s while downed (0.1 s while the ring fills), and again when someone joins or it reconnects. The server relays it to everyone else and keeps the state: a player who is not up owns no enemy and is given none (the enemy goes to the nearest player still up, whose game's AI then chases that player's Link).
+- **A revive goes to its downed player only.** The reviver's game sends `DBNO_REVIVE` every 0.2 s while A is held beside them, and once with holding 0 when it lets go; the server passes it to the target alone while the mode is on (`dbno_revives_relayed`; to nobody, to itself or with the mode off: dropped, `dbno_revives_dropped`). The downed game counts the hold (a hold counts 0.7 s past its last message) and says who revives and how far in its `DBNO_STATE`, so both see the same ring.
+
 ## Later stages (outline only)
 
 - **Stage 3:** `PLAYER_STATUS` decides whether puppets show during cutscenes. `JOIN_PARTNER` (above) asks for a warp to another player's scene.
@@ -489,6 +503,7 @@ Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hoo
 - Version 10 also (branch `encrypt-always-b`, 2026-11-12): every session has a join password and is encrypted; the plain path is gone both ways (a server refuses a `HELLO` without a key share and every `HELLO` when it has no password, and `coop_server` does not start without one; a game refuses a `WELCOME` without keys). No new type, no format change.
 - Version 10 is this release's protocol: everything above marked version 10 ships in it. `main` before this release had an unreleased draft of version 10 (without keep-number, encrypt-always and the platform types); a build of that draft and one of this release both say 10 but do not work together (the draft's `HELLO` has no previous number and may have no key share, and its server lets a game in without a password). The draft was never released, so no player has it. These were briefly numbered 11 on the integration branch.
 - Version 11 (branch `native-host-b`, 2026-11-12): up to 16 players. Player numbers are 1 to 16 (`kMaxPlayers`), `WELCOME` lists up to 15 others, 12 more slot colours; a version 10 game refuses a `WELCOME` with 5 or more players, so the version goes up. The server takes `--max-players` (1 to 16, default 4 until the games' side takes 16) and sends `PLAYER_SAMPLE` and `PLAYER_POSE` by where the players are ("Who gets which stream"). No new type.
+- Protocol 11 also (branch `dbno`): `DBNO_MODE` (470), `DBNO_STATE` (471), `DBNO_REVIVE` (472); 470 to 479 kept. No bump of its own: a build without them never downs anyone (it gets no `DBNO_MODE`, so it plays with the game's own death), and a server without them does not relay them.
 
 ## Who gets which stream
 

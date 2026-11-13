@@ -115,6 +115,13 @@ constexpr Taken Guarded(Guard guard, std::int32_t life, std::int32_t sum) {
     return Taken{sum, false};
 }
 
+// A Life step that takes `sum` off `life` when the rules want the life
+// lowered to `to` (-1: they do not): it takes at least down to `to`, so the
+// game's own step does it (its death at 0). Never less than the game's own.
+constexpr std::int32_t Lowered(std::int32_t life, std::int32_t sum, std::int32_t to) {
+    return to >= 0 && life - sum > to ? life - to : sum;
+}
+
 // The guard as the game's threads see it. The frame sets it (Set); the Life
 // step of our own Link asks it (Step, any game thread) and its lethal hits
 // are counted for the next frame (TakeLethal).

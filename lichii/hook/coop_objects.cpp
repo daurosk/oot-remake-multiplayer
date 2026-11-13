@@ -56,6 +56,7 @@
 #include "coop_actor_events.h"
 #include "coop_puppet.h"
 #include "coop_pvp_game.h"
+#include "coop_dbno_game.h"
 #include "coop_svc.h"
 
 #include <algorithm>
@@ -2059,6 +2060,7 @@ private:
                 CoopActorEvents::TheLifeTable().Clear();  // (another heap's components)
                 CoopActorEvents::TheRing().Forget();
 #endif
+                CoopDbno::SetOurLifeComponent(0);  // down but not out: until our Link is seen again
             }
             box.main = main_;
             ring = box.ring;
@@ -2281,6 +2283,9 @@ private:
                     if (known.first == "Player_Child" || known.first == "Player_Adult") {
                         GivePvp(a, value->first + 8, life);  // PvP (coop_pvp_game.cpp)
                     }
+                    if (known.first == "Player_Child" || known.first == "Player_Adult") {
+                        GiveDbno(r, a, value->first + 8, life);  // down but not out (coop_dbno_game.h)
+                    }
                     // On by default (=0 turns it off): a MaxLife raised by
                     // another player is put into the component the hearts are
                     // drawn from, so a heart container crosses (issue 88).
@@ -2462,6 +2467,23 @@ private:
             return std::nullopt;
         }
         return std::pair{*value, *max};
+    }
+
+    // Down but not out (coop_dbno_game.h): our Link's Life component for the
+    // Life step's guard, and the life the rules ask for (a revive, a downed
+    // Link's quarter heart, out), written as PvP's fallback does.
+    void GiveDbno(Reader& r, u64 link, u64 life_at, s32 life) {
+        const auto table = r.Ptr(link + kActorComponents);
+        const auto component = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
+        CoopDbno::SetOurLifeComponent(component.value_or(0));
+        const auto want = CoopDbno::TakeLifeWrite();
+        if (!want || life < 0 || *want == life || memory_ == nullptr ||
+            !memory_->IsValidVirtualAddressRange(life_at, 4)) {
+            return;
+        }
+        memory_->Write32(life_at, static_cast<u32>(*want));
+        TheLinkLife().store(*want);
+        LOG_INFO(Core, "coop: dbno: our Link's life {} -> {}", life, *want);
     }
 
     // PvP: our Link's life `life` (at `life_at`) was just read. Notes it for

@@ -48,14 +48,14 @@ What Host.bat does for this, by itself:
 2. **The host** double-clicks `Host.bat`. The server window shows **Give your friends ONE of these**, with the **Over Radmin VPN** address (`26.x.x.x`) first, and has already copied it (the invite code replaces that copy a few seconds later; copy the address from the window then). Send it with the join password: the window shows it as `Join password for this session: ...` (only in the window, never in the log), or set your own `server_password`.
 3. **The others** double-click `Join.bat`, paste that address and press Enter. Join.bat says when you are connected.
 
-**Hosting from Hookshot's title screen on a VPN (or in the same house)?**
+**Hosting from Hookshot's Multiplayer tab on a VPN (or in the same house)?** Co-op on Hookshot is the first tab of its pause menu: press **F1** (or a pad's **Home**), and **Multiplayer** is the first tab. The title's Host and Join rows open it too. Its **Commands** page lists the chat commands and the key that opens the chat.
 
-1. **The host** opens **Host** on the title screen, then chooses **Same network or VPN**. The game shows one line, for example `192.168.1.20:27510 abcdefghijklmnopqrst` (this PC's address and port, a space, the session's join password), and has copied it. With a VPN program running, its address comes first (Radmin VPN `26.x.x.x`, Hamachi `25.x.x.x`, Tailscale `100.x.x.x`).
+1. **The host** chooses **Host a game** on the Multiplayer tab, then **Same network or VPN**. The game shows one line, for example `192.168.1.20:27510 abcdefghijklmnopqrst` (this PC's address and port, a space, the session's join password), and has copied it. With a VPN program running, its address comes first (Radmin VPN `26.x.x.x`, Hamachi `25.x.x.x`, Tailscale `100.x.x.x`).
 2. The host pastes that line into a chat with the friends (Ctrl+V). It holds the join password, so keep it among friends.
-3. **The others** open **Join** on the title screen and paste the line where the invite code goes (A on the field, or Ctrl+V), then **OK**. Nothing else to type.
+3. **The others** choose **Join a game** on the Multiplayer tab and paste the line where the invite code goes (A on **Friend's code**, or Ctrl+V), then **Join**. Nothing else to type.
 4. If Windows asks about the firewall on the host's PC, allow the game on private networks.
 
-The invite code is for friends over the internet: it holds the host's internet address, which often does not work from inside the same house. **Copy the code again** on the Host screen brings the invite code back.
+The invite code is for friends over the internet: it holds the host's internet address, which often does not work from inside the same house. **Copy the code again** on the Host page brings the invite code back.
 
 Nobody touches a router. Only people with the network password can reach the server. If the others cannot connect, the host runs `check-hosting.cmd` in the kit folder while the server window is open: it prints exactly what is wrong and the command that fixes it (usually one firewall line for Radmin addresses; it changes nothing by itself).
 

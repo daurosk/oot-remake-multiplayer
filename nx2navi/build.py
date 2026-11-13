@@ -254,7 +254,10 @@ def assemble(dll, server):
     tool = MOD_OUT / 'tools' / 'puppet_pack'
     tool.mkdir(parents=True)
     # Every module of the tool (build.py imports them all; a missing one stops the pack).
+    # Test helpers stay behind: the release maker (tools/release/make_nx2navi_mod.py) refuses them.
     for source in sorted((REPO / 'tools' / 'puppet_pack').glob('*.py')):
+        if source.name.startswith('test') or source.name.endswith('_test.py'):
+            continue
         shutil.copy2(source, tool / source.name)
     # The programs are GPL-3.0 and hold ENet (MIT): their licences go with them.
     shutil.copy2(REPO / 'LICENSE', MOD_OUT / 'LICENSE.txt')

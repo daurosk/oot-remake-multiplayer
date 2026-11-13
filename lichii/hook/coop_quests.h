@@ -95,7 +95,9 @@ class Store final : public coop::host::FlagStore {
     bool is_max(coop::host::FlagKey key) override;
     bool is_one_way(coop::host::FlagKey key) override { return inner_.is_one_way(key); }
     bool holds(coop::host::FlagKey key) override { return inner_.holds(key); }
-    bool busy(coop::host::FlagKey key) override { return inner_.busy(key); }
+    // A complete_only quest our game is finishing itself counts as busy, so
+    // the end waits (FlagWatcher unwritten_) instead of being dropped.
+    bool busy(coop::host::FlagKey key) override;
 
     // Steps moved since the last call (for the log).
     std::vector<Raised> take_raised();

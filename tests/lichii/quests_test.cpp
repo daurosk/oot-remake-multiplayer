@@ -393,10 +393,20 @@ TEST_CASE("quests: Get_Epona shares its end only") {
     for (const char* step : {"GambleRacePlaying", "AfterWonGambleRace"}) {
         Game racing;
         racing.step(kEpona, step);
-        CHECK(racing.store.write(entry("Complete")));
+        CHECK_FALSE(racing.store.write(entry("Complete")));  // held, tried again
+        CHECK(racing.store.busy(key));
         CHECK(racing.at(kEpona, step));
         CHECK(racing.enum_writes == 0);
     }
+
+    // Lost the race (back to ReadyForGambleRace): the held end is written then.
+    Game lost;
+    lost.step(kEpona, "GambleRacePlaying");
+    CHECK_FALSE(lost.store.write(entry("Complete")));
+    lost.step(kEpona, "ReadyForGambleRace");
+    CHECK_FALSE(lost.store.busy(key));
+    CHECK(lost.store.write(entry("Complete")));
+    CHECK(lost.at(kEpona, "Complete"));
 
     // Unread (GameData not up) or a value not in the list: not written.
     Game none;

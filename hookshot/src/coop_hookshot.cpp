@@ -450,7 +450,11 @@ CoopDraw::Keys g_keys;
 std::mutex g_box_mutex;
 CoopChatBox::Box g_box;
 unsigned g_box_lead = 0;  // a double-byte code page's lead byte, waiting for its second
-bool g_box_key_set = false;  // the open key was taken from LICHII_COOP_CHAT_KEY or set by the tab (SetChatKey)
+bool g_box_key_set = false;  // the open key was taken from LICHII_COOP_CHAT_KEY
+// The tab's new open key (SetChatKey), taken by the next key press under g_box_mutex. Not a lock: the tab calls in
+// holding CoopPause's own mutex, and TypeChar takes that one while it holds g_box_mutex (one lock order only).
+constexpr std::uint64_t kNoChatKey = ~std::uint64_t{0};
+std::atomic<std::uint64_t> g_box_key_next{kNoChatKey};
 
 // (under g_box_mutex) "" = T, the box's own default.
 void UseChatKey(const std::string& v) {
@@ -676,6 +680,9 @@ bool TypeKey(std::uint32_t vk, bool repeat) {
         g_box_key_set = true;
         UseChatKey(Env("LICHII_COOP_CHAT_KEY"));
     }
+    if (const std::uint64_t next = g_box_key_next.exchange(kNoChatKey); next != kNoChatKey) {
+        g_box.SetOpenKey(static_cast<std::uint32_t>(next));   // (after the variable: the tab's choice wins)
+    }
     const bool taken = g_box.Key(vk, repeat);
     if (auto text = g_box.TakeSend()) {
         const bool ok = CoopHook::SendChat(*text);
@@ -734,9 +741,13 @@ bool Mouse(float fx, float fy, int event) {
 }
 
 void SetChatKey(const std::string& key) {
-    std::lock_guard lock(g_box_mutex);
-    g_box_key_set = true;
-    UseChatKey(key.empty() ? std::string("T") : key);
+    const std::string k = key.empty() ? std::string("T") : key;
+    if (const auto vk = CoopChatBox::ParseOpenKey(k)) {
+        g_box_key_next.store(*vk);   // (no g_box_mutex here: see g_box_key_next)
+        LOG_INFO(Core, "coop: chat box key: {} (from the Multiplayer tab)", *vk == 0 ? std::string("off") : k);
+    } else {
+        LOG_WARNING(Core, "coop: chat key {} is not a letter, a digit, F1 to F12 or off; the key stays", k);
+    }
 }
 
 bool KeysTaken() {

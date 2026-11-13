@@ -39,6 +39,7 @@
 #include "coop_hook.h"
 #include "coop_hud.h"
 #include "coop_hud_hearts.h"
+#include "coop_input.h"
 #include "coop_png.h"
 #include "coop_puppet.h"
 #include "coop_puppet_config.h"
@@ -595,6 +596,36 @@ bool KeysTaken() {
     return box || cheats;
 }
 
+// This game's controller and keyboard (coop_input.h): hookshot.exe's patch 0015 exports the choice; the kit's
+// LICHII_COOP_PAD and LICHII_COOP_KEYBOARD set it. Applied before co-op may turn itself off, so two games on one PC
+// keep their own pads either way (the choice stays in the exe). An exe without patch 0015: every pad counts.
+void UseInputSelect() {
+    CoopInput::Exports e;
+#ifdef _WIN32
+    const HMODULE exe = GetModuleHandleW(nullptr);
+    e.select = reinterpret_cast<decltype(e.select)>(reinterpret_cast<void*>(GetProcAddress(exe, "hos_coop_input_select")));
+    e.pad_name =
+        reinterpret_cast<decltype(e.pad_name)>(reinterpret_cast<void*>(GetProcAddress(exe, "hos_coop_input_pad_name")));
+#else
+    e.select = reinterpret_cast<decltype(e.select)>(dlsym(RTLD_DEFAULT, "hos_coop_input_select"));
+    e.pad_name = reinterpret_cast<decltype(e.pad_name)>(dlsym(RTLD_DEFAULT, "hos_coop_input_pad_name"));
+#endif
+    CoopInput::Bind(e);
+    std::vector<std::string> warnings;
+    const auto s = CoopInput::FromValues(Env("LICHII_COOP_PAD"), Env("LICHII_COOP_KEYBOARD"), &warnings);
+    for (const auto& w : warnings) {
+        LOG_WARNING(Core, "coop: {}", w);
+    }
+    CoopInput::Apply(s);
+    if (!CoopInput::Available()) {
+        if (s != CoopInput::Setting{}) {
+            LOG_WARNING(Core, "coop: this Hookshot cannot choose a controller (patch 0015): every pad counts");
+        }
+        return;
+    }
+    LOG_INFO(Core, "coop: controller {}, keyboard {}", CoopInput::PadValue(s.pad), CoopInput::KeyboardValue(s.keyboard));
+}
+
 bool Start(const HosCoopApi* api) {
     if (api == nullptr || api->version != HOS_COOP_API_VERSION || api->size < kFirstApiSize) {
         return false;
@@ -610,6 +641,7 @@ bool Start(const HosCoopApi* api) {
              HasPadButtons(api) ? "" : "; this Hookshot gives no pad word (own Ocarina notes not sent: build it again)");
     // Started without the kit's launcher: its coop-options.ini switches still count.
     CoopTitle::ApplyKitOptions();
+    UseInputSelect();
     const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
     std::vector<std::string> errors;
     // The title's menu (patch 0004's Hookshot, or HOS_COOP_MENU=1): the module stays loaded with co-op idle until the

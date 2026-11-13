@@ -72,7 +72,22 @@ netsh advfirewall firewall delete rule name="OoT co-op server UDP 27510"
 
 ## Two players on one PC
 
-For testing: unzip the kit twice into two folders, do [setup.md](setup.md) in each, then `Host.bat` in one and `Join.bat` with `127.0.0.1` in the other. The keyboard goes only to the window that has focus.
+Two games side by side, each with its own controller, or one with a controller and one with the keyboard and mouse. Hookshot only (patch 0015); the emulator gives the keyboard and every pad to the window in front.
+
+1. **Two kits.** Unzip the kit twice, into two short folders (for example `C:\oot-coop-1` and `C:\oot-coop-2`), and do [setup.md, "Play on Hookshot"](setup.md#play-on-hookshot-experimental) in each. A Hookshot game takes about 10 GB of RAM, so two need about 20 GB free.
+2. **Plug in the controllers** before you start the games. They are numbered in the order they were connected: the first one plugged in is controller 1. A controller that turns off or is unplugged gets its number back when it returns, and the others keep theirs. Steam Controller / Steam Deck pads with Steam Input on show twice (the real pad and Steam's stand-in): choose the stand-in, and the game gets no motion controls from it.
+3. **Choose each game's controller.** In each kit's `coop-options.ini` add one line, or use the **Multiplayer** tab's **Settings > Controller** row in the game, which shows each controller's name and applies at once:
+
+   | Setup | Kit 1 (`coop-options.ini`) | Kit 2 (`coop-options.ini`) |
+   |---|---|---|
+   | A controller each | `LICHII_COOP_PAD=1` | `LICHII_COOP_PAD=2` |
+   | Controller + keyboard and mouse | `LICHII_COOP_PAD=1` | `LICHII_COOP_PAD=none` |
+
+   A game with a controller chosen reads only that one, and keeps reading it while the other game's window is in front. With `none` the game reads no controller, only the keyboard and mouse.
+4. **Start them:** `Play-OoT-Coop.bat` in kit 1, **Host** on its title screen; `Play-OoT-Coop.bat` in kit 2, **Join** with `127.0.0.1` (or `Host-Hookshot.bat` in one and `Join-Hookshot.bat` with `127.0.0.1` in the other).
+5. **The keyboard and mouse** go to the window in front (click it to play there). A controller player does not need their window in front. To keep the keyboard out of the controller game altogether, add `LICHII_COOP_KEYBOARD=off` to its kit; `LICHII_COOP_KEYBOARD=always` makes a game read the keys even behind the other window (no mouse).
+
+`hookshot_log.txt` beside each `hookshot.exe` says what it chose: `hid: this game's controller: one pad (1)` and `coop: controller 1, keyboard focus`. The default (no line, or `LICHII_COOP_PAD=auto`) is Hookshot's own way: every controller, in the window in front only (the Insert menu's **Controller in background** also lets them in behind). A game built before patch 0015 says `this Hookshot cannot choose a controller`: run `Build-Hookshot-Coop.bat` again.
 
 ## Something does not work
 

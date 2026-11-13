@@ -816,9 +816,10 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
         return 0;
     }
     if (id == CoopPlayerInput::kWrapButtons || id == CoopPlayerInput::kWrapSticks ||
-        id == CoopPlayerInput::kWrapControllerGet) {
-        CoopLocalGame::Wrap(id, phase, x);   // local co-op: an extra player's Player reads its own controller
-        return 0;
+        id == CoopPlayerInput::kWrapInputOff || id == CoopPlayerInput::kWrapControllerGet) {
+        // Local co-op: an extra player's Player reads its own controller. (native-puppets-b2's remote input, once
+        // wired, is a second handler of these ids: both must run, and either may take phase 0.)
+        return CoopLocalGame::Wrap(id, phase, x);
     }
     if (id == HOS_COOP_WRAP_EVENT_REQUEST) {
         // The game asks for an event: its name at the request (phase 0: x1 is the request), whether the manager took
@@ -965,8 +966,9 @@ void UseLocalPads() {
     }
     deps.wraps = [] {
         return HasWrap(CoopPlayerInput::kWrapButtons) && HasWrap(CoopPlayerInput::kWrapSticks) &&
-               HasWrap(CoopPlayerInput::kWrapControllerGet);
+               HasWrap(CoopPlayerInput::kWrapInputOff) && HasWrap(CoopPlayerInput::kWrapControllerGet);
     };
+    deps.main_base = [] { return CoopRuntime::MainBase(); };
     deps.slots = [] { return CoopPuppet::TheDirector().Slots(); };
     deps.read = [](std::uint64_t address, void* out, std::size_t size) { return CoopRuntime::Read(address, out, size); };
     deps.log = [](const std::string& line) { LOG_INFO(Core, "coop: {}", line); };

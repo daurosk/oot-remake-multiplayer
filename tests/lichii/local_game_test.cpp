@@ -5,6 +5,7 @@
 #include <cstring>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <doctest/doctest.h>
@@ -468,4 +469,58 @@ TEST_CASE("local net: a number for a seat that left meanwhile is given back, and
     CHECK(std::holds_alternative<coop::protocol::LocalMessage>(*wrapped));
     CHECK_FALSE(seats.Wrap(1, coop::protocol::Chat{0, "hi"}).has_value());
     CHECK_FALSE(seats.Wrap(2, coop::protocol::PlayerStatus{0, 0}).has_value());
+}
+
+TEST_CASE("local game: a pad that reconnects into its slot is taken again for its player") {
+    World w;
+    CoopLocalGame::Game game(w.Deps());
+    game.See(InPlay());
+    REQUIRE(game.Add(1, SeatOn(1)));
+    CHECK(w.pads[1].npad == 1);
+    game.See(InPlay());
+    CHECK(w.takes.size() == 1);   // (nothing changed: nothing taken)
+    // Hookshot: a new opening in slot 1, given back to player 1's pad.
+    w.pads[1].serial = 99;
+    w.pads[1].npad = 0;
+    game.See(InPlay());
+    CHECK(w.takes == std::vector<std::string>{"1->1", "1->1"});
+    CHECK(w.pads[1].npad == 1);
+    game.See(InPlay());
+    CHECK(w.takes.size() == 2);
+    // Gone from its slot: nothing to take until it is back.
+    const Pad gone = w.pads[1];
+    w.pads.erase(w.pads.begin() + 1);
+    game.See(InPlay());
+    CHECK(w.takes.size() == 2);
+    w.pads.push_back({1, 100, gone.name, 0});
+    game.See(InPlay());
+    CHECK(w.takes.size() == 3);
+}
+
+TEST_CASE("local game: an extra player's Player whose controller is missing gets input off, never player 1's pad") {
+    World w;
+    const std::uint64_t main = 0x80000000;
+    auto deps = w.Deps();
+    deps.main_base = [main] { return main; };
+    CoopLocalGame::Game game(std::move(deps));
+    game.See(InPlay());
+    REQUIRE(game.Add(1, SeatOn(1)));
+    w.Live(17, 0x9000);
+    game.See(InPlay());
+    w.memory.Node(0x100000, 0x9000);   // the extra player's node
+    w.memory.Node(0x200000, 0x8000);   // the first Link's
+    const std::uint64_t manager = 0x300000;
+    w.memory.words[main + CoopLocalInput::addr::kControllerManager] = manager;
+    const auto off = [&](std::uint64_t node) {
+        std::uint64_t x[32] = {};
+        x[19] = node;
+        const int taken = game.Wrap(CoopPlayerInput::kWrapInputOff, 0, x);
+        x[0] = 0;   // (what the game's check would have said)
+        game.Wrap(CoopPlayerInput::kWrapInputOff, 1, x);
+        return std::make_pair(taken, x[0]);
+    };
+    CHECK(off(0x100000) == std::make_pair(1, std::uint64_t{1}));   // no controller 1: off
+    CHECK(off(0x200000) == std::make_pair(0, std::uint64_t{0}));   // the first Link: the game decides
+    w.memory.words[manager + 0x110] = 0x310000;                    // controller 1 is there
+    CHECK(off(0x100000) == std::make_pair(0, std::uint64_t{0}));
 }

@@ -1,22 +1,23 @@
-From e97969edc73f17cf3e7cea3a6bb1bd7ad881ac18 Mon Sep 17 00:00:00 2001
+From 1066322f192ad1581ab47aa178472320249c4bae Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 15:11:06 -0900
-Subject: [PATCH] Co-op player input: the Player's pad reads are wrapped, and
- local players' pads are Npad No.2 to No.4
+Subject: [PATCH] Co-op player input: Player pad wraps, local pads as Npads 2-4
 
 The other player's Link is to be the game's own Player actor. Four wrapped functions (patch 0005's wraps): the Player's button and stick reads, its input-off check and the controller getter. The module gives another player's Link that player's input there; without it the game's functions run as they are.
 
 Local co-op (split screen): a pad the co-op module hands to a second, third or fourth player on this PC is left out of player 1's merged pad and answers the game's reads of Npad No.2 to No.4 (host/pad_sdl.c keeps each SDL pad's own state; host/nn_hid.c gives those Npads their style and states, and logs once which Npads the game supports). Three exports of the exe for the module, found by name as patch 0008's: hos_coop_pad_info, hos_coop_pad_read and hos_coop_pad_take. Nothing changes until the module takes a pad.
+
+Needs patches 0005 (the wraps) and 0007 (coop_hooks.py's context) applied first.
 ---
- host/nn_hid.c            | 80 +++++++++++++++++++++++++++++++++--
+ host/nn_hid.c            | 88 +++++++++++++++++++++++++++++++++++---
  host/pad_sdl.c           | 91 +++++++++++++++++++++++++++++++++++++---
  nx2/coop_hooks.py        |  2 +
  nx2/coop_player_wraps.py | 33 +++++++++++++++
- 4 files changed, 196 insertions(+), 10 deletions(-)
+ 4 files changed, 203 insertions(+), 11 deletions(-)
  create mode 100644 nx2/coop_player_wraps.py
 
 diff --git a/host/nn_hid.c b/host/nn_hid.c
-index 8e0476be..26c111f9 100644
+index 8e0476be..31a6b54c 100644
 --- a/host/nn_hid.c
 +++ b/host/nn_hid.c
 @@ -687,6 +687,23 @@ static uint64_t bound_pad_buttons(uint64_t raw) {
@@ -43,21 +44,26 @@ index 8e0476be..26c111f9 100644
  static volatile LONG pad_raw_now;   /* the gamepads' inputs at the last read, 1 << HOS_PAD_* */
  static int pad_after_menu;          /* (the menu just closed: the pads wait until they are let go; oc_pad_word too) */
  uint32_t hos_pad_raw(void) { return (uint32_t)pad_raw_now; }
-@@ -1056,6 +1073,21 @@ static void npad_states(Ctx *c) {
+@@ -1056,6 +1073,26 @@ static void npad_states(Ctx *c) {
      uint64_t buttons = 0;
      int32_t stick[4] = {0};
      int connected = id == NPAD_NO1;
 +    /* (oot-remake-multiplayer's patch 0010, local co-op) Npad No.2 to No.4: the pad a player on this PC took
-+       (pad_sdl.c), its own buttons and sticks; nothing while the Insert menu has the pads or the game is behind other
-+       windows (as No.1's pads). No keyboard, mouse or script: those stay player 1's */
++       (pad_sdl.c), its own buttons and sticks; nothing while the Insert menu has the pads, after it closed until that
++       pad is let go, or while the game is behind other windows (as No.1's pads). No keyboard, mouse, script or Ocarina
++       note keys: those stay player 1's */
 +    int local = 0;
 +    if (id >= 1 && id <= 3) {
 +        uint64_t raw = 0;
 +        local = hos_sdl_pad_npad((int)id, &raw, stick);
 +        static const char *bg_env;
 +        static int bg_looked;
++        static int local_after_menu[4];
 +        if (!bg_looked) bg_looked = 1, bg_env = getenv("HOS_INPUT_BACKGROUND");
-+        if (local && (rx_option(1, 0) || (!game_in_front() && !pads_in_background(bg_env, rx_option(4, 0)))))
++        if (rx_option(1, 0)) local_after_menu[id] = 1;
++        else if (local_after_menu[id] && !raw) local_after_menu[id] = 0;
++        if (local && (rx_option(1, 0) || local_after_menu[id] ||
++                      (!game_in_front() && !pads_in_background(bg_env, rx_option(4, 0)))))
 +            memset(stick, 0, sizeof stick);
 +        else if (local)
 +            buttons = local_pad_buttons(raw);
@@ -65,7 +71,7 @@ index 8e0476be..26c111f9 100644
      {
          static int64_t last_read;
          static uint32_t seen_ids[16];
-@@ -1071,7 +1103,8 @@ static void npad_states(Ctx *c) {
+@@ -1071,7 +1108,8 @@ static void npad_states(Ctx *c) {
          for (int i = 0; i < nseen; i++) known |= seen_ids[i] == id;
          if (!known && nseen < 16) {
              seen_ids[nseen++] = id;
@@ -75,7 +81,17 @@ index 8e0476be..26c111f9 100644
                      (unsigned long long)c->x[30]);
          }
      }
-@@ -1116,7 +1149,7 @@ static void npad_states(Ctx *c) {
+@@ -1108,7 +1146,8 @@ static void npad_states(Ctx *c) {
+     uint64_t hos_coop_pad_filter(uint64_t buttons, int32_t stick[4]);   /* (oot-remake-multiplayer, coop_bridge.c: the title menu) */
+     if (connected) buttons = hos_coop_pad_filter(buttons, stick);
+     int64_t s = ++sampling;
+-    const uint64_t word = oc_pad_word(buttons);   /* (while the game waits for a note button, the five are the controls: oc_notes) */
++    /* (while the game waits for a note button, the five are the controls: oc_notes; player 1's only) */
++    const uint64_t word = connected ? oc_pad_word(buttons) : buttons;
+     if (connected) __atomic_store_n(&hos_coop_pad, word, __ATOMIC_RELAXED);
+     for (int i = 0; i < count; i++) {
+         uint64_t e = out + (uint64_t)i * STATE_SIZE;
+@@ -1116,7 +1155,7 @@ static void npad_states(Ctx *c) {
          G64(e) = (uint64_t)(s - i);
          G64(e + 8) = word;
          memcpy(GP(e + 16), stick, 16);
@@ -84,7 +100,7 @@ index 8e0476be..26c111f9 100644
      }
      RET(count);
  }
-@@ -1126,14 +1159,27 @@ HLE(_ZN2nn3hid13GetNpadStatesEPNS0_16NpadJoyDualStateEiRKj) { npad_states(c); }
+@@ -1126,14 +1165,27 @@ HLE(_ZN2nn3hid13GetNpadStatesEPNS0_16NpadJoyDualStateEiRKj) { npad_states(c); }
  HLE(_ZN2nn3hid13GetNpadStatesEPNS0_16NpadJoyLeftStateEiRKj) { npad_states(c); }
  HLE(_ZN2nn3hid13GetNpadStatesEPNS0_17NpadJoyRightStateEiRKj) { npad_states(c); }
  /* GetNpadStyleSet(unsigned int const&) -> BitFlagSet<32, NpadStyleTag> */
@@ -114,7 +130,7 @@ index 8e0476be..26c111f9 100644
  HLE(_ZN2nn3hid24SetSupportedNpadStyleSetENS_4util10BitFlagSetILi32ENS0_12NpadStyleTagEEE) {}
  HLE(_ZN2nn3hid18StartSixAxisSensorERKNS0_19SixAxisSensorHandleE) {}
  
-@@ -1322,3 +1368,29 @@ HLE(_ZN2nn3hid20GetTouchScreenStatesILm16EEEiPNS0_16TouchScreenStateIXT_EEEi) {
+@@ -1322,3 +1374,29 @@ HLE(_ZN2nn3hid20GetTouchScreenStatesILm16EEEiPNS0_16TouchScreenStateIXT_EEEi) {
      G64(ARG(0)) = (uint64_t)InterlockedIncrement64(&sampling);
      RET(1);
  }

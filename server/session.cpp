@@ -390,7 +390,13 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   // the host only (on_save). Outside the host's byte and message budgets: a
   // part dropped here would leave the guest's transfer unfinished.
   const bool host_save = std::holds_alternative<SavePart>(message) && id == host_;
-  if (!host_save && !within_rate(c, channel, bytes, now_us)) {
+  // A split-screen seat's envelope is charged to that seat (on_local), not to
+  // its game as well: two to four players on one connection keep their rates.
+  const bool seat_envelope =
+      (std::holds_alternative<LocalSample>(message) &&
+       local_player(id, std::get<LocalSample>(message).seat)) ||
+      (std::holds_alternative<LocalMessage>(message) && local_player(id, std::get<LocalMessage>(message).seat));
+  if (!host_save && !seat_envelope && !within_rate(c, channel, bytes, now_us)) {
     ++stats_.rate_limited;
     return;
   }
@@ -1990,6 +1996,7 @@ void Session::tick(std::uint64_t now_us) {
                now_us - c.refused_at >= config_.refused_grace_us) {
       late_hello.push_back(id);  // refused, but the transport never closed it
     } else if (c.state == State::joined) {
+      if (c.parent) continue;  // (a split-screen seat leaves with its game, never on its own)
       if (now_us - c.last_heard >= config_.silence_timeout_us) {
         silent.push_back(id);
       } else if (now_us - c.last_ping >= config_.ping_interval_us) {
@@ -2003,8 +2010,10 @@ void Session::tick(std::uint64_t now_us) {
     remove_player(id, LeaveReason::timed_out, now_us);
   }
   for (ConnectionId id : silent) {
+    auto it = connections_.find(id);
+    if (it == connections_.end()) continue;  // (gone with an earlier one this tick)
     actions_.push_back(DisconnectAction{id});
-    const std::uint64_t quiet_ms = (now_us - connections_.at(id).last_heard) / 1000;
+    const std::uint64_t quiet_ms = (now_us - it->second.last_heard) / 1000;
     remove_player(id, LeaveReason::timed_out, now_us,
                   "timed out: nothing heard for " + std::to_string(quiet_ms) + " ms");
   }

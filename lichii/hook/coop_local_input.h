@@ -32,6 +32,8 @@ namespace addr {
 inline constexpr std::uint64_t kControllerFirst = 0xb0;
 inline constexpr std::uint64_t kControllerList = 0x110;
 inline constexpr std::uint64_t kControllerLast = 0xb8;
+// main+: the pointer to the controller manager (its getController's x0).
+inline constexpr std::uint64_t kControllerManager = 0x4e92f10;
 }  // namespace addr
 
 // Where the manager keeps controller `index`, as getController picks it.

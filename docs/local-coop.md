@@ -42,7 +42,10 @@ input routing, with no game code (`tests/lichii/local_game_test.cpp`).
   (`hookshot/src/hos_coop_pads.h`), found by name as patch 0008's. A taken pad leaves the first
   player's merged pad, its rumble stops, and the game's reads of Npad No.(k+1) get it (with the
   menu's button binds). The keyboard and mouse stay the first player's. Without the patch, local
-  co-op is not offered.
+  co-op is not offered. Patch order: 0010 applies after 0005 (the wraps it adds rows to) and 0007
+  (its `nx2/coop_hooks.py` context); the host C hunks apply on their own. A pad that reconnects
+  (a new opening of its slot) goes back to the first player in Hookshot; the seat takes it again at
+  the next frame.
 - **The read.** The Player's two pad reads (wraps 16 and 17) ask the controller manager's
   getController (main+0x3b25e00, wrap 19) for controller 0. While the Player of local player k
   reads, that ask becomes controller k, if the manager has one; every other reader (menus, the
@@ -52,7 +55,8 @@ input routing, with no game code (`tests/lichii/local_game_test.cpp`).
   says `hid: the game supports npads ...` and `hid: the game reads npad 0x1`), that the manager's
   controller k is Npad No.(k+1), and that controller 0 does not follow every Npad (else the second
   pad would move both Links). If the manager has no controller k, the log says
-  `local co-op: player 2: the game has no controller 1` and the second Link follows the first pad.
+  `local co-op: player 2: the game has no controller 1, so that Link gets no input`: the Player's
+  input-off check (wrap 18) answers off for it, so it never reads the first player's pad.
 - **Test switch:** `LICHII_COOP_LOCAL=<pad slot>` starts player 2 on that pad at the first frame in
   play, without the menu.
 

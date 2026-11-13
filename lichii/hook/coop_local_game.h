@@ -68,6 +68,8 @@ struct Deps {
     std::function<bool()> wraps;
     // The Director's slots (CoopPuppet::TheDirector().Slots()), the calc thread.
     std::function<std::vector<CoopPuppet::Director::SlotView>()> slots;
+    // main's guest address (CoopRuntime::MainBase), for the controller manager.
+    std::function<std::uint64_t()> main_base;
     // Guest memory, any thread.
     std::function<bool(std::uint64_t address, void* out, std::size_t size)> read;
     std::function<void(const std::string&)> log;
@@ -97,9 +99,12 @@ public:
     // The puppet Director's targets for the local players (calc thread, from CoopPuppet::Publish).
     void AddTargets(CoopPuppet::Input& input) const;
     // A wrapped function (hos_coop_wrap): 16 and 17 open and close a Player's
-    // read, 19 is getController (x0 manager, w1 index). Always lets the game's
-    // function run; changes x1 at 19 while an extra player's Player reads.
-    void Wrap(std::uint32_t id, int phase, std::uint64_t* x) const;
+    // read, 19 is getController (x0 manager, w1 index): x1 is turned to
+    // controller k while an extra player's Player reads. 18 is the Player's
+    // input-off check: answered "off" (1, the game's check not run) for an
+    // extra player's Player whose controller the game does not have, so it
+    // never reads player 1's pad. Returns hos_coop_wrap's value.
+    int Wrap(std::uint32_t id, int phase, std::uint64_t* x) const;
 
     const CoopLocalInput::Players& Players() const { return players_; }
     // The extra players asked for (calc thread).
@@ -120,6 +125,9 @@ private:
     bool TakePad(int player, int slot);
     void GivePad(int player);
     std::uint64_t ActorOf(int player) const;   // its Player once live, else 0
+    std::uint64_t ReadingActor(std::uint64_t node) const;
+    bool HasController(std::uint64_t manager, std::uint32_t index) const;
+    void SayNoController(int player) const;
     void Say(const std::string& line) const {
         if (deps_.log) deps_.log("local co-op: " + line);
     }
@@ -141,8 +149,8 @@ void Frame(const Facts& facts);
 void AddTargets(CoopPuppet::Input& input);
 // The extra players asked for (calc thread); none before Install.
 std::vector<SeatNow> Seats();
-// hos_coop_wrap.
-void Wrap(std::uint32_t id, int phase, std::uint64_t* x);
+// hos_coop_wrap; its return value.
+int Wrap(std::uint32_t id, int phase, std::uint64_t* x);
 // Tests (LICHII_COOP_LOCAL=<slot>): at the first frame in play, local co-op
 // starts with the keyboard for player 1 and pad `slot` for player 2.
 void AutoStart(int slot);

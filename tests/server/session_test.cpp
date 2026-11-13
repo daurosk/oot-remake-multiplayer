@@ -4334,3 +4334,44 @@ TEST_CASE("local players: they live by their game's traffic, leave with it, and 
   CHECK(h.session.player_count() == 2);
   CHECK(nothing_to_local_players(h));
 }
+
+TEST_CASE("local players: a split-screen game that goes silent times out with its seats, and the server lives") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, LocalJoin{1, "Saria"}, kChannelSession);
+  h.receive(1, LocalJoin{2, "Mido"}, kChannelSession);
+  h.clear();
+  // Game 1 (and so its seats) goes quiet; game 2 keeps talking past the silence timeout.
+  for (int i = 0; i < 48; ++i) {
+    h.now += 250'000;
+    h.receive(2, Ping{h.now}, kChannelSession);
+    h.session.tick(h.now);
+    h.collect();
+  }
+  CHECK(h.dropped == std::vector<ConnectionId>{1});
+  CHECK(h.session.player_count() == 1);
+  const auto left = messages_of<PlayerLeft>(h, 2);
+  REQUIRE(left.size() == 3);
+  CHECK(left[2].player_number == 1);
+  CHECK(nothing_to_local_players(h));
+}
+
+TEST_CASE("local players: seats' envelopes do not use up their game's own message rate") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, LocalJoin{1, "Saria"}, kChannelSession);
+  h.clear();
+  PlayerSample sample;
+  sample.time = {1, 1};
+  sample.position = Vec3{1.0f, 0.0f, 0.0f};
+  for (int i = 0; i < 600; ++i) h.receive(1, *local_envelope(1, sample), kChannelPlayerSamples);
+  CHECK(h.session.stats().rate_limited > 0);  // the seat is held to its own rate
+  h.clear();
+  sample.time = {2, 1};
+  h.receive(1, sample, kChannelPlayerSamples);  // the game's own player still gets through
+  const auto got = messages_of<PlayerSample>(h, 2);
+  REQUIRE(got.size() == 1);
+  CHECK(got[0].player_number == 1);
+}

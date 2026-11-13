@@ -126,6 +126,17 @@ std::vector<SeatNow> Game::Seats() const {
 
 void Game::See(const Facts& facts) {
     facts_ = facts;
+    // A pad that reconnected (or woke) into its slot is a new opening, which Hookshot gives back to player 1: the
+    // seat takes it again.
+    for (int k = 1; k <= CoopLocalInput::kMostExtra; k++) {
+        const Extra& e = extra_[Index(k)];
+        if (!e.wanted || e.device < 0 || e.device == kKeyboardSlot) continue;
+        const std::optional<Pad> pad = FindPad(e.device);
+        if (pad && (pad->serial != e.serial || pad->npad != NpadFor(k))) {
+            Say("player " + std::to_string(k + 1) + "'s controller came back: taken again");
+            TakePad(k, e.device);
+        }
+    }
     // A scene change deletes and makes the Players again: the wraps follow the new actor.
     for (int k = 1; k <= CoopLocalInput::kMostExtra; k++)
         players_.Set(k, extra_[Index(k)].wanted ? ActorOf(k) : 0);
@@ -149,37 +160,60 @@ void Game::AddTargets(CoopPuppet::Input& input) const {
     }
 }
 
-void Game::Wrap(std::uint32_t id, int phase, std::uint64_t* x) const {
+std::uint64_t Game::ReadingActor(std::uint64_t node) const {
+    // An AI node's Player: [[[node+8]+8]+0x1f0] (the node in the caller's x19).
+    namespace a = CoopPlayerInput::addr;
+    std::uint64_t owner = 0, holder = 0, actor = 0;
+    if (deps_.read(node + a::kNodeOwner, &owner, 8) && owner && deps_.read(owner + a::kOwnerHolder, &holder, 8) &&
+        holder && deps_.read(holder + a::kHolderActor, &actor, 8))
+        return actor;
+    return 0;
+}
+
+bool Game::HasController(std::uint64_t manager, std::uint32_t index) const {
+    std::uint64_t controller = 0;
+    return manager != 0 && deps_.read(manager + CoopLocalInput::ControllerSlot(index), &controller, 8) &&
+           controller != 0;
+}
+
+void Game::SayNoController(int player) const {
+    if (!no_controller_said_[Index(player)].exchange(true))
+        Say("player " + std::to_string(player + 1) + ": the game has no controller " +
+            std::to_string(CoopLocalInput::ControllerFor(player)) + ", so that Link gets no input");
+}
+
+int Game::Wrap(std::uint32_t id, int phase, std::uint64_t* x) const {
     thread_local CoopLocalInput::Thread thread;
-    if (id == CoopPlayerInput::kWrapButtons || id == CoopPlayerInput::kWrapSticks) {
-        int player = 0;
-        if (phase == 0 && players_.Any()) {
-            // The reading Player: [[[node+8]+8]+0x1f0], the node in the caller's x19.
-            namespace a = CoopPlayerInput::addr;
-            std::uint64_t owner = 0, holder = 0, actor = 0;
-            if (deps_.read(x[19] + a::kNodeOwner, &owner, 8) && owner &&
-                deps_.read(owner + a::kOwnerHolder, &holder, 8) && holder &&
-                deps_.read(holder + a::kHolderActor, &actor, 8))
-                player = players_.Of(actor);
+    thread_local bool held_off = false;   // (wrap 18: this call was answered "input off")
+    if (id == CoopPlayerInput::kWrapInputOff) {
+        // Whether the Player's input is off; both callers skip their read when it is. An extra player's Player
+        // whose controller the game does not have is off: it never reads player 1's pad.
+        if (phase == 1) {
+            if (std::exchange(held_off, false)) x[0] = 1;
+            return 0;
         }
-        thread.Read(phase, player);
-        return;
+        const int player = players_.Any() ? players_.Of(ReadingActor(x[19])) : 0;
+        if (player == 0 || !deps_.main_base) return 0;
+        std::uint64_t manager = 0;
+        deps_.read(deps_.main_base() + CoopLocalInput::addr::kControllerManager, &manager, 8);
+        if (HasController(manager, CoopLocalInput::ControllerFor(player))) return 0;
+        SayNoController(player);
+        held_off = true;
+        return 1;   // (the game's check is not run; phase 1 answers 1)
     }
-    if (id != CoopPlayerInput::kWrapControllerGet || phase != 0 || thread.Reading() == 0) return;
+    if (id == CoopPlayerInput::kWrapButtons || id == CoopPlayerInput::kWrapSticks) {
+        thread.Read(phase, phase == 0 && players_.Any() ? players_.Of(ReadingActor(x[19])) : 0);
+        return 0;
+    }
+    if (id != CoopPlayerInput::kWrapControllerGet || phase != 0 || thread.Reading() == 0) return 0;
     const std::uint64_t manager = x[0];
-    const auto has = [&](std::uint32_t index) {
-        std::uint64_t controller = 0;
-        return deps_.read(manager + CoopLocalInput::ControllerSlot(index), &controller, 8) && controller != 0;
-    };
+    const auto has = [&](std::uint32_t index) { return HasController(manager, index); };
     if (const auto index = thread.ControllerGet(static_cast<std::uint32_t>(x[1]), has)) {
         x[1] = (x[1] & ~0xffffffffull) | *index;
-        return;
+    } else if (static_cast<std::uint32_t>(x[1]) == 0) {
+        SayNoController(thread.Reading());   // (wrap 18 keeps such a Player's reads from running)
     }
-    const std::size_t k = Index(thread.Reading());
-    if (static_cast<std::uint32_t>(x[1]) == 0 && !no_controller_said_[k].exchange(true)) {
-        Say("player " + std::to_string(k + 2) + ": the game has no controller " +
-            std::to_string(CoopLocalInput::ControllerFor(thread.Reading())) + ", so it reads player 1's pad");
-    }
+    return 0;
 }
 
 namespace {
@@ -220,8 +254,9 @@ void AddTargets(CoopPuppet::Input& input) {
     if (Game* game = Installed()) game->AddTargets(input);
 }
 
-void Wrap(std::uint32_t id, int phase, std::uint64_t* x) {
-    if (Game* game = Installed()) game->Wrap(id, phase, x);
+int Wrap(std::uint32_t id, int phase, std::uint64_t* x) {
+    Game* game = Installed();
+    return game ? game->Wrap(id, phase, x) : 0;
 }
 
 void AutoStart(int slot) { g_auto_slot = slot; }

@@ -276,13 +276,14 @@ TEST_CASE("title menu: Co-op Settings shows name, colour, players and voice, Sav
     CHECK(m.options().colour == "red");
     m.Press(Input::kDown);
     m.Press(Input::kDown);
-    CHECK(m.Press(Input::kDecide) == Sound::kMove);   // voice off
-    CHECK_FALSE(m.options().voice);
+    CHECK_FALSE(m.options().voice);                    // off is the default
+    CHECK(m.Press(Input::kDecide) == Sound::kMove);   // voice on
+    CHECK(m.options().voice);
     CHECK(m.Press(Input::kBack) == Sound::kBack);   // not saved
     CHECK_FALSE(m.open());
 
     m.Open(start, Page::kSettings);
-    CHECK(m.options().voice);
+    CHECK_FALSE(m.options().voice);
     CHECK(m.Press(Input::kDecide) == Sound::kDecide);   // edit the name
     CHECK(m.editing());
     m.Press(Input::kErase);
@@ -339,17 +340,36 @@ TEST_CASE("title menu: Up or Down while editing ends the edit, and keys only typ
     CHECK_FALSE(m.Char('a'));
 }
 
-TEST_CASE("title menu: voice off is LICHII_COOP_VOICE=off, on is the default") {
+TEST_CASE("title menu: voice chat is off unless turned on: on writes ptt, off takes the line away") {
     Options o;
-    o.voice = false;
-    std::string c, opt;
+    CHECK_FALSE(o.voice);
+    CHECK_FALSE(Options::Read("", "").voice);
+    std::string c, opt = "LICHII_COOP_VOICE=ptt\n";
     o.Write(c, opt);
-    CHECK(IniGet(opt, "LICHII_COOP_VOICE") == "off");
+    CHECK_FALSE(IniGet(opt, "LICHII_COOP_VOICE").has_value());
     CHECK_FALSE(Options::Read("", opt).voice);
     o.voice = true;
     o.Write(c, opt);
-    CHECK_FALSE(IniGet(opt, "LICHII_COOP_VOICE").has_value());
+    CHECK(IniGet(opt, "LICHII_COOP_VOICE") == "ptt");
     CHECK(Options::Read("", opt).voice);
+    // a mode written by hand stays as it is while voice stays on
+    std::string open = "LICHII_COOP_VOICE=open\n";
+    Options::Read("", open).Write(c, open);
+    CHECK(IniGet(open, "LICHII_COOP_VOICE") == "open");
+    CHECK(Options::Read("", "LICHII_COOP_VOICE=on\n").voice);
+    CHECK_FALSE(Options::Read("", "LICHII_COOP_VOICE=off\n").voice);
+    // this run's variable: ptt when on, unset (off) when off
+    const auto env = [](const Options& x) {
+        for (const auto& [k, v] : x.Environment()) {
+            if (k == "LICHII_COOP_VOICE") {
+                return v;
+            }
+        }
+        return std::string("missing");
+    };
+    CHECK(env(o) == "ptt");
+    o.voice = false;
+    CHECK(env(o).empty());
 }
 
 TEST_CASE("title menu: Host and Join in plain words, nothing about ports or passwords") {

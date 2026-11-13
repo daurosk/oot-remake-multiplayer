@@ -38,6 +38,7 @@
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
+#include "coop_npc_anim.h"
 #include "coop_guard.h"
 
 namespace CoopObjects {
@@ -82,6 +83,15 @@ struct PlayWish {
     // (a chest shown open, issue 195: only over its closed idle "CloseWait",
     // never over its own opening when our Link opens it here).
     std::string only_over;
+    // Walking townspeople (coop_npc_anim.h). `npc`: `frame` is the playing
+    // frame (slot +0x10c on both sides) and is compared the short way round
+    // a loop of `loop` frames (0: not known), run on at `run` frames a game
+    // frame (below 0: at `rate`). `alias`: the copy's slot keeps the name
+    // its own AI asked for while it plays this one.
+    bool npc = false;
+    bool alias = false;
+    float loop = 0.0f;
+    float run = -1.0f;
 };
 
 // The frame of an animation `age_us` after it showed `frame` at `rate`
@@ -689,6 +699,7 @@ private:
         bool fish = false;                      // IsFish: the lure rules
         bool guard = false;                     // IsGuard: handed over on a reaction
         bool npc = false;                       // Npc_: claimed by our event (issue 200)
+        CoopNpcAnim::Loop npc_loop;             // its owner's animation loop, from the samples
         std::uint64_t event_until = 0;          // flagged by our event until then
         coop::protocol::Vec3 first_position{};  // where it was first seen
         int missed = 0;                         // walks in a row without it

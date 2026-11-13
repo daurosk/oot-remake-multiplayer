@@ -183,14 +183,16 @@ TEST_CASE("truncated buffers are refused at every length") {
         const Error e = decode(fixed, back);
         // A TEST_PAYLOAD filler or an optional sample component can be cut
         // off cleanly, and so can any PLAYER_EQUIP component; anything else must
-        // be refused.
+        // be refused. A VOICE_FRAME's Opus packet is the rest of the body, so
+        // a shorter one is still a packet (Opus refuses it when decoding).
         if (e == Error::none) {
           const bool may_shrink = std::holds_alternative<TestPayload>(m) ||
                                   std::holds_alternative<PlayerSample>(m) ||
                                   std::holds_alternative<PlayerEquip>(m) ||
                                   std::holds_alternative<HandoverState>(m) ||
                                   std::holds_alternative<ObjectSpawn>(m) ||
-                                  std::holds_alternative<ObjectSample>(m);
+                                  std::holds_alternative<ObjectSample>(m) ||
+                                  std::holds_alternative<VoiceFrame>(m);
           CHECK(may_shrink);
         }
       }
@@ -1284,6 +1286,38 @@ TEST_CASE("an ocarina note has its number, channel and layout") {
   bad[kHeaderSize + 1] = 20;  // past the last note
   Message m;
   CHECK(decode(bad, m) == Error::bad_value);
+}
+
+TEST_CASE("a voice frame has its number, channel and layout") {
+  CHECK(static_cast<int>(MessageType::voice_frame) == 420);
+  CHECK(channel_of(MessageType::voice_frame) == kChannelVoice);
+  CHECK(kChannelVoice < kChannelCount);
+  CHECK_FALSE(allowed_on_channel(MessageType::voice_frame, kChannelPlayerSamples));
+  CHECK(allowed_on_channel(MessageType::voice_frame, kChannelVoice));
+  CHECK(may_send(Sender::client, MessageType::voice_frame));
+  CHECK(may_send(Sender::server, MessageType::voice_frame));
+  Message v = VoiceFrame{0, 9, 0, {1, 2, 3}};
+  CHECK(check_received(v, Sender::client, kChannelVoice) == Error::none);
+  CHECK(check_received(v, Sender::client, kChannelSession) == Error::wrong_channel);
+  CHECK(set_sender(v, 2));
+  CHECK(sender_of(v) == 2);
+  const VoiceFrame full{0, 0xBEEF, 0, std::vector<std::uint8_t>(kMaxVoiceBytes, 0x5a)};
+  const Bytes b = must_encode(full);
+  REQUIRE(b.size() == kHeaderSize + 1 + 2 + 1 + kMaxVoiceBytes);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<VoiceFrame>(back) == full);
+  const Bytes e = must_encode(VoiceFrame{0, 3, voice::end, {}});
+  REQUIRE(e.size() == kHeaderSize + 1 + 2 + 1);
+  REQUIRE(decode(e, back) == Error::none);
+  CHECK(std::get<VoiceFrame>(back).flags == voice::end);
+  Bytes out;
+  CHECK(encode(VoiceFrame{0, 1, 0, {}}, out) == Error::bad_value);  // audio with no bytes
+  CHECK(encode(VoiceFrame{0, 1, voice::end, {1}}, out) == Error::bad_value);  // end with audio
+  CHECK(encode(VoiceFrame{0, 1, 0x80, {1}}, out) == Error::bad_value);  // unknown flag
+  CHECK(encode(VoiceFrame{0, 1, 0, std::vector<std::uint8_t>(kMaxVoiceBytes + 1, 0)}, out) ==
+        Error::bad_value);
+  CHECK(encode(VoiceFrame{200, 1, 0, {1}}, out) == Error::bad_value);
 }
 
 TEST_CASE("bad times of day are refused") {

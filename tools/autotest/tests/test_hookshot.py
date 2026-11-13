@@ -37,11 +37,13 @@ class Clock:
 
 
 class FakeGame:
-    def __init__(self, clock=None, mem=True, camera=0.0, refuse_teleports=0):
+    def __init__(self, clock=None, mem=True, camera=0.0, refuse_teleports=0, drop_teleports=0):
         self.clock = clock or Clock()
         self.mem = mem
         self.camera = camera
         self.refuse = refuse_teleports
+        self.drop = drop_teleports   # sent but dropped by the game (Longshot rc.3: "result 0")
+        self.map = "KokiriForest_Child"
         self.got = []            # (time, request)
         self.held = []           # inputs not let go: requests
         self.pos = [0.0, 0.0, 0.0]
@@ -102,7 +104,16 @@ class FakeGame:
                 if self.refuse > 0:
                     self.refuse -= 1
                     return dict(base, ok=False, error="refused", message="a map loading")
-                return dict(base, teleport=1, sent=True, map=req["to"])
+                if self.drop > 0:
+                    self.drop -= 1
+                    return dict(base, teleport=1, sent=True, accepted=False, map=req["to"])
+                self.map = req["to"]
+                return dict(base, teleport=1, sent=True, accepted=True, map=req["to"])
+            if cmd == "wait" and req.get("event") == "map":
+                if req.get("map", "").lower() == self.map.lower():
+                    return dict(base, state="play", waited=1, map=self.map)
+                self.clock.t += req.get("timeout", 60)
+                return dict(base, ok=False, error="timeout", message="map", state="play", map=self.map)
             if cmd in ("shot", "wait", "quit"):
                 return dict(base)
             return dict(base, ok=False, error="unknown_cmd", message=cmd)
@@ -365,6 +376,21 @@ class PlayerTest(unittest.TestCase):
         self.assertEqual(game.cmds("teleport")[-1]["to"], "KakarikoVillage_Child")
         self.assertTrue(any(line.startswith("coop: test warp KakarikoVillage_Child: sent") for line in log.lines))
         self.assertTrue(any("start Kakariko_WellSide not used" in line for line in log.lines))
+        self.assertIn("coop: test warp done (map KakarikoVillage_Child)", log.lines)
+
+    def test_warp_asks_again_when_the_map_does_not_come(self):
+        """Sent is not moved: a teleport the game drops (asked during the load's arrival event) is asked again."""
+        game, log, _, _, _ = play("warp KakarikoVillage_Child\nwait 6", FakeGame(drop_teleports=1))
+        self.assertEqual(len(game.cmds("teleport")), 2)
+        self.assertEqual(game.map, "KakarikoVillage_Child")
+        self.assertTrue(any("not accepted" in line for line in log.lines))
+        self.assertTrue(any("map KakarikoVillage_Child not reached, asking again" in line for line in log.lines))
+        self.assertEqual(sum(line.startswith("coop: test warp done") for line in log.lines), 1)
+
+    def test_warp_gives_up_when_the_map_never_comes(self):
+        game, log, _, _, _ = play("warp KakarikoVillage_Child\nwait 6", FakeGame(drop_teleports=99))
+        self.assertTrue(any("gave up" in line for line in log.lines))
+        self.assertFalse(any(line.startswith("coop: test warp done") for line in log.lines))
 
     def test_module_steps_are_skipped_without_the_file(self):
         game, log, _, _, _ = play("give bombs\nchat /teleport B\nplace 1 2 3\nmark m")
@@ -401,11 +427,12 @@ class PlayerTest(unittest.TestCase):
                 kill Enemy_Skulltula_Gold
                 mark m
             """, game, commands=path)
-            self.assertEqual(len(taken), 2)
+            self.assertEqual(len(taken), 3)   # the mark too: the module logs it in the game's log
             self.assertEqual(taken[0].splitlines()[1:], ["give bombs", "chat /teleport B", "place 1 2.5 -3"])
             self.assertEqual(taken[1].splitlines()[1:], [
                 "setflag PouchData.Item_Bomb.StockNum 20", "wear head Mask_Keaton", "assign Bow",
                 "setenum 0x1234abcd Done", "kill Enemy_Skulltula_Gold"])
+            self.assertEqual(taken[2].splitlines()[1:], ["mark m"])
             self.assertTrue(all(t.startswith("# ") for t in taken))
             self.assertEqual(sum(" sent (line" in line for line in log.lines), 8)
             self.assertFalse(any("skipped" in line for line in log.lines))
@@ -417,7 +444,7 @@ class PlayerTest(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "commands-A.txt")
-            game, log, _, _, _ = play("give bombs\nmark m", commands=path, take_for=1.0)
+            game, log, _, _, _ = play("give bombs\nwait 6", commands=path, take_for=1.0)
             self.assertTrue(any("give NOT taken" in line for line in log.lines))
             with open(path) as f:
                 self.assertIn("give bombs", f.read())

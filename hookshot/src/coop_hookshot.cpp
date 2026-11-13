@@ -44,6 +44,7 @@
 #include "coop_runtime.h"
 #include "coop_settings.h"
 #include "coop_svc.h"
+#include "coop_title.h"
 #include "core/core.h"
 #include "coop_host_menu.h"
 #include "hos_coop_api.h"
@@ -400,6 +401,7 @@ std::uint32_t FromCodePage(unsigned byte) {
 
 CoopDraw::Scene DrawScene() {
     CoopDraw::Scene s;
+    s.title = CoopTitle::View();
     {
         std::lock_guard lock(g_box_mutex);
         if (g_box.open()) {
@@ -486,6 +488,9 @@ CoopDraw::Scene DrawScene() {
 }
 
 bool TypeKey(std::uint32_t vk, bool repeat) {
+    if (CoopTitle::Key(vk, repeat)) {   // the title's Multiplayer menu, while it is open
+        return true;
+    }
     if (!g_on) {
         return false;
     }
@@ -528,12 +533,18 @@ bool TypeChar(std::uint32_t byte) {
         return false;
     }
     std::lock_guard lock(g_box_mutex);
-    if (!g_box.open() && !g_cheats.open()) {
+    if (!CoopTitle::KeysTaken() && (!g_on || (!g_box.open() && !g_cheats.open()))) {
         return false;
     }
     const std::uint32_t cp = FromCodePage(byte);
     if (cp == 0) {
         return true;
+    }
+    if (CoopTitle::Char(cp)) {
+        return true;
+    }
+    if (!g_on) {
+        return false;
     }
     if (g_cheats.open()) {
         return g_cheats.Char(cp, CoopChatBox::Utf8(cp));
@@ -567,6 +578,9 @@ bool Mouse(float fx, float fy, int event) {
 }
 
 bool KeysTaken() {
+    if (CoopTitle::KeysTaken()) {
+        return true;
+    }
     if (!g_on) {
         return false;
     }
@@ -590,15 +604,24 @@ bool Start(const HosCoopApi* api) {
     }
     LOG_INFO(Core, "coop: Hookshot module, game build {}, main at {:#x}{}", g_build.substr(0, 16), api->main_base,
              HasPadButtons(api) ? "" : "; this Hookshot gives no pad word (own Ocarina notes not sent: build it again)");
+    // Started without the kit's launcher: its coop-options.ini switches still count.
+    CoopTitle::ApplyKitOptions();
     const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
     std::vector<std::string> errors;
-    // HOS_COOP_MENU=1 (the title menu's Hookshot): the module stays loaded with co-op idle until the player
-    // hosts or joins from the menu (hos_coop_host.h).
-    const bool menu = EnvOn("HOS_COOP_MENU");
-    if (!menu && (!CoopHook::LoadSettings(ini, errors).enabled() || !errors.empty())) {
+    // The title's menu (patch 0004's Hookshot, or HOS_COOP_MENU=1): the module stays loaded with co-op idle until the
+    // player hosts or joins from the title (coop_title.h, hos_coop_host.h).
+    const bool menu = EnvOn("HOS_COOP_MENU") || TitleMenuPossible(api, Env("LICHII_COOP_TITLE_MENU"));
+    const bool server = CoopHook::LoadSettings(ini, errors).enabled() && errors.empty();
+    for (const auto& e : errors) {
+        LOG_WARNING(Core, "coop: {}", e);
+    }
+    if (!menu && !server) {
         CoopHook::Start();  // logs why co-op is off
         g_api = nullptr;
         return false;
+    }
+    if (!server) {
+        LOG_INFO(Core, "coop: no server in coop.ini: co-op idle until the title's Host or Join");
     }
     // The same switches that make the emulator put its cave in.
     if (EnvOn("LICHII_COOP_PUPPET") || EnvOn("LICHII_COOP_DEBUG_PUPPET")) {
@@ -607,10 +630,14 @@ bool Start(const HosCoopApi* api) {
     g_hold = EnvOn("LICHII_COOP_OBJECTS_AI_HOLD");
     CoopHook::Start();
     g_on = true;
+    CoopTitle::Init(api, server);
     return true;
 }
 
 void Frame(void* ctx, int site) {
+    if (site == HOS_COOP_SITE_FRAME && ctx != nullptr && g_on) {
+        CoopTitle::OnFrame(ctx);
+    }
     if (!g_on) {
         return;
     }
@@ -725,6 +752,15 @@ COOP_HOOKSHOT_EXPORT int hos_coop_mouse(float fx, float fy, int event) {
     return CoopHookshot::Mouse(fx, fy, event) ? 1 : 0;
 }
 // Drawing over the picture (hos_coop_draw.h), on Hookshot's render thread.
+// The title menu (hos_coop_api.h, patch 0004): the game's title screen and the pad first.
+COOP_HOOKSHOT_EXPORT void hos_coop_title(void* ctx, uint64_t screen, int event) {
+    if (g_on) {
+        CoopTitle::OnTitle(ctx, screen, event);
+    }
+}
+COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) {
+    return g_on && stick != nullptr ? CoopTitle::OnPad(buttons, stick) : buttons;
+}
 COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void) {
     return g_on && CoopDraw::Wanted(CoopHookshot::DrawScene()) ? 1 : 0;
 }

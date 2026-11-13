@@ -1,0 +1,207 @@
+From 12a050a422ae3ed3b27db9528143f88a5f99995f Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Thu, 12 Nov 2026 13:18:16 -0900
+Subject: [PATCH] Co-op title menu: the title screen's hooks, the pad first,
+ call scratch
+
+The Multiplayer menu on the title screen (oot-remake-multiplayer's
+docs/hookshot.md "The title menu"). nx2/coop_title_hooks.py puts C into the
+game's UITitleScreen (vtable 0x84c106e8; words and build id checked): after
+its set-up has made its buttons (main+0x3406940), at its active step
+(main+0x3406d70) and in its deleting destructor (main+0x34067b0), calling
+host/coop_bridge.c hos_coop_title with the screen on the calc thread.
+nn_hid.c hands player 1's pad word and sticks to the module first
+(hos_coop_pad_filter), so the game does not move under the menu. The API
+gains scratch: bytes in the game's stack, above the next call's stack
+words, for that call's pointers; and call() points x8 at free stack, so a
+game function that returns a result in memory (the UI sound player's
+play-by-name) has somewhere to put it. The two exports are optional: an
+older module works as before.
+---
+ host/coop_bridge.c      | 26 ++++++++++++++++++++++
+ host/hos_coop_api.h     | 16 ++++++++++++++
+ host/nn_hid.c           |  2 ++
+ nx2/coop_hooks.py       |  2 ++
+ nx2/coop_title_hooks.py | 48 +++++++++++++++++++++++++++++++++++++++++
+ 5 files changed, 94 insertions(+)
+ create mode 100644 nx2/coop_title_hooks.py
+
+diff --git a/host/coop_bridge.c b/host/coop_bridge.c
+index 63de418..edae1a3 100644
+--- a/host/coop_bridge.c
++++ b/host/coop_bridge.c
+@@ -65,6 +65,7 @@ static int bridge_call(void *ctx, const HosCoopCall *k, uint64_t *x0) {
+     if (!in_guest(sp, sizeof k->stack)) return 0;
+     for (int i = 0; i < 4; i++) recomp_store64(c, sp + 8 * i, k->stack[i]);
+     for (int i = 0; i < 8; i++) c->x[i] = k->x[i];
++    c->x[8] = (saved.x[31] - 0xb0) & ~0xfULL;   /* (an indirect result's place: free stack above scratch's, below the hook's sp) */
+     uint32_t s0;
+     memcpy(&s0, &k->s0, sizeof s0);
+     c->vreg[0][0] = s0, c->vreg[0][1] = 0;
+@@ -80,6 +81,19 @@ static hos_coop_key_fn coop_key;   /* (optional: typing, display.c and nn_hid.c
+ static hos_coop_char_fn coop_char;
+ static hos_coop_keys_taken_fn coop_keys_taken;
+ static hos_coop_mouse_fn coop_mouse;   /* (optional: the cheats panel's clicks, display.c) */
++static hos_coop_pad_fn coop_pad;       /* (optional: the title menu, nn_hid.c and nx2/coop_title_hooks.py below) */
++static hos_coop_title_fn coop_title;
++/* Bytes for the next call's pointers: in the game's stack between the call's stack words (bridge_call's sp + 32) and the
++   hook's own sp, which the called function does not touch (it only writes below its sp): [sp - 0x1c0, sp - 0xc0). x8,
++   where a function puts a result it returns in memory, is [sp - 0xb0, sp - 0x30) (bridge_call). */
++static uint64_t bridge_scratch(void *ctx, const void *data, size_t n) {
++    Ctx *c = (Ctx *)ctx;
++    if (!c || n > 256) return 0;
++    const uint64_t at = (c->x[31] - 0x1c0) & ~0xfULL;
++    if (!in_guest(at, n ? n : 1)) return 0;
++    if (n) memcpy(hos_guest_base() + at, data, n);
++    return at;
++}
+ extern volatile uint64_t hos_coop_pad;   /* nn_hid.c: the word npad_states gave the game */
+ static uint64_t bridge_pad_buttons(void) { return __atomic_load_n(&hos_coop_pad, __ATOMIC_RELAXED); }
+ /* (a key held now, by virtual-key code: Windows' own, or the SDL window's keys on Linux, host/posix/display_sdl.c) */
+@@ -143,6 +157,8 @@ static void load(void) {
+     coop_char = (hos_coop_char_fn)(void *)GetProcAddress(m, "hos_coop_char");
+     coop_keys_taken = (hos_coop_keys_taken_fn)(void *)GetProcAddress(m, "hos_coop_keys_taken");
+     coop_mouse = (hos_coop_mouse_fn)(void *)GetProcAddress(m, "hos_coop_mouse");
++    coop_pad = (hos_coop_pad_fn)(void *)GetProcAddress(m, "hos_coop_pad");
++    coop_title = (hos_coop_title_fn)(void *)GetProcAddress(m, "hos_coop_title");
+     if (!start || !coop_frame || !coop_hold || !coop_stop) {
+         hos_log("coop: %s lacks an export: co-op off", path);
+         __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
+@@ -157,6 +173,7 @@ static void load(void) {
+     api.read = bridge_read, api.write = bridge_write, api.cas32 = bridge_cas32, api.call = bridge_call, api.log = bridge_log;
+     api.pad_buttons = bridge_pad_buttons;
+     api.key_down = bridge_key_down;
++    api.scratch = bridge_scratch;
+     if (!start(&api)) {
+         hos_log("coop: the module stays off");
+         __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
+@@ -183,6 +200,15 @@ int hos_coop_keys_taken(void) {
+     return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_keys_taken ? coop_keys_taken() : 0;
+ }
+ 
++/* nn_hid.c npad_states: player 1's pad for the module first (its title menu); the buttons the game gets */
++uint64_t hos_coop_pad_filter(uint64_t buttons, int32_t stick[4]) {
++    return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_pad ? coop_pad(buttons, stick) : buttons;
++}
++/* nx2/coop_title_hooks.py: the game's title screen (HOS_COOP_TITLE_*) */
++void hos_coop_title(Ctx *c, uint64_t screen, int event) {
++    if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_title) coop_title(c, screen, event);
++}
++
+ /* nvn_native.c nvnQueuePresentTexture: every present, once the module is loaded (it loads at a frame hook). */
+ void hos_coop_present(void) {
+     if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2) coop_frame(NULL, HOS_COOP_SITE_PRESENT);
+diff --git a/host/hos_coop_api.h b/host/hos_coop_api.h
+index 9e2075c..bc47834 100644
+--- a/host/hos_coop_api.h
++++ b/host/hos_coop_api.h
+@@ -51,6 +51,11 @@ typedef struct HosCoopApi {
+        game's window, any thread: GetAsyncKeyState's on Windows, the SDL window's keys on Linux (as nn_hid.c reads
+        them: nothing while the window does not have the keyboard). */
+     int (*key_down)(uint32_t vk);
++    /* Added with the title menu (check size covers it): copies `n` bytes (at most 256) into the game's stack, above
++       where the next call()'s stack words go, for that call's pointers (a name, room for a result); their guest address,
++       0 when they do not fit. Only with the ctx of a hook that may call(), for the next call made with it. With it,
++       call() also points x8 (where a function puts a result it returns in memory) at 128 free bytes of that stack. */
++    uint64_t (*scratch)(void *ctx, const void *data, size_t n);
+ } HosCoopApi;
+ 
+ /* The module's exports (extern "C"). */
+@@ -72,5 +77,16 @@ typedef int (*hos_coop_keys_taken_fn)(void);               /* any thread, often:
+    Hookshot does nothing more with it (a click taken does not capture the mouse for the camera). */
+ enum { HOS_COOP_MOUSE_MOVE = 0, HOS_COOP_MOUSE_LEFT = 1, HOS_COOP_MOUSE_WHEEL_UP = 2, HOS_COOP_MOUSE_WHEEL_DOWN = 3 };
+ typedef int (*hos_coop_mouse_fn)(float fx, float fy, int event);   /* the window's thread */
++/* The title menu (optional exports, docs/hookshot.md "The title menu"):
++   - the pad: player 1's buttons (Switch NpadButton bits) and sticks (left x, y, right x, y) as Hookshot made them,
++     at each read of the pads (several a frame), before the game gets them; it returns the buttons the game gets and
++     may clear the sticks (nn_hid.c npad_states);
++   - the title screen: nx2/coop_hooks.py calls it from the game's UITitleScreen on the game's calc thread, with a ctx
++     call() may use, as hos_coop_frame's; `screen` is the screen object, `event` one of HOS_COOP_TITLE_*. */
++#define HOS_COOP_TITLE_GONE 0    /* its deleting destructor (0x834267a0, main+0x34067a0) */
++#define HOS_COOP_TITLE_SETUP 1   /* its set-up, its buttons made (0x834267d0, main+0x34067d0: vtable slot 93) */
++#define HOS_COOP_TITLE_STEP 2    /* its active step (0x83426d70, main+0x3406d70: vtable slot 96) */
++typedef uint64_t (*hos_coop_pad_fn)(uint64_t buttons, int32_t stick[4]);   /* the game's input thread */
++typedef void (*hos_coop_title_fn)(void *ctx, uint64_t screen, int event);   /* the game's calc thread */
+ 
+ #endif
+diff --git a/host/nn_hid.c b/host/nn_hid.c
+index 054caa5..8e0476b 100644
+--- a/host/nn_hid.c
++++ b/host/nn_hid.c
+@@ -1105,6 +1105,8 @@ static void npad_states(Ctx *c) {
+     if (connected) buttons = hos_title_input(buttons);
+     uint64_t hos_frame_step_buttons(uint64_t buttons);   /* nn_vi.c: the frame step of the wheel and quick menus */
+     if (connected) buttons = hos_frame_step_buttons(buttons);
++    uint64_t hos_coop_pad_filter(uint64_t buttons, int32_t stick[4]);   /* (oot-remake-multiplayer, coop_bridge.c: the title menu) */
++    if (connected) buttons = hos_coop_pad_filter(buttons, stick);
+     int64_t s = ++sampling;
+     const uint64_t word = oc_pad_word(buttons);   /* (while the game waits for a note button, the five are the controls: oc_notes) */
+     if (connected) __atomic_store_n(&hos_coop_pad, word, __ATOMIC_RELAXED);
+diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
+index 52a19bc..cd87977 100644
+--- a/nx2/coop_hooks.py
++++ b/nx2/coop_hooks.py
+@@ -62,4 +62,6 @@ def install(lifter, img, build_id):
+     coop_puppet_guard.install(lifter, img, build_id)
+     import coop_platform_lift   # (patch 0003: looping platforms' pause counters)
+     coop_platform_lift.install(lifter, img, build_id)
++    import coop_title_hooks   # (patch 0004: the title menu)
++    coop_title_hooks.install(lifter, img, build_id)
+     return len(FRAME_SITES) + 1
+diff --git a/nx2/coop_title_hooks.py b/nx2/coop_title_hooks.py
+new file mode 100644
+index 0000000..07f6e8f
+--- /dev/null
++++ b/nx2/coop_title_hooks.py
+@@ -0,0 +1,48 @@
++"""Co-op's title menu (oot-remake-multiplayer's patch 0004, its docs/hookshot.md "The title menu").
++
++The game's title screen is a UITitleScreen (vtable 0x84c106e8, made by main+0x3406710): its buttons Pa_Button_00..03 of
++the layout Title_00, the focused one at +0x2e0. What a press does is the game's Sequence (NormalTitle.module.ainb), not
++this screen. C after three of its instructions calls host/coop_bridge.c hos_coop_title with the screen, so the co-op
++module knows when the title is up and can play the game's own UI sounds from its calc thread:
++- its set-up (vtable slot 93, main+0x34067d0) once its buttons are made and focused: after `ldr x0, [x19, #0x28]` at
++  main+0x3406940, x19 the screen (HOS_COOP_TITLE_SETUP);
++- its active step (slot 96, main+0x3406d70), after its first instruction, x0 the screen (HOS_COOP_TITLE_STEP);
++- its deleting destructor (main+0x34067a0), after `mov x19, x0` at main+0x34067b0 (HOS_COOP_TITLE_GONE).
++
++The words are checked and the build id; another game version leaves the hooks out (no title menu; co-op still runs).
++"""
++
++MAIN = 0x80020000
++BUILD_ID = "e0f3ccfaf50065ae4ea01eb5aeb13b1a45da3348"
++# (offset after which the call goes, the words there and after, the event: host/hos_coop_api.h HOS_COOP_TITLE_*, the
++#  register that holds the screen)
++SITES = ((0x3406940, (0xf9401660, 0xb0004961), 1, 19),   # ldr x0, [x19, #0x28]; adrp x1, #0x83d53000
++         (0x3406d70, (0x3946a008, 0x7100051f), 2, 0),    # ldrb w8, [x0, #0x1a8]; cmp w8, #1
++         (0x34067b0, (0xaa0003f3, 0x9759f0c7), 0, 0))    # mov x19, x0; bl #0x80aa2ad0
++TEXT = ("{ extern void hos_coop_title(Ctx *c, uint64_t screen, int event); hos_coop_title(c, c->x[%d], %d); }   "
++        "/* (nx2/coop_title_hooks.py: co-op's title menu, host/coop_bridge.c) */")
++
++
++def _word(img, pc):
++    try:
++        return img.word(pc)
++    except Exception:
++        return None
++
++
++def install(lifter, img, build_id):
++    """The hooks into lifter.after; none when the build or a word differs. Returns how many went in."""
++    if build_id != BUILD_ID:
++        return 0
++    for off, words, _, _ in SITES:
++        for i, want in enumerate(words):
++            have = _word(img, MAIN + off + 4 * i)
++            if have != want:
++                print("co-op title menu: main+%#x holds %s, not %08x: left out" % (
++                    off + 4 * i, "?" if have is None else "%08x" % have, want))
++                return 0
++    for off, _, event, reg in SITES:
++        pc = MAIN + off
++        lifter.after[pc] = (lifter.after[pc] + "\n" if pc in lifter.after else "") + TEXT % (reg, event)
++    print("co-op title menu: hooks at main+%#x, main+%#x and main+%#x" % tuple(s[0] for s in SITES))
++    return len(SITES)
+-- 
+2.56.0.windows.4
+

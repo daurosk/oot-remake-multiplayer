@@ -93,7 +93,8 @@ std::atomic<std::uint64_t> g_screen{0};
 std::atomic<std::uint64_t> g_last_step_ms{0};
 std::atomic<bool> g_step_seen{false};
 std::atomic<bool> g_rows{false};
-std::atomic<bool> g_focus_continue{false};   // the title has our three rows (the puppet pack's Title_00), texts set
+std::atomic<bool> g_focus_continue{false};
+std::atomic<bool> g_reveal_continue{false};   // the title has our three rows (the puppet pack's Title_00), texts set
 
 std::mutex g_mutex;   // everything below
 CoopTitleMenu::Menu g_menu;
@@ -344,8 +345,14 @@ bool g_copied = false;   // this session's invite code was put on the clipboard
 std::string g_answer_note;  // what became of the friend's answer code the host pasted ("" when none)
 std::string g_join_text;    // the code (or address) this join used: remembered once connected
 CoopTitleMenu::AutoLoad g_autoload;   // Join -> the host's save loaded in one step
-constexpr int kContinueButton = 2;    // Pa_Button_02 is Continue (OpenTitle.module.ainb: label 0001)
+constexpr int kContinueButton = CoopTitleMenu::AutoLoad::kContinue;
 constexpr std::uint64_t kFocus = 0x8088ffc0;   // the screens' focus setter (screen, button, 0): Hookshot's oot_menu.c
+// The title's row count: its layout's BtnNum animation at a frame (frame N shows N rows), as UISystemWindowScreen
+// sets its own (f_83425740 takes it with kAnim, f_83425ad0.. sets it with kAnimFrame and s0).
+constexpr std::uint64_t kAnim = 0x8045c7a0;        // (layout, name): the layout's animation of that name
+constexpr std::uint64_t kAnimFrame = 0x802f2d90;   // (animation, s0 = frame)
+constexpr std::uint64_t kBtnNumName = 0x83e3e439;  // "BtnNum" in the game's read-only data
+constexpr float kRowsWithContinue = 3.0f;          // New Game, Options, Continue
 bool g_join_saved = false;
 
 // What the module's host is doing, in plain words (CoopTitleMenu::PlainStatus). The invite code goes on the
@@ -825,6 +832,26 @@ void OnTitle(void* ctx, std::uint64_t screen, int event) {
                      count, kFirstRow + static_cast<int>(kRowLabels.size()));
         }
     }
+    if (event == HOS_COOP_TITLE_STEP && g_reveal_continue.exchange(false) && ctx != nullptr) {
+        // Continue shown: a joiner with no save of their own got a title without it, and the host's save came after.
+        char name[8] = {};
+        const std::uint64_t layout = Read64(screen + kTitleLayout);
+        if (layout != 0 && CoopRuntime::Read(kBtnNumName, name, 7) && std::strcmp(name, "BtnNum") == 0) {
+            HosCoopCall k{};
+            k.function = kAnim;
+            k.x[0] = layout, k.x[1] = kBtnNumName;
+            std::uint64_t anim = 0;
+            if (g_api->call(ctx, &k, &anim) && anim != 0) {
+                k = HosCoopCall{};
+                k.function = kAnimFrame;
+                k.x[0] = anim;
+                k.s0 = kRowsWithContinue;
+                std::uint64_t x0 = 0;
+                g_api->call(ctx, &k, &x0);
+                LOG_INFO(Core, "coop: title menu: the title's Continue shown for the host's save");
+            }
+        }
+    }
     if (event == HOS_COOP_TITLE_STEP && g_focus_continue.exchange(false) && ctx != nullptr) {
         // The cursor to Continue for the host's save (AutoLoad), as the game's own screens move it.
         std::int32_t count = 0;
@@ -878,13 +905,16 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
     std::lock_guard lock(g_mutex);
     if (g_autoload.active()) {
         const auto tick = g_autoload.Step(NowMs(), CoopSave::HostSaveReady(), TitleUp(), InGame());
+        if (tick.reveal_continue) {
+            g_reveal_continue = true;   // (made at the title's next step, with its game context)
+        }
         if (tick.focus_continue) {
             g_focus_continue = true;   // (made at the title's next step, with its game context)
         }
         // Only on Continue: if the title kept it hidden (no save when it opened), the cursor stays elsewhere
         // (New Game) and no A goes in; the give-up line then says to press Continue.
         const bool title = TitleUp();
-        if (tick.press_a && (!title || FocusedIndex(g_screen.load()) == kContinueButton)) {
+        if (tick.press_a && CoopTitleMenu::AutoLoad::PressAllowed(title, title ? FocusedIndex(g_screen.load()) : -1)) {
             buttons |= kA;
         }
         if (!g_autoload.active()) {

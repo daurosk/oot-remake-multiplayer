@@ -510,13 +510,19 @@ TEST_CASE("title menu: after Join the host's save loads in one step") {
     auto t = a.Step(2000, false, true, false);
     CHECK_FALSE(t.press_a);
     CHECK_FALSE(t.focus_continue);
-    // the save is here, the title is up: the cursor to Continue, then A pressed now and then
+    // the save is here, the title is up: Continue shown (a first-time joiner's title opened without it), the
+    // cursor to it, then A pressed now and then
     t = a.Step(3000, true, true, false);
     CHECK(a.Line() == "Loading Saria's save...");
-    t = a.Step(3100, true, true, false);
-    CHECK(t.focus_continue);
-    CHECK_FALSE(t.press_a);   // (300 ms after: the cursor first)
+    t = a.Step(3050, true, true, false);
+    CHECK(t.reveal_continue);
+    CHECK_FALSE(t.focus_continue);
+    CHECK_FALSE(t.press_a);
+    CHECK_FALSE(a.Step(3100, true, true, false).reveal_continue);   // once
     t = a.Step(3300, true, true, false);
+    CHECK(t.focus_continue);
+    CHECK_FALSE(t.press_a);   // (the cursor first)
+    t = a.Step(3600, true, true, false);
     CHECK(t.press_a);
     CHECK_FALSE(t.focus_continue);   // once only
     t = a.Step(3450, true, false, false);   // held 120 ms, then let go (the title may be gone: the file list)
@@ -549,4 +555,18 @@ TEST_CASE("title menu: no host's save, or no way in: a plain line and no endless
     CHECK_FALSE(b.active());
     CHECK(b.Line() == "Press Continue to play Saria's save.");
     CHECK_FALSE(b.Step(100 + AutoLoad::kLoadMs + 500, true, true, false).press_a);
+}
+
+TEST_CASE("title menu: with no Continue under the cursor AutoLoad presses nothing on the title") {
+    CHECK_FALSE(AutoLoad::PressAllowed(true, 0));    // New Game focused (Continue hidden: the cursor could not go there)
+    CHECK_FALSE(AutoLoad::PressAllowed(true, -1));   // nothing focused
+    CHECK_FALSE(AutoLoad::PressAllowed(true, 4));    // one of our rows
+    CHECK(AutoLoad::PressAllowed(true, AutoLoad::kContinue));
+    CHECK(AutoLoad::PressAllowed(false, 0));         // the title gone: the file list takes the A
+    // and AutoLoad then gives up with the plain line, no endless presses
+    AutoLoad a;
+    a.Start(0, "Saria");
+    a.Step(10, true, true, false);
+    a.Step(AutoLoad::kLoadMs + 20, true, true, false);
+    CHECK(a.Line() == "Press Continue to play Saria's save.");
 }

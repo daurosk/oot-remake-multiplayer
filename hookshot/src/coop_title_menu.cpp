@@ -497,6 +497,7 @@ void AutoLoad::Start(std::uint64_t now_ms, std::string host) {
     since_ = now_ms;
     next_press_ = 0;
     focused_ = false;
+    revealed_ = false;
 }
 
 AutoLoad::Tick AutoLoad::Step(std::uint64_t now_ms, bool host_save_ready, bool title_up, bool in_game) {
@@ -509,7 +510,7 @@ AutoLoad::Tick AutoLoad::Step(std::uint64_t now_ms, bool host_save_ready, bool t
         if (host_save_ready && title_up) {
             phase_ = Phase::kLoad;
             since_ = now_ms;
-            next_press_ = now_ms + 300;   // (the cursor first)
+            next_press_ = now_ms + 600;   // (Continue shown, then the cursor, then A)
         } else if (now_ms - since_ >= kWaitSaveMs) {
             phase_ = Phase::kNoSave;
         }
@@ -522,7 +523,12 @@ AutoLoad::Tick AutoLoad::Step(std::uint64_t now_ms, bool host_save_ready, bool t
         phase_ = Phase::kStuck;
         return t;
     }
-    if (!focused_ && title_up) {
+    if (!revealed_ && title_up) {
+        revealed_ = true;
+        t.reveal_continue = true;
+        return t;
+    }
+    if (!focused_ && title_up && now_ms - since_ >= 300) {
         focused_ = true;
         t.focus_continue = true;
     }

@@ -143,10 +143,13 @@ std::vector<std::string> PlainStatus(const HostView& v);
 
 // After Join connects: the host's save (lichii/hook/coop_save.h, the co-op
 // folder) is loaded in one step, with no Continue to find. Wait until the
-// host's save is in this game's co-op folder, then put the title's cursor on
-// Continue (the co-op folder holds only the host's save) and press A every
-// kPressEveryMs until Link is in the game (the file list and its question
-// take the same A). Gives up after a while with a line saying what to do.
+// host's save is in this game's co-op folder, then show the title's Continue
+// (a first-time joiner's title opened without it: the module sets the title's
+// row count as the game's own dialogs set theirs), put the cursor on it (the
+// co-op folder holds only the host's save) and press A every kPressEveryMs
+// until Link is in the game (the file list and its question take the same A),
+// but only while the cursor really is on Continue. Gives up after a while
+// with a line saying what to do.
 class AutoLoad {
 public:
     static constexpr std::uint64_t kWaitSaveMs = 60000;   // for the host's save to arrive
@@ -159,12 +162,19 @@ public:
     bool active() const { return phase_ == Phase::kWait || phase_ == Phase::kLoad; }
     // One look: whether A is held now, and whether the cursor should go to Continue (once).
     struct Tick {
-        bool press_a = false;
-        bool focus_continue = false;
+        bool press_a = false;           // (the module sends it only while the cursor is on Continue)
+        bool reveal_continue = false;   // once: the title shows its Continue row
+        bool focus_continue = false;    // once, after it: the cursor to Continue
     };
     Tick Step(std::uint64_t now_ms, bool host_save_ready, bool title_up, bool in_game);
     // What the player sees (bottom left of the title); "" when nothing.
     std::string Line() const;
+
+    // The title's Continue (Pa_Button_02: OpenTitle.module.ainb gives it label 0001).
+    static constexpr int kContinue = 2;
+    // Whether AutoLoad's A may go in: on the title only with the cursor on Continue (never New Game, never a row
+    // the title hides); once the title has gone (the file list, its question) every press.
+    static bool PressAllowed(bool title_up, int focused_button) { return !title_up || focused_button == kContinue; }
 
 private:
     enum class Phase { kOff, kWait, kLoad, kDone, kNoSave, kStuck };
@@ -173,6 +183,7 @@ private:
     std::uint64_t since_ = 0;
     std::uint64_t next_press_ = 0;
     bool focused_ = false;
+    bool revealed_ = false;
 };
 
 // ---------------------------------------------------------------------------

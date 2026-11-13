@@ -43,6 +43,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <mutex>
 #include <optional>
@@ -68,6 +69,9 @@ struct Boss {
     std::string_view outro;  // the death's
     int room = -1;           // CoopBoss::RoomByIndex, or -1: no room in the table
 };
+
+inline constexpr std::size_t kBossCount = 10;
+static_assert(kBossCount <= coop::protocol::kMaxSceneBoss + 1u);
 
 // The ten bosses, by BOSS_SCENE's boss index (0 to 7: CoopBoss::Rooms() order).
 std::span<const Boss> Bosses();
@@ -174,7 +178,7 @@ private:
     void Say(Actions& out, std::uint8_t b, coop::protocol::BossSceneKind kind, const Local& local) const;
     void Skip(const char* why, std::uint64_t now_us, Actions& out);
 
-    std::array<Fight, coop::protocol::kMaxSceneBoss + 1> fights_{};
+    std::array<Fight, kBossCount> fights_{};  // one per Bosses() entry
     std::optional<Playing> playing_;  // the boss event our game runs now
     bool event_ = false;
     std::optional<std::int32_t> max_life_;  // last tick's

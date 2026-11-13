@@ -14,7 +14,7 @@ namespace {
 // event flows); 8 and 9 have no room in that table. Event flows checked in
 // the RomFS (Event/EventFlow, 2026-11-13). No mini-boss has an intro or
 // death event of its own (no Dm_ flow names one), so none is listed.
-constexpr std::array<Boss, 10> kBosses{{
+constexpr std::array<Boss, kBossCount> kBosses{{
     {"Queen Gohma", "Dm_Deku_BossIn", "Dm_Deku_BossOut", 0},
     {"King Dodongo", "Dm_DodongoCave_BossIn", "Dm_DodongoCave_BossOut", 1},
     {"Barinade", "Dm_InsideJabu_Jabu_BossIn", "Dm_InsideJabu_Jabu_BossOut", 2},

@@ -467,7 +467,12 @@ public:
         std::array<float, 12> transform{};  // place, then the 3x3 rows
         bool rotation = false;              // false: keep the actor's own
         bool asleep = false;                // state 6 may be moved too (issue 101)
+        // A ride (CoopWorld::IsRide) with our Link on its deck: this actor (our Link) is moved by what this
+        // write moves the ride, read just before it is made (the setter's warp does not carry him).
+        u64 carry = 0;
     };
+
+    std::vector<std::pair<Pose, int>> settles_;  // poses kept after the copy became ours (Release)
 
     struct Hit {
         u64 actor = 0;      // the copy
@@ -477,6 +482,9 @@ public:
         std::array<float, 3> from{};  // the hitter's place (ours when not known)
         u64 asked_ms = 0;             // set by AddHit
         bool exact = false;           // `at` is where the blade was, not the actor's foot
+        // Another game's sword hit on a sign, Life +0x278..+0x2b0
+        // (CoopWorld::SignHitRecord): given as a slash. Empty: kHitTemplate.
+        std::vector<u64> record;
     };
 
     // Present thread: hits to replay at the next game frame.
@@ -509,6 +517,18 @@ public:
             }
             // A pose wished before it became ours would set the bit again
             // in the same frame: it is no copy any more.
+#if defined(LICHII_COOP_RELEASE_SETTLE_FRAMES) && LICHII_COOP_RELEASE_SETTLE_FRAMES > 0
+            // A build that defines LICHII_COOP_RELEASE_SETTLE_FRAMES keeps putting the copy
+            // where it was shown for that many game frames after it became ours, while its
+            // own update runs again: on NX2navi the body of a held copy is elsewhere (the
+            // copy jumped 25 m at the hand-over, runs ds8, ds9), and the game takes the
+            // setter's place into the body only in an update that runs.
+            for (const Pose& p : poses_) {
+                if (p.actor == a && settles_.size() < 64) {
+                    settles_.push_back({p, LICHII_COOP_RELEASE_SETTLE_FRAMES});
+                }
+            }
+#endif
             std::erase_if(poses_, [a](const Pose& p) { return p.actor == a; });
             // Issue 157 (peahat autotest 2026-11-12): the Peahat's own AI
             // started 'TakeOffAnticipation' for our Link, the copy was put
@@ -543,6 +563,11 @@ public:
     }
 
     // Calls made since the last ask (for the 5 s log line).
+    std::size_t TakeCarried() {
+        std::lock_guard lock(mutex_);
+        return std::exchange(carried_, 0);
+    }
+
     std::array<std::size_t, 4> TakeCounts() {
         std::lock_guard lock(mutex_);
         const std::array<std::size_t, 4> counts{moved_, deleted_, played_, framed_};
@@ -607,6 +632,19 @@ public:
                 WriteHolds(guest);
             }
             work_ = poses_;
+            for (auto& [pose, left] : settles_) {
+                work_.push_back(pose);
+                --left;
+            }
+            std::erase_if(settles_, [this](const auto& e) {
+                if (e.second > 0) {
+                    return false;
+                }
+                if (releases_.size() < 64) {
+                    releases_.push_back(e.first.actor);  // its setter bit cleared once more, next frame
+                }
+                return true;
+            });
             if (work_.size() > 1) {
                 std::rotate(work_.begin(), work_.begin() + (++turn_ % work_.size()), work_.end());
             }
@@ -621,6 +659,11 @@ public:
             }
             next_ = 0;
             next_remove_ = 0;
+            carry_.reset();
+            if (!anchor_.carried) {
+                anchor_.valid = false;  // a frame without our Link on a ride another game moves
+            }
+            anchor_.carried = false;
         }
         if (main_ == 0) {
             return std::nullopt;
@@ -801,10 +844,27 @@ public:
         // The list starts one further on each frame, so no copy is left out
         // twice in a row (run3, 2026-11-09: with 16 calls a frame, 3 to 5 of
         // 19 to 21 copies were never moved and no animation was ever played).
+        if (carry_) {
+            // The ride just written: our Link on its deck goes to his place on it (RideAnchor).
+            const auto [link, to] = *carry_;
+            carry_.reset();
+            if (Alive(guest, link)) {
+                guest.Write(link + kActorPosition, to.data(), 12);
+                ++carried_;
+                CoopPuppet::Call c;
+                c.function = main_ + kSetMatrix;
+                c.x[0] = link;
+                c.x[1] = 0;
+                return c;
+            }
+        }
         while (next_ < work_.size()) {
             const Pose& p = work_[next_++];
             if (!Alive(guest, p.actor, p.asleep)) {
                 continue;
+            }
+            if (p.carry != 0) {
+                RideAnchor(guest, p);
             }
             if (p.rotation) {
                 guest.Write(p.actor + kActorPosition, p.transform.data(), 48);
@@ -958,9 +1018,34 @@ private:
         const std::array<float, 3> at{h.at[0], h.at[1] + (h.exact ? 0.0f : 1.0f), h.at[2]};
         std::memcpy(&rec[0x27c / 4 - kHitRecord / 4], at.data(), 12);
         std::memcpy(&rec[0x2a0 / 4 - kHitRecord / 4], h.from.data(), 12);
+        std::array<u32, 4> header{0x00060001, 0x40040000, id, 2};
+        std::array<s32, 2> amount{4, h.amount};
+        if (h.record.size() == CoopWorld::kSignHitWords) {
+            // Another game's sword hit on its sign (docs/world.md, "Signs: the
+            // hit itself"): a Master Sword slash as the game left it on a sign
+            // at the moment its AI cut (live, 2026-11-13), with the sender's
+            // place, blade line, travel and hitter's place.
+            static constexpr std::array<u32, 0x98 / 4> kSlash{
+                0, 0, 0, 0,                                      // +0x240 attacker, id, present
+                0x00060001, 0x40040000, 0x0000000e, 0x00000000,  // +0x250
+                0x00000000, 0x00000000, 0x0000000a, 0x00000004,  // +0x260
+                0x00000200, 0x00000000, 0x00000000, 0x00000000,  // +0x270, the sender's words from +0x278
+                0, 0, 0, 0, 0, 0, 0, 0,                          // +0x280, +0x290
+                0, 0, 0, 0,                                      // +0x2a0
+                0x00000000, 0x00000000, 0x000343ff, 0x00200000,  // +0x2b0; +0x2be 0x20: a slash that cuts
+                0x00000004, 0x00000000, 0x00000002, 0x02000000,  // +0x2c0 (+0x2c4 id)
+                0x03010102, 0x00030000,                          // +0x2d0
+            };
+            CoopWorld::NoteGivenSignHit(h.actor);
+            rec = kSlash;
+            std::memcpy(&rec[(CoopWorld::kSignHitFrom - kHitRecord) / 4], h.record.data(),
+                        8 * CoopWorld::kSignHitWords);
+            amount = {4, 2};
+            std::memcpy(&rec[0], &h.attacker, 8);
+            rec[2] = id;
+            rec[0x2c4 / 4 - kHitRecord / 4] = id;
+        }
         rec[3] = 0;  // present last, below
-        const std::array<u32, 4> header{0x00060001, 0x40040000, id, 2};
-        const std::array<s32, 2> amount{4, h.amount};
         guest.Write(life + kHitHeader, header.data(), sizeof(header));
         guest.Write(life + kHitAmount, amount.data(), sizeof(amount));
         guest.Write(life + kHitRecord, rec.data(), sizeof(rec));
@@ -1026,6 +1111,80 @@ private:
     bool allocating_ = false;
     bool alloc_tried_ = false;
     std::vector<Pose> work_;
+    std::optional<std::pair<u64, std::array<float, 3>>> carry_;  // our Link's place after a ride's write
+    // Our Link's place on a ride another game moves, kept as his offset from the ride. Run bt1 (2026-11-13):
+    // with the ride moved by the setter alone, the game took the Link on its deck along by only 0.27 to 0.9
+    // of each step (he slid back and fell off), so adding each step to his place would also add that
+    // share again (he would creep forward). So the offset is kept: a move of his since our last write that
+    // goes the ride's way and is no longer than its last step is that share (ignored); any other move is
+    // his own walking (the offset follows it).
+    struct Anchor {
+        bool valid = false;
+        bool carried = false;           // a carry pose came this frame
+        u64 link = 0;
+        u64 ride = 0;
+        std::array<float, 3> offset{};  // our Link minus the ride
+        std::array<float, 3> set{};     // where we last put our Link
+        std::array<float, 3> step{};    // the ride's last step
+    };
+    Anchor anchor_;
+    static constexpr float kCarryMaxM = 3.0f;  // a ride's step in one frame, at most; a longer one: a jump
+    static constexpr float kCarryJumpM = 2.0f; // our Link this far from where we put him: placed anew
+    void RideAnchor(CoopPuppet::Guest& guest, const Pose& p) {
+        std::array<float, 3> ride{};
+        std::array<float, 3> link{};
+        if (!guest.Read(p.actor + kActorPosition, ride.data(), 12) ||
+            !guest.Read(p.carry + kActorPosition, link.data(), 12)) {
+            return;
+        }
+        std::array<float, 3> step{};
+        float d2 = 0.0f;
+        for (std::size_t i = 0; i < 3; ++i) {
+            step[i] = p.transform[i] - ride[i];
+            d2 += step[i] * step[i];
+        }
+        if (d2 >= kCarryMaxM * kCarryMaxM) {
+            anchor_.valid = false;  // the ride jumped (taken over, a first placement): no carry this frame
+            return;
+        }
+        float moved2 = 0.0f;
+        std::array<float, 3> moved{};
+        for (std::size_t i = 0; i < 3; ++i) {
+            moved[i] = link[i] - anchor_.set[i];
+            moved2 += moved[i] * moved[i];
+        }
+        if (!anchor_.valid || anchor_.link != p.carry || anchor_.ride != p.actor ||
+            moved2 > kCarryJumpM * kCarryJumpM) {
+            for (std::size_t i = 0; i < 3; ++i) {
+                anchor_.offset[i] = link[i] - ride[i];
+            }
+        } else {
+            float along = 0.0f;
+            float last2 = 0.0f;
+            for (std::size_t i = 0; i < 3; ++i) {
+                along += moved[i] * anchor_.step[i];
+                last2 += anchor_.step[i] * anchor_.step[i];
+            }
+            const float last = std::sqrt(last2);
+            const bool share = last2 > 1e-8f && along > 0.0f && std::sqrt(moved2) <= 1.25f * last + 0.02f;
+            if (!share) {
+                for (std::size_t i = 0; i < 3; ++i) {
+                    anchor_.offset[i] += moved[i];
+                }
+            }
+        }
+        std::array<float, 3> to{};
+        for (std::size_t i = 0; i < 3; ++i) {
+            to[i] = p.transform[i] + anchor_.offset[i];
+        }
+        anchor_.valid = true;
+        anchor_.carried = true;
+        anchor_.link = p.carry;
+        anchor_.ride = p.actor;
+        anchor_.set = to;
+        anchor_.step = step;
+        carry_ = std::make_pair(p.carry, to);
+    }
     // Issue 157: the animation each copy's own AI last chose that we put
     // back (name, steady ms), and the ones to give back once it is ours.
     static constexpr u64 kWakeReplayMs = 8000;
@@ -1040,6 +1199,7 @@ private:
     std::size_t turn_ = 0;  // where this frame's poses start
     std::size_t next_remove_ = 0;
     std::size_t moved_ = 0;
+    std::size_t carried_ = 0;  // our Link moved with a ride another game moves
     std::size_t deleted_ = 0;
     std::vector<u64> holds_;
     CoopHold::Masks masks_;
@@ -1302,6 +1462,7 @@ public:
                     world_.ForgetKept();
                 }
             }
+            world_.NotePuppets(puppets_);
             world_.Tick(*scene, self, server_now_us, seen, player_, world);
             for (auto& m : world.send) {
                 send.emplace_back(std::move(m));
@@ -1341,6 +1502,7 @@ public:
                     h.at = hit.at;
                     h.from = hit.from;
                     h.exact = true;
+                    h.record = hit.record;
                     TheMover().AddHit(h);
                 }
             }
@@ -1718,6 +1880,7 @@ public:
     int counter_lines_ = 0;
     std::size_t platform_lines_ = 0;
     std::vector<CoopWorld::GimmickProbe::Gimmick> gimmicks_;
+    std::vector<coop::protocol::Vec3> puppets_;  // the other players' Links in the last walk
     bool gimmick_probe_on_ = false;
     bool scrubs_on_ = true;  // LICHII_COOP_SCRUBS=0 turns it off (issue 149)
     std::vector<CoopScrubs::Seen> scrubs_seen_;
@@ -2040,6 +2203,7 @@ private:
 
     bool Collect(Reader& r, std::vector<Seen>& out) {
         gimmicks_.clear();  // dungeon gimmicks for the probe
+        puppets_.clear();   // the other players' Links (a ride's pull aboard, coop_world)
         platform_drivers_.clear();
         scrubs_seen_.clear();  // issue 149
         std::vector<u64> actors;
@@ -2135,6 +2299,13 @@ private:
                     d.position[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
                 }
                 platform_drivers_.push_back(std::move(d));
+            }
+            if (known.first.starts_with("CoopPuppet_") && puppets_.size() < 8) {
+                coop::protocol::Vec3 at{};
+                for (std::size_t i = 0; i < 3; ++i) {
+                    at[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
+                }
+                puppets_.push_back(at);
             }
             if (gimmick_probe_on_ && CoopWorld::IsGimmick(known.first)) {
                 CoopWorld::GimmickProbe::Gimmick g;
@@ -2354,7 +2525,11 @@ private:
             std::lock_guard lock(KeyRefundMutex());
             names.swap(TestKillQueue());
         }
-        for (const std::string& name : names) {
+        for (const std::string& queued : names) {
+            // "ACTOR|N" (the test's hurt): a hit of N instead of the whole life.
+            const auto bar = queued.find('|');
+            const std::string name = queued.substr(0, bar);
+            const std::int32_t amount = bar == std::string::npos ? 0 : std::atoi(queued.c_str() + bar + 1);
             const Seen* best = nullptr;
             float best_m = 0.0f;
             for (const Seen& s : seen) {
@@ -2379,8 +2554,8 @@ private:
             }
             LifeWrite w;
             w.address = best->address;
-            w.life = 0;
-            w.hurt = std::max<std::int32_t>(best->life->life, 1);
+            w.life = amount > 0 ? std::max<std::int32_t>(best->life->life - amount, 0) : 0;
+            w.hurt = amount > 0 ? amount : std::max<std::int32_t>(best->life->life, 1);
             w.from = player_;
             writes.push_back(w);
             LOG_INFO(Core, "coop: test kill {} {:#x} at {:.2f} {:.2f} {:.2f} ({:.1f} m, life {}): hit",
@@ -2561,7 +2736,15 @@ private:
         // A placed world object goes where coop_world says, or stays where
         // this game has it: the enemy sharing does not place those.
         std::erase_if(poses, [this](const PoseWrite& w) { return world_.Places(w.address); });
-        world_.Poses(now_us, poses);        auto& memory = system.ApplicationMemory();
+        world_.Poses(now_us, poses);
+        // A ride's pull aboard is for our own Link (coop_world, IsRide).
+        for (PoseWrite& w : poses) {
+            if (w.our_link) {
+                w.address = our_link_;
+            }
+        }
+        std::erase_if(poses, [](const PoseWrite& w) { return w.address == 0; });
+        auto& memory = system.ApplicationMemory();
         Reader r(memory);
         std::unordered_map<u64, coop::protocol::Vec3> placed;
         std::vector<Mover::Pose> wish;
@@ -2608,6 +2791,7 @@ private:
             Mover::Pose p;
             p.actor = w.address;
             p.asleep = asleep;
+            p.carry = w.carry_our_link ? our_link_ : 0;
             std::copy(w.position.begin(), w.position.end(), p.transform.begin());
             if (w.rotation) {
                 std::copy(w.rotation->begin(), w.rotation->end(), p.transform.begin() + 3);
@@ -2672,6 +2856,10 @@ private:
                          placed_.size(), drift_count_ ? drift_sum_ / drift_count_ : 0.0f,
                          drift_max_, drift_count_, moved, deleted, played, framed, sync_.HurtsTaken(),
                          sync_.HurtsMissed());
+            }
+            if (const std::size_t carried = TheMover().TakeCarried(); carried > 0) {
+                LOG_INFO(Core, "coop: objects: our Link carried with a ride another game moves in {} frames",
+                         carried);
             }
             // Issue 101: which copy was furthest from where we put it, so
             // one run tells a copy the setter does not hold (a flying or

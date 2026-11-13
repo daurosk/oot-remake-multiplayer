@@ -10,6 +10,7 @@
 #include <cstring>
 #include <fstream>
 #include <mutex>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -21,6 +22,8 @@
 #include "coop_hook.h"
 #include "coop_objects_sync.h"
 #include "coop_puppet.h"
+#include "coop_pose.h"
+#include "coop_world.h"
 #include "coop_puppet_config.h"
 #include "coop_puppet_sound.h"
 #include "coop_runtime.h"
@@ -55,12 +58,14 @@ std::string g_build;
 bool g_configured = false;
 bool g_hold3 = false;
 std::atomic<bool> g_on{false};
+std::atomic<bool> g_link_alive{true};
 std::atomic<bool> g_broken{false};
 int g_frame_handle = 0, g_step_handle = 0, g_counter_handle = 0;
 std::atomic<std::uint64_t> g_ring{0};  // the platform counters' ring (coop_counters.h), kept here
 Core::System g_system;
 std::atomic<std::uint64_t> g_frames{0}, g_steps{0}, g_calls{0}, g_frame_us{0}, g_step_us{0}, g_worst_us{0};
 std::atomic<std::uint64_t> g_worst_frame_us{0};  // the longest OnFrame since the last status line
+std::atomic<std::uint64_t> g_ours_us{0};         // of this OnFrame, the time in the port's own frame (hooks.frame)
 
 // Inside a frame or hook callback a page of the game's memory is asked for once (map_range: a pointer that is
 // good until the callback returns, NX2navi docs/plugins.md "Memory") and every read in it is then a copy: the
@@ -221,6 +226,10 @@ void OnStep(Nx2HookCall* call, void*) {
     const std::size_t made = CoopCallers::RunFrame(guest, SteadyMs(), CoopSvc::kCallsPerFrame,
                                                    [api](const CoopPuppet::Call& c) { return Make(api, c); });
     FlashStep(guest, SteadyMs());
+    if (static std::uint64_t next_player_ms = 0; g_hold3 && SteadyMs() >= next_player_ms) {
+        next_player_ms = SteadyMs() + 500;  // our Link's actor, for the enemies' target (objects/brain.hpp)
+        Objects::Brain::NoteOurPlayer(main, Objects::Brain::FindPlayer(api, main));
+    }
     static ApiPort port;
     if (Objects::AnimProbe::On()) {
         Objects::AnimProbe::Step(port, main, SteadyMs(), [](const std::string& line) { CoopRuntime::Log(line); });
@@ -244,9 +253,18 @@ void OnFrame(const Nx2Frame*, void*) {
     }
     const std::uint64_t begin = SteadyUs();
     InCallback in;
+    g_ours_us.store(0, std::memory_order_relaxed);
     CoopHook::OnFrame(g_system);
     g_frames.fetch_add(1, std::memory_order_relaxed);
     const std::uint64_t us = SteadyUs() - begin;
+    if (us > 250'000 && g_log != nullptr) {
+        // A frame of the hook that held the picture back (the dead player's lag): how much was ours.
+        char line[160];
+        std::snprintf(line, sizeof(line), "slow hook frame: %.0f ms, of it %.0f ms in this port's own frame",
+                      static_cast<double>(us) / 1000.0,
+                      static_cast<double>(g_ours_us.load(std::memory_order_relaxed)) / 1000.0);
+        g_log(line);
+    }
     g_frame_us.fetch_add(us, std::memory_order_relaxed);
     if (us > g_worst_frame_us.load(std::memory_order_relaxed)) {
         g_worst_frame_us.store(us, std::memory_order_relaxed);
@@ -264,12 +282,16 @@ void OnFrame(const Nx2Frame*, void*) {
 // belongs to the puppet actor, so the game's sound system places the sound at the puppet as it places
 // any actor's. Two game calls per sound, on the calc thread at the frame step; the scratch memory (the
 // asset, the handle and the name) is one small block of the game's heap, asked for once.
+void WriteVariation(CoopPuppet::Guest& guest, std::uint64_t user,
+                    const std::vector<std::pair<std::uint8_t, std::uint32_t>>& props);  // below, "Gear sounds"
+
 struct VoiceBox {
     std::mutex mutex;
     struct Want {
         std::uint8_t player = 0;
         std::string asset;
         std::uint64_t at_ms = 0;
+        std::vector<std::pair<std::uint8_t, std::uint32_t>> props;  // gear sounds: the user's variation values
     };
     std::vector<Want> wanted;  // any thread
     // the calc thread
@@ -328,6 +350,7 @@ std::optional<CoopPuppet::Call> VoiceStep(CoopPuppet::Guest& guest, bool after_c
         return std::nullopt;
     }
     std::pair<std::uint8_t, std::string> next;
+    std::vector<std::pair<std::uint8_t, std::uint32_t>> next_props;
     {
         std::lock_guard lock(v.mutex);
         // A sound that waited too long (a load, a puppet being made) is not played late.
@@ -340,6 +363,7 @@ std::optional<CoopPuppet::Call> VoiceStep(CoopPuppet::Guest& guest, bool after_c
         }
         if (v.block != 0) {
             next = {v.wanted.front().player, v.wanted.front().asset};
+            next_props = std::move(v.wanted.front().props);
             v.wanted.erase(v.wanted.begin());
         }
     }
@@ -375,6 +399,7 @@ std::optional<CoopPuppet::Call> VoiceStep(CoopPuppet::Guest& guest, bool after_c
         !guest.Write(v.block + kVoiceAsset, &zero, 8) || !guest.Write(v.block + kVoiceHandle, handle.data(), 8)) {
         return std::nullopt;
     }
+    WriteVariation(guest, user, next_props);  // the boots, the floor, the foot of the real Link's step
     v.user = user;
     v.player = next.first;
     v.asset = next.second;
@@ -397,7 +422,121 @@ std::optional<CoopPuppet::Call> VoiceStep(CoopPuppet::Guest& guest, bool after_c
 struct OwnSounds {
     std::mutex mutex;
     std::vector<std::string> names;
+    std::vector<std::vector<std::pair<std::uint8_t, std::uint32_t>>> props;  // with each name (may be empty)
 };
+
+// --- Gear sounds: the sound user's properties that choose a footstep's variation ---
+// Read from the game's sound resource (SLink2/slink2.Product.111.bslnk.zs) and the lifted code by a research
+// sub-agent: 'FootStep' of user Player_Adult switches on the property 足装備 (boots: Hover, Heavy, normal), each
+// leaf picks its wave by サウンドマテリアル (the floor), and 足 (which foot) and the speeds choose further;
+// 'EquipmentNoise_FootStep' switches on the weapon and shield properties. A user's values are a u32 array at
+// [user+0x98], one slot per definition ([[user+0x58]+0x48][i], count u16 at [[user+0x58]+0x44]); the game marks a
+// changed one in the bit masks at user+0x88 / +0x90. So our Link's values go with each such sound and are written
+// into the puppet's user (same user, same definitions) just before the puppet emits it.
+const char* const kVariationProps[] = {"足装備", "足", "サウンドマテリアル", "移動速度(アニメ)", "速度", "足速度",
+                                       "勾配", "接地面の濡れ率", "水マテリアル", "武器種別", "武器装備状態",
+                                       "盾種別", "盾装備状態"};
+struct PropIndex {
+    std::mutex mutex;
+    std::uint64_t user = 0;  // whose definitions these are
+    std::vector<std::uint8_t> indices;
+    bool said = false;
+};
+PropIndex g_prop_index;
+bool g_gear_sounds = true;  // OOT_COOP_GEAR_SOUNDS=0: names only, as before
+
+std::uint32_t PropCount(const Nx2PluginApi* api, std::uint64_t user, std::uint64_t* defs) {
+    std::uint64_t res = 0;
+    std::uint16_t count = 0;
+    if (api->read(user + 0x58, &res, 8) != 1 || res < 0x10000 || api->read(res + 0x44, &count, 2) != 1 ||
+        api->read(res + 0x48, defs, 8) != 1 || *defs < 0x10000) {
+        return 0;
+    }
+    return count;
+}
+
+// The indices of kVariationProps in this user's definitions (found once per user by name).
+std::vector<std::uint8_t> VariationIndices(const Nx2PluginApi* api, std::uint64_t user) {
+    std::lock_guard lock(g_prop_index.mutex);
+    if (g_prop_index.user == user) {
+        return g_prop_index.indices;
+    }
+    g_prop_index.user = user;
+    g_prop_index.indices.clear();
+    std::uint64_t defs = 0;
+    const std::uint32_t count = PropCount(api, user, &defs);
+    std::string seen;
+    for (std::uint32_t i = 0; i < count && i < 255; ++i) {
+        std::uint64_t def = 0;
+        if (api->read(defs + 8 * i, &def, 8) != 1 || def < 0x10000) {
+            continue;
+        }
+        // The name: a char* at def+8 (as in the XLink component's own lists), else at def+0.
+        for (const std::uint64_t at : {std::uint64_t{8}, std::uint64_t{0}}) {
+            std::uint64_t text = 0;
+            char name[48] = {};
+            if (api->read(def + at, &text, 8) != 1 || text < 0x10000 || api->read(text, name, sizeof(name) - 1) != 1) {
+                continue;
+            }
+            bool found = false;
+            for (const char* want : kVariationProps) {
+                if (std::string_view(name) == want) {
+                    g_prop_index.indices.push_back(static_cast<std::uint8_t>(i));
+                    found = true;
+                }
+            }
+            if (found) {
+                seen += std::string(seen.empty() ? "" : ", ") + name + " " + std::to_string(i);
+                break;
+            }
+        }
+    }
+    if (!g_prop_index.said && g_log != nullptr) {
+        g_prop_index.said = true;
+        g_log(("gear sounds: our Link's sound user has " + std::to_string(count) + " properties; the variation ones: " +
+               (seen.empty() ? std::string("none found by name (names only are sent)") : seen))
+                  .c_str());
+    }
+    return g_prop_index.indices;
+}
+
+std::vector<std::pair<std::uint8_t, std::uint32_t>> ReadVariation(const Nx2PluginApi* api, std::uint64_t user) {
+    std::vector<std::pair<std::uint8_t, std::uint32_t>> out;
+    std::uint64_t values = 0;
+    if (!g_gear_sounds || api->read(user + 0x98, &values, 8) != 1 || values < 0x10000) {
+        return out;
+    }
+    for (const std::uint8_t i : VariationIndices(api, user)) {
+        std::uint32_t v = 0;
+        if (api->read(values + 4 * i, &v, 4) == 1) {
+            out.emplace_back(i, v);
+        }
+    }
+    return out;
+}
+
+// The puppet's user: the same values, marked changed as the game's own setter does (main+0x3bd01a0).
+void WriteVariation(CoopPuppet::Guest& guest, std::uint64_t user,
+                    const std::vector<std::pair<std::uint8_t, std::uint32_t>>& props) {
+    std::uint64_t values = 0, res = 0;
+    std::uint16_t count = 0;
+    if (props.empty() || !guest.Read(user + 0x98, &values, 8) || values < 0x10000 || !guest.Read(user + 0x58, &res, 8) ||
+        res < 0x10000 || !guest.Read(res + 0x44, &count, 2)) {
+        return;
+    }
+    for (const auto& [i, v] : props) {
+        if (i >= count) {
+            continue;
+        }
+        guest.Write(values + 4 * i, &v, 4);
+        const std::uint64_t mask_at = user + 0x88 + 8 * (i >> 6);
+        std::uint64_t mask = 0;
+        if (guest.Read(mask_at, &mask, 8)) {
+            mask |= std::uint64_t{1} << (i & 63);
+            guest.Write(mask_at, &mask, 8);
+        }
+    }
+}
 OwnSounds g_own;
 std::atomic<std::uint64_t> g_own_user{0};
 std::atomic<std::uint64_t> g_own_heard{0};
@@ -429,9 +568,244 @@ void OnEmit(Nx2HookCall* call, void*) {
     if (g_own_debug != 0 && g_log != nullptr) {
         g_log((std::string("sound: our Link starts '") + name + "'").c_str());
     }
+    auto props = PuppetFx::HasVariations(name) ? ReadVariation(api, user)
+                                               : std::vector<std::pair<std::uint8_t, std::uint32_t>>{};
+    if (g_own_debug != 0 && g_log != nullptr && !props.empty()) {
+        std::string line = std::string("sound: '") + name + "' with";
+        for (const auto& [i, v] : props) {
+            line += " " + std::to_string(i) + "=" + std::to_string(v);
+        }
+        g_log(line.c_str());
+    }
     std::lock_guard lock(g_own.mutex);
     if (g_own.names.size() < 32) {
         g_own.names.emplace_back(name);
+        g_own.props.push_back(std::move(props));
+    }
+}
+
+// --- Research (OOT_COOP_DEBUG_SIGN=1): each call of a sign's cut routine main+0x266f960 (node, mode), with the hit
+// its Life component holds at that moment and what the routine answers (docs/world.md, "Signs: the hit itself").
+thread_local int t_in_sign_cut = 0;
+void OnSignTrace(Nx2HookCall* call, void*) {
+    const Nx2PluginApi* api = g_api.load(std::memory_order_acquire);
+    if (t_in_sign_cut == 0 || api == nullptr || g_log == nullptr) {
+        return;
+    }
+    const std::uint64_t x0 = call->x[0], x1 = call->x[1], x2 = call->x[2], lr = call->lr, x8 = call->x[8];
+    if (call->addr - g_main.load() == 0x2670a60) {  // its fourteen inputs, as floats
+        std::array<std::uint64_t, 14> at{};
+        api->read(x0, at.data(), sizeof(at));
+        std::string line = "sign trace: inputs";
+        for (std::size_t i = 0; i < at.size(); ++i) {
+            std::array<float, 4> f{};
+            std::array<std::uint32_t, 4> u{};
+            api->read(at[i], f.data(), sizeof(f));
+            std::memcpy(u.data(), f.data(), sizeof(u));
+            char one[120];
+            std::snprintf(one, sizeof one, " [%zu] %.4g %.4g %.4g %.4g (%x)", i, f[0], f[1], f[2], f[3], u[0]);
+            line += one;
+        }
+        g_log(line.c_str());
+    }
+    api->call_original(call);
+    if (call->addr - g_main.load() == 0x6ab6f0 && lr - g_main.load() == 0x2671784) {
+        // The contacts of the board's "Tgt" body, as the cut routine walks them.
+        const std::uint64_t it = x8;
+        std::array<std::uint64_t, 9> w{};
+        api->read(it, w.data(), sizeof(w));
+        std::array<std::uint64_t, 0x28> c{};
+        api->read(x0, c.data(), sizeof(c));
+        char one[200];
+        std::string line = "sign contacts: iterator";
+        for (const std::uint64_t v : w) {
+            std::snprintf(one, sizeof one, " %llx", static_cast<unsigned long long>(v));
+            line += one;
+        }
+        std::snprintf(one, sizeof one, "; container +0x8 %llx +0x28 %llx +0xa0 %llx; entries:",
+                      static_cast<unsigned long long>(c[1]), static_cast<unsigned long long>(c[5]),
+                      static_cast<unsigned long long>(c[0x14]));
+        line += one;
+        const std::uint64_t first = (w[8] & 0xff) != 0 ? 0 : w[0], end = w[2];
+        for (std::uint64_t e = first; e != 0 && e < end && e < first + 0x80; e += 0x10) {
+            std::uint64_t p = 0, flag = 0, a = 0, b = 0, va = 0, vb = 0, vp = 0;
+            std::uint16_t bits = 0;
+            api->read(e, &p, 8), api->read(e + 8, &flag, 8);
+            api->read(p, &vp, 8), api->read(p + 0x5c, &bits, 2), api->read(p + 0x60, &a, 8), api->read(p + 0x68, &b, 8);
+            api->read(a, &va, 8), api->read(b, &vb, 8);
+            std::snprintf(one, sizeof one, " {%llx vt+0x%llx flag %llx bits %x a %llx vt+0x%llx b %llx vt+0x%llx}",
+                          static_cast<unsigned long long>(p), static_cast<unsigned long long>(vp - g_main.load()),
+                          static_cast<unsigned long long>(flag & 0xff), bits, static_cast<unsigned long long>(a),
+                          static_cast<unsigned long long>(va - g_main.load()), static_cast<unsigned long long>(b),
+                          static_cast<unsigned long long>(vb - g_main.load()));
+            line += one;
+        }
+        g_log(line.c_str());
+    }
+    char text[200];
+    std::snprintf(text, sizeof text, "sign trace: main+0x%llx(%llx, %llx, %llx) from +0x%llx -> %llx",
+                  static_cast<unsigned long long>(call->addr - g_main.load()), static_cast<unsigned long long>(x0),
+                  static_cast<unsigned long long>(x1), static_cast<unsigned long long>(x2),
+                  static_cast<unsigned long long>(lr - g_main.load()), static_cast<unsigned long long>(call->x[0]));
+    g_log(text);
+}
+void OnSignCut(Nx2HookCall* call, void*) {
+    const Nx2PluginApi* api = g_api.load(std::memory_order_acquire);
+    if (api == nullptr || g_log == nullptr) {
+        return;
+    }
+    const std::uint64_t node = call->x[0], mode = call->x[1];
+    std::uint64_t a = 0, actor = 0, table = 0, life = 0;
+    std::string text;
+    if (api->read(node + 8, &a, 8) == 1 && api->read(a + 8, &a, 8) == 1 && api->read(a + 0x1f0, &actor, 8) == 1 &&
+        api->read(actor + 0x270, &table, 8) == 1 && api->read(table + 0x2b8, &life, 8) == 1 && life > 0x10000) {
+        std::array<std::uint64_t, 0x100 / 8> words{};
+        api->read(life + 0x1f8, words.data(), sizeof(words));
+        char one[24];
+        for (const std::uint64_t w : words) {
+            std::snprintf(one, sizeof one, " %llx", static_cast<unsigned long long>(w));
+            text += one;
+        }
+        std::uint64_t cfg = 0, inputs = 0;
+        api->read(life + 0x12b0, &cfg, 8);
+        api->read(node + 0x58, &inputs, 8);
+        std::snprintf(one, sizeof one, " | %llx", static_cast<unsigned long long>(cfg));
+        text += one;
+        std::snprintf(one, sizeof one, " | %llx", static_cast<unsigned long long>(inputs));
+        text += one;
+    }
+    ++t_in_sign_cut;
+    api->call_original(call);
+    --t_in_sign_cut;
+    char head[160];
+    std::snprintf(head, sizeof head, "sign cut routine: actor %llx mode %llu answers %llu; Life +0x1f8:",
+                  static_cast<unsigned long long>(actor), static_cast<unsigned long long>(mode),
+                  static_cast<unsigned long long>(call->x[0] & 1));
+    g_log((head + text).c_str());
+}
+
+// --- A sign cut by another player: the blade's contact (docs/world.md, "Signs: the blade's contact") ---
+// The hook gives our sign the cutter's own sword hit, and the sign's AI then runs the game's cut routine
+// main+0x266f960. Its helper main+0x2670a60 cuts a piece of the board only when the board's "Tgt" rigid body has a
+// contact with another body at that moment (the list at [body + 0x158]: count +0x8, entries +0x28 of
+// {contact, flags}, the other body at contact + 0x60): the blade, which is not there in this game. For the length
+// of that one call the list gets one contact whose other body is the board's own, and is emptied again after it.
+std::atomic<std::uint64_t> g_sign_block{0};  // 0x100 bytes of the game's heap for the contact, made once
+std::atomic<std::uint64_t> g_sign_cuts{0};
+bool g_sign_gate_debug = false;
+void OnSignGate(Nx2HookCall* call, void*) {
+    const std::uint64_t given = CoopWorld::GivenSignHitActor(500);
+    const Nx2PluginApi* api = g_api.load(std::memory_order_acquire);
+    if (given == 0 || api == nullptr) {
+        return;
+    }
+    const std::uint64_t main = g_main.load();
+    auto word = [api](std::uint64_t at) {
+        std::uint64_t v = 0;
+        return at >= 0x10000 && api->read(at, &v, 8) == 1 ? v : 0;
+    };
+    const std::uint64_t actor = word(word(word(call->x[0] + 8) + 8) + 0x1f0), mode = call->x[1];
+    if (actor != given) {
+        return;
+    }
+    const std::uint64_t root = word(word(word(actor + 0x270) + 0x50) + 0x20);
+    std::uint64_t block = g_sign_block.load();
+    if (block == 0) {
+        const std::uint64_t size[1] = {0x100};
+        block = api->guest_call(main + CoopPuppet::addr::kMalloc, size, 1);
+        if (block < 0x10000) {
+            return;
+        }
+        g_sign_block.store(block);
+    }
+    const std::uint64_t name = main + 0x3ca5b05;  // "Tgt"
+    const std::uint64_t find[2] = {root, name};
+    std::uint64_t body = root != 0 ? api->guest_call(main + 0x6b1e30, find, 2) : 0;
+    if (body >= 0x10000) {
+        const std::uint64_t again[2] = {body, name};
+        body = api->guest_call(main + 0x1132250, again, 2);
+    }
+    const std::uint64_t list = body >= 0x10000 ? word(body + 0x158) : 0;
+    std::uint32_t count = 1;
+    const std::uint64_t entries = list != 0 ? word(list + 0x28) : 0;
+    if (entries == 0 || api->read(list + 8, &count, 4) != 1 || count != 0) {
+        return;  // not found, or real contacts: the game's own answer stands
+    }
+    // The other body: the board's own rigid body, an object of the class the game's contacts hold.
+    std::uint64_t other = 0;
+    for (std::uint64_t at = 0; at < 0x200 && other == 0; at += 8) {
+        const std::uint64_t p = word(body + at);
+        if (p >= 0x10000 && word(p) == main + 0x4c37d20) {
+            other = p;
+        }
+    }
+    if (other == 0) {
+        if (g_sign_gate_debug && g_log != nullptr) {
+            g_log("sign: no rigid body found for the stand-in contact; the cut is left to the game");
+        }
+        return;
+    }
+    std::array<std::uint64_t, 0x70 / 8> contact{};
+    contact[0x60 / 8] = other;
+    contact[0x68 / 8] = other;
+    std::array<std::uint64_t, 2> entry{block, 0}, before{};
+    api->read(entries, before.data(), sizeof(before));
+    api->write(block, contact.data(), sizeof(contact));
+    api->write(entries, entry.data(), sizeof(entry));
+    count = 1;
+    api->write(list + 8, &count, 4);
+    api->call_original(call);
+    count = 0;
+    api->write(list + 8, &count, 4);
+    api->write(entries, before.data(), sizeof(before));
+    g_sign_cuts.fetch_add(1);
+    if (g_log != nullptr) {
+        char text[160];
+        std::snprintf(text, sizeof text, "sign: the cutter's hit ran our sign's cut routine with a stand-in contact "
+                      "(mode %llu, answer %llu)", static_cast<unsigned long long>(mode),
+                      static_cast<unsigned long long>(call->x[0] & 1));
+        g_log(text);
+    }
+}
+
+#include "item_get_step.inc"
+
+// --- Floor switches pressed by any player are down in every game (step_switch.hpp) ---
+// The step switch's selector `SelectorSwitchStepBootup` (evaluate main+0x11a4920, x0 = the node): [node+0x58]
+// points at its ForceOn input byte, the node's current child is the byte at +0x1e and its On child's index the
+// byte at +0x68. Found by a research sub-agent from the lifted code and the switch's AI file (not by a run).
+StepSwitch::Switches g_switches;
+std::atomic<bool> g_switches_on{false};
+std::atomic<std::uint64_t> g_switch_calls{0};
+void OnStepSelector(Nx2HookCall* call, void*) {
+    const Nx2PluginApi* api = g_api.load(std::memory_order_acquire);
+    if (api == nullptr) {
+        return;
+    }
+    auto word = [api](std::uint64_t at) {
+        std::uint64_t v = 0;
+        return at >= 0x10000 && api->read(at, &v, 8) == 1 ? v : 0;
+    };
+    const std::uint64_t node = call->x[0];
+    const std::uint64_t actor = word(word(word(node + 8) + 8) + 0x1f0);
+    const std::uint64_t placement = actor != 0 ? word(actor + 0x3d8) : 0;
+    const std::uint64_t hash = placement != 0 ? word(placement + 0x88) : 0;
+    if (hash == 0 || hash == ~std::uint64_t{0}) {
+        return;
+    }
+    g_switch_calls.fetch_add(1, std::memory_order_relaxed);
+    const std::uint64_t now = SteadyUs();
+    if (g_switches.Force(hash, now)) {
+        const std::uint64_t port = word(node + 0x58);
+        const std::uint8_t one = 1;
+        if (port >= 0x10000) {
+            api->write(port, &one, 1);
+        }
+    }
+    api->call_original(call);
+    std::uint8_t current = 0xff, on = 0xfe;
+    if (api->read(node + 0x1e, &current, 1) == 1 && api->read(node + 0x68, &on, 1) == 1) {
+        g_switches.Seen(hash, current == on, now);
     }
 }
 
@@ -579,6 +953,7 @@ bool Attach(const Nx2PluginApi* api, std::uint64_t main_base) {
         return Teleport::Step(guest, after_call, result, g_main.load());
     });
     CoopCallers::Add(kVoiceOrder, VoiceStep);
+    CoopCallers::Add(kItemOrder, ItemStep);
     {
         const char* e = std::getenv("OOT_COOP_DEBUG_OWN_SOUNDS");
         g_own_debug = e != nullptr ? std::atoi(e) : 0;
@@ -586,10 +961,28 @@ bool Attach(const Nx2PluginApi* api, std::uint64_t main_base) {
         g_voice_debug = e != nullptr && std::string_view(e) == "1";
         e = std::getenv("OOT_COOP_PUPPET_BLINK");
         g_blink = e != nullptr && std::string_view(e) == "1";
+        e = std::getenv("OOT_COOP_GEAR_SOUNDS");
+        g_gear_sounds = e == nullptr || std::string_view(e) != "0";
         e = std::getenv("OOT_COOP_PUPPET_SOUNDS");
         if (e == nullptr || std::string_view(e) != "0") {
             g_emit_handle = api->hook_function(main_base + PuppetFx::addr::kEmit, OnEmit, nullptr);
         }
+    }
+    if (const char* e = std::getenv("OOT_COOP_SIGN_CUT"); e == nullptr || std::string_view(e) != "0") {
+        g_sign_gate_debug = std::getenv("OOT_COOP_DEBUG_SIGN") != nullptr;
+        api->hook_function(main_base + 0x266f960, OnSignGate, nullptr);
+    }
+    if (const char* e = std::getenv("OOT_COOP_DEBUG_SIGN"); e != nullptr && std::string_view(e) == "1") {
+        api->hook_function(main_base + 0x266f960, OnSignCut, nullptr);
+    } else if (e != nullptr && std::string_view(e) == "2") {
+        api->hook_function(main_base + 0x266f960, OnSignCut, nullptr);
+        for (const std::uint64_t at : {0x266f8e0ull, 0x2670a60ull, 0xf0b190ull, 0xd73710ull, 0x1173c30ull, 0x6b1e30ull,
+                                       0x1132250ull, 0x6ab6f0ull, 0x122750ull, 0x2e2ec00ull, 0x3b10100ull}) {
+            api->hook_function(main_base + at, OnSignTrace, nullptr);
+        }
+    }
+    if (const char* e = std::getenv("OOT_COOP_SWITCHES"); e == nullptr || std::string_view(e) != "0") {
+        g_switches_on = api->hook_function(main_base + 0x11a4920, OnStepSelector, nullptr) > 0;
     }
     g_on = true;
     g_step_handle = api->hook_function(main_base + kFrameStep, OnStep, nullptr);
@@ -608,13 +1001,27 @@ bool Attach(const Nx2PluginApi* api, std::uint64_t main_base) {
 
 bool SendChat(const std::string& text) { return g_on && CoopHook::SendChat(text); }
 
-void PuppetSound(std::uint8_t player, const std::string& asset) {
+StepSwitch::Switches* Switches() { return g_switches_on.load() ? &g_switches : nullptr; }
+void AskItemScene(const std::string& actor, const std::array<float, 3>& at) {
+    std::lock_guard lock(g_item.mutex);
+    g_item.scene = std::make_pair(actor, at);
+}
+void AskFanfare(int type) {
+    std::lock_guard lock(g_item.mutex);
+    g_item.fanfare = type;
+}
+int TakeItemDone() { return g_item_done.exchange(0); }
+void NoteEvent(bool event) { g_item_event = event; }
+std::uint64_t SwitchCalls() { return g_switch_calls.load(std::memory_order_relaxed); }
+
+void PuppetSound(std::uint8_t player, const std::string& asset,
+                 std::vector<std::pair<std::uint8_t, std::uint32_t>> props) {
     if (!g_on || !PuppetFx::SoundName(asset)) {
         return;
     }
     std::lock_guard lock(g_voice.mutex);
     if (g_voice.wanted.size() < 16) {
-        g_voice.wanted.push_back({player, asset, SteadyMs()});
+        g_voice.wanted.push_back({player, asset, SteadyMs(), std::move(props)});
     }
 }
 
@@ -626,10 +1033,15 @@ void PuppetHurt(std::uint8_t player) {
 
 void SetOwnSoundUser(std::uint64_t user) { g_own_user.store(user, std::memory_order_relaxed); }
 
-std::vector<std::string> TakeOwnSounds() {
+std::vector<PuppetFx::SoundProps> TakeOwnSounds() {
     std::lock_guard lock(g_own.mutex);
-    std::vector<std::string> out;
-    out.swap(g_own.names);
+    std::vector<PuppetFx::SoundProps> out;
+    for (std::size_t i = 0; i < g_own.names.size(); ++i) {
+        out.push_back({std::move(g_own.names[i]), i < g_own.props.size() ? std::move(g_own.props[i])
+                                                                          : decltype(g_own.props)::value_type{}});
+    }
+    g_own.names.clear();
+    g_own.props.clear();
     return out;
 }
 
@@ -661,13 +1073,28 @@ std::string StatusText() {
     line += text;
     if (g_hold3) {
         const Objects::Brain::Counts c = Objects::Brain::Take();
-        std::snprintf(text, sizeof(text), ", hold: %zu held, %llu AI updates, %llu left out, %llu run for a hit",
+        std::snprintf(text, sizeof(text),
+                      ", hold: %zu held, %llu AI updates, %llu left out, %llu run for a hit, %llu with the far rule "
+                      "widened%s, burrows: %llu refused (copies), %llu turned to us, %llu let, %llu held for a living player, "
+                      "%llu aimed at our Link",
                       Objects::Hold::TheTable().Count(), static_cast<unsigned long long>(c.calls),
-                      static_cast<unsigned long long>(c.skipped), static_cast<unsigned long long>(c.for_hits));
+                      static_cast<unsigned long long>(c.skipped), static_cast<unsigned long long>(c.for_hits),
+                      static_cast<unsigned long long>(c.far_runs), c.far_found ? "" : " (its file not found)",
+                      static_cast<unsigned long long>(c.burrows_refused),
+                      static_cast<unsigned long long>(c.burrows_redirected),
+                      static_cast<unsigned long long>(c.burrows_let),
+                      static_cast<unsigned long long>(c.burrows_held),
+                      static_cast<unsigned long long>(c.targets_set));
         line += text;
+        if (!c.verbs.empty()) {
+            line += " (verbs: " + c.verbs + ", far looks " + std::to_string(c.far_tries) + ")";
+        }
     }
     return line;
 }
+
+void NoteOurLife(int life) { g_link_alive.store(life > 0, std::memory_order_relaxed); }
+bool OurLinkAlive() { return g_link_alive.load(std::memory_order_relaxed); }
 
 void Stop() {
     if (!g_on.exchange(false)) {
@@ -729,9 +1156,30 @@ bool Read(std::uint64_t address, void* out, std::size_t size) {
     }
     return api->read(address, out, size) == 1;
 }
+// Whether a range can be read. Asked before nearly every read of the hook's (EmulatorMemory::read), and by
+// its scans with many words that only might be pointers (CoopLiveEvents::FindRunningEvent): a read of memory
+// that is not the guest's own heap, stacks or modules takes the runtime's slow checks, about a millisecond
+// each, which made a frame of the hook take 1 to 3 s on the Game Over and at every load (the dead player's
+// lag, runs ds11 to ds13). The interface's map_range answers from the runtime's own map of guest regions
+// without that (its pointer is not kept: only whether there is one). OOT_COOP_VALID_SLOW=1: the old way.
 bool Valid(std::uint64_t address, std::size_t size) {
+    if (size == 0 || address + size <= address || address < 0x10000) {
+        return false;
+    }
+    static const bool slow = [] {
+        const char* e = std::getenv("OOT_COOP_VALID_SLOW");
+        return e != nullptr && *e == '1';
+    }();
+    const Nx2PluginApi* api = g_api.load(std::memory_order_acquire);
+    if (!slow && api != nullptr && NX2_HAS(api, Nx2PluginApi, map_range) && api->map_range != nullptr) {
+        const std::uint64_t main = g_main.load(std::memory_order_relaxed);
+        if (address == main + CoopCounters::kRingPointer) {
+            return true;  // kept here, not in main
+        }
+        return api->map_range(address, size, 0) != nullptr;
+    }
     std::uint8_t b = 0;
-    return size != 0 && address + size > address && Read(address, &b, 1) && Read(address + size - 1, &b, 1);
+    return Read(address, &b, 1) && Read(address + size - 1, &b, 1);
 }
 bool Write(std::uint64_t address, const void* in, std::size_t size) {
     const Nx2PluginApi* api = g_api.load(std::memory_order_acquire);
@@ -820,8 +1268,16 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
 void Frame(Core::System&, std::uint64_t, const std::optional<coop::host::PlayerReading>& reading,
            coop::host::Session* session) {
     const auto& hooks = CoopNx2navi::Up::g_hooks;
+    if (reading) {
+        const float at[3] = {reading->position[0], reading->position[1], reading->position[2]};
+        CoopNx2navi::Objects::Brain::NoteOurLink(at, CoopNx2navi::Up::OurLinkAlive());
+    } else {
+        CoopNx2navi::Objects::Brain::NoteOurLink(nullptr, CoopNx2navi::Up::OurLinkAlive());
+    }
     if (hooks.frame != nullptr) {
+        const std::uint64_t ours_begin = CoopNx2navi::Up::SteadyUs();
         hooks.frame(reading, session, hooks.user);
+        CoopNx2navi::Up::g_ours_us.fetch_add(CoopNx2navi::Up::SteadyUs() - ours_begin, std::memory_order_relaxed);
     }
 }
 std::vector<std::string> TakeLines() {

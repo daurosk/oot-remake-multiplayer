@@ -54,6 +54,10 @@ std::vector<std::string> TakeOutbox();
 // Any thread: a line that fades after a few seconds. A chat line also goes to
 // the history the chat box shows.
 void Notice(std::string text, bool chat = false);
+// Another player's item lines since the last ask (the item-get moment, item_get.hpp).
+std::vector<std::string> TakeItemLines();
+// The game's menu was open at the last overlay frame.
+bool MenuOpen();
 
 // Takes the callbacks out and gives the input back if the chat box held it.
 // Any thread; the DLL's stop export calls it.

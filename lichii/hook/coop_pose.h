@@ -156,6 +156,9 @@ void SetLog(std::function<void(const std::string&)> log, bool debug, bool as_too
 // Calc thread: whether the pose copy drives this player's puppet now (poses
 // arrived in the last kFreshMs), so the director plays no AS command on it.
 bool Drives(std::uint8_t number, std::uint64_t now_ms);
+// Our own pose stops being read for the others while frozen: they keep the last one (an item-get scene the
+// NX2navi port plays here for another player's item: the others would see our puppet hold up an empty hand).
+void FreezeOwnPose(bool frozen);
 inline constexpr std::uint64_t kFreshMs = 1000;
 
 }  // namespace CoopPose

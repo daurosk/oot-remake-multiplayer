@@ -3,6 +3,23 @@
 
 namespace CoopNx2navi::Teleport {
 
+const Peer* RegroupChoice(std::span<const Peer> peers, const std::optional<std::string>& died_scene) {
+    const Peer* best = nullptr;
+    int best_rank = 0;
+    for (const Peer& p : peers) {
+        if (!p.fresh || !p.scene || p.busy || p.number == 0 || p.number > 4 || (p.alive && !*p.alive)) {
+            continue;
+        }
+        // Lower is better: same scene first, then the host, then the lower number.
+        const int rank = (died_scene && *p.scene == *died_scene ? 0 : 100) + (p.host ? 0 : 10) + p.number;
+        if (best == nullptr || rank < best_rank) {
+            best = &p;
+            best_rank = rank;
+        }
+    }
+    return best;
+}
+
 std::optional<Auto::Want> Auto::Tick(const std::optional<std::string>& scene, bool self_host,
                                      std::span<const Peer> peers, std::uint64_t now_us) {
     if (!scene) {
@@ -44,19 +61,7 @@ std::optional<Auto::Want> Auto::Tick(const std::optional<std::string>& scene, bo
                 died_us_ = 0;
             }
         } else if (now_us - in_game_since_us_ >= kJoinSettleUs) {
-            const Peer* leader = nullptr;
-            for (const Peer& p : peers) {
-                if (!p.fresh || !p.scene || p.number == 0 || p.number >= together_.size()) {
-                    continue;
-                }
-                if (p.host) {
-                    leader = &p;
-                    break;
-                }
-                if (options_.follow == FollowMode::anyone && leader == nullptr) {
-                    leader = &p;
-                }
-            }
+            const Peer* leader = RegroupChoice(peers, died_scene_);
             if (leader != nullptr) {
                 died_us_ = 0;
                 pending_ = Pending{leader->number, leader->name, Why::regroup, now_us + kKeepUs, now_us, true};
@@ -115,12 +120,13 @@ void Auto::Done(std::uint8_t player) {
     }
 }
 
-void Auto::Died(std::uint64_t now_us) {
+void Auto::Died(std::uint64_t now_us, std::optional<std::string> scene) {
     if (options_.follow == FollowMode::off || died_us_ != 0) {
         return;
     }
     died_us_ = now_us != 0 ? now_us : 1;
     died_reloaded_ = false;
+    died_scene_ = std::move(scene);
 }
 
 void Auto::Reset() {

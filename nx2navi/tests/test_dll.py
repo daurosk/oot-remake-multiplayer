@@ -418,7 +418,7 @@ class Case(unittest.TestCase):
         self.assertEqual(code, 0, out + log)
         self.assertIn('game thread: frame callback registered', log)
         self.assertIn('teleport: on (/teleport <player> in chat); join at the host: on; follow through '
-                      'exits: the host', log)
+                      'exits: anyone', log)
         self.assertIn('callbacks frame 1 overlay 0 key 0 text 0', out)
         self.assertNotIn('guest call of', out)
         self.assertIn('callbacks left after stop 0', out)

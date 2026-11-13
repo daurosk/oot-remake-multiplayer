@@ -296,6 +296,7 @@ int main(int argc, char** argv) {
     options.session.join_password = line->password;
     options.session.pvp = line->pvp;
     options.session.nearest_owner = line->owner_nearest;
+    if (line->owner_nearest) options.session.owner_dead_us = 1'000'000;  // off a dead player at once
     if (line->owner_hold_ms) options.session.owner_hold_us = std::uint64_t{*line->owner_hold_ms} * 1000;
     options.bind = line->bind;
     options.session.log = [](const std::string& text) {

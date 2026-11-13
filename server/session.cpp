@@ -498,6 +498,8 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     }
   } else if (const auto* st = std::get_if<PlayerStatus>(&message)) {
     on_status(c, st->flags, now_us);
+  } else if (const auto* life = std::get_if<PlayerLife>(&message)) {
+    on_life(c, life->life, now_us);
   }
   if (sender_of(message)) set_sender(message, c.number);
   send_to_others(id, channel, message);
@@ -719,6 +721,7 @@ namespace {
 // Bits of PLAYER_STATUS that keep a player from being given an object.
 constexpr std::uint8_t kBusy = status::loading | status::paused | status::dead;
 
+constexpr std::uint64_t kAliveHoldUs = 3'000'000;  // a dead player's life above 0 this long: alive
 constexpr std::uint8_t kFighting = object_presence::in_fight | object_presence::targeting;
 
 double metres(const Vec3& a, const Vec3& b) {
@@ -743,9 +746,32 @@ void Session::on_status(Connection& c, std::uint8_t flags, std::uint64_t now_us)
       when = stamp(now_us);
     }
   };
+  // A player whose life is 0 is dead whatever its status says (on_life).
+  if (c.life_dead) flags |= status::dead;
   since(status::paused, c.paused_since);
   since(status::dead, c.dead_since);
   c.status = flags;
+}
+
+// PLAYER_LIFE: a player at life 0 (dying, on the Game Over screen, not back
+// yet) is dead for the ownership rules until a life above 0 is seen again:
+// nothing is handed to its game, and what it owns goes to a living player
+// after owner_dead_us. No game sets status::dead itself.
+void Session::on_life(Connection& c, std::uint16_t life, std::uint64_t now_us) {
+  // The life read during the death and the Game Over screen is not always 0
+  // (seen in two games: the enemies went back to the dead player's game for
+  // a second, five times in twenty seconds), so a dead player is alive again
+  // only once a life above 0 has stood for kAliveHoldUs (run_ownership).
+  if (life == 0) {
+    c.alive_since = 0;
+    if (c.life_dead) return;
+    c.life_dead = true;
+    c.status |= status::dead;
+    if (c.dead_since == 0) c.dead_since = stamp(now_us);
+    ++stats_.players_died;
+  } else if (c.life_dead && c.alive_since == 0) {
+    c.alive_since = stamp(now_us);
+  }
 }
 
 // PLAYER_SAMPLE and OBJECT_PRESENT each say the scene, from different threads
@@ -1560,6 +1586,15 @@ void Session::fish_owner(const ObjectId& oid, Object& o, ConnectionId owner, boo
 }
 
 void Session::run_ownership(std::uint64_t now_us) {
+  // Back from the dead: a life above 0 that has held kAliveHoldUs (on_life).
+  for (auto& [cid, c] : connections_) {
+    if (c.life_dead && c.alive_since != 0 && now_us - c.alive_since >= kAliveHoldUs) {
+      c.life_dead = false;
+      c.alive_since = 0;
+      c.status = static_cast<std::uint8_t>(c.status & ~status::dead);
+      c.dead_since = 0;
+    }
+  }
   std::vector<ObjectId> ids;
   ids.reserve(objects_.size());
   for (const auto& entry : objects_) ids.push_back(entry.first);

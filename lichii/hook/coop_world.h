@@ -121,6 +121,12 @@ bool IsFallTaken(std::string_view name);
 // from where it started sends it (from up to kShifterReachM), and the others
 // hold it at that place until it is back home.
 bool IsGimmickMover(std::string_view name);
+// A ride (the Shadow Temple's boat, `Obj_ShadowTemple_PaddleShip_*`, also in the boss rush's StalfosStage):
+// a gimmick mover whose trip one game decides for everyone. The first game whose ride leaves its home sends
+// the trip; the others hold their boat on it every frame, carry their own Link with it while he stands on its
+// deck (the setter's warp does not take him along), and pull a Link left at the dock aboard beside a friend
+// who rides it. Off with LICHII_COOP_RIDES=0 (each game rides its own, as before).
+bool IsRide(std::string_view name);
 // A shifter held for good at a place another game gave (its AI would put it
 // back); the rest settle as blocks do.
 bool HoldsPlace(std::string_view name);
@@ -263,6 +269,34 @@ bool SignWordWritable(std::uint64_t current, std::uint64_t value);
 // from the run of 2026-11-10), as SIGN_CUT keys: only these are sent and
 // written, into components the probe has read 0x200 bytes of.
 bool SignCutKeyAllowed(std::uint64_t key);
+
+// The cutter's hit (docs/world.md, "Signs: the hit itself"). A sign's AI node
+// (ExecuteCuttableSignboardControl, update main+0xa35200) cuts in
+// main+0x266f960 from the hit its Life component holds: the place (+0x27c),
+// the blade's line (+0x288) and its travel (+0x294), valid by the bits of
+// +0x2b8, the kind of cut by +0x2be. The game clears the kind and the bits
+// once the hit is taken; the place, the two vectors and the hitter's place
+// (+0x278..+0x2b0, kSignHitWords words) stay. So the game whose sword hit a
+// sign sends those words in a SIGN_CUT under the Life component's region
+// (key offset = byte offset - kSignHitFrom), once per hit, and every other
+// game gives its sign a sword slash with them (Mover::Replay, the record of a
+// Master Sword slash on a sign): its own AI makes the same cut. A build that
+// does not know these keys leaves them out (SignCutKeyAllowed).
+inline constexpr std::uint64_t kSignHitRegion = 2 + 0x2b8 / 8;
+inline constexpr std::uint64_t kSignHitFrom = 0x278;
+inline constexpr std::size_t kSignHitWords = (0x2b0 - 0x278) / 8;  // 7
+// The hit in a SIGN_CUT's words, in order, when every word of it is there
+// and its floats are finite; else empty.
+std::vector<std::uint64_t> SignHitRecord(const std::vector<coop::protocol::SignWord>& words);
+// The same check on words read from a Life component.
+bool SignHitValid(const std::vector<std::uint64_t>& record);
+// The sign actor a cutter's hit was last given to (Mover::Replay), for the
+// build's glue: the game's cut routine also wants the blade to touch the
+// board at that moment (docs/world.md, "Signs: the blade's contact"), which
+// only code inside the game's own call can answer. 0 when none was given in
+// the last `within_ms`.
+void NoteGivenSignHit(std::uint64_t actor);
+std::uint64_t GivenSignHitActor(std::uint64_t within_ms);
 
 // A dungeon gimmick: a switch, a water plane, a shutter, a torch, a lift or
 // a moving floor (docs/dungeon.md "Live dungeon actions"); for the
@@ -440,6 +474,23 @@ public:
     static constexpr std::uint64_t kHitEveryUs = 300'000;  // per sign
     static constexpr std::uint64_t kHitWaitUs = 300'000;   // a sign just loaded is hit this late
     static constexpr std::uint64_t kCutAfterHitUs = 200'000;  // cut words this long after its hit
+    static constexpr bool kSwingAsHit = false;               // WORLD_HIT as a stand-in hit (see Tick)
+    static constexpr float kSignWatchM = 8.0f;               // a sign's Life hit is read this near our Link
+    static constexpr std::uint64_t kSwingHitUs = 1'500'000;  // a hit this long after our swing passed is ours
+    static constexpr std::uint64_t kGivenQuietUs = 400'000;  // after a hit given to our sign, its Life is not ours
+    static constexpr std::uint64_t kRecordKeepsUs = 5'000'000;  // no cut words this long after a cutter's hit
+    // Rides (IsRide). Aboard: our Link this high above the boat's place (its deck is 7 m above it) and
+    // this near it level (the boat is about 25 m long).
+    static constexpr float kAboardLowM = 4.0f;
+    static constexpr float kAboardHighM = 11.0f;
+    static constexpr float kAboardLevelM = 14.0f;
+    static constexpr float kDeckHighM = 7.0f;          // the deck above the boat's place (StalfosStage)
+    static constexpr float kRideLeftM = 3.0f;          // another game's boat this far from home: the trip began
+    static constexpr float kDockNearM = 30.0f;         // our Link this near our boat's home: at the dock
+    static constexpr float kSunkM = 1.5f;              // a boat this far below home is sinking: nobody is pulled
+    static constexpr std::uint64_t kPullEveryUs = 3'000'000;
+    static constexpr int kPullsMax = 20;               // per visit of the scene (a fall respawns at the dock)
+    static constexpr std::uint64_t kPullHoldUs = 300'000;  // the pull's place is written this long
     static constexpr float kAnchorNearM = 0.5f;          // a block's base anchor is this near its old rest
     static constexpr std::uint64_t kAnchorHoldUs = 1'000'000;  // the anchor is put at the new rest this long
 
@@ -456,6 +507,11 @@ public:
             std::uint64_t address = 0;
             coop::protocol::Vec3 at{};
             coop::protocol::Vec3 from{};
+            // The cutter's own hit as the game left it in its sign's Life
+            // component (+0x278..+0x2b0, kSignHitWords): given as a sword
+            // slash, so the sign's AI cuts along the same blade line. Empty:
+            // the stand-in hit.
+            std::vector<std::uint64_t> record;
         };
         std::vector<Hit> hits;
         // Words of another player's cut to write into our sign (SIGN_CUT):
@@ -513,6 +569,9 @@ public:
     void Swing(const coop::protocol::GrassCut& cut,
                const std::optional<coop::protocol::Vec3>& player, std::uint64_t now_us, Out& out);
 
+    // Present thread, before Tick: where the other players' Links (their puppets) stand here (a ride's pull
+    // aboard puts our Link beside one who rides it).
+    void NotePuppets(const std::vector<coop::protocol::Vec3>& at) { puppets_ = at; }
     // Present thread, every frame: where the copies another game moves go.
     void Poses(std::uint64_t now_us, std::vector<CoopObjects::PoseWrite>& out) const;
     // This actor's place is ours to decide: the enemy sharing must not place it.
@@ -577,6 +636,10 @@ private:
         bool breakable = false;
         bool grass = false;
         bool sign = false;
+        std::vector<std::uint64_t> hit_seen;  // a sign: its Life hit words as last read
+        bool hit_read = false;                // read at least once
+        std::uint64_t swing_us = 0;           // a sign: our sword last passed it
+        std::uint64_t record_us = 0;          // a sign: a cutter's own hit was last given to it
         bool faller = false;  // IsFaller: falls and stays, never moved or deleted
         bool key = false;     // IsLyingKey or IsGoldToken: its taking is a break
         std::string count;    // the count it adds to (KeyCountOf, kTokenCount)
@@ -606,7 +669,9 @@ private:
         bool following = false;            // another game's moves are placed
         bool stirred = false;              // moved since the walk before
         bool roller = false;               // IsRoller: rolls on its own
-        bool mover = false;                // IsGimmickMover (home: first_position)
+        bool mover = false;                // IsGimmickMover or IsRide (home: first_position)
+        bool ride = false;                 // IsRide
+        bool aboard = false;               // a ride: our Link stood on its deck at the last walk
         std::uint32_t place_seen = 0;      // the rest place we last took (Remote::place_serial)
         std::optional<coop::protocol::Vec3> follow_from;  // where it rested before another game moved it
         std::uint64_t settle_us = 0;       // when we took it
@@ -637,6 +702,8 @@ private:
     void Move(Object& o, std::uint8_t self, std::uint64_t now_us,
               const std::optional<coop::protocol::Vec3>& player, Out& out);
     std::optional<Sample> PoseAt(const Remote& r, std::uint64_t now_us) const;
+    // Rides (IsRide), after the moves of a Tick: who is aboard, and a Link left at the dock pulled aboard.
+    void Rides(std::uint64_t now_us, Out& out);
 
     std::string scene_;
     std::uint64_t scene_since_ = 0;
@@ -675,6 +742,16 @@ private:
     std::vector<coop::protocol::Message> early_;  // for a scene we are not in yet
     std::uint8_t self_ = 0;
     std::optional<coop::protocol::Vec3> player_;  // our Link at the last Tick
+    // A ride's pull of our Link aboard (Rides): written by Poses until `until_us`.
+    struct Pull {
+        coop::protocol::Vec3 to{};
+        std::uint64_t until_us = 0;
+    };
+    Pull pull_;
+    std::vector<coop::protocol::Vec3> puppets_;  // NotePuppets
+    int pulls_ = 0;                 // this visit of the scene
+    std::uint64_t pulled_us_ = 0;   // the last pull
+    std::uint64_t ride_log_us_ = 0; // the once-a-second ride line
     SignProbe probe_;
 
     mutable std::mutex inbox_mutex_;

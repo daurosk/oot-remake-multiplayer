@@ -368,8 +368,9 @@ overlay = @OVERLAY@
 #         files into this mod's romfs folder). 0: they are not shown.
 puppet = @PUPPET@
 # follow: whom your game follows through exits: when that player walks into another
-#         area, your game loads it too, at the entrance they took. host (the usual
-#         one), anyone (every player you share an area with) or off.
+#         area, your game loads it too, at the entrance they took. anyone (the
+#         usual one: every player you share an area with, so nobody is left in
+#         another area), host (the host only) or off.
 follow = @FOLLOW@
 # join_at_host: 1 puts your Link next to the host once, when you get into the game
 #         while the host is playing. 0: you stay where your save put you.
@@ -396,13 +397,13 @@ JOIN_LOCAL = 'Join over Local Network'
 
 
 def write_coop_ini(path, server, port, name, password='', share_progress=True, overlay=True,
-                   puppet=True, follow='host', join_at_host=True, objects=True, host_save=False):
+                   puppet=True, follow='anyone', join_at_host=True, objects=True, host_save=False):
     """Writes coop.ini. An empty server, name or password leaves that line commented
     out, so co-op is off without an error in the log. CRLF, UTF-8, no byte order mark."""
     values = {'@SERVER@': server, '@PORT@': str(port), '@NAME@': name, '@PASSWORD@': password,
               '@SHARE@': '1' if share_progress else '0', '@OVERLAY@': '1' if overlay else '0',
               '@PUPPET@': '1' if puppet else '0',
-              '@FOLLOW@': follow if follow in FOLLOW_MODES else 'host',
+              '@FOLLOW@': follow if follow in FOLLOW_MODES else 'anyone',
               '@JOIN_AT_HOST@': '1' if join_at_host else '0', '@OBJECTS@': '1' if objects else '0',
               '@HOST_SAVE@': '1' if host_save else '0'}
     out = []
@@ -605,7 +606,7 @@ class Multiplayer:
     def _load(self):
         defaults = {'name': '', 'port': DEFAULT_PORT, 'host_address': '', 'join_password': '',
                     'server_password': '', 'share_progress': True, 'overlay': True, 'puppet': True,
-                    'follow': 'host', 'join_at_host': True, 'objects': True, 'host_save': True,
+                    'follow': 'anyone', 'join_at_host': True, 'objects': True, 'host_save': True,
                     'stop_server_with_game': False,
                     'server_allow': '', 'server_bind': ''}
         try:
@@ -629,7 +630,7 @@ class Multiplayer:
         if not valid_port(defaults['port']):
             defaults['port'] = DEFAULT_PORT
         if defaults['follow'] not in FOLLOW_MODES:
-            defaults['follow'] = 'host'
+            defaults['follow'] = 'anyone'
         return defaults
 
     def _save(self):
@@ -762,8 +763,9 @@ class Multiplayer:
                             'folder; nothing of your game leaves this PC.'),
             api.toggle('Follow The Host Through Exits', lambda: self.settings['follow'] != 'off',
                        self.set_follow,
-                       desc='When the host walks into another area, your game loads that area too, at '
-                            'the entrance the host took. It waits for your cutscene or talk to end. '
+                       desc='When another player you share an area with walks into another area, your '
+                            'game loads that area too, at the entrance they took, so nobody is left '
+                            'behind. It waits for your cutscene or talk to end. '
                             'Needs an NX2navi build with its plugin interface. In the game\'s chat box, '
                             '/teleport <name> takes you to a player at any time.'),
             api.toggle('Join At The Host', lambda: bool(self.settings['join_at_host']),
@@ -853,11 +855,11 @@ class Multiplayer:
         self._changed()
 
     def set_follow(self, value):
-        # 'anyone' can only be set by hand (the launcher's settings file); the toggle keeps it.
+        # 'host' can only be set by hand (the launcher's settings file); the toggle keeps it.
         if not value:
             self.settings['follow'] = 'off'
         elif self.settings['follow'] == 'off':
-            self.settings['follow'] = 'host'
+            self.settings['follow'] = 'anyone'
         self._changed()
 
     def set_objects(self, value):

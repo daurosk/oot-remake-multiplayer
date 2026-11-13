@@ -2,6 +2,7 @@
 // Going to another player (teleport.hpp).
 #include "teleport.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
@@ -101,7 +102,10 @@ struct Answered {
     coop::protocol::JoinRefuseReason reason{};
 };
 
+std::atomic<std::optional<bool> (*)(std::uint8_t)> g_peer_alive{nullptr};
+
 struct Glue {
+    std::optional<std::string> last_scene;  // our Link's last scene (it is gone at the death)
     void (*log)(const char* line) = nullptr;
     bool configured = false;
 
@@ -153,6 +157,10 @@ struct Glue {
     CoopTeleport::Vec target_at{};
     std::uint64_t said_ask_us = 0;
     bool arrive_event = false;      // SetArriveEvent
+    bool follow_event = [] {        // OOT_COOP_FOLLOW_EVENT=0: no event of ours for a trip's scene change
+        const char* e = std::getenv("OOT_COOP_FOLLOW_EVENT");
+        return !(e != nullptr && *e == '0');
+    }();
     std::uint64_t frames = 0;       // game frames seen
     std::uint64_t event_frame = 0;  // `frames` when the scene event was last started; 0: not in this trip
     // TestGoto: the places still to go to, and since when our Link is in the game.
@@ -257,7 +265,7 @@ void Logic(Glue& g, CoopPuppet::Guest& guest, std::uint64_t main) {
         want = std::exchange(g.want, std::nullopt);
         answers = std::exchange(g.answers, {});
         if (std::exchange(g.died, false) && connected) {
-            g.automatic.Died(now);
+            g.automatic.Died(now, g.local.scene ? g.local.scene : g.last_scene);
         }
     }
     GuestMemory memory(guest, main);
@@ -276,7 +284,9 @@ void Logic(Glue& g, CoopPuppet::Guest& guest, std::uint64_t main) {
         }
     }
 
-    if (!g.gotos.empty() && local.scene) {
+    // A test move waits while our Link is in an event (a get scene's text box, a cutscene): run ig1 moved the
+    // joiner under its own open item-get box.
+    if (!g.gotos.empty() && local.scene && !local.event) {
         if (g.in_game_us == 0) {
             g.in_game_us = now;
         }
@@ -407,6 +417,17 @@ void Logic(Glue& g, CoopPuppet::Guest& guest, std::uint64_t main) {
             // keeps the old scene's start name and the picture stays black.
             const bool asked =
                 main != 0 && !act.start.empty() && AskScene(g, memory, *act.scene, act.start);
+            // This port starts the game's short event that carries a requested scene change, as its own test
+            // scene change does (the shared trip leaves it to the player's next talk or sign: on the emulator a
+            // load carried by it left Link stuck, issue 197; on NX2navi Link is playable after such a load, runs
+            // sc2, bk8: the block pulled right after it). Without it a follower stood in the old area until the
+            // player talked to someone (run fo1). OOT_COOP_FOLLOW_EVENT=0: the shared rule.
+            if (asked && g.follow_event && !local.event) {
+                act.start_event = true;
+            }
+            if (g.follow_event) {
+                std::erase(act.lines, std::string("teleport: talk to someone or read a sign within a minute to go there"));
+            }
             if (!asked || now - g.said_ask_us > 3'000'000) {
                 g.said_ask_us = now;
                 g.Log("teleport: scene change to %s at %s: %s", act.scene->c_str(),
@@ -480,6 +501,8 @@ void Configure(const Auto::Options& options, void (*log)(const char* line)) {
                                                  : "off");
 }
 
+void SetPeerAlive(std::optional<bool> (*alive)(std::uint8_t)) { g_peer_alive.store(alive); }
+
 void Died() {
     Glue& g = TheGlue();
     std::lock_guard lock(g.mutex);
@@ -488,6 +511,13 @@ void Died() {
 
 void SetArriveEvent(bool on) {
     TheGlue().arrive_event = on;
+}
+
+bool Travelling() {
+    Glue& g = TheGlue();
+    std::lock_guard lock(g.mutex);
+    const auto phase = g.trip.phase();
+    return phase != Trip::Phase::idle || g.move.has_value() || !g.gotos.empty();
 }
 
 void TestGoto(std::string_view spec) {
@@ -662,6 +692,9 @@ void Frame(const std::optional<coop::host::PlayerReading>& reading, coop::host::
                 peer.name = player.nickname.empty() ? "P" + std::to_string(player.number)
                                                     : player.nickname;
                 peer.host = player.number == room.host;
+                if (const auto alive_of = g_peer_alive.load(); alive_of != nullptr) {
+                    peer.alive = alive_of(player.number);
+                }
                 if (const auto* p = presence.player(player.number)) {
                     peer.scene = p->scene();
                     if (!p->samples().empty()) {
@@ -680,6 +713,9 @@ void Frame(const std::optional<coop::host::PlayerReading>& reading, coop::host::
         std::lock_guard lock(g.mutex);
         g.answer =
             game_thread ? CoopTeleport::AnswerFor(local, g.grounded) : CoopTeleport::Answer{};
+        if (local.scene) {
+            g.last_scene = local.scene;
+        }
         g.local = std::move(local);
         g.peers = std::move(peers);
         g.self_host = self_host;

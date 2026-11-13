@@ -1639,7 +1639,15 @@ private:
             const auto found = story_watch_.Frame(running, [&] {
                 return CoopLiveEvents::FindRunningEvent(&ReadGuest, &*memory, base_, names);
             });
-            if (found && shared_joiner_.Ours(*found, here.scene)) {
+            // A cutscene our game starts while our Link has no life left (the Game Over's own, the
+            // respawn at a dungeon's entrance) is ours alone: shared, it took a living player out of a
+            // boss fight to the dungeon's entrance (NX2navi run bo3, Dm_ForestTemple_0016).
+            const auto hearts = CoopObjects::OurLife();
+            const bool dead_here = hearts && hearts->max > 0 && hearts->life <= 0;
+            if (found && dead_here) {
+                LOG_INFO(Core, "coop: cutscene: {} started while our Link is dead: not shared", *found);
+            }
+            if (found && !dead_here && shared_joiner_.Ours(*found, here.scene)) {
                 proto::DungeonEvent e;
                 e.scene = here.scene;
                 e.name = *found;

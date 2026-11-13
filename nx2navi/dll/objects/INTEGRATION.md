@@ -260,3 +260,20 @@ The older rules below are 0.7's.
 `build.py` builds `lichii/hook` unchanged and `dll/upstream.cpp` drives it; of this folder it uses `brain.cpp`, `hold.cpp`, `anim_probe.cpp` and `world_probe.cpp` only. Two things of that build belong to shared enemies: the spawner's wait for a copy is 20 s there (`-DLICHII_COOP_SPAWN_CREATE_TIMEOUT_MS=20000`; with the hook's own 3 s the second player of two games on one PC got no Stalchild copies at all), and the hook's `objects: list head` line is logged once a minute. `nx2navi/README.md`, "Since the afternoon of 2026-11-13", has the runs.
 
 Since 14:00 of 2026-11-13 two more things of that build touch what this folder is about: the hook's reads no longer go through a kept `map_range` page (a crash in a load, run `wd1`; every read is the interface's own `read`), and the hook's clock rule is narrowed for this build (`-DLICHII_COOP_TIME_RESYNC_SECONDS=180 -DLICHII_COOP_TIME_SET_EVERY_US=15000000`: a guest's clock is set again when it is three in-game minutes from the host's). An enemy that changes owner still plays its own first animation in the new owner's game (a Stalchild: "Disappear"): not changed.
+
+Since 15:00 of 2026-11-13 (nx2navi/README.md, "Since 15:00 of 2026-11-13"): a sign another player cut is cut here by the game's own routine (the shared code gives the cutter's hit; `dll/upstream.cpp` `OnSignGate`, a hook of main+0x266f960, supplies the blade's contact the routine asks for); the mod's server takes a player at life 0 as dead (`server/session.cpp` `on_life`: skipped by the owner rules, its enemies handed over after 1 s, alive again once a life above 0 has stood for 3 s); `tests/objects/build_tests.py` also runs the shared code's `tests/lichii/world_test.cpp`. An enemy that changes owner still plays "Disappear" (not changed).
+
+Since 17:00 of 2026-11-13 (nx2navi/README.md, "Since 17:00 of 2026-11-13"), `brain.cpp` does more than leave a held copy's AI update out:
+- It hooks the game's action-verb call (main+0xc08f0). Verb 96, the Stalchild's "Disappear", is refused for held copies, and for an owned Stalchild whose own Link is dead or far while another living player is near.
+- A Stalchild that just became ours gets our Link as its brain target (main+0x88efe0, target slot `[[actor+0x270]+0x418]+0x28`), and for its first 300 updates a burrow request becomes a walk to our Link.
+- The Stalchild's two return distances in its parameter file (a byml dictionary under `[[actor+0x290]+0x158]+0x278`) are widened for the updates a held copy runs.
+- `upstream.cpp` feeds it our Link's actor, life and place and the other living players' places (`Brain::NoteOurLink`, `NoteOurPlayer`, `NoteOthers`).
+- The status line counts all of it ("burrows: ... refused (copies), ... turned to us, ... let, ... held for a living player, ... aimed at our Link").
+- `lichii/hook/coop_objects.cpp` keeps a released copy at its shown place for `LICHII_COOP_RELEASE_SETTLE_FRAMES` frames (this build 12; upstream 0).
+
+Since 21:00 of 2026-11-13 (nx2navi/README.md, "Since 21:00 of 2026-11-13"):
+- `lichii/hook/coop_world.{h,cpp}`: the Shadow Temple's boat is a ride (`IsRide`, `WorldSync::Rides`). The first game whose boat leaves sends the trip as a gimmick mover; the others hold theirs on it.
+- `PoseWrite` (`coop_objects_sync.h`) has two flags. `carry_our_link`: our Link on a held ride's deck is moved with it by the Mover (`RideAnchor`, which keeps his offset on the deck). `our_link`: a pose for our own Link (the pull aboard).
+- The walk hands the puppets' places to `WorldSync::NotePuppets`.
+- `coop_pose.{h,cpp}`: `FreezeOwnPose`, used by this port while it plays the game's item-get scene for another player's item.
+- Floor switches (`dll/step_switch.*`) and the item-get moment (`dll/item_get*`) are this port's own and do not touch this folder.

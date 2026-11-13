@@ -76,9 +76,14 @@ void Frame(const std::optional<coop::host::PlayerReading>& reading, coop::host::
 // Frame thread: our Link has no life left (Game Over). After the game's reload
 // this game goes to the player it follows (teleport_auto.hpp, Died).
 void Died();
+// Where a player's life comes from (nothing: not known; false: no life left), for the
+// way back after a Game Over (teleport_auto.hpp, RegroupChoice). Null: not known.
+void SetPeerAlive(std::optional<bool> (*alive)(std::uint8_t player));
 
 // The notices since the last call, for the in-game panel.
 std::vector<std::string> TakeLines();
+// A trip of ours (a follow, a join, a test move) is under way: no item-get scene starts meanwhile (item_get.hpp).
+bool Travelling();
 
 // The game's thread, as CoopPuppet::Director::Step is asked: once a frame
 // with after_call false, then again after each call it returned.

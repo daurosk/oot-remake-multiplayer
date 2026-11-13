@@ -267,7 +267,7 @@ class Ini(unittest.TestCase):
             self.assertEqual(plugin.read_coop_ini(path),
                              {'server': '127.0.0.1', 'port': '27510', 'name': 'Saria', 'password': 'pw',
                               'share_progress': '1', 'overlay': '1', 'puppet': '1',
-                              'follow': 'host', 'join_at_host': '1', 'objects': '1', 'host_save': '0'})   # shared enemies: on unless asked
+                              'follow': 'anyone', 'join_at_host': '1', 'objects': '1', 'host_save': '0'})   # shared enemies: on unless asked
             plugin.write_coop_ini(path, '26.1.2.3', 27510, 'Saria', '', host_save=True)
             self.assertEqual(plugin.read_coop_ini(path)['host_save'], '1')
             plugin.write_coop_ini(path, '127.0.0.1', 27510, 'Saria', '', objects=False)
@@ -276,7 +276,7 @@ class Ini(unittest.TestCase):
             self.assertEqual(plugin.read_coop_ini(path)['follow'], 'anyone')
             self.assertEqual(plugin.read_coop_ini(path)['join_at_host'], '0')
             plugin.write_coop_ini(path, '127.0.0.1', 27510, 'Saria', '', follow='nonsense')
-            self.assertEqual(plugin.read_coop_ini(path)['follow'], 'host')
+            self.assertEqual(plugin.read_coop_ini(path)['follow'], 'anyone')
             plugin.write_coop_ini(path, '127.0.0.1', 27510, 'Saria', '', False, overlay=False, puppet=False)
             self.assertEqual(plugin.read_coop_ini(path)['puppet'], '0')
             plugin.write_coop_ini(path, '127.0.0.1', 27510, 'Saria', '', False, overlay=False)
@@ -402,20 +402,20 @@ class Menus(unittest.TestCase):
         self.assertEqual(self.api.settings['join_password'], '')
         rows['Shared Progress']['set'](True)
         self.assertTrue(self.api.settings['share_progress'])
-        # Follow and the join at the host: on unless turned off; 'anyone' (set by hand) is kept.
+        # Follow and the join at the host: on unless turned off; 'host' (set by hand) is kept.
         self.assertTrue(rows['Follow The Host Through Exits']['get']())
         self.assertTrue(rows['Join At The Host']['get']())
         rows['Follow The Host Through Exits']['set'](False)
         self.assertEqual(self.api.settings['follow'], 'off')
         rows['Follow The Host Through Exits']['set'](True)
-        self.assertEqual(self.api.settings['follow'], 'host')
-        self.api.settings['follow'] = 'anyone'
+        self.assertEqual(self.api.settings['follow'], 'anyone')
+        self.api.settings['follow'] = 'host'
         again = plugin.Multiplayer(self.api)
         again.set_follow(True)
-        self.assertEqual(self.api.settings['follow'], 'anyone')
+        self.assertEqual(self.api.settings['follow'], 'host')
         again.set_follow(False)
         again.set_follow(True)
-        self.assertEqual(self.api.settings['follow'], 'host')
+        self.assertEqual(self.api.settings['follow'], 'anyone')
         rows['Join At The Host']['set'](False)
         self.assertFalse(self.api.settings['join_at_host'])
         self.assertTrue(rows['Shared Enemies']['get']())   # on unless turned off (since coop-dll 0.7)
@@ -493,7 +493,7 @@ class Menus(unittest.TestCase):
         self.assertEqual(plugin.read_coop_ini(ini),
                          {'server': '26.1.2.3', 'port': '4000', 'name': 'Saria', 'password': 'letmein',
                           'share_progress': '1', 'overlay': '1', 'puppet': '1',
-                          'follow': 'host', 'join_at_host': '1', 'objects': '1',
+                          'follow': 'anyone', 'join_at_host': '1', 'objects': '1',
                           # A joiner takes the host's save first (on unless turned off).
                           'host_save': '1'})
         self.assertEqual(self.api.plays, [{'env': {'OOT_COOP_INI': str(ini)}, 'dlls': [plugin.DLL]}])

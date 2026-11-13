@@ -132,6 +132,9 @@ public:
         return std::nullopt;
     }
 
+    // A message of one game to the server, as its hook would send it.
+    void Tell(Game& g, const proto::Message& m) { Send(g, m); }
+
     std::uint8_t Owner(std::uint64_t hash) const {
         const auto o = server_.object_owner(proto::ObjectId{proto::ObjectKind::placed, 0, hash});
         return o ? o->first : 0;
@@ -475,6 +478,76 @@ TEST_CASE("two games, nearest owner: the nearest player's game gets the enemy wi
     const auto back = w.RunUntil(5 * kS, [&] { return w.Owner(kReDead) == 1; });
     REQUIRE(back.has_value());
     CHECK(*back <= 2500'000);  // the 1.5 s between two changes
+}
+
+// The user's rule (2026-11-13): once a player is dead, nothing goes for that player any more. The
+// server learns it from PLAYER_LIFE (no game sets the dead status flag).
+TEST_CASE("two games, nearest owner: a dead player's enemies go to the living player, and none comes back until it lives") {
+    coop::server::SessionConfig config;
+    config.nearest_owner = true;
+    config.owner_dead_us = 1'000'000;  // as the mod's server sets it
+    World w(config);
+    w.a.link = {0, 0, 0};
+    w.b.link = {0, 0, 30};
+    w.a.Add(kAddrA, "Enemy_ReDead", kReDead, {0, 0, 5}, 12);
+    w.b.Add(kAddrB, "Enemy_ReDead", kReDead, {0, 0, 5}, 12);
+    w.Run(4 * kS);
+    REQUIRE(w.Owner(kReDead) == 1);
+    // A dies beside it; B stands 25 m away, far beyond the margin of the distance rule.
+    w.Tell(w.a, proto::Message{proto::PlayerLife{proto::kPlayerSelf, 0, 24}});
+    const auto took = w.RunUntil(5 * kS, [&] { return w.Owner(kReDead) == 2; });
+    REQUIRE(took.has_value());
+    MESSAGE("the living player's game had it " << *took / 1000 << " ms after the other died");
+    CHECK(*took <= 2 * kS);
+    // The dead player's body is the nearest by far: it stays with the living one.
+    w.Run(6 * kS);
+    CHECK(w.Owner(kReDead) == 2);
+    // A life above 0 for a moment during the Game Over screen (seen in a game) changes nothing.
+    w.Tell(w.a, proto::Message{proto::PlayerLife{proto::kPlayerSelf, 3, 24}});
+    w.Run(kS);
+    w.Tell(w.a, proto::Message{proto::PlayerLife{proto::kPlayerSelf, 0, 24}});
+    w.Run(5 * kS);
+    CHECK(w.Owner(kReDead) == 2);
+    // Back to life (Recommencer): once the life has stood for 3 s the nearest player counts again.
+    w.Tell(w.a, proto::Message{proto::PlayerLife{proto::kPlayerSelf, 12, 24}});
+    const auto back = w.RunUntil(8 * kS, [&] { return w.Owner(kReDead) == 1; });
+    REQUIRE(back.has_value());
+    CHECK(*back >= 3 * kS);
+    CHECK(*back <= 5500'000);
+}
+
+TEST_CASE("two games, nearest owner: the owner dies and reloads: no duplicate, the life is kept") {
+    coop::server::SessionConfig config;
+    config.nearest_owner = true;
+    config.owner_dead_us = 1'000'000;
+    World w(config);
+    w.a.link = {0, 0, 0};
+    w.b.link = {0, 0, 12};
+    w.a.Add(kAddrA, "Enemy_ReDead", kReDead, {0, 0, 4}, 12);
+    w.b.Add(kAddrB, "Enemy_ReDead", kReDead, {0, 0, 4}, 12);
+    w.Run(4 * kS);
+    REQUIRE(w.Owner(kReDead) == 1);
+    w.a.At(kAddrA).life = 6;  // the fight so far, in the owner's game
+    w.Run(kS);
+    REQUIRE(w.b.At(kAddrB).life == 6);
+    // A dies: its enemy goes to B.
+    w.Tell(w.a, proto::Message{proto::PlayerLife{proto::kPlayerSelf, 0, 24}});
+    REQUIRE(w.RunUntil(5 * kS, [&] { return w.Owner(kReDead) == 2; }).has_value());
+    // A's game reloads the area (Recommencer): its enemy is gone, a fresh one at full life comes at another
+    // address, its Link back at the area's start, alive again.
+    w.a.actors.erase(kAddrA);
+    w.Run(kS);
+    constexpr std::uint64_t kAddrA2 = kAddrA + 0x10000;
+    w.a.Add(kAddrA2, "Enemy_ReDead", kReDead, {0, 0, 4}, 12);
+    w.a.link = {0, 0, 40};
+    w.Tell(w.a, proto::Message{proto::PlayerLife{proto::kPlayerSelf, 24, 24}});
+    w.Run(6 * kS);
+    // One object for the group, still B's, and the life the fight left in both games.
+    CHECK(w.Owner(kReDead) == 2);
+    CHECK(w.b.At(kAddrB).life == 6);
+    CHECK(w.a.At(kAddrA2).life == 6);
+    CHECK(w.b.actors.size() == 1);
+    CHECK(w.a.actors.size() == 1);
 }
 
 TEST_CASE("two games, nearest owner: two players side by side do not pass an enemy to and fro") {

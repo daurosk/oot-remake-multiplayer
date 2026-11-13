@@ -72,7 +72,10 @@
 #include "coop_game_build.h"
 #include "ai_probe.hpp"
 #include "guest_memory.hpp"
+#include "item_get.hpp"
+#include "coop_boss.h"
 #include "objects/objects.hpp"
+#include "objects/brain.hpp"
 #include "progress.hpp"
 #include "puppet_fx.hpp"
 #include "upstream.hpp"
@@ -1628,7 +1631,7 @@ CoopNx2navi::Settings SettingsFromFile(const std::filesystem::path& folder) {
     s.puppet = json.Bool("puppet").value_or(true);
     s.join_at_host = json.Bool("join_at_host").value_or(true);
     s.objects = json.Bool("objects").value_or(true);
-    const std::string follow = json.String("follow").value_or("host");
+    const std::string follow = json.String("follow").value_or("anyone");
     s.follow = follow == "off"      ? CoopNx2navi::Settings::Follow::off
                : follow == "anyone" ? CoopNx2navi::Settings::Follow::anyone
                                     : CoopNx2navi::Settings::Follow::host;

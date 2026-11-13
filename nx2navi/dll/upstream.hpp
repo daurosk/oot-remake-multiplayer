@@ -25,6 +25,7 @@
 //   session, each frame's reading and every network event.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -34,7 +35,9 @@
 #include "coop/host/player_reader.hpp"
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
+#include "puppet_fx.hpp"
 #include "settings.hpp"
+#include "step_switch.hpp"
 
 struct Nx2PluginApi;
 
@@ -65,14 +68,27 @@ bool SendChat(const std::string& text);
 // game's own sound system plays it on the puppet actor's sound user, so it comes from where the puppet
 // stands (upstream.cpp, "A puppet's own voice"). Any thread; made at a later frame step. Dropped when
 // that player has no live puppet here.
-void PuppetSound(std::uint8_t player, const std::string& asset);
+void PuppetSound(std::uint8_t player, const std::string& asset,
+                 std::vector<std::pair<std::uint8_t, std::uint32_t>> props = {});
+// Floor switches (step_switch.hpp): null when the hook is off (OOT_COOP_SWITCHES=0) or was refused.
+StepSwitch::Switches* Switches();
+std::uint64_t SwitchCalls();  // calls of the switch selector seen (status line)
+// The item-get moment (item_get.hpp): the game's get scene for this item actor beside our Link, or its fanfare.
+void AskItemScene(const std::string& actor, const std::array<float, 3>& at);
+void AskFanfare(int type);
+int TakeItemDone();          // 0 nothing, 1 the scene played, 2 it failed
+void NoteEvent(bool event);  // our Link is in an event (each frame)
 // A player was struck: their puppet's model turns red for a moment as the game's own Link does
 // (puppet_fx.hpp). Any thread.
 void PuppetHurt(std::uint8_t player);
 // Our own Link's sound user (0 none), told every frame; the names of the sounds it started since the
 // last call (a hook on the game's emit), for the other games.
 void SetOwnSoundUser(std::uint64_t user);
-std::vector<std::string> TakeOwnSounds();
+std::vector<PuppetFx::SoundProps> TakeOwnSounds();  // each with its variation values (may be none)
+// Our own Link's life (quarter hearts), each time it is read: at 0 he is dead, and the enemy rules
+// that look for a living Link here (objects/brain.hpp, the burrow) do not count him. Any thread.
+void NoteOurLife(int life);
+bool OurLinkAlive();
 std::string StatusText();
 void Stop();
 

@@ -98,6 +98,11 @@ struct PoseWrite {
     std::uint64_t address = 0;
     coop::protocol::Vec3 position{};
     std::optional<Mat3> rotation;
+    // A ride another game moves (CoopWorld::IsRide) with our Link on its deck: our Link is moved by what
+    // this write moves the ride, at the moment it is made (the setter's warp does not carry him).
+    bool carry_our_link = false;
+    // `address` is ignored: the pose is for our own Link (a ride's pull aboard).
+    bool our_link = false;
 };
 
 // A life to write into an actor (its +0x1c10 life value).

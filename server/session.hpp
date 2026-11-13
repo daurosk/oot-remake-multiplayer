@@ -201,6 +201,8 @@ struct SessionConfig {
   // An owner paused or dead this long (or loading at all) loses its objects
   // to another player who has them, fight or not.
   std::uint64_t owner_paused_us = 6'000'000;
+  // (With nearest_owner the server's main sets owner_dead_us to 1 s: an
+  // enemy must turn to a living player at once.)
   std::uint64_t owner_dead_us = 10'000'000;
   // A player position older than this is not used for distances.
   std::uint64_t position_stale_us = 5'000'000;
@@ -266,6 +268,7 @@ struct Stats {
   std::uint64_t after_refused = 0;   // packets from a connection being closed
   std::uint64_t rate_limited = 0;    // over a player's message rate
   std::uint64_t relayed = 0;         // messages passed on (once per message)
+  std::uint64_t players_died = 0;    // PLAYER_LIFE went to 0 (on_life)
   // PvP (docs/protocol.md, "PvP"). Relayed ones count in relayed too.
   std::uint64_t pvp_hits_relayed = 0;   // PVP_HIT passed on to its victim
   std::uint64_t pvp_hits_dropped = 0;   // PVP_HIT while PvP is off, or to nobody
@@ -461,6 +464,8 @@ class Session {
     std::uint8_t status = 0;
     std::uint64_t paused_since = 0;
     std::uint64_t dead_since = 0;
+    bool life_dead = false;  // a PLAYER_LIFE said 0 and none above 0 has held since (on_life)
+    std::uint64_t alive_since = 0;  // dead, and a life above 0 came then
     // It entered a scene and has not been sent that scene's spawns yet.
     bool replay_due = false;
     std::uint64_t owners_told_at = 0;
@@ -554,6 +559,7 @@ class Session {
   void fish_owner(const protocol::ObjectId& oid, Object& o, ConnectionId owner, bool unfit,
                   std::uint64_t now_us);
   void on_status(Connection& c, std::uint8_t flags, std::uint64_t now_us);
+  void on_life(Connection& c, std::uint16_t life, std::uint64_t now_us);
   void on_grass_cut(ConnectionId id, Connection& c, protocol::GrassCut& cut,
                     std::uint64_t now_us);
   // Forgets the cuts of a scene no joined player is in: the grass grows back

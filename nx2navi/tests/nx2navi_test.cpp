@@ -24,8 +24,11 @@
 #include "overlay_model.hpp"
 #include "puppet_fx.hpp"
 #include "coop/protocol/codec.hpp"
+#include "coop/host/notify.hpp"
 #include "save_sync.hpp"
 #include "settings.hpp"
+#include "step_switch.hpp"
+#include "item_get.hpp"
 #include "teleport_auto.hpp"
 
 #ifdef _WIN32
@@ -426,10 +429,10 @@ TEST_CASE("nx2navi main check: the build is known by its id note") {
 TEST_CASE("nx2navi settings: follow and join_at_host") {
   std::vector<std::string> errors;
   auto s = ParseSettings("server = 1.2.3.4\n", errors);
-  CHECK(s.follow == CoopNx2navi::Settings::Follow::host);
+  CHECK(s.follow == CoopNx2navi::Settings::Follow::anyone);  // the default since 2026-11-13
   CHECK(s.join_at_host);
-  s = ParseSettings("server = 1.2.3.4\nfollow = anyone\njoin_at_host = 0\n", errors);
-  CHECK(s.follow == CoopNx2navi::Settings::Follow::anyone);
+  s = ParseSettings("server = 1.2.3.4\nfollow = host\njoin_at_host = 0\n", errors);
+  CHECK(s.follow == CoopNx2navi::Settings::Follow::host);
   CHECK_FALSE(s.join_at_host);
   CHECK(ParseSettings("server = 1.2.3.4\nfollow = off\n", errors).follow ==
         CoopNx2navi::Settings::Follow::off);
@@ -604,6 +607,53 @@ TEST_CASE("nx2navi teleport: a player who leaves the session is not waited for; 
   a.Reset();
   CHECK_FALSE(a.Tick(In("Field"), false, peers, 10 * kSecond));
   CHECK(a.Tick(In("Field"), false, peers, 13 * kSecond));  // joins again in the new session
+}
+
+TEST_CASE("nx2navi teleport: after a Game Over, back beside a living friend") {
+  using CoopNx2navi::Teleport::RegroupChoice;
+  auto dead = [](Peer p) { p.alive = false; return p; };
+  auto alive = [](Peer p) { p.alive = true; return p; };
+  // The host is dead, one of two guests is alive: that guest.
+  std::vector<Peer> peers = {dead(MakePeer(1, true, "Field")), dead(MakePeer(3, false, "Field")),
+                             alive(MakePeer(4, false, "Market"))};
+  REQUIRE(RegroupChoice(peers, In("Field")) != nullptr);
+  CHECK(RegroupChoice(peers, In("Field"))->number == 4);
+  // Nobody alive: nothing (the game's own respawn).
+  peers[2] = dead(MakePeer(4, false, "Market"));
+  CHECK(RegroupChoice(peers, In("Field")) == nullptr);
+  // In the scene we fell in before the host elsewhere; the host first within a scene.
+  std::vector<Peer> two = {alive(MakePeer(1, true, "Market")), alive(MakePeer(3, false, "Field")),
+                           MakePeer(2, false, "Field")};  // P2's life is not known: counts as alive
+  CHECK(RegroupChoice(two, In("Field"))->number == 2);
+  two[2] = dead(MakePeer(2, false, "Field"));
+  CHECK(RegroupChoice(two, In("Field"))->number == 3);
+  CHECK(RegroupChoice(two, In("Lake"))->number == 1);
+  // Not in the game (no samples) or busy: not chosen.
+  std::vector<Peer> away = {alive(MakePeer(1, true, "Field", false)), alive(MakePeer(2, false, "Field"))};
+  away[1].busy = true;
+  CHECK(RegroupChoice(away, In("Field")) == nullptr);
+
+  // The whole rule: the host died (follow mode host) and goes to the living joiner after its reload.
+  Auto host(Auto::Options{FollowMode::host, true});
+  std::vector<Peer> joiner = {alive(MakePeer(2, false, "Field"))};
+  CHECK_FALSE(host.Tick(In("Field"), true, joiner, 1 * kSecond));
+  host.Died(2 * kSecond, std::string("Field"));
+  CHECK_FALSE(host.Tick(std::nullopt, true, joiner, 3 * kSecond));  // the reload
+  CHECK_FALSE(host.Tick(In("Field"), true, joiner, 10 * kSecond));
+  const auto go = host.Tick(In("Field"), true, joiner, 13 * kSecond);
+  REQUIRE(go);
+  CHECK(go->player == 2);
+  CHECK(go->why == Auto::Why::regroup);
+  // A dead joiner is not gone to; with nobody alive for the window, the game's respawn stands.
+  Auto lone(Auto::Options{FollowMode::host, false});
+  std::vector<Peer> gone = {dead(MakePeer(1, true, "Field"))};
+  CHECK_FALSE(lone.Tick(In("Field"), false, gone, 1 * kSecond));
+  lone.Died(2 * kSecond, std::string("Field"));
+  CHECK_FALSE(lone.Tick(std::nullopt, false, gone, 3 * kSecond));
+  for (std::uint64_t t = 4; t < 40; ++t) {
+    CHECK_FALSE(lone.Tick(In("Field"), false, gone, t * kSecond));
+  }
+  CHECK_FALSE(lone.died());
 }
 
 TEST_CASE("nx2navi settings: shared enemies are on unless the file says 0") {
@@ -1974,15 +2024,16 @@ TEST_CASE("nx2navi teleport: after a Game Over the follower goes back to the hos
   a.Done(1);
 }
 
-TEST_CASE("nx2navi teleport: no regroup for the host, with follow off, or when our Link was brought back") {
+TEST_CASE("nx2navi teleport: the host regroups too; none with follow off, or when our Link was brought back") {
   std::vector<Peer> guest = {MakePeer(2, false, "Field")};
-  Auto host;  // we are the host: the others follow us
+  Auto host;  // we are the host: since the living-friend rule, a dead host comes back beside a guest
   host.Tick(In("Field"), true, guest, 10 * kSecond);
   host.Died(11 * kSecond);
   host.Tick(std::nullopt, true, guest, 15 * kSecond);
-  CHECK_FALSE(host.Tick(In("Kokiri"), true, guest, 20 * kSecond));
-  CHECK_FALSE(host.Tick(In("Kokiri"), true, guest, 23 * kSecond));
-  CHECK_FALSE(host.Tick(In("Kokiri"), true, guest, 60 * kSecond));
+  CHECK_FALSE(host.Tick(In("Kokiri"), true, guest, 20 * kSecond));  // settling
+  const auto back = host.Tick(In("Kokiri"), true, guest, 23 * kSecond);
+  REQUIRE(back);
+  CHECK(back->player == 2);
   CHECK_FALSE(host.died());
 
   Auto::Options off;
@@ -2151,4 +2202,157 @@ TEST_CASE("the panel's own texts are French in a French game") {
     CHECK(Ui::PeerLine(peer, s.local) == "J2 Saria : hors du jeu");
     Ui::SetFrench(false);
     CHECK(Ui::LocalLine(s.local) == "You: HyruleField_Adult");
+}
+
+// ------------------------------- floor switches pressed by any player (step_switch.hpp)
+
+TEST_CASE("step switch: a note survives its encoding, a bad one is refused") {
+    namespace S = CoopNx2navi::StepSwitch;
+    const S::Note n{"ForestTemple", 0x0123456789abcdefULL, true};
+    const auto back = S::Decode(S::Encode(n));
+    REQUIRE(back);
+    CHECK(back->scene == "ForestTemple");
+    CHECK(back->hash == n.hash);
+    CHECK(back->pressed);
+    CHECK_FALSE(S::Decode({1, 2, 3}));
+    std::vector<std::uint8_t> zero(9, 0);
+    zero[0] = 1;
+    CHECK_FALSE(S::Decode(zero));  // hash 0
+}
+
+TEST_CASE("step switch: pressed here is said at once and again every 2 s; up again is said once") {
+    namespace S = CoopNx2navi::StepSwitch;
+    S::Switches w;
+    w.SetScene("ForestTemple");
+    w.Seen(0x77, false, 1'000'000);
+    CHECK(w.TakeSends(1'000'000).empty());  // up from the start: nothing to say
+    w.Seen(0x77, true, 1'100'000);
+    auto s = w.TakeSends(1'100'000);
+    REQUIRE(s.size() == 1);
+    CHECK(s[0].pressed);
+    CHECK(s[0].scene == "ForestTemple");
+    CHECK(w.TakeSends(2'000'000).empty());
+    CHECK(w.TakeSends(3'200'000).size() == 1);  // again after 2 s
+    w.Seen(0x77, false, 3'300'000);
+    s = w.TakeSends(3'300'000);
+    REQUIRE(s.size() == 1);
+    CHECK_FALSE(s[0].pressed);
+    CHECK(w.TakeSends(9'000'000).empty());
+}
+
+TEST_CASE("step switch: another player's press holds ours down while said, and our forced switch is never echoed") {
+    namespace S = CoopNx2navi::StepSwitch;
+    S::Switches w;
+    w.SetScene("ForestTemple");
+    CHECK_FALSE(w.Force(0x77, 1'000'000));
+    w.Remote(1, {"ForestTemple", 0x77, true}, 1'000'000);
+    CHECK(w.Force(0x77, 1'100'000));
+    w.Seen(0x77, true, 1'100'000);       // down because we forced it
+    CHECK(w.TakeSends(1'200'000).empty());  // not sent back
+    CHECK(w.Force(0x77, 5'900'000));      // within 5 s of the last note
+    CHECK_FALSE(w.Force(0x77, 6'100'000));  // not said again: let go
+    w.Remote(1, {"ForestTemple", 0x77, true}, 7'000'000);
+    CHECK(w.Force(0x77, 7'000'000));
+    w.Remote(1, {"ForestTemple", 0x77, false}, 7'500'000);  // they stepped off
+    CHECK_FALSE(w.Force(0x77, 7'600'000));
+    w.Remote(2, {"WaterTemple", 0x77, true}, 8'000'000);  // another scene: not ours
+    CHECK_FALSE(w.Force(0x77, 8'000'000));
+    // Two players on theirs: held while either says so.
+    w.Remote(1, {"ForestTemple", 0x88, true}, 10'000'000);
+    w.Remote(2, {"ForestTemple", 0x88, true}, 11'000'000);
+    w.Remote(1, {"ForestTemple", 0x88, false}, 12'000'000);
+    CHECK(w.Force(0x88, 12'100'000));
+    w.SetScene("DekuTree");  // a new scene forgets them
+    CHECK_FALSE(w.Force(0x88, 12'200'000));
+}
+
+// ------------------------------- the item-get moment for another player's item (item_get.hpp)
+
+TEST_CASE("item get: a notice line names its item actor and icon") {
+    namespace I = CoopNx2navi::ItemGet;
+    CHECK(I::ActorFor("Host got the map (Forest Temple)") == "Item_Dungeon_Map");
+    CHECK(I::ActorFor("Host got the compass (Water Temple)") == "Item_Dungeon_Compass");
+    CHECK(I::ActorFor("Host got the Boss Key (Fire Temple)") == "Item_Dungeon_BossKey");
+    CHECK(I::ActorFor("Host learned Zelda's Lullaby").empty());
+    CHECK(I::ActorFor("Host got a Heart Container - your max health went up").empty());
+    const std::string hookshot = I::ActorFor("Saria got the " + coop::host::ItemName("Item_Hookshot") +
+                                             " - you got one too!");
+    CHECK(hookshot == "Item_Hookshot");
+    CHECK(I::IconPath("Item_Dungeon_Map") == "romfs:UI/Tex/Icon/Item_Dungeon_Map.bntx.zs#Item_Dungeon_Map");
+    CHECK(I::IconPath("Item_Medal_Water").empty());
+    CHECK(I::FanfareType("Item_Dungeon_Map") == 2);
+}
+
+TEST_CASE("item get: the scene only when safe, one at a time; too long a wait or no actor: the fanfare") {
+    namespace I = CoopNx2navi::ItemGet;
+    I::Queue q;
+    I::Look ok;
+    ok.in_game = true;
+    ok.life = 24;
+    ok.height = 10.0f;
+    q.Offer("Host got the map (Forest Temple)", 0);
+    q.Offer("Host got the compass (Forest Temple)", 0);
+    CHECK_FALSE(q.Frame(ok, 1'000'000));  // readable for 3 s first
+    I::Look busy = ok;
+    busy.event = true;
+    CHECK_FALSE(q.Frame(busy, 3'500'000));  // in a cutscene
+    auto d = q.Frame(ok, 4'200'000);
+    REQUIRE(d);
+    CHECK(d->scene);
+    CHECK(d->want.actor == "Item_Dungeon_Map");
+    CHECK_FALSE(q.Frame(ok, 5'000'000));  // one at a time
+    q.Done(true, 9'000'000);
+    CHECK_FALSE(q.Frame(ok, 10'000'000));  // 3 s apart
+    I::Look hurt = ok;
+    hurt.life = 20;
+    CHECK_FALSE(q.Frame(hurt, 11'000'000));  // struck: 8 s of quiet
+    d = q.Frame(hurt, 12'500'000);           // 12 s after it came: the fanfare instead
+    REQUIRE(d);
+    CHECK_FALSE(d->scene);
+    // A scene that failed gives its fanfare next.
+    q.Offer("Host got the Boss Key (Forest Temple)", 13'000'000);
+    I::Look still = ok;
+    still.life = 20;
+    d = q.Frame(still, 30'000'000);
+    REQUIRE(d);
+    REQUIRE(d->scene);
+    q.Done(false, 31'000'000);
+    d = q.Frame(still, 31'100'000);
+    REQUIRE(d);
+    CHECK_FALSE(d->scene);
+    CHECK(d->want.actor == "Item_Dungeon_BossKey");
+    // A song has no actor: its fanfare at once (out of a cutscene).
+    q.Offer("Host learned Saria's Song", 40'000'000);
+    d = q.Frame(still, 40'000'000);
+    REQUIRE(d);
+    CHECK_FALSE(d->scene);
+}
+
+// ------------------------------- gear sounds: a footstep with the properties that choose its variation
+
+TEST_CASE("gear sounds: a footstep and its variation values survive the message, the rest stay names") {
+    namespace Fx = CoopNx2navi::PuppetFx;
+    Fx::SoundProps s{"FootStep", {{3, 1}, {7, 12}, {9, 0x3f800000}}};
+    const auto data = Fx::EncodeSoundProps(s);
+    CHECK(data.size() <= 96);
+    const auto back = Fx::DecodeSoundProps(data);
+    REQUIRE(back);
+    CHECK(back->name == "FootStep");
+    REQUIRE(back->values.size() == 3);
+    CHECK(back->values[2].first == 9);
+    CHECK(back->values[2].second == 0x3f800000u);
+    CHECK_FALSE(Fx::DecodeSoundProps({}));
+    CHECK_FALSE(Fx::DecodeSoundProps({3, 'a', 'b'}));
+    // Thirteen properties of a long name still fit one message.
+    Fx::SoundProps many{"EquipmentNoise_FootStep", {}};
+    for (std::uint8_t i = 0; i < 13; ++i) {
+        many.values.emplace_back(i, i * 1000u);
+    }
+    const auto big = Fx::EncodeSoundProps(many);
+    CHECK(big.size() <= 96);
+    REQUIRE(Fx::DecodeSoundProps(big));
+    CHECK(Fx::DecodeSoundProps(big)->values.size() == 13);
+    CHECK(Fx::HasVariations("FootStep"));
+    CHECK(Fx::HasVariations("EquipmentNoise_FootStep"));
+    CHECK_FALSE(Fx::HasVariations("SwordAttack_S_01"));
 }

@@ -23,6 +23,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace CoopNx2navi::PuppetFx {
@@ -78,6 +79,56 @@ inline constexpr std::uint8_t kExtraMagic = 2;  // data: u16 now, u16 most (litt
 inline constexpr std::size_t kMaxSoundName = 63;
 // A sound older than this when the puppet can play it is not played.
 inline constexpr std::uint64_t kSoundStaleMs = 400;
+// A footstep-like sound with the values of the sound user's properties that choose its variation (the boots,
+// the floor's sound material, which foot, the speed: docs in nx2navi/README.md, "Gear sounds"): u8 name length,
+// the name, u8 count, then per property u8 index and u32 value (little endian). The index is the property's place
+// in the user's definitions, the same in every game for the same user ('Player_Adult', 'Player_Child').
+inline constexpr std::uint8_t kExtraSoundProps = 4;
+struct SoundProps {
+    std::string name;
+    std::vector<std::pair<std::uint8_t, std::uint32_t>> values;
+};
+inline std::vector<std::uint8_t> EncodeSoundProps(const SoundProps& s) {
+    std::vector<std::uint8_t> out;
+    const std::size_t n = s.name.size() > kMaxSoundName ? kMaxSoundName : s.name.size();
+    out.push_back(static_cast<std::uint8_t>(n));
+    out.insert(out.end(), s.name.begin(), s.name.begin() + static_cast<std::ptrdiff_t>(n));
+    const std::size_t room = out.size() + 1 < 96 ? (96 - out.size() - 1) / 5 : 0;
+    const std::size_t count = s.values.size() < room ? s.values.size() : room;
+    out.push_back(static_cast<std::uint8_t>(count));
+    for (std::size_t i = 0; i < count; ++i) {
+        out.push_back(s.values[i].first);
+        for (int b = 0; b < 4; ++b) {
+            out.push_back(static_cast<std::uint8_t>(s.values[i].second >> (8 * b)));
+        }
+    }
+    return out;
+}
+inline std::optional<SoundProps> DecodeSoundProps(const std::vector<std::uint8_t>& d) {
+    if (d.empty() || d[0] == 0 || d.size() < 2u + d[0]) {
+        return std::nullopt;
+    }
+    SoundProps s;
+    s.name.assign(d.begin() + 1, d.begin() + 1 + d[0]);
+    const std::size_t count = d[1 + d[0]];
+    std::size_t at = 2u + d[0];
+    if (d.size() != at + 5 * count) {
+        return std::nullopt;
+    }
+    for (std::size_t i = 0; i < count; ++i, at += 5) {
+        std::uint32_t v = 0;
+        for (int b = 0; b < 4; ++b) {
+            v |= static_cast<std::uint32_t>(d[at + 1 + b]) << (8 * b);
+        }
+        s.values.emplace_back(d[at], v);
+    }
+    return s;
+}
+// The sounds whose variation the user's properties choose (the rest go as kExtraSound).
+inline bool HasVariations(std::string_view name) {
+    return name.starts_with("FootStep") || name.starts_with("EquipmentNoise_FootStep") || name.starts_with("Landing") ||
+           name.starts_with("Jump");
+}
 // At most this many of our own sounds are sent in a second (a run is two steps a second).
 inline constexpr int kSoundsPerSecond = 24;
 

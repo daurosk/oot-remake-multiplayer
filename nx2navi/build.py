@@ -52,7 +52,7 @@ SERVER_LIB = ['server/' + n for n in (
 SERVER = SERVER_LIB + ['server/main.cpp']
 DLL_LIB = ['nx2navi/dll/guest_memory.cpp', 'nx2navi/dll/settings.cpp', 'nx2navi/dll/overlay_model.cpp',
            'nx2navi/dll/teleport_auto.cpp', 'nx2navi/dll/menu_model.cpp', 'nx2navi/dll/save_sync.cpp',
-           'nx2navi/dll/mp_saves.cpp',
+           'nx2navi/dll/mp_saves.cpp', 'nx2navi/dll/step_switch.cpp', 'nx2navi/dll/item_get.cpp',
            # Over Steam: the pages and what the two games say around the session (no Windows code).
            'nx2navi/dll/steam_model.cpp', 'nx2navi/dll/steam_menu.cpp',
            'lichii/hook/coop_settings.cpp', 'lichii/hook/coop_colors.cpp']
@@ -354,12 +354,13 @@ def main():
         up_includes = [f'-I{REPO / i}' for i in UP_INCLUDES] + [
             f'-isystem{fmt / "include"}', f'-isystem{enet / "include"}', f'-isystem{monocypher / "src"}']
         up_flags = ['-DLICHII_COOP', '-DCOOP_HOOKSHOT', '-DCOOP_UPSTREAM', '-DFMT_HEADER_ONLY',
-                    '-DLICHII_COOP_VERSION="nx2navi"', '-DLICHII_COOP_SPAWN_CREATE_TIMEOUT_MS=20000', '-DLICHII_COOP_TIME_RESYNC_SECONDS=180', '-DLICHII_COOP_TIME_SET_EVERY_US=15000000', '-Wno-unused-parameter', '-Wno-missing-field-initializers']
+                    '-DLICHII_COOP_VERSION="nx2navi"', '-DLICHII_COOP_SPAWN_CREATE_TIMEOUT_MS=20000', '-DLICHII_COOP_RELEASE_SETTLE_FRAMES=12', '-DLICHII_COOP_TIME_RESYNC_SECONDS=180', '-DLICHII_COOP_TIME_SET_EVERY_US=15000000', '-Wno-unused-parameter', '-Wno-missing-field-initializers']
         lib = [o for o in dll_lib if 'coop_settings' not in o.name and 'coop_colors' not in o.name]
         dll = builder.link(BUILD / 'bin' / 'coop_nx2navi_up.dll',
                            builder.compile_all(UP_OWN + hook_sources() + ['coop/overlay/src/overlay.cpp', 'coop/src/version.cpp'],
                                                'dll_up', up_flags, up_includes) + lib +
-                           coop_objects + enet_objects, shared=True)
+                           coop_objects + enet_objects, shared=True,
+                           extra=(f'-Wl,-Map={BUILD / "bin" / "coop_nx2navi_up.map"}',))
     assemble(dll, server, fmt)
 
     if options.tests:

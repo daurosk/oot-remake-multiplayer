@@ -40,6 +40,13 @@ public:
                           ? CoopNx2navi::Teleport::FollowMode::anyone
                           : CoopNx2navi::Teleport::FollowMode::off;
             CoopNx2navi::Teleport::Configure(automatic, LogLine);
+            CoopNx2navi::Teleport::SetPeerAlive([](std::uint8_t player) -> std::optional<bool> {
+                const auto life = CoopHud::PlayerLife(player);
+                if (!life || life->max == 0) {
+                    return std::nullopt;
+                }
+                return life->life > 0;
+            });
             CoopNx2navi::Teleport::TestGoto(Utf8(Environment(L"OOT_COOP_TEST_GOTO")));
             CoopNx2navi::Teleport::TestScene(Utf8(Environment(L"OOT_COOP_TEST_SCENE")));
             debug_position_ = Environment(L"OOT_COOP_DEBUG_POS") == L"1";
@@ -211,6 +218,7 @@ private:
             CoopNx2navi::Teleport::Frame(reading, *session, connected, server_now, true);
             SendExtras(*session, connected, reading.has_value());
         }
+        ItemMoment(reading);
         for (const std::string& line : CoopNx2navi::Teleport::TakeLines()) {
             CoopNx2navi::Overlay::Notice(line);
         }
@@ -326,13 +334,24 @@ private:
                 }
             });
         }
+        {
+            // The other living players in our scene, for the enemy burrow rule (objects/brain.hpp).
+            std::vector<std::array<float, 3>> living;
+            for (const Ui::Peer& peer : s.peers) {
+                if (peer.position && peer.scene && s.local.scene && *peer.scene == *s.local.scene &&
+                    (peer.max_life == 0 || peer.life > 0)) {
+                    living.push_back({(*peer.position)[0], (*peer.position)[1], (*peer.position)[2]});
+                }
+            }
+            CoopNx2navi::Objects::Brain::NoteOthers(living);
+        }
         CoopNx2navi::Overlay::Publish(std::move(s));
     }
 
     // Our own Link's sounds and magic for the other games.
     void SendExtras(coop::host::Session& session, bool connected, bool in_game) {
         namespace Fx = CoopNx2navi::PuppetFx;
-        const std::vector<std::string> sounds = CoopNx2navi::Up::TakeOwnSounds();
+        const std::vector<Fx::SoundProps> sounds = CoopNx2navi::Up::TakeOwnSounds();
         const std::uint64_t now_ms = SteadyUs() / 1000;
         std::optional<std::vector<std::uint8_t>> magic;
         if (in_game && now_ms - magic_read_ms_ >= 250) {
@@ -352,20 +371,83 @@ private:
                 }
             }
         }
+        // Floor switches (step_switch.hpp): ours as they change, pressed ones again every 2 s.
+        if (auto* switches = CoopNx2navi::Up::Switches()) {
+            switches->SetScene(scene_ ? *scene_ : std::string());
+            for (const std::string& line : switches->TakeLines()) {
+                g_log.Line("%s", line.c_str());
+            }
+            const auto notes = switches->TakeSends(SteadyUs());
+            if (connected && !notes.empty()) {
+                session.with_client([&](coop::net::Client& client) {
+                    for (const auto& n : notes) {
+                        client.send(coop::protocol::PlayerExtra{coop::protocol::kPlayerSelf,
+                                                                CoopNx2navi::StepSwitch::kExtraSwitch,
+                                                                CoopNx2navi::StepSwitch::Encode(n)});
+                    }
+                });
+            }
+        }
         if (!connected || (sounds.empty() && !magic)) {
             return;
         }
         session.with_client([&](coop::net::Client& client) {
-            for (const std::string& name : sounds) {
+            for (const Fx::SoundProps& sound : sounds) {
                 if (sound_budget_.Take(now_ms)) {
-                    client.send(coop::protocol::PlayerExtra{coop::protocol::kPlayerSelf, Fx::kExtraSound,
-                                                            std::vector<std::uint8_t>(name.begin(), name.end())});
+                    if (sound.values.empty()) {
+                        client.send(coop::protocol::PlayerExtra{
+                            coop::protocol::kPlayerSelf, Fx::kExtraSound,
+                            std::vector<std::uint8_t>(sound.name.begin(), sound.name.end())});
+                    } else {  // with the boots, floor and foot that choose its variation (gear sounds)
+                        client.send(coop::protocol::PlayerExtra{coop::protocol::kPlayerSelf, Fx::kExtraSoundProps,
+                                                                Fx::EncodeSoundProps(sound)});
+                    }
                 }
             }
             if (magic) {
                 client.send(coop::protocol::PlayerExtra{coop::protocol::kPlayerSelf, Fx::kExtraMagic, *magic});
             }
         });
+    }
+
+    // Another player's item: the game's own item-get scene here when it is safe, else its fanfare and the line
+    // with the item's icon (item_get.hpp; OOT_COOP_ITEM_GET=0 keeps the line only).
+    void ItemMoment(const std::optional<coop::host::PlayerReading>& reading) {
+        const std::uint64_t now = SteadyUs();
+        const bool event = reading && reading->event_running.value_or(false);
+        CoopNx2navi::Up::NoteEvent(event);
+        const auto lines = CoopNx2navi::Overlay::TakeItemLines();
+        if (!item_get_on_) {
+            return;
+        }
+        for (const std::string& line : lines) {
+            item_queue_.Offer(line, now);
+            const std::string actor = CoopNx2navi::ItemGet::ActorFor(line);
+            g_log.Line("item-get: queued '%s' (%s)", line.c_str(),
+                       actor.empty() ? "no item actor: its fanfare only" : actor.c_str());
+        }
+        if (const int done = CoopNx2navi::Up::TakeItemDone(); done != 0) {
+            item_queue_.Done(done == 1, now);
+        }
+        CoopNx2navi::ItemGet::Look look;
+        look.in_game = reading.has_value();
+        look.event = event;
+        look.menu = CoopNx2navi::Overlay::MenuOpen();
+        look.boss_fight = CoopBoss::Fighting();
+        look.travelling = CoopNx2navi::Teleport::Travelling();
+        look.height = reading ? reading->position[1] : 0.0f;
+        look.life = life_;
+        if (const auto d = item_queue_.Frame(look, now)) {
+            if (d->scene && reading) {
+                g_log.Line("item-get: %s: safe now (in control, still, not hurt, no boss fight): the game's get scene",
+                           d->want.actor.c_str());
+                CoopNx2navi::Up::AskItemScene(d->want.actor, {reading->position[0], reading->position[1],
+                                                              reading->position[2]});
+            } else {
+                g_log.Line("item-get: '%s': the game's fanfare and the line instead", d->want.line.c_str());
+                CoopNx2navi::Up::AskFanfare(CoopNx2navi::ItemGet::FanfareType(d->want.actor));
+            }
+        }
     }
 
     // Our Link's life (quarter hearts): the test writes, and the way back after a Game Over.
@@ -414,6 +496,7 @@ private:
                 test_life_.erase(test_life_.begin());
             }
         }
+        CoopNx2navi::Up::NoteOurLife(life_);
         if (life_ <= 0 && !dead_) {
             dead_ = true;
             g_log.Line("our Link has no life left (Game Over); after the reload this game goes back to the "
@@ -569,6 +652,17 @@ private:
                     sound_feed_[extra->player_number] = true;
                     CoopNx2navi::Up::PuppetSound(extra->player_number,
                                                  std::string(extra->data.begin(), extra->data.end()));
+                } else if (extra->kind == Fx::kExtraSoundProps) {
+                    if (auto sp = Fx::DecodeSoundProps(extra->data)) {
+                        sound_feed_[extra->player_number] = true;
+                        CoopNx2navi::Up::PuppetSound(extra->player_number, sp->name, std::move(sp->values));
+                    }
+                } else if (extra->kind == CoopNx2navi::StepSwitch::kExtraSwitch) {
+                    if (const auto n = CoopNx2navi::StepSwitch::Decode(extra->data)) {
+                        if (auto* switches = CoopNx2navi::Up::Switches()) {
+                            switches->Remote(extra->player_number, *n, SteadyUs());
+                        }
+                    }
                 } else if (extra->kind == Fx::kExtraMagic) {
                     if (const auto m = Fx::DecodeMagic(extra->data); m && m->most > 0) {
                         peer_magic_[extra->player_number] =
@@ -629,6 +723,11 @@ private:
     Clock::time_point next_goto_file_{};
     Clock::time_point next_position_{};
     std::int32_t life_ = -1;
+    CoopNx2navi::ItemGet::Queue item_queue_;
+    bool item_get_on_ = [] {
+        const char* e = std::getenv("OOT_COOP_ITEM_GET");
+        return e == nullptr || std::string_view(e) != "0";
+    }();
     std::int32_t max_life_ = 0;
     struct TestLife {
         std::uint64_t after_us = 0;

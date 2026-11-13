@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_world.h"
 
+#include <chrono>
+#include <atomic>
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <utility>
 
@@ -166,6 +169,40 @@ bool IsGimmickMover(std::string_view name) {
     return name.starts_with("Obj_Deku_MoveFloor_");
 }
 
+namespace {
+bool EnvNotZero(const char* name) {
+#ifdef _WIN32
+    char* value = nullptr;
+    std::size_t size = 0;
+    if (_dupenv_s(&value, &size, name) != 0 || value == nullptr) {
+        return true;
+    }
+    const bool v = std::string_view(value) != "0";
+    std::free(value);
+    return v;
+#else
+    const char* value = std::getenv(name);
+    return value == nullptr || std::string_view(value) != "0";
+#endif
+}
+bool RidesOn() {
+    static const bool on = EnvNotZero("LICHII_COOP_RIDES");
+    return on;
+}
+// LICHII_COOP_RIDE_CARRY=0: our Link is not moved with a ride another game moves (to see whether the game
+// carries him by itself).
+bool RideCarryOn() {
+    static const bool on = EnvNotZero("LICHII_COOP_RIDE_CARRY");
+    return on;
+}
+} // namespace
+
+bool IsRide(std::string_view name) {
+    // The Shadow Temple's boat (and the boss rush's copy of its room, StalfosStage): its actor place goes
+    // the length of the room (run sx1: x 70.5 -> -120 at y 39.26, animations DemoStart, Start, Departure).
+    return RidesOn() && name.starts_with("Obj_ShadowTemple_PaddleShip_");
+}
+
 bool IsFallTaken(std::string_view name) {
     // A taken (keyed) piece whose fall or break plays in the game that did it:
     // the falling floors, and the visible parts of a web (the web itself is a
@@ -176,7 +213,7 @@ bool IsFallTaken(std::string_view name) {
 
 bool IsWorldObject(std::string_view name) {
     return IsBreakable(name) || IsMovable(name) || IsFaller(name) || IsLyingKey(name) ||
-           IsGoldToken(name) || IsShifter(name) || IsGimmickMover(name);
+           IsGoldToken(name) || IsShifter(name) || IsGimmickMover(name) || IsRide(name);
 }
 
 // A shifter whose AI would put it back up (hammer drop floors, pillars and
@@ -398,6 +435,9 @@ void WorldSync::Reset() {
     refund_notes_.clear();
     own_drops_.clear();
     player_.reset();
+    pull_ = {};
+    pulls_ = 0;
+    pulled_us_ = 0;
     probe_.Reset();
     std::lock_guard lock(inbox_mutex_);
     inbox_.clear();
@@ -812,8 +852,82 @@ void WorldSync::Poses(std::uint64_t now_us, std::vector<CoopObjects::PoseWrite>&
             w.address = address;
             w.position = s->position;
             w.rotation = CoopObjects::MatOf(s->rotation);
+            w.carry_our_link = o.ride && o.aboard && RideCarryOn();
             out.push_back(w);
         }
+    }
+    if (now_us < pull_.until_us) {
+        CoopObjects::PoseWrite w;
+        w.our_link = true;
+        w.position = pull_.to;
+        out.push_back(w);
+    }
+}
+
+void WorldSync::Rides(std::uint64_t now_us, Out& out) {
+    const auto level = [](const proto::Vec3& a, const proto::Vec3& b) {
+        const float dx = a[0] - b[0];
+        const float dz = a[2] - b[2];
+        return std::sqrt(dx * dx + dz * dz);
+    };
+    const auto on_deck = [&level](const proto::Vec3& who, const proto::Vec3& boat) {
+        const float dy = who[1] - boat[1];
+        return Finite(who) && dy >= kAboardLowM && dy <= kAboardHighM && level(who, boat) <= kAboardLevelM;
+    };
+    for (auto& [address, o] : objects_) {
+        if (!o.ride) {
+            continue;
+        }
+        const bool was = o.aboard;
+        o.aboard = player_ && Finite(o.position) && on_deck(*player_, o.position);
+        const char* who = o.following ? "another player's trip" : o.ours ? "our trip, sent" : "at rest";
+        if (o.aboard != was) {
+            out.notes.push_back(Line("world: %016llx %s: our Link%s", o.hash, o.name,
+                                     o.aboard ? (o.following ? " is aboard (carried with another player's trip)"
+                                                             : " is aboard")
+                                              : " is off it"));
+        }
+        if (now_us - ride_log_us_ >= 1'000'000) {
+            ride_log_us_ = now_us;
+            char line[256];
+            std::snprintf(line, sizeof line,
+                          ": at %.2f %.2f %.2f (home %.2f %.2f %.2f), %s; our Link %s%.2f %.2f %.2f",
+                          o.position[0], o.position[1], o.position[2], o.first_position[0], o.first_position[1],
+                          o.first_position[2], who, o.aboard ? "aboard at " : "at ",
+                          player_ ? (*player_)[0] : 0.0f, player_ ? (*player_)[1] : 0.0f,
+                          player_ ? (*player_)[2] : 0.0f);
+            out.notes.push_back(Line("world: ride %016llx %s%s", o.hash, o.name, line));
+        }
+        // A Link left at the dock while another game's trip is under way: pulled aboard, beside a friend who
+        // rides it when there is one, else onto its deck.
+        if (!o.following || o.aboard || !player_ || pulls_ >= kPullsMax ||
+            (pulled_us_ != 0 && now_us - pulled_us_ < kPullEveryUs) || !Finite(o.position)) {
+            continue;
+        }
+        const auto r = remote_.find(o.hash);
+        if (r == remote_.end() || level(*player_, o.first_position) > kDockNearM ||
+            Distance(o.position, o.first_position) < kRideLeftM ||
+            o.position[1] < o.first_position[1] - kSunkM) {
+            continue;
+        }
+        std::optional<proto::Vec3> to;
+        for (const proto::Vec3& at : puppets_) {
+            if (on_deck(at, o.position)) {
+                to = proto::Vec3{at[0], at[1] + 0.3f, at[2] + 1.5f};
+                break;
+            }
+        }
+        const bool beside = to.has_value();
+        if (!to) {
+            to = proto::Vec3{o.position[0], o.position[1] + kDeckHighM + 0.3f, o.position[2]};
+        }
+        pull_ = {*to, now_us + kPullHoldUs};
+        pulled_us_ = now_us;
+        ++pulls_;
+        char more[160];
+        std::snprintf(more, sizeof more, ": our Link was left at the dock: pulled aboard %s at %.2f %.2f %.2f",
+                      beside ? "beside a friend" : "onto its deck", (*to)[0], (*to)[1], (*to)[2]);
+        out.notes.push_back(Line("world: %016llx %s%s", o.hash, o.name, more));
     }
 }
 
@@ -996,6 +1110,7 @@ void WorldSync::Swing(const proto::GrassCut& cut, const std::optional<proto::Vec
             continue;
         }
         o.hit_sent_us = now_us;
+        o.swing_us = now_us;
         proto::WorldHit h;
         h.scene = scene_;
         h.hash = o.hash;
@@ -1027,6 +1142,9 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         skulltulas_seen_us_.clear();
         skulltulas_dead_.clear();
         anchor_holds_.clear();
+        pull_ = {};
+        pulls_ = 0;
+        pulled_us_ = 0;
         std::lock_guard lock(inbox_mutex_);
         for (proto::Message& m : early_) {
             if (*SceneOfMessage(m) == scene_) {
@@ -1087,7 +1205,8 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         const bool token = IsGoldToken(s.name);
         const bool key = IsLyingKey(s.name) || token;
         const bool shifter = IsShifter(s.name);
-        const bool mover = IsGimmickMover(s.name);
+        const bool ride = IsRide(s.name);
+        const bool mover = IsGimmickMover(s.name) || ride;
         const bool breakable = IsBreakable(s.name) || faller || key;
         if (!breakable && !shifter && !mover && !IsMovable(s.name)) {
             continue;
@@ -1119,6 +1238,7 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
             }
             o.shifter = shifter;
             o.mover = mover;
+            o.ride = ride;
             o.roller = IsRoller(s.name);
             o.hold = shifter && HoldsPlace(s.name);
             o.life = life;
@@ -1244,14 +1364,20 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         // Another player's swings at this sign, once our copy has settled in.
         if (const auto waiting = hits_.find(o.hash);
             waiting != hits_.end() && o.sign && now_us - o.first_us >= kHitWaitUs) {
-            for (const auto& [at, from] : waiting->second) {
-                out.hits.push_back({address, at, from});
+            // The swing alone is no longer given as a hit: a stand-in hit made
+            // the sign's AI run its cut routine in a mode that cuts nothing
+            // (main+0x266f960, mode 1) before the cutter's own hit came (SIGN_CUT
+            // with the Life words, below), and that one then cut nothing either.
+            if (kSwingAsHit) {
+                for (const auto& [at, from] : waiting->second) {
+                    out.hits.push_back({address, at, from, {}});
+                }
+                probe_.Hit({address, o.hash, o.name, o.position}, false, now_us);
             }
-            out.notes.push_back(Line("world: %016llx %s hit by another player's sword%s", o.hash,
+            o.hit_given_us = now_us;  // the cut words (an older sender's) still wait kCutAfterHitUs
+            out.notes.push_back(Line("world: %016llx %s passed by another player's sword%s", o.hash,
                                      o.name, ""));
-            probe_.Hit({address, o.hash, o.name, o.position}, false, now_us);
             hits_.erase(waiting);
-            o.hit_given_us = now_us;
         }
         // Another player's cut of this sign: its words, once the hits are in.
         // Written only into components the probe has read whole (it copies
@@ -1261,6 +1387,29 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
             !hits_.contains(o.hash) && now_us - o.hit_given_us >= kCutAfterHitUs &&
             probe_.Copied(address, o.hash)) {
             std::size_t taken = 0;
+            if (std::vector<std::uint64_t> record = SignHitRecord(cut->second); !record.empty()) {
+                // The cutter's own hit: our sign's AI cuts from it, so no word is written.
+                Out::Hit hit;
+                hit.address = address;
+                std::array<float, 6> v{};
+                std::memcpy(v.data(), reinterpret_cast<const char*>(record.data()) + (0x27c - kSignHitFrom), 12);
+                std::memcpy(v.data() + 3, reinterpret_cast<const char*>(record.data()) + (0x2a0 - kSignHitFrom), 12);
+                o.record_us = now_us;
+                hit.at = {v[0], v[1], v[2]};
+                hit.from = {v[3], v[4], v[5]};
+                hit.record = std::move(record);
+                out.hits.push_back(std::move(hit));
+                out.notes.push_back(Line("world: %016llx %s cut by another player%s", o.hash, o.name,
+                                         ": the cutter's own sword hit is given to our sign"));
+                probe_.Hit({address, o.hash, o.name, o.position}, false, now_us);
+                o.hit_given_us = now_us;
+                cuts_.erase(cut);
+                continue;
+            }
+            if (o.record_us != 0 && now_us - o.record_us < kRecordKeepsUs) {
+                cuts_.erase(cut);  // its own AI cut it from the cutter's hit: no word is written
+                continue;
+            }
             for (const proto::SignWord& w : cut->second) {
                 const auto part = probe_.PartOf(address, o.hash, (w.key >> 32) - 2);
                 if (!SignCutKeyAllowed(w.key) || HeapPointer(w.value) || !part) {
@@ -1283,6 +1432,7 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         }
         Move(o, self, now_us, player, out);
     }
+    Rides(now_us, out);
     // A mover that stopped without a rest place (it left, or the place was
     // lost): forgotten once nothing follows it.
     std::erase_if(remote_, [now_us](const auto& e) {
@@ -1870,6 +2020,62 @@ bool SignCutKeyAllowed(std::uint64_t key) {
     return std::find(kCutWords.begin(), kCutWords.end(), word) != kCutWords.end();
 }
 
+namespace {
+std::atomic<std::uint64_t> g_given_sign{0};
+std::atomic<std::int64_t> g_given_sign_ms{0};
+std::int64_t SignClockMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+}  // namespace
+
+void NoteGivenSignHit(std::uint64_t actor) {
+    g_given_sign_ms.store(SignClockMs());
+    g_given_sign.store(actor);
+}
+
+std::uint64_t GivenSignHitActor(std::uint64_t within_ms) {
+    const std::uint64_t actor = g_given_sign.load();
+    return actor != 0 && SignClockMs() - g_given_sign_ms.load() <= static_cast<std::int64_t>(within_ms) ? actor : 0;
+}
+
+bool SignHitValid(const std::vector<std::uint64_t>& record) {
+    if (record.size() != kSignHitWords) {
+        return false;
+    }
+    // +0x27c place, +0x288 blade line, +0x294 travel: nine floats from byte 4 on.
+    std::array<float, 9> v{};
+    std::memcpy(v.data(), reinterpret_cast<const char*>(record.data()) + 4, sizeof(v));
+    float size = 0.0f;
+    for (const float f : v) {
+        if (!std::isfinite(f) || std::fabs(f) > 1.0e6f) {
+            return false;
+        }
+    }
+    for (std::size_t i = 3; i < 9; ++i) {
+        size += std::fabs(v[i]);
+    }
+    return size > 1.0e-3f;  // a blade line and a travel at all
+}
+
+std::vector<std::uint64_t> SignHitRecord(const std::vector<proto::SignWord>& words) {
+    std::vector<std::uint64_t> record(kSignHitWords, 0);
+    std::vector<bool> have(kSignHitWords, false);
+    for (const proto::SignWord& w : words) {
+        const std::uint64_t offset = w.key & 0xffffffffu;
+        if ((w.key >> 32) != kSignHitRegion || offset % 8 != 0 || offset / 8 >= kSignHitWords) {
+            continue;
+        }
+        record[offset / 8] = w.value;
+        have[offset / 8] = true;
+    }
+    if (std::find(have.begin(), have.end(), false) != have.end() || !SignHitValid(record)) {
+        return {};
+    }
+    return record;
+}
+
 bool SignWordWritable(std::uint64_t current, std::uint64_t value) {
     if (HeapPointer(value) || HeapPointer(current) || PoseWord(current)) {
         return false;
@@ -2101,6 +2307,45 @@ void WorldSync::ProbeSigns(const SignProbe::ReadWord& read, std::uint64_t now_us
             signs.push_back({address, o.hash, o.name, o.position});
         }
     }
+    // Our own sword's hits (kSignHitRegion): the words the game keeps of a
+    // hit in the sign's Life component changed after our swing passed it.
+    for (auto& [address, o] : objects_) {
+        if (!o.sign || !player_ || Distance(*player_, o.position) > kSignWatchM) {
+            continue;
+        }
+        const auto table = read(address + SignProbe::kActorTable);
+        const auto life = table && ProbePointer(*table) ? read(*table + 0x2b8) : std::nullopt;
+        if (!life || !ProbePointer(*life)) {
+            continue;
+        }
+        std::vector<std::uint64_t> now;
+        for (std::size_t i = 0; i < kSignHitWords; ++i) {
+            const auto w = read(*life + kSignHitFrom + 8 * i);
+            if (!w) {
+                break;
+            }
+            now.push_back(*w);
+        }
+        if (now.size() != kSignHitWords) {
+            continue;
+        }
+        const bool changed = o.hit_read && now != o.hit_seen;
+        o.hit_seen = now;
+        o.hit_read = true;
+        if (!changed || (o.record_us != 0 && now_us - o.record_us < kGivenQuietUs) ||
+            o.swing_us == 0 || now_us - o.swing_us > kSwingHitUs ||
+            !SignHitValid(now)) {
+            continue;
+        }
+        proto::SignCut m;
+        m.scene = scene_;
+        m.hash = o.hash;
+        for (std::size_t i = 0; i < kSignHitWords; ++i) {
+            m.words.push_back({(kSignHitRegion << 32) | (8 * i), now[i]});
+        }
+        out.notes.push_back(Line("world: %016llx %s: our sword hit it: the hit sent%s", o.hash, o.name, ""));
+        out.send.emplace_back(std::move(m));
+    }
     std::vector<SignProbe::Cut> cuts;
     for (std::string& line : probe_.Look(read, signs, player_, now_us, &cuts)) {
         out.notes.push_back(std::move(line));
@@ -2110,9 +2355,9 @@ void WorldSync::ProbeSigns(const SignProbe::ReadWord& read, std::uint64_t now_us
         m.scene = scene_;
         m.hash = c.hash;
         m.words = std::move(c.words);
-        char more[48];
-        std::snprintf(more, sizeof more, ": %zu words sent", m.words.size());
+        char more[96];
         const auto it = objects_.find(c.address);
+        std::snprintf(more, sizeof more, ": %zu words sent", m.words.size());
         out.notes.push_back(Line("world: %016llx %s cut here%s", c.hash,
                                  it != objects_.end() ? it->second.name : std::string("?"), more));
         out.send.emplace_back(std::move(m));

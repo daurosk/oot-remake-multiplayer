@@ -33,7 +33,15 @@ struct Peer {
     bool host = false;               // the session's host
     std::optional<std::string> scene;
     bool fresh = false;              // its samples arrive: it is in the game now
+    std::optional<bool> alive;       // life above 0 (its last PLAYER_LIFE); nothing: not known
+    bool busy = false;               // in a cutscene, talk or menu: not a place to arrive at now
 };
+
+// After our Game Over: the living player to come back beside, or nothing (then the
+// game's own respawn stands). In the game (fresh, a scene, not busy) and not known
+// to be dead; first one in `died_scene` (the scene we fell in), the host before the
+// others, then the lowest number; else the same order over the other scenes.
+const Peer* RegroupChoice(std::span<const Peer> peers, const std::optional<std::string>& died_scene);
 
 struct AutoOptions {
     FollowMode follow = FollowMode::host;
@@ -80,11 +88,11 @@ public:
     void Done(std::uint8_t player);
     // Not connected any more: nothing is wanted, and the next session joins again.
     void Reset();
-    // Our Link has no life left (Game Over). Once the game has reloaded and our
-    // Link stands again, the next Tick wants the leader (the host; with
-    // `anyone`, the host or else the first player in the game), unless
-    // following is off or we are the one the others follow.
-    void Died(std::uint64_t now_us);
+    // Our Link has no life left (Game Over), in `scene`. Once the game has reloaded
+    // and our Link stands again, the next Tick wants a living player
+    // (RegroupChoice), the host's game too, unless following is off. With nobody
+    // alive in the game for kRegroupWindowUs, the game's own respawn stands.
+    void Died(std::uint64_t now_us, std::optional<std::string> scene = std::nullopt);
     bool died() const { return died_us_ != 0; }
 
     bool pending() const { return pending_.has_value(); }
@@ -105,6 +113,7 @@ private:
     std::array<bool, 5> together_{};      // by player number: was in our scene
     std::uint64_t died_us_ = 0;           // 0: no Game Over waits
     bool died_reloaded_ = false;          // our Link was gone since (the reload)
+    std::optional<std::string> died_scene_;  // where we fell
     std::optional<Pending> pending_;
 };
 

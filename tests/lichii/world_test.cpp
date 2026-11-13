@@ -1263,11 +1263,14 @@ TEST_CASE("world: our sword passing a sign sends a hit, another player's hit is 
     b.Receive(got);
     CHECK(Walk(b, 1100 * kMs, {}).hits.empty());
     CHECK(Walk(b, 2000 * kMs, {Thing(0x900, 0x70, 100, sign)}).hits.empty());  // just loaded
+    // The swing alone is noted, not given as a hit: a stand-in hit made the
+    // sign's AI run its cut routine in a mode that cuts nothing (docs/world.md,
+    // "Signs: the hit itself"); the cutter's own hit comes in SIGN_CUT.
     const auto given = Walk(b, 2400 * kMs, {Thing(0x900, 0x70, 100, sign)});
-    REQUIRE(given.hits.size() == 1);
-    CHECK(given.hits[0].address == 0x900);
-    CHECK(given.hits[0].at == hit.at);
-    CHECK(given.hits[0].from == kLink);
+    CHECK(given.hits.empty());
+    CHECK(std::any_of(given.notes.begin(), given.notes.end(), [](const std::string& n) {
+        return n.find("passed by another player's sword") != std::string::npos;
+    }));
     CHECK(given.send.empty());
     CHECK(Walk(b, 2500 * kMs, {Thing(0x900, 0x70, 100, sign)}).hits.empty());
 }
@@ -1294,7 +1297,7 @@ struct FakeSign {
     std::optional<std::uint64_t> operator()(std::uint64_t a) {
         ++reads;
         const auto in = [a](std::uint64_t base, std::uint64_t size) { return a >= base && a < base + size; };
-        if (!in(kActor, 0x600) && !in(kTable, 0x300) && !in(kLife, 0x200) && !in(kCut, 0x200) &&
+        if (!in(kActor, 0x600) && !in(kTable, 0x300) && !in(kLife, 0x300) && !in(kCut, 0x200) &&
             !in(kPoint, 0x200)) {
             return std::nullopt;
         }
@@ -1304,6 +1307,109 @@ struct FakeSign {
 };
 
 } // namespace
+
+namespace {
+// A Master Sword slash as the game keeps it in a sign's Life component,
+// +0x278 on (run sn4, 2026-11-13): place, blade line, travel, hitter's place.
+constexpr std::array<std::uint64_t, 7> kSlashWords{
+    0xc260bbd100000000, 0x4335178b4316da01, 0x348800003d849a76, 0x405b39af3f7f767e,
+    0x41b76238c0bedd63, 0x4315d4eec26401bc, 0x00000000433466cb};
+}  // namespace
+
+TEST_CASE("sign hit: the words of a sword hit are told from anything else") {
+    using namespace CoopWorld;
+    std::vector<proto::SignWord> words;
+    for (std::size_t i = 0; i < kSignHitWords; ++i) {
+        words.push_back({(kSignHitRegion << 32) | (8 * i), kSlashWords[i]});
+    }
+    const auto record = SignHitRecord(words);
+    REQUIRE(record.size() == kSignHitWords);
+    CHECK(record[1] == kSlashWords[1]);
+    CHECK(SignHitValid(record));
+    CHECK(proto::encode(proto::Message{proto::SignCut{0, "HyruleField_Adult", 0x70, words}}).has_value());
+    // None of them is a cut word an older build would write.
+    for (const auto& w : words) {
+        CHECK_FALSE(SignCutKeyAllowed(w.key));
+    }
+    // A word missing, a place that is no number, no blade at all: no hit.
+    auto missing = words;
+    missing.pop_back();
+    CHECK(SignHitRecord(missing).empty());
+    auto nan = words;
+    nan[0].value = 0x7fc0000000000000;
+    CHECK(SignHitRecord(nan).empty());
+    auto still = words;
+    still[2].value = still[3].value = still[4].value = 0;
+    still[1].value &= 0xffffffffu;
+    CHECK(SignHitRecord(still).empty());
+    // The cut words of an older sender alone are no hit.
+    CHECK(SignHitRecord({{((2ull + 0x268 / 8) << 32) | 0x98, 1}}).empty());
+}
+
+TEST_CASE("sign hit: our sword's hit goes out once, and the other game gives its sign that hit") {
+    const char* name = "Obj_SignBoard_A_01";
+    FakeSign mem;
+    auto read = [&mem](std::uint64_t a) { return mem(a); };
+    WorldSync w;
+    WorldSync::Out out;
+    Walk(w, 1000 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)});
+    w.ProbeSigns(read, 1000 * kMs, out);  // the first reading of its Life
+    CHECK(Sent<proto::SignCut>(out).empty());
+    auto hit_lands = [&mem] {
+        for (std::size_t i = 0; i < kSlashWords.size(); ++i) {
+            mem.words[FakeSign::kLife + 0x278 + 8 * i] = kSlashWords[i];
+        }
+    };
+    // A hit nobody of ours swung for (an arrow, another game's hit given to it): not sent.
+    hit_lands();
+    w.ProbeSigns(read, 1100 * kMs, out);
+    CHECK(Sent<proto::SignCut>(out).empty());
+    // Our swing passes it, then the hit lands: sent once, with the seven words.
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    proto::GrassCut swing;
+    swing.scene = kScene;
+    swing.position = {1.2f, 3.0f, 3.4f};
+    swing.radius = 0.5f;
+    swing.sweep = {proto::Vec3{1.2f, 3.1f, 3.4f}, proto::Vec3{nan, nan, nan}, proto::Vec3{nan, nan, nan}};
+    w.Swing(swing, kLink, 2000 * kMs, out);
+    out = {};
+    mem.words[FakeSign::kLife + 0x278] = 0xc260c14e00000000;  // a new place: a new hit
+    w.ProbeSigns(read, 2050 * kMs, out);
+    REQUIRE(Sent<proto::SignCut>(out).size() == 1);
+    proto::SignCut cut = Sent<proto::SignCut>(out)[0];
+    CHECK(cut.hash == 0x70);
+    REQUIRE(cut.words.size() == CoopWorld::kSignHitWords);
+    CHECK(cut.words[0] == proto::SignWord{CoopWorld::kSignHitRegion << 32, 0xc260c14e00000000});
+    CHECK(proto::encode(proto::Message{cut}).has_value());
+    out = {};
+    w.ProbeSigns(read, 2100 * kMs, out);
+    CHECK(Sent<proto::SignCut>(out).empty());
+
+    // The other game: once its sign has settled in, the hit is given with the record; no word is written.
+    FakeSign other;
+    auto read_b = [&other](std::uint64_t a) { return other(a); };
+    WorldSync b;
+    WorldSync::Out probe;
+    Walk(b, 1000 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)});
+    b.ProbeSigns(read_b, 1000 * kMs, probe);
+    cut.player_number = 1;
+    b.Receive(cut);
+    auto step = Walk(b, 1500 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)});
+    REQUIRE(step.hits.size() == 1);
+    CHECK(step.hits[0].address == FakeSign::kActor);
+    REQUIRE(step.hits[0].record.size() == CoopWorld::kSignHitWords);
+    CHECK(step.hits[0].record[0] == 0xc260c14e00000000);
+    CHECK(step.hits[0].at[1] == doctest::Approx(150.85f).epsilon(0.001));
+    CHECK(step.words.empty());
+    // The hit the Mover then writes into our sign's Life is not taken for a hit of our own.
+    for (std::size_t i = 0; i < kSlashWords.size(); ++i) {
+        other.words[FakeSign::kLife + 0x278 + 8 * i] = cut.words[i].value;
+    }
+    probe = {};
+    b.ProbeSigns(read_b, 1550 * kMs, probe);
+    CHECK(Sent<proto::SignCut>(probe).empty());
+    CHECK(Walk(b, 1600 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)}).hits.empty());
+}
 
 TEST_CASE("sign probe: names where a word is") {
     using CoopWorld::SignProbe;
@@ -1439,7 +1545,7 @@ TEST_CASE("sign cut: our cut's words go out as SIGN_CUT and are written into the
     b.Receive(hit);
     b.Receive(cut);
     auto step = Walk(b, 1500 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)});
-    CHECK(step.hits.size() == 1);
+    CHECK(step.hits.empty());  // the swing is no hit; an older sender's words still wait 0.2 s
     CHECK(step.words.empty());
     CHECK(Walk(b, 1600 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)}).words.empty());  // 0.2 s after the hit
     step = Walk(b, 1700 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)});
@@ -2593,4 +2699,78 @@ TEST_CASE("world: a moving floor moved in one game is sent and held in the other
     const proto::Vec3 away{1.0f, 2.0f, 50.0f};
     Walk(far, 1000 * kMs, {at(1.0f)}, away);
     CHECK(Walk(far, 1100 * kMs, {at(3.0f)}, away).send.empty());
+}
+
+// ------------------------------- rides: the Shadow Temple's boat, one trip for everyone (nx2navi, 2026-11-13)
+
+TEST_CASE("world: the Shadow Temple's boat is a ride, a gimmick mover with our Link carried and pulled aboard") {
+    CHECK(CoopWorld::IsRide("Obj_ShadowTemple_PaddleShip_A_01"));
+    CHECK(CoopWorld::IsWorldObject("Obj_ShadowTemple_PaddleShip_A_01"));
+    CHECK_FALSE(CoopWorld::IsRide("Obj_ShadowTemple_MoveFloor_A_03"));
+    CHECK_FALSE(CoopWorld::IsRide("Obj_Deku_MoveFloor_A_01"));
+}
+
+TEST_CASE("world: another game's boat trip is held here, our Link on its deck is carried, one left at the dock is "
+          "pulled aboard beside a friend") {
+    const char* boat = "Obj_ShadowTemple_PaddleShip_A_01";
+    auto at = [&](float x) { return Thing(0x500, 0x5bc0, std::nullopt, boat, {x, 2.0f, 3.0f}); };
+    const proto::Vec3 deck{71.3f, 9.0f, 3.5f};  // 7 m above the boat's place, as in StalfosStage
+
+    // A's boat leaves with A aboard: A sends the trip.
+    WorldSync a;
+    Walk(a, 1000 * kMs, {at(70.0f)}, deck, 1);
+    std::vector<proto::WorldMove> trip;
+    std::uint64_t t = 1100;
+    for (int i = 1; i <= 45; ++i, t += 100) {  // 18 m out: beyond the deck's reach from the dock
+        const float x = 70.0f - 0.4f * static_cast<float>(i);
+        for (const auto& v : Sent<proto::WorldMove>(Walk(a, t * kMs, {at(x)}, proto::Vec3{x + 1.3f, 9.0f, 3.5f}, 1))) {
+            trip.push_back(v);
+        }
+    }
+    REQUIRE(trip.size() >= 5);
+    std::vector<CoopObjects::PoseWrite> mine;
+    a.Poses(t * kMs, mine);
+    CHECK(mine.empty());  // the decider's game holds nothing and carries nobody
+
+    // B, aboard at home: its boat follows A's trip and our Link is carried with it.
+    WorldSync b;
+    Walk(b, 1000 * kMs, {at(70.0f)}, deck);
+    for (const auto& v : trip) {
+        b.Receive(v);
+    }
+    Walk(b, (trip.back().time_us / kMs + 50) * kMs, {at(70.0f)}, deck);
+    std::vector<CoopObjects::PoseWrite> held;
+    b.Poses(trip.back().time_us + 50 * kMs, held);
+    REQUIRE(held.size() == 1);
+    CHECK(held[0].carry_our_link);
+    CHECK_FALSE(held[0].our_link);
+    CHECK(held[0].position[0] < 70.0f);
+
+    // C, standing at the dock while the trip is 18 m out: pulled aboard beside A's puppet on its deck.
+    WorldSync c;
+    const proto::Vec3 dock{70.0f, 9.0f, 3.0f};
+    Walk(c, 1000 * kMs, {at(70.0f)}, dock);
+    for (const auto& v : trip) {
+        c.Receive(v);
+    }
+    const std::uint64_t now = trip.back().time_us + 50 * kMs;
+    Walk(c, now - 30 * kMs, {at(70.0f)}, dock);  // following now: our copy is put on the trip
+    c.NotePuppets({proto::Vec3{trip.back().position[0] + 1.3f, 9.0f, 3.5f}});
+    const auto pulled = Walk(c, now, {at(trip.back().position[0])}, dock);
+    std::vector<CoopObjects::PoseWrite> poses;
+    c.Poses(now, poses);
+    const auto pull = std::find_if(poses.begin(), poses.end(), [](const auto& w) { return w.our_link; });
+    REQUIRE(pull != poses.end());
+    CHECK(pull->position[0] == doctest::Approx(trip.back().position[0] + 1.3f));
+    CHECK(pull->position[1] == doctest::Approx(9.3f));
+    bool said = false;
+    for (const auto& n : pulled.notes) {
+        said = said || n.find("pulled aboard beside a friend") != std::string::npos;
+    }
+    CHECK(said);
+    // Not again within 3 s, and never while our Link rides it.
+    std::vector<CoopObjects::PoseWrite> later;
+    Walk(c, now + 1000 * kMs, {at(trip.back().position[0])}, dock);
+    c.Poses(now + 1000 * kMs, later);
+    CHECK(std::none_of(later.begin(), later.end(), [](const auto& w) { return w.our_link; }));
 }

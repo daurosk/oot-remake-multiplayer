@@ -40,7 +40,7 @@ TESTS = ['tests/main.cpp', 'nx2navi/tests/objects/fake_game.cpp',
          'nx2navi/tests/objects/port_test.cpp', 'nx2navi/tests/objects/two_games_test.cpp',
          'nx2navi/tests/objects/loopback_test.cpp',
          # The shared code's own cases for the files this port changed or leans on.
-         'tests/lichii/objects_test.cpp', 'tests/lichii/boss_test.cpp']
+         'tests/lichii/objects_test.cpp', 'tests/lichii/boss_test.cpp', 'tests/lichii/world_test.cpp']
 EXTRA_INCLUDES = ['nx2navi/dll/objects/shim', 'nx2navi/dll/objects', 'nx2navi/tests/objects']
 
 

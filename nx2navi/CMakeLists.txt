@@ -13,7 +13,7 @@ add_library(coop_nx2navi_lib STATIC
   dll/teleport_auto.cpp
   dll/menu_model.cpp
   dll/save_sync.cpp
-  dll/mp_saves.cpp
+  dll/mp_saves.cpp dll/step_switch.cpp dll/item_get.cpp
   dll/steam_model.cpp
   dll/steam_menu.cpp
   # No emulator code in it (tests/CMakeLists.txt builds it the same way).

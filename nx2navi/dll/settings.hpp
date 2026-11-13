@@ -25,10 +25,11 @@ struct Settings {
     // The other players shown as a second Link (puppet.hpp), in a game with
     // the plugin interface and the puppet pack; on unless the file says 0.
     bool puppet = true;
-    // Who this game follows through loading zones (teleport.hpp): the host
-    // (the default), anyone it shares a scene with, or nobody.
+    // Who this game follows through loading zones (teleport.hpp): anyone it
+    // shares a scene with (the default since 2026-11-13: nobody is left in
+    // another area), the host only, or nobody.
     enum class Follow { off, host, anyone };
-    Follow follow = Follow::host;
+    Follow follow = Follow::anyone;
     // Once per run, when this game first gets into the game while the host
     // is in it: go to where the host is. On unless the file says 0.
     bool join_at_host = true;

@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cstdio>
 #include <deque>
+#include <map>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -26,6 +27,7 @@
 #include <vector>
 
 #include "third_party/plugin_api.h"
+#include "item_get.hpp"
 #include "title_menu.hpp"
 
 namespace CoopNx2navi::Overlay {
@@ -77,6 +79,11 @@ struct Shared {
     bool have_snapshot = false;
     Ui::Snapshot snapshot;
     std::deque<Ui::Notice> notices;
+    // "Saria got the Hookshot": shown large, one at a time, while this game's player is in control (DrawItemBanner).
+    std::deque<std::string> banners;
+    std::uint64_t banner_since_ms = 0;  // when the front one was first drawn, 0 not yet
+    std::deque<std::string> item_lines;  // the same lines, for the item-get moment (TakeItemLines)
+    std::map<std::string, int> icons;    // romfs icon path -> texture (0 loading, -1 none)
     Ui::ChatView chat;
     std::vector<std::string> outbox;
     bool visible = true;
@@ -522,6 +529,94 @@ int HudFont(int px) {
     return g_hud.font;
 }
 
+// An item's icon (romfs path), loaded once on a thread of its own (the runtime unpacks the archive: ~0.4 s).
+int BannerIcon(const std::string& path) {
+    if (path.empty() || g_api == nullptr || g_api->version < 6 || !NX2_HAS(g_api, Nx2PluginApi, font_free)) {
+        return 0;
+    }
+    {
+        std::lock_guard lock(g.mutex);
+        if (const auto it = g.icons.find(path); it != g.icons.end()) {
+            return it->second;
+        }
+        g.icons[path] = 0;
+    }
+    std::thread([path] {
+        std::uint32_t wh[2] = {0, 0};
+        const int t = g_api->texture_load(path.c_str(), 0, wh);
+        Log("item line: %s %s", t > 0 ? "icon" : "no icon for", path.c_str());
+        std::lock_guard lock(g.mutex);
+        g.icons[path] = t > 0 ? t : -1;
+    }).detach();
+    return 0;
+}
+
+Ui::Snapshot g_banner_snapshot;
+// Another player's item, as a large line in the game's font across the upper third of the picture: the stand-in
+// for the game's own item-get scene, which only the player who took the item gets. One at a time, 4.5 s each;
+// it waits while this game's menu is open or a cutscene or talk runs here, and starts when the player is back.
+constexpr std::uint64_t kBannerMs = 4500, kBannerFadeMs = 500;
+void DrawItemBanner(const Nx2Draw* d, const Ui::Snapshot& snapshot) {
+    std::string text;
+    std::uint64_t age = 0;
+    {
+        std::lock_guard lock(g.mutex);
+        const std::uint64_t now = NowMs();
+        if (!g.banners.empty() && g.banner_since_ms != 0 && now - g.banner_since_ms >= kBannerMs) {
+            g.banners.pop_front();
+            g.banner_since_ms = 0;
+        }
+        if (g.banners.empty() || d->menu_open != 0 || !snapshot.local.in_game || snapshot.local.event) {
+            if (!g.banners.empty() && g.banner_since_ms != 0) {
+                g.banner_since_ms = 0;  // cut short by a menu or a scene: shown whole again after it
+            }
+            return;
+        }
+        if (g.banner_since_ms == 0) {
+            g.banner_since_ms = now;
+        }
+        text = g.banners.front();
+        age = now - g.banner_since_ms;
+    }
+    float px = 0.0f, py = 0.0f, pw = d->width, ph = d->height;
+    if (NX2_HAS(d, Nx2Draw, picture_height) && d->picture_width > 0.0f && d->picture_height > 0.0f) {
+        px = d->picture_x, py = d->picture_y, pw = d->picture_width, ph = d->picture_height;
+    }
+    const float u = ph / 1080.0f;
+    const int size = static_cast<int>(46.0f * u + 0.5f);
+    float alpha = 1.0f;
+    if (age < kBannerFadeMs) {
+        alpha = static_cast<float>(age) / kBannerFadeMs;
+    } else if (age > kBannerMs - kBannerFadeMs) {
+        alpha = static_cast<float>(kBannerMs - age) / kBannerFadeMs;
+    }
+    const auto a8 = [alpha](int v) { return static_cast<int>(static_cast<float>(v) * alpha); };
+    const int font = GameLook(d) ? HudFont(size) : 0;
+    float wh[2] = {0.0f, static_cast<float>(size)};
+    if (font != 0) {
+        d->text_font_size(font, 0.0f, text.c_str(), wh);
+    } else {
+        d->text_size(static_cast<float>(size), text.c_str(), wh);
+    }
+    // The item's own icon from the game's files (romfs UI/Tex/Icon), left of the line, when it has one.
+    const int icon = BannerIcon(CoopNx2navi::ItemGet::IconPath(CoopNx2navi::ItemGet::ActorFor(text)));
+    const float icon_side = icon > 0 ? wh[1] * 1.7f : 0.0f;
+    const float x = px + (pw - wh[0] + icon_side) * 0.5f, y = py + ph * 0.27f;
+    const float pad = 18.0f * u;
+    d->rect_filled(px, y - pad, px + pw, y + wh[1] + pad, NX2_RGBA(0, 0, 0, a8(120)), 0.0f);
+    d->rect_filled(px, y - pad, px + pw, y - pad + 2.0f * u, NX2_RGBA(255, 214, 110, a8(200)), 0.0f);
+    d->rect_filled(px, y + wh[1] + pad - 2.0f * u, px + pw, y + wh[1] + pad, NX2_RGBA(255, 214, 110, a8(200)), 0.0f);
+    if (icon > 0) {
+        const float ix = x - icon_side - 10.0f * u, iy = y + wh[1] * 0.5f - icon_side * 0.5f;
+        d->image(icon, ix, iy, ix + icon_side, iy + icon_side, 0.0f, 0.0f, 1.0f, 1.0f, NX2_RGBA(255, 255, 255, a8(255)));
+    }
+    if (font != 0) {
+        d->text_font(font, x, y, 0.0f, NX2_RGBA(255, 232, 150, a8(255)), NX2_RGBA(0, 0, 0, a8(200)), text.c_str());
+    } else {
+        d->text(x, y, static_cast<float>(size), NX2_RGBA(255, 232, 150, a8(255)), text.c_str());
+    }
+}
+
 // One player's block in the game's look; returns the y of the next block.
 float DrawPeerBlockGame(const Nx2Draw* d, const Ui::Peer& peer, int colour, float x, float y, float u) {
     const int name_px = static_cast<int>(26.0f * u + 0.5f);
@@ -669,6 +764,7 @@ void OnOverlay(const Nx2Draw* d, void*) {
             lines = Ui::Panel(g.snapshot, g.notices, g.chat, now);
         }
     }
+    DrawItemBanner(d, g_banner_snapshot = [&] { std::lock_guard lock(g.mutex); return g.snapshot; }());
     // The map markers show with the panel hidden too (F9 hides only the panel).
     if (g_minimap.load(std::memory_order_relaxed)) {
         DrawMinimap(d, for_map);
@@ -879,10 +975,28 @@ std::vector<std::string> TakeOutbox() {
     return out;
 }
 
+std::vector<std::string> TakeItemLines() {
+    std::lock_guard lock(g.mutex);
+    std::vector<std::string> out(g.item_lines.begin(), g.item_lines.end());
+    g.item_lines.clear();
+    return out;
+}
+
+bool MenuOpen() {
+    std::lock_guard lock(g.mutex);
+    return g.menu_open;
+}
+
 void Notice(std::string text, bool chat) {
     std::lock_guard lock(g.mutex);
     if (chat) {
         Ui::AddHistory(g.chat.history, text);
+    }
+    if (!chat && text.find(" got ") != std::string::npos && g.banners.size() < 8) {
+        g.banners.push_back(text);  // another player's item, song or key: the large line too
+        if (g.item_lines.size() < 8) {
+            g.item_lines.push_back(text);
+        }
     }
     Ui::AddNotice(g.notices, std::move(text), NowMs());
 }

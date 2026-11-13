@@ -310,6 +310,15 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             }
             step.kind = Kind::kill;
             step.mark = std::string(w[1]);
+        } else if (cmd == "HURT") {
+            // hurt ACTOR N: the nearest ACTOR with a life loses N, as one hit of this game's
+            // (a copy's drop goes to its owner as DAMAGE). Test only.
+            std::uint32_t amount = 0;
+            if (w.size() != 3 || !Ticks(w[2], amount)) {
+                return fail("want: hurt ACTOR N (N above 0)");
+            }
+            step.kind = Kind::kill;
+            step.mark = std::string(w[1]) + "|" + std::string(w[2]);
         } else if (cmd == "GIVE") {
             if (w.size() != 2) {
                 return fail("want: give ITEM");

@@ -2,6 +2,8 @@
 // The pose copy (coop_pose.h). No emulator header, so the unit tests build it.
 #include "coop_pose.h"
 
+#include <atomic>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -563,13 +565,19 @@ Wrote WriteFor(State& s, CoopPuppet::Guest& guest, std::uint8_t number, std::uin
 
 }  // namespace
 
+namespace {
+std::atomic<bool> g_frozen{false};
+}  // namespace
+
+void FreezeOwnPose(bool frozen) { g_frozen.store(frozen, std::memory_order_relaxed); }
+
 void OnCalcFrame(CoopPuppet::Guest& guest, std::uint64_t main_base,
                  const std::vector<std::pair<std::uint8_t, std::uint64_t>>& puppets,
                  std::uint64_t now_ms) {
     State& s = S();
     std::lock_guard lock(s.mutex);
     const std::uint64_t player = main_base != 0 ? FindPlayer(guest, main_base) : 0;
-    if (player != 0) {
+    if (player != 0 && !g_frozen.load(std::memory_order_relaxed)) {
         if (auto local = ReadLocal(s, guest, player)) {
             s.last_size = local->bones.size();
             s.outbox = std::move(local);

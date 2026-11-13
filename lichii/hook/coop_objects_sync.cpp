@@ -1932,6 +1932,9 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                     while (o->received.size() > kKeepSamples) {
                         o->received.pop_front();
                     }
+                    if (const auto& a = o->received.back().animation; o->npc && a) {
+                        o->npc_loop.See(a->name, a->frame);  // coop_npc_anim.h
+                    }
                 }
             }
             if (!sample->state.life || !o->life) {
@@ -2176,6 +2179,24 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
             -static_cast<std::int64_t>(kBehindUs), static_cast<std::int64_t>(kExtrapolateUs));
         out.push_back({address, wanted->name, rate, FrameAfter(wanted->frame, rate, age),
                        last.time, 0, {}});
+        if (o.npc) {
+            // Walking townspeople (coop_npc_anim.h): the playing frame, run
+            // on as fast as the owner's last two samples show it running.
+            PlayWish& wish = out.back();
+            wish.npc = true;
+            wish.alias = !o.guard;  // a guard's own reaction is a hand-over (issue 191)
+            wish.loop = o.npc_loop.Length();
+            wish.run = rate;
+            if (o.received.size() >= 2) {
+                const Received& before = o.received[o.received.size() - 2];
+                if (before.animation && before.animation->name == wanted->name) {
+                    wish.run = CoopNpcAnim::SeenRate(before.animation->frame, before.time,
+                                                     wanted->frame, last.time, rate);
+                }
+            }
+            wish.frame =
+                CoopNpcAnim::Wrapped(FrameAfter(wanted->frame, wish.run, age), wish.loop);
+        }
         // Issue 150: a boss's other slots (Gohma's eye guard and eyelids,
         // whose AS events open and close the eye's guard). Without them
         // each game's copy kept its own AI's guard: the eye stood open for

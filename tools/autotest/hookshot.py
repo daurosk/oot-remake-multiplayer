@@ -768,6 +768,8 @@ def run(a):
             commands[x] = os.path.join(out, "commands-%s.txt" % x)
             open(commands[x], "w").close()
             env = dict(os.environ, HOS_CONTROL=sock, HOS_CONTROL_MEM="ro", LICHII_COOP_TEST_COMMANDS=commands[x])
+            # Each game plays the save its scenario put in (the joiner would load the host's): a switch can undo it.
+            env.setdefault("LICHII_COOP_TEST_OWN_SAVE", "1")
             if a.server:
                 env["LICHII_COOP_SERVER"] = "127.0.0.1:%d" % a.port
                 env["LICHII_COOP_NAME"] = "Hook" + x

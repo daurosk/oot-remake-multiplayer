@@ -422,6 +422,8 @@ class HookshotGames:
         env = dict(os.environ, HOS_CONTROL=sock, HOS_CONTROL_MEM="ro", LICHII_COOP_TEST_COMMANDS=self.commands[x],
                    LICHII_COOP_SERVER="127.0.0.1:%d" % self.port, LICHII_COOP_NAME="Hook" + x)
         env.pop("LICHII_COOP_PASSWORD", None)
+        # Each game plays the save its scenario put in (the joiner would load the host's): a switch can undo it.
+        env.setdefault("LICHII_COOP_TEST_OWN_SAVE", "1")
         if password:
             env["LICHII_COOP_PASSWORD"] = password
         for kv in self.head["switches"] + self.env:

@@ -551,6 +551,7 @@ class RunTest(unittest.TestCase):
             self.assertEqual([p.env["HOS_CONTROL_MEM"] for p in started], ["ro", "ro"])
             self.assertEqual([p.env.get("ONLY_B") for p in started], [None, "1"])
             self.assertEqual([p.env["BOTH"] for p in started], ["1", "1"])
+            self.assertEqual([p.env["LICHII_COOP_TEST_OWN_SAVE"] for p in started], ["1", "1"])   # each game its own save
             ga, gb = fakes.values()
             for g in (ga, gb):
                 shots = [os.path.basename(r["path"]) for r in g.cmds("shot")]

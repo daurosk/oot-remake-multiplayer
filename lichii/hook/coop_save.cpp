@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <variant>
@@ -57,27 +58,37 @@ fs::path g_pending;
 bool g_title_up = false;   // the title's menu is up (NoteTitle, Hookshot's title module)
 const void* g_decided_client = nullptr;   // the session's client it was made for
 
-// Unset, or "1"/"0": the environment's LICHII_COOP_HOST_SAVE.
-std::optional<bool> EnvChoice() {
+// An environment variable's text ("" when unset).
+std::string EnvText(const char* name) {
 #ifdef _MSC_VER
     char* value = nullptr;
     std::size_t size = 0;
-    if (_dupenv_s(&value, &size, "LICHII_COOP_HOST_SAVE") != 0 || value == nullptr) {
-        return std::nullopt;
+    if (_dupenv_s(&value, &size, name) != 0 || value == nullptr) {
+        return {};
     }
     const std::string v(value);
     std::free(value);
+    return v;
 #else
-    const char* raw = std::getenv("LICHII_COOP_HOST_SAVE");
-    if (raw == nullptr) {
-        return std::nullopt;
-    }
-    const std::string v(raw);
+    const char* raw = std::getenv(name);
+    return raw != nullptr ? std::string(raw) : std::string();
 #endif
+}
+
+// Unset, or "1"/"0": the environment's LICHII_COOP_HOST_SAVE.
+std::optional<bool> EnvChoice() {
+    const std::string v = EnvText("LICHII_COOP_HOST_SAVE");
     if (v.empty()) {
         return std::nullopt;
     }
     return v != "0";
+}
+
+// LICHII_COOP_TEST_OWN_SAVE=1 (the autotests, tools/autotest): a guest on Hookshot keeps its own save folder and
+// asks for no host's save, so each test game plays the save its scenario put in. Players never set it.
+bool TestOwnSave() {
+    const std::string v = EnvText("LICHII_COOP_TEST_OWN_SAVE");
+    return !v.empty() && v != "0";
 }
 
 // Where the folder is fixed at the start (the emulator): the environment only (save::folder_choice).
@@ -113,9 +124,12 @@ void SwitchFrame(coop::net::Client& client) {
     }
     if (!g_decided && !g_dir.empty()) {
         const bool connected = client.state() == coop::net::State::connected && client.host_number() != 0;
-        const auto choice =
-            save::folder_choice(std::nullopt, true, connected, connected && client.is_host(), g_in_game);
+        auto choice = save::folder_choice(std::nullopt, true, connected, connected && client.is_host(), g_in_game);
         if (choice == save::FolderChoice::wait) return;
+        if (choice == save::FolderChoice::coop && TestOwnSave()) {
+            LOG_INFO(Core, "coop: save: LICHII_COOP_TEST_OWN_SAVE: this guest keeps its own saves (a test)");
+            choice = save::FolderChoice::own;
+        }
         g_decided = true;
         g_decided_client = &client;
         // Both sides start on the game's own folder: a guest moves to the co-op one only once the host's save is

@@ -23,6 +23,12 @@ Check ((Compare-KitVersion 'v0.2.0' 'v0.10.0') -eq -1) 'numbers compare as numbe
 Check ((Compare-KitVersion 'v0.1.0-beta2' 'v0.1.0-beta2') -eq 0) 'the same version'
 Check ((Compare-KitVersion '' 'v0.1.0-beta1') -eq -1) 'a kit with no release is older than any release'
 Check ((Compare-KitVersion 'v0.1.0-beta1' 'nightly') -eq 1) 'a tag that is no version counts as the oldest'
+# The names from 0.10.1 on (SemVer from the test number: test10.1 = v0.10.1, test11 = v0.11.0): newer than every
+# v0.1.0-testN, in order among themselves.
+Check ((Compare-KitVersion 'v0.10.1' 'v0.1.0-test10') -eq 1) 'v0.10.1 is newer than v0.1.0-test10'
+Check ((Compare-KitVersion 'v0.1.0-test10' 'v0.10.1') -eq -1) 'v0.1.0-test10 is older than v0.10.1'
+Check ((Compare-KitVersion 'v0.11.0' 'v0.10.1') -eq 1) 'v0.11.0 is newer than v0.10.1'
+Check ((Compare-KitVersion 'v0.11.1' 'v0.11.0') -eq 1) 'a hotfix v0.11.1 is newer than v0.11.0'
 
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-update-test-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null

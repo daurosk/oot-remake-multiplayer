@@ -144,7 +144,7 @@ bool On(const std::optional<std::string>& v) {
 }
 
 // The Settings page's rows, in order.
-// Co-op Settings shows only what a player needs (Caleb: hosting as simple as a child can do it); the other
+// Co-op Settings shows only what a player needs (dauro: hosting as simple as a child can do it); the other
 // settings stay in the files as they are.
 enum SettingsRow : std::size_t { kName, kColour, kMaxPlayersRow, kVoice, kSave, kSettingsBack, kSettingsRows };
 enum MainRow : std::size_t { kHost, kJoin, kSettings, kMainBack, kMainRows };

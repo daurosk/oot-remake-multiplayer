@@ -363,8 +363,7 @@ void Loader::SetHostValues(std::optional<std::vector<SharedValue>> values) {
         if (values) {
             host_values_.emplace();
             for (SharedValue& v : *values) {
-                (*host_values_)[v.id + "
-" + v.key] = std::move(v.value);
+                (*host_values_)[v.id + "\n" + v.key] = std::move(v.value);
             }
         } else {
             host_values_.reset();

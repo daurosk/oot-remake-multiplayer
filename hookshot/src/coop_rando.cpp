@@ -184,8 +184,9 @@ Plan Decide(const Want& want, const std::vector<Built>& built, const std::vector
         return plan;
     }
     switch_off_all_but(plan.folder);
+    // On, and the first row: its size table (which keeps the larger entry of every other mod) must win.
     const CoopMods::Row* row = RowOf(rows, plan.folder);
-    if (row == nullptr || !row->on) {
+    if (row == nullptr || !row->on || rows.empty() || !CoopMods::NameSame(rows.front().name, plan.folder)) {
         plan.on.push_back(plan.folder);
     }
     plan.what = plan.on.empty() && plan.off.empty() ? Plan::Do::nothing : Plan::Do::use;
@@ -204,12 +205,14 @@ std::vector<std::string> BuildArgs(const fs::path& seed_file, const fs::path& ga
 }
 
 std::wstring CommandLine(const fs::path& program, const std::vector<std::string>& args) {
-    std::string line = Quote(CoopMods::ToUtf8(program));
+    // ToUtf8 writes '/': Windows paths back to '\' before quoting (a trailing '\' is doubled by Quote).
+    const auto windows = [](std::string s) {
+        std::replace(s.begin(), s.end(), '/', '\\');
+        return s;
+    };
+    std::string line = Quote(windows(CoopMods::ToUtf8(program)));
     for (const std::string& a : args) {
-        line += " " + Quote(a);
-    }
-    for (char& c : line) {
-        if (c == '/') c = '\\';  // ToUtf8 writes '/': Windows paths back
+        line += " " + Quote(windows(a));
     }
     return CoopMods::FromUtf8(line).wstring();
 }

@@ -50,8 +50,7 @@ struct World {
         fs::create_directories(game / "System");
         Put(ootrr, "MZ");
         // This run's hookshot.exe has patch 0011 (it reads the Mods tab's list): process 1, nothing indexed.
-        Put(mods / "coop-mods.applied", "coop-mods-applied 1 1
-");
+        Put(mods / "coop-mods.applied", "coop-mods-applied 1 1\n");
     }
     ~World() {
         std::error_code ec;
@@ -161,11 +160,12 @@ TEST_CASE("rando: OOTRR's command lines") {
     CHECK(GenerateArgs("", "a b", "s.ootrr") == std::vector<std::string>{"generate", "default", "ab", "s.ootrr"});
     CHECK(BuildArgs("s.ootrr", "C:/game", "C:/mods", "randomizer-ab") ==
           std::vector<std::string>{"build", "s.ootrr", "C:/game", "C:/mods", "randomizer-ab", "--host", "hookshot"});
-    CHECK(CommandLine("C:/My Tools/ootrr.exe", {"build", "C:/a b/", "x\"y"}) ==
-          LR"("C:\My Tools\ootrr.exe" build "C:\a b\\" "x\"y")");
+    // "C:\My Tools\ootrr.exe" build "C:\a b\\" "x\"y"   (a trailing backslash doubled before the quote)
+    const std::wstring want = L"\"C:\\My Tools\\ootrr.exe\" build \"C:\\a b\\\\\" \"x\\\"y\"";
+    CHECK(CommandLine("C:/My Tools/ootrr.exe", {"build", "C:/a b/", "x\"y"}) == want);
 }
 
-TEST_CASE("rando: switched on, a seed is made, built once and switched on first; a restart is asked for") {
+TEST_CASE("rando: switched on, a seed is made, built once and switched on first, and a restart is asked for") {
     World w;
     CoopMods::Loader loader(w.mods, {nullptr, 1});
     loader.Start();

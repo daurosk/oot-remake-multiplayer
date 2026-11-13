@@ -12,6 +12,7 @@
 #include "common/logging.h"
 #include "coop_hook.h"
 #include "coop_hookshot.h"
+#include "coop_mods_tab.h"
 #include "coop_pause_files.h"
 #include "coop_title.h"
 #include "coop_title_menu.h"
@@ -399,15 +400,24 @@ void Init(bool coop_on) {
              coop_on ? "; co-op came with the game's start" : "");
 }
 
+// Tab 1: Mods (coop_mods_tab.h), once the mod loader runs.
+constexpr int kModsTab = 1;
+
 int Tabs() {
-    return 1;
+    return CoopModsTab::Available() ? 2 : 1;
 }
 
 const char* TabName(int tab) {
+    if (tab == kModsTab && CoopModsTab::Available()) {
+        return CoopModsTab::TabName();
+    }
     return tab == kMultiplayerTab ? "Multiplayer" : nullptr;
 }
 
 bool Page(int tab, HosCoopMenuPage* out) {
+    if (tab == kModsTab) {
+        return CoopModsTab::Page(out);
+    }
     if (tab != kMultiplayerTab || out == nullptr || out->size < sizeof(HosCoopMenuPage)) {
         return false;
     }
@@ -446,6 +456,9 @@ bool Page(int tab, HosCoopMenuPage* out) {
 }
 
 bool Input(int tab, int event, int arg, int arg2) {
+    if (tab == kModsTab) {
+        return CoopModsTab::MenuInput(event, arg, arg2);
+    }
     if (tab != kMultiplayerTab) {
         return false;
     }
@@ -485,7 +498,9 @@ int Wanted() {
 }
 
 bool Key(std::uint32_t vk, bool repeat) {
-    (void)repeat;
+    if (CoopModsTab::Key(vk, repeat)) {  // the Mods tab's text field, while it is typed into
+        return true;
+    }
     std::lock_guard lock(g_mutex);
     if (!g_shown || !g_menu.typing()) {
         return false;
@@ -517,6 +532,9 @@ bool Key(std::uint32_t vk, bool repeat) {
 }
 
 bool Char(std::uint32_t cp) {
+    if (CoopModsTab::Char(cp)) {
+        return true;
+    }
     std::lock_guard lock(g_mutex);
     if (!g_shown || !g_menu.typing()) {
         return false;
@@ -528,6 +546,9 @@ bool Char(std::uint32_t cp) {
 }
 
 bool KeysTaken() {
+    if (CoopModsTab::KeysTaken()) {
+        return true;
+    }
     std::lock_guard lock(g_mutex);
     return g_shown && g_menu.typing();
 }

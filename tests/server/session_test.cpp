@@ -3724,7 +3724,7 @@ TEST_CASE("pvp: only the host changes it, for everyone, and an empty session goe
   CHECK_FALSE(h.session.pvp());
 }
 
-TEST_CASE("mods: each player's list is passed on and given to joiners; shared settings only from the host") {
+TEST_CASE("mods: each player's list is passed on and given to joiners, and shared settings only from the host") {
   Harness h;
   h.join(1, "Link");
   h.join(2, "Zelda");

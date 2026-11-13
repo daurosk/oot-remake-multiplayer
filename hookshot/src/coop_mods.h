@@ -136,8 +136,7 @@ private:
     std::map<std::string, std::string> restart_values_;  // "id\nkey" -> the value at the start, "restart" settings
     std::map<std::string, std::string> changed_;         // name -> reason (NoteChanged)
     std::vector<SettingFn> on_setting_;
-    std::optional<std::map<std::string, std::string>> host_values_;  // "id
-key" -> the host's value
+    std::optional<std::map<std::string, std::string>> host_values_;  // id + newline + key -> the host's value
 };
 
 }  // namespace CoopMods

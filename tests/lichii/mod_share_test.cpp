@@ -18,7 +18,7 @@ ModEntry Mod(const char* id, const char* version, std::uint8_t hash = 0) {
 }
 }  // namespace
 
-TEST_CASE("mod share: the same mods in any order match; hashes not known yet are not compared") {
+TEST_CASE("mod share: the same mods in any order match, and hashes not known yet are not compared") {
     const ModList host{1, {Mod("rando", "1.0", 5), Mod("hud", "2", 7)}};
     CHECK(CoopModShare::Compare(host, ModList{0, {Mod("hud", "2", 7), Mod("rando", "1.0", 5)}}).empty());
     CHECK(CoopModShare::Compare(host, ModList{0, {Mod("hud", "2", 0), Mod("rando", "1.0", 5)}}).empty());

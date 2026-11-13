@@ -62,7 +62,10 @@ bool PasswordOk(std::string_view password);
 
 struct Options {
     std::string name = "Player";   // coop.ini name
-    std::string colour;            // coop-options.ini color ("": the player number's)
+    std::string colour;            // coop-options.ini color ("": the player number's); a tunic name, or the
+                                   // file's own text when it is another colour (gray, #F82, rgb(...)): kept
+    std::string colour_in_file;    // the color line's value as read: Write leaves the line alone while
+                                   // colour still equals it (only a change of the colour row writes it)
     bool tunics = true;            // LICHII_COOP_TUNICS (0: everyone in green)
     bool hud = true;               // LICHII_COOP_HUD (0: the plain look)
     std::string chat_key = "T";    // LICHII_COOP_CHAT_KEY

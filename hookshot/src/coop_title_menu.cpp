@@ -266,23 +266,16 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     if (const auto v = IniGet(coop_ini, "name"); v && NameOk(*v)) {
         o.name = std::string(Trim(*v));
     }
-    if (const auto v = IniGet(options_ini, "color")) {
+    if (const auto v = IniGet(options_ini, "color"); v && !v->empty()) {
+        // A tunic name (any case) shows as that row value; any other colour the game reads (gray, brown, #F82,
+        // 0xFF8020, #FF8020FF, rgb(...): CoopColors::Parse) is kept as the player wrote it, never dropped.
+        o.colour_in_file = *v;
         std::string c = *v;
         std::transform(c.begin(), c.end(), c.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-        if (c.size() >= 2 && (c.front() == '"' || c.front() == '\'') && c.back() == c.front()) {
-            c = std::string(Trim(c.substr(1, c.size() - 2)));
-        }
         const auto& list = Colours();
-        const bool hex = (c.size() == 7 && c[0] == '#') || c.size() == 6;
-        const std::string digits = c.size() == 7 ? c.substr(1) : c;
-        if (std::find(list.begin(), list.end(), c) != list.end()) {
-            o.colour = c;
-        } else if (hex && std::all_of(digits.begin(), digits.end(), [](char ch) { return std::isxdigit(static_cast<unsigned char>(ch)); })) {
-            o.colour = "#" + digits;   // the player's own colour: kept (the row then steps into the tunics)
-            std::transform(o.colour.begin(), o.colour.end(), o.colour.begin(),
-                           [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
-        } else {
-            o.colour = "";
+        o.colour = std::find(list.begin(), list.end(), c) != list.end() ? c : *v;
+        if (o.colour == c && c != *v) {
+            o.colour_in_file = c;   // ("Orange": the same colour; written only if the row changes it)
         }
     }
     o.tunics = !Off(IniGet(options_ini, "LICHII_COOP_TUNICS"));
@@ -315,7 +308,9 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
 void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     coop_ini = IniSet(coop_ini, "name", Trim(name), true);
     std::string o = options_ini;
-    o = colour.empty() ? IniUnset(o, "color") : IniSet(o, "color", colour, true);
+    if (colour != colour_in_file) {   // (unchanged: the line stays exactly as the player wrote it)
+        o = colour.empty() ? IniUnset(o, "color") : IniSet(o, "color", colour, true);
+    }
     o = tunics ? IniUnset(o, "LICHII_COOP_TUNICS") : IniSet(o, "LICHII_COOP_TUNICS", "0", false);
     o = hud ? IniUnset(o, "LICHII_COOP_HUD") : IniSet(o, "LICHII_COOP_HUD", "0", false);
     o = chat_key == "T" ? IniUnset(o, "LICHII_COOP_CHAT_KEY") : IniSet(o, "LICHII_COOP_CHAT_KEY", chat_key, false);

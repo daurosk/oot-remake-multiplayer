@@ -28,21 +28,26 @@ $emu = Join-Path $kit 'emulator'
 $exe = Join-Path $emu 'lichii.exe'
 $ini = Join-Path $emu 'user\config\coop.ini'
 $template = Join-Path $PSScriptRoot 'coop.ini.template'
+# Play-OoT-Coop.bat (play.ps1 choose -Hookshot): one launcher that asks host or join, the last answer first.
+if ($Mode -eq 'choose') {
+    $lastMode = Join-Path $kit 'hookshot\last-mode.txt'
+    $was = if (Test-Path -LiteralPath $lastMode) { "$(Get-Content -LiteralPath $lastMode -TotalCount 1)".Trim() } else { '' }
+    $default = if ($was -eq 'join') { 'J' } else { 'H' }
+    Write-Host 'H = host a game (your friends join you)    J = join a friend''s game'
+    $answer = "$(Read-Host "H or J [$default]")".Trim().ToUpperInvariant()
+    if (-not $answer) { $answer = $default }
+    $Mode = if ($answer.StartsWith('J')) { 'join' } else { 'host' }
+    try { New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lastMode) | Out-Null; [System.IO.File]::WriteAllText($lastMode, "$Mode`n") } catch { }
+}
 if ($Hookshot) {
     # The game Build-Hookshot-Coop.bat built (hookshot-build.ps1 notes where, for -Out); its module
-    # reads coop.ini beside hookshot.exe. The emulator's own steps below are skipped for it.
-    $hsGame = Join-Path $kit 'hookshot\game'
-    $hsWhere = Join-Path $kit 'hookshot\game-folder.txt'
-    if (Test-Path -LiteralPath $hsWhere) { $hsGame = (Get-Content -LiteralPath $hsWhere -TotalCount 1).Trim() }
-    $exe = @((Join-Path $hsGame 'bin\hookshot.exe'), (Join-Path $hsGame 'hookshot.exe')) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-    if (-not $exe -or -not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $exe) 'hookshot_coop.dll'))) {
-        Write-Host "No co-op Hookshot game in $hsGame yet. Run Build-Hookshot-Coop.bat first (SETUP.md, ""Play on Hookshot"")."
-        exit 1
-    }
-    $emu = Split-Path -Parent $exe
-    $ini = Join-Path $emu 'coop.ini'
+    # reads coop.ini beside hookshot.exe. The emulator's own steps below are skipped for it. A game not
+    # built yet, or one an update left behind, is brought up to date after the update check below.
+    $hsGame = Get-KitHookshotGame $kit
+    $exe = Get-KitHookshotExe $hsGame
+    if ($exe) { $emu = Split-Path -Parent $exe; $ini = Join-Path $emu 'coop.ini' }
 }
-if (-not (Test-Path $exe)) { Write-Host "Not found: $exe"; exit 1 }
+if (-not $Hookshot -and -not (Test-Path $exe)) { Write-Host "Not found: $exe"; exit 1 }
 
 # Yes or no, yes when no key comes in $Seconds (an unattended start still updates).
 function Read-YesNo([string]$Question, [int]$Seconds) {
@@ -138,6 +143,31 @@ if (-not $NoUpdate -and (Test-Path $updater)) {
             }
         }
     }
+}
+
+# Hookshot: the game as this kit wants it, with no step of the player's. Build-Hookshot-Coop runs by
+# itself: co-op only (seconds) when the Hookshot pin is the same, the game built again when the update moved it,
+# and the first build when there is no game yet (the game files are asked for once and remembered).
+if ($Hookshot) {
+    $need = Get-KitHookshotNeed $kit
+    if ($need) {
+        Write-Host (Get-KitHookshotNeedText $need)
+        $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+        & $ps -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'hookshot-build.ps1')
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host 'The Hookshot game could not be brought up to date (above: why). Run Build-Hookshot-Coop.bat to try again.'
+            Wait-AnyKey 60
+            exit 1
+        }
+        $hsGame = Get-KitHookshotGame $kit
+        $exe = Get-KitHookshotExe $hsGame
+    }
+    if (-not $exe -or -not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $exe) 'hookshot_coop.dll'))) {
+        Write-Host "No co-op Hookshot game in $hsGame. Run Build-Hookshot-Coop.bat (SETUP.md, ""Play on Hookshot"")."
+        exit 1
+    }
+    $emu = Split-Path -Parent $exe
+    $ini = Join-Path $emu 'coop.ini'
 }
 
 $current = Read-CoopIni $ini

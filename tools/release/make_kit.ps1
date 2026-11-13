@@ -230,7 +230,7 @@ if (-not (Test-Path $hsPin)) {
     if (-not $hsPatches) { throw 'hookshot\PIN is there but hookshot\patches has no .patch.' }
     # (byte for byte: a patch's own line ends are part of it)
     foreach ($p in $hsPatches) { Copy-Item -LiteralPath $p.FullName -Destination (Join-Path $hsKit "patches\$($p.Name)") }
-    foreach ($f in 'Build-Hookshot-Coop.bat', 'Host-Hookshot.bat', 'Join-Hookshot.bat') { Copy-Text (Join-Path $here "kit\$f") (Join-Path $kit $f) }
+    foreach ($f in 'Build-Hookshot-Coop.bat', 'Host-Hookshot.bat', 'Join-Hookshot.bat', 'Play-OoT-Coop.bat') { Copy-Text (Join-Path $here "kit\$f") (Join-Path $kit $f) }
     foreach ($f in 'hookshot-build.ps1', 'apply_patch.py') { Copy-Text (Join-Path $here "kit\scripts\$f") (Join-Path $kit "scripts\$f") }
     $hsPinMap = @{}
     Get-Content $hsPin | ForEach-Object { if ($_ -match '^(\w+)=(.*)$') { $hsPinMap[$Matches[1]] = $Matches[2].Trim() } }

@@ -491,6 +491,104 @@ function Use-KitPuppetPack([string]$Manifest, [string]$ToolDir, [string[]]$Missi
     return $false
 }
 
+# --- Hookshot: what the kit's game needs before it starts (updates without player steps) ---
+
+# The kit's Hookshot game folder: hookshot\game-folder.txt (hookshot-build.ps1 writes it), else hookshot\game.
+function Get-KitHookshotGame([string]$Kit) {
+    $where = Join-Path $Kit 'hookshot\game-folder.txt'
+    if (Test-Path -LiteralPath $where) {
+        $g = "$(Get-Content -LiteralPath $where -TotalCount 1)".Trim()
+        if ($g) { return $g }
+    }
+    return (Join-Path $Kit 'hookshot\game')
+}
+
+# hookshot.exe of a game folder (a builder's game folder has it in bin\), or $null.
+function Get-KitHookshotExe([string]$Game) {
+    foreach ($p in (Join-Path $Game 'bin\hookshot.exe'), (Join-Path $Game 'hookshot.exe')) {
+        if (Test-Path -LiteralPath $p) { return $p }
+    }
+    return $null
+}
+
+# The stamp the kit's hookshot-build.ps1 writes to the game's coop-built-from.txt: release, pin, patches.
+function Get-KitHookshotStamp([string]$Kit) {
+    $hs = Join-Path $Kit 'hookshot'
+    $keys = @{}
+    foreach ($f in 'PIN', 'TOOLS.txt') {
+        foreach ($line in @(Get-Content -LiteralPath (Join-Path $hs $f) -ErrorAction SilentlyContinue)) {
+            if ($line -match '^\s*([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$') { $keys[$Matches[1]] = $Matches[2] }
+        }
+    }
+    if (-not $keys.release -or -not $keys.commit) { return '' }
+    $patches = @(Get-ChildItem -LiteralPath (Join-Path $hs 'patches') -Filter '*.patch' -File -ErrorAction SilentlyContinue | Sort-Object Name)
+    $hash = (($patches | ForEach-Object { (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }) -join ',')
+    return "release=$($keys.release)`ncommit=$($keys.commit)`npatches=$hash"
+}
+
+# What the kit's Hookshot game needs before it starts:
+#   'game'    no game built yet (the first build, 10 to 45 minutes)
+#   'pin'     the kit moved to another Hookshot release or pin (a full game build, about 15 minutes)
+#   'patches' the co-op patches changed (the game built again, only what changed: a few minutes)
+#   'module'  the co-op module or the puppet pack tool changed (co-op put in again: seconds to a minute)
+#   ''        nothing: start the game
+function Get-KitHookshotNeed([string]$Kit) {
+    $game = Get-KitHookshotGame $Kit
+    $exe = Get-KitHookshotExe $game
+    if (-not $exe) { return 'game' }
+    $stampFile = Join-Path $game 'coop-built-from.txt'
+    $have = if (Test-Path -LiteralPath $stampFile) { [System.IO.File]::ReadAllText($stampFile) } else { '' }
+    $want = Get-KitHookshotStamp $Kit
+    if ($want -and $have -ne $want) {
+        $base = { param($s) (@($s -split "`n") | Where-Object { $_ -match '^(release|commit)=' }) -join "`n" }
+        if ((& $base $have) -ne (& $base $want)) { return 'pin' }
+        return 'patches'
+    }
+    $exeDir = Split-Path -Parent $exe
+    $kitModule = Join-Path $Kit 'hookshot\hookshot_coop.dll'
+    $gameModule = Join-Path $exeDir 'hookshot_coop.dll'
+    if (Test-Path -LiteralPath $kitModule) {
+        if (-not (Test-Path -LiteralPath $gameModule)) { return 'module' }
+        if ((Get-FileHash -LiteralPath $kitModule -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $gameModule -Algorithm SHA256).Hash) {
+            return 'module'
+        }
+    }
+    $manifest = Join-Path $exeDir 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json'
+    if ((Test-Path -LiteralPath $manifest) -and (Get-PuppetPackHint $manifest (Join-Path $Kit 'tools\puppet_pack'))) { return 'module' }
+    return ''
+}
+
+# The line said before Build-Hookshot-Coop runs by itself for that need.
+function Get-KitHookshotNeedText([string]$Need) {
+    switch ($Need) {
+        'game' { 'The Hookshot game is not built yet: building it now from your game (10 to 45 minutes, once; the PC stays usable).' }
+        'pin' { 'This update moves to a new Hookshot: updating the game (about 15 minutes; the PC stays usable).' }
+        'patches' { 'This update changes the Hookshot game a little: updating it (a few minutes).' }
+        'module' { 'Putting the updated co-op into the Hookshot game (seconds to a minute).' }
+        default { '' }
+    }
+}
+
+# The UDP port check-hosting.cmd checks: the one this kit's server listens on when it is running (Host.bat or
+# Host-Hookshot.bat), else the port of the coop.ini written last (the emulator's or the Hookshot game's: Host-Hookshot.bat
+# writes only the latter), else $Default.
+function Get-KitHostPort([string]$Kit, [int[]]$Listening, [int]$Default) {
+    $inis = @((Join-Path $Kit 'emulator\user\config\coop.ini'))
+    $exe = Get-KitHookshotExe (Get-KitHookshotGame $Kit)
+    if ($exe) { $inis += (Join-Path (Split-Path -Parent $exe) 'coop.ini') }
+    $known = @()
+    foreach ($i in $inis) {
+        if (-not (Test-Path -LiteralPath $i)) { continue }
+        $p = (Read-CoopIni $i).port
+        if ($p -match '^\d{1,5}$') { $known += [pscustomobject]@{ Port = [int]$p; Time = (Get-Item -LiteralPath $i).LastWriteTimeUtc } }
+    }
+    foreach ($k in $known) { if ($Listening -contains $k.Port) { return $k.Port } }
+    if (@($Listening).Count -eq 1) { return [int]@($Listening)[0] }
+    $newest = $known | Sort-Object Time -Descending | Select-Object -First 1
+    if ($newest) { return $newest.Port }
+    return $Default
+}
+
 function Get-PuppetPackHint([string]$Manifest, [string]$ToolDir) {
     try {
         $json = [System.IO.File]::ReadAllText($Manifest) | ConvertFrom-Json -ErrorAction Stop

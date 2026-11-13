@@ -94,6 +94,31 @@ A player test (2026-11-12): "Ghoma can enter stun state but have its eye guarded
 - Tested: `tests/protocol/codec_test.cpp` (the slots component), `tests/lichii/objects_test.cpp` (slots sent, a slot change sends at once, slot wishes for the copy, none for plain enemies), `tests/server/session_test.cpp` (gohma-sync case; the old cases run with the old switches).
 - **Not proven** (no game run on this branch): that the copy's guard really follows its slots (if `DisableGuard` is an AI-side flag instead, the eye stays each game's own; then the next step is the AI hold for bosses, docs/objects.md), how many slots Gohma has, and the height after the one stun hand-over. Autotest `gohma-sync` (boss rush room `GohmaStage`, since no kit save is from before Gohma).
 
+## Native boss sync (Hookshot, branch native-boss-gohma)
+
+Goal: every boss fight the same in every game, run by the game's own code. Gohma first; the others are the same mechanism with their own lists.
+
+**How a boss runs.** Every boss is an enemy with the engine's BSA component (brain, sequence, action; `[[actor+0x270]+0x188]`) and AI graphs in its pack (`AI/<Boss>.brain.root.ainb`, `*.brain.<phase>.module.ainb`, `*.action.<move>.module.ainb`, `*.actionseq.root.ainb`). Its brain picks a **brain verb** (the phase: Gohma's land battle, ceiling battle, wander; an event; death) and asks for **action verbs** (walk, climb, basic attack, chance time, spawn larvae). Each goes through one game function:
+
+| What | Function | Arguments |
+|---|---|---|
+| set brain verb | main+0x6733b0 (13 callers) | x0 the BSA, w1 the verb, w2 force, x3 the asking node (not read) |
+| request action verb | main+0xc08f0 (9 callers) | x0 the BSA, x1 a 0x60-byte request (three places, two extra values, slot, verb, flags, the asking node), w2 1 when the verb changed |
+
+**The sync.**
+- Both functions are wrapped (rows 4 and 5 of Hookshot's one hook table; `hookshot/src/hos_coop_bosses.h`). The module turns native boss sync on only when its `hookshot.exe` has both (HELLO's wrap bits) and `LICHII_COOP_BOSS_NATIVE` is not `0`; the action verbs also need `LICHII_COOP_BOSS_ACTIONS` not `0`. Off: bosses as before (the owner's animations, gohma-sync).
+- The **owner's** game runs the boss. Each change of its brain verb or action is kept (`lichii/hook/coop_boss_native.h`) and sent in the boss's samples as the `bsa` component (20, [protocol.md](protocol.md)); a new one goes with the next sample (50 ms).
+- A **copy** (the boss in another player's game) keeps running its own AI (perception, physics, the action graph, the animations), but once the owner's first verbs have come its own brain verb changes and action requests are skipped at the wraps (the function does not run), and the owner's are put in through the same two functions by our caller on the game's calc thread. An action is asked with the copy's own asking node (learnt from its own skipped requests: the game's callers always name one). So every game runs the same phases and the same action sequences: the game's own animations, movement and attacks.
+- A boss copy taking its owner's verbs is never frozen by the AI hold.
+- Hits are as for every enemy (native-actors: the copy's Life step turns a hit into `DAMAGE` for the owner); the stun the owner's game makes comes back to the copies as its next brain or action verb.
+- A hand-over (the boss changes owner) keeps the state: the new owner goes on from the verbs it last put in, and counts on from the owner's `seq`, so the others take its verbs as new.
+
+**Log.** `coop: bosses: native sync on (brain verbs wrapped, action verbs wrapped)`; per boss `coop: bosses: Enemy_DungeonBoss_Gohma: native boss sync on (BSA 0x..., ours|a copy)` and on a copy `...: the owner's verbs came (brain N): the copy's own brain is skipped from now`; every 10 s while it works `coop: bosses: ours sent N brain + N action verbs (N by plug); copies: N own skipped, N brain + N action verbs put in (N waited for a node), N busy`.
+
+**Not proven** (nothing run yet; the hook table must have rows 4 and 5): that a copy put on the owner's verbs stays in step (timers and random choices inside one action sequence are each game's own), that an action asked with the copy's own node is safe (the node's result callbacks), that a request named through a plug (`by plug`, its places not sent) gives the copy usable places, how the Mover's animation replays and the native verbs get on together (if they fight, the Mover should stop replaying slot 0 for a boss copy that takes verbs).
+
+**Next bosses.** King Dodongo, Barinade, Phantom Ganon, Volvagia, Morpha, Bongo Bongo, Twinrova, Ganondorf, Ganon: the same two functions; per boss its sub-actors (to be made only by the owner) and its intro and outro events (`Dm_<Dungeon>_BossIn` / `BossOut`, shared through native-world's event request wrap).
+
 ## Not known yet (for the in-game check)
 
 1. Whether the force-set-matrix move into a room of the same scene loads that room's walls and floor, or Link falls through (the dungeon may stream rooms by `DungeonRoomIndex`). If he falls, the fallback is the scene change, which needs an event running.

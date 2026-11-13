@@ -458,6 +458,147 @@ TEST_CASE("objects: with hurt on, a copy loses life through the game and it is n
     CHECK(All<proto::Damage>(Tick(sync, 800 * kMs, {Enemy(0x100, 0x11, 2)})).size() == 1);
 }
 
+// Hookshot, patch 0007: this game's hits on a copy come from the game's own
+// Life step (Sync::GameHit), not from the life read falling.
+namespace {
+std::int32_t DamageSent(const Step& step) {
+    std::int32_t sum = 0;
+    for (const auto& d : All<proto::Damage>(step)) {
+        sum += d.amount;
+    }
+    return sum;
+}
+} // namespace
+
+TEST_CASE("objects: life events: the Life step's hit on a copy goes to the owner, whichever comes first") {
+    Sync sync;
+    sync.SetLifeEvents(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 6)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2, 1);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 6)});
+
+    // The hit and its fall in the same walk.
+    sync.GameHit(0x100, 1);
+    CHECK(DamageSent(Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 5)})) == 0);
+    CHECK(DamageSent(Tick(sync, 130 * kMs, {Enemy(0x100, 0x11, 5)})) == 1);
+    // The hit one walk before the life read shows it: counted once.
+    sync.GameHit(0x100, 2);
+    std::int32_t sent = DamageSent(Tick(sync, 200 * kMs, {Enemy(0x100, 0x11, 5)}));
+    sent += DamageSent(Tick(sync, 220 * kMs, {Enemy(0x100, 0x11, 3)}));
+    sent += DamageSent(Tick(sync, 400 * kMs, {Enemy(0x100, 0x11, 3)}));
+    CHECK(sent == 2);
+    // The fall read first, its hit drained one walk later: counted once, at the hit.
+    sent = DamageSent(Tick(sync, 500 * kMs, {Enemy(0x100, 0x11, 2)}));
+    sync.GameHit(0x100, 1);
+    sent += DamageSent(Tick(sync, 520 * kMs, {Enemy(0x100, 0x11, 2)}));
+    sent += DamageSent(Tick(sync, 700 * kMs, {Enemy(0x100, 0x11, 2)}));
+    sent += DamageSent(Tick(sync, 1200 * kMs, {Enemy(0x100, 0x11, 2)}));
+    CHECK(sent == 1);
+    CHECK(sync.LooseDrops() == 0);
+    // A hit for more than it has left: only what it had goes.
+    sync.GameHit(0x100, 9);
+    sent = DamageSent(Tick(sync, 1300 * kMs, {Enemy(0x100, 0x11, 0)}));
+    sent += DamageSent(Tick(sync, 1500 * kMs, {Enemy(0x100, 0x11, 0)}));
+    CHECK(sent == 2);
+}
+
+TEST_CASE("objects: an actor the game itself deleted is gone at the first walk without it") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2), Enemy(0x200, 0x22, 2, 5.0f)});
+    REQUIRE(sync.IdOf(0x100));
+    REQUIRE(sync.IdOf(0x200));
+    sync.GameDeleted(0x100, 10 * kMs);  // (the game's delete request, patch 0007)
+    sync.GameDeleted(0x999, 10 * kMs);  // (an actor we do not share: nothing)
+    Tick(sync, 40 * kMs, {});
+    CHECK_FALSE(sync.IdOf(0x100));
+    CHECK(sync.IdOf(0x200));  // off the list for one walk only: lifted, or changing hands
+    Tick(sync, 80 * kMs, {});
+    CHECK_FALSE(sync.IdOf(0x200));
+    // Long after the request the address is another actor's: two walks again.
+    Tick(sync, 100 * kMs, {Enemy(0x300, 0x33, 2)});
+    sync.GameDeleted(0x300, 100 * kMs);
+    Tick(sync, 20'000 * kMs, {Enemy(0x300, 0x33, 2)});
+    Tick(sync, 20'040 * kMs, {});
+    CHECK(sync.IdOf(0x300));
+}
+
+TEST_CASE("objects: life events: a hit that took no life is forgotten, a fall with no step still counts") {
+    Sync sync;
+    sync.SetLifeEvents(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 6)});
+    Own(sync, *sync.IdOf(0x100), 2, 1);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 6)});
+    // The step said 1 but the life stayed (the game's own guard): nothing goes, and a fall
+    // long after it is not paired with it.
+    sync.GameHit(0x100, 1);
+    std::int32_t sent = 0;
+    for (std::uint64_t t = 20; t <= 400; t += 20) {
+        sent += DamageSent(Tick(sync, t * kMs, {Enemy(0x100, 0x11, 6)}));
+    }
+    CHECK(sent == 0);
+    // Life gone with no step for it (something outside the Life step): a hit after the wait.
+    sent = DamageSent(Tick(sync, 500 * kMs, {Enemy(0x100, 0x11, 4)}));
+    sent += DamageSent(Tick(sync, 700 * kMs, {Enemy(0x100, 0x11, 4)}));
+    CHECK(sent == 0);
+    CHECK(sync.LooseDrops() == 0);
+    sent += DamageSent(Tick(sync, 810 * kMs, {Enemy(0x100, 0x11, 4)}));
+    sent += DamageSent(Tick(sync, 1000 * kMs, {Enemy(0x100, 0x11, 4)}));
+    CHECK(sent == 2);
+    CHECK(sync.LooseDrops() == 2);
+}
+
+TEST_CASE("objects: life events: our hit in the same frames as the owner's hurt is still ours") {
+    Sync sync;
+    sync.SetHurt(true);
+    sync.SetLifeEvents(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 4)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    proto::ObjectSample s;
+    s.player_number = 2;
+    s.id = id;
+    s.state.life = proto::ObjectLife{3, 4};
+    sync.Receive(s);
+    auto step = Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 4)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 1);
+    // The game takes the owner's hurt and our Link's own hit in one step: 2 gone, 1 of it ours.
+    sync.GameHit(0x100, 1);
+    std::int32_t sent = DamageSent(Tick(sync, 40 * kMs, {Enemy(0x100, 0x11, 2)}));
+    sent += DamageSent(Tick(sync, 200 * kMs, {Enemy(0x100, 0x11, 2)}));
+    sent += DamageSent(Tick(sync, 900 * kMs, {Enemy(0x100, 0x11, 2)}));
+    CHECK(sent == 1);
+    CHECK(sync.LooseDrops() == 0);
+    CHECK(sync.HurtsTaken() == 1);  // (and its life is not written back up to the owner's 3)
+    // The owner's hurt alone: nothing of ours.
+    Sync other;
+    other.SetHurt(true);
+    other.SetLifeEvents(true);
+    Tick(other, 0, {Enemy(0x100, 0x11, 4)});
+    Own(other, id, 2);
+    other.Receive(s);
+    Tick(other, 10 * kMs, {Enemy(0x100, 0x11, 4)});
+    sent = DamageSent(Tick(other, 40 * kMs, {Enemy(0x100, 0x11, 3)}));
+    sent += DamageSent(Tick(other, 900 * kMs, {Enemy(0x100, 0x11, 3)}));
+    CHECK(sent == 0);
+    CHECK(other.HurtsTaken() == 1);
+}
+
+TEST_CASE("objects: life events: life we put through the step ourselves is no hit of this game's") {
+    Sync sync;
+    sync.SetLifeEvents(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 5)});
+    Own(sync, *sync.IdOf(0x100), 2, 1);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 5)});
+    sync.Stepped(0x100, 2, 10 * kMs);  // (the owner's life, given to the Life step: no GameHit for it)
+    std::int32_t sent = DamageSent(Tick(sync, 40 * kMs, {Enemy(0x100, 0x11, 3)}));
+    sent += DamageSent(Tick(sync, 500 * kMs, {Enemy(0x100, 0x11, 3)}));
+    sent += DamageSent(Tick(sync, 900 * kMs, {Enemy(0x100, 0x11, 3)}));
+    CHECK(sent == 0);
+    CHECK(sync.LooseDrops() == 0);
+}
+
 TEST_CASE("objects: a hurt the game does not take is written as life after 400 ms") {
     Sync sync;
     sync.SetHurt(true);
@@ -1595,6 +1736,34 @@ TEST_CASE("objects: the AI hold's table and hook") {
     CHECK(u32(0) == 0);
 }
 
+TEST_CASE("objects: the AI hold's host table (Hookshot, no guest table)") {
+    CoopHold::HostTable t;
+    // Nothing held yet: every brain runs as the game wants.
+    CHECK(t.Apply(0x1111, 0x1230u) == 0x1230u);
+    t.Publish({0x1111, 0, 0x2222}, CoopHold::MasksFor(1));
+    CHECK(t.Count() == 2);
+    CHECK(t.Apply(0x1111, 0x1230u) == 0x1231u);
+    CHECK(t.Apply(0x2222, 0x1230u) == 0x1231u);
+    CHECK(t.Apply(0x3333, 0x1230u) == 0x1230u);
+    CHECK(t.Apply(0, 0x1230u) == 0x1230u);
+    // Mode 2 clears the bit; a component no longer listed runs its own AI again.
+    t.Publish({0x2222}, CoopHold::MasksFor(2));
+    CHECK(t.Apply(0x2222, 0x1231u) == 0x1230u);
+    CHECK(t.Apply(0x1111, 0x1231u) == 0x1231u);
+    // At most 64; past them nothing is held.
+    std::vector<std::uint64_t> many;
+    for (std::uint64_t i = 1; i <= 100; ++i) {
+        many.push_back(0x10000 + i);
+    }
+    t.Publish(many, CoopHold::MasksFor(1));
+    CHECK(t.Count() == CoopHold::kMaxHeld);
+    CHECK(t.Apply(0x10000 + CoopHold::kMaxHeld, 0) == 1u);
+    CHECK(t.Apply(0x10000 + CoopHold::kMaxHeld + 1, 0) == 0u);
+    t.Clear();
+    CHECK(t.Count() == 0);
+    CHECK(t.Apply(0x10001, 0) == 0u);
+}
+
 TEST_CASE("objects: group rules for parts and bosses") {
     using CoopObjects::IsBoss;
     using CoopObjects::PartOf;
@@ -2558,6 +2727,55 @@ TEST_CASE("objects: a boss's other AS slots go with its samples and are played o
     auto ps = All<proto::ObjectSample>(Tick(plain, 10 * kMs, {p}));
     REQUIRE(ps.size() == 1);
     CHECK_FALSE(ps[0].state.slots);
+}
+
+TEST_CASE("objects: a boss's brain and action verbs go with its samples, a new one at once (native boss sync)") {
+    const std::string gohma = "Enemy_DungeonBoss_Gohma";
+    Sync owner;
+    Seen e = Enemy(0x100, 0x11, 12, 0.0f, gohma);
+    e.animation = proto::Animation{"Wait", 0.0f, 1.0f};
+    e.bsa = proto::BossBsa{1, 2, false, std::nullopt};
+    Tick(owner, 0, {e});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+    Own(owner, id, 1, 4);
+    auto samples = All<proto::ObjectSample>(Tick(owner, 10 * kMs, {e}));
+    REQUIRE(samples.size() == 1);
+    REQUIRE(samples[0].state.bsa);
+    CHECK(samples[0].state.bsa->brain_verb == 2);
+    // Nothing new, standing still: no sample (until the still one, 1 s).
+    CHECK(All<proto::ObjectSample>(Tick(owner, 100 * kMs, {e})).empty());
+    // A new verb (seq 2), nothing else changed: a sample at the next 50 ms step.
+    e.bsa = proto::BossBsa{2, 3, true, std::nullopt};
+    auto changed = All<proto::ObjectSample>(Tick(owner, 200 * kMs, {e}));
+    REQUIRE(changed.size() == 1);
+    CHECK(changed[0].state.bsa->seq == 2);
+
+    // The copy keeps the owner's latest for the boss module, and its AI is never held.
+    Sync copy;
+    Seen c = Enemy(0x200, 0x11, 12, 0.0f, gohma);
+    c.animation = proto::Animation{"Walk", 0.0f, 1.0f};
+    Tick(copy, 0, {c}, 2);
+    Own(copy, id, 1, 4);
+    CHECK(copy.BossVerbsIn().empty());
+    proto::ObjectSample s = changed[0];
+    s.player_number = 1;
+    s.state.time = {1000 * kMs, 1};
+    copy.Receive(s);
+    Tick(copy, 1010 * kMs, {c}, 2);
+    const auto in = copy.BossVerbsIn();
+    REQUIRE(in.size() == 1);
+    CHECK(in[0].first == 0x200);
+    CHECK(in[0].second.brain_verb == 3);
+    CHECK(copy.Holds(1020 * kMs).empty());
+
+    // A plain enemy's samples carry no verbs.
+    Sync plain;
+    Seen p = Enemy(0x300, 0x33, 2, 0.0f, "Enemy_Stalchild");
+    Tick(plain, 0, {p});
+    Own(plain, *plain.IdOf(0x300), 1);
+    auto ps = All<proto::ObjectSample>(Tick(plain, 10 * kMs, {p}));
+    REQUIRE(ps.size() == 1);
+    CHECK_FALSE(ps[0].state.bsa);
 }
 
 TEST_CASE("objects: no stun DAMAGE from a plain enemy, our own boss, or when the owner is stunned too") {

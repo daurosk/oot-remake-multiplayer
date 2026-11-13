@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "coop/host/game_flag_events.hpp"
 #include "coop/host/game_flags.hpp"
 #include "fake_memory.hpp"
 
@@ -346,4 +347,129 @@ TEST_CASE("game flags: a String64 written at once into its buffer, and its type 
   CHECK(flags.find_type(0x22) == 2);
   CHECK(flags.find_type(0x11) == 0);
   CHECK_FALSE(flags.find_type(0x99));
+}
+
+TEST_CASE("game flags: the writes waiting in the game's queues, as its applier is about to take them") {
+  using coop::host::GameFlagType;
+  using coop::host::GameFlagWrite;
+  auto w = game();
+  std::vector<GameFlagWrite> got;
+  const auto sink = [&](const GameFlagWrite& write) { got.push_back(write); };
+  CHECK(coop::host::queued_flag_writes(w, 0, sink) == 0);  // nothing queued
+
+  // Queued as the game's setters do (here: our own queue writes, the same slots).
+  REQUIRE(GameFlags::set_bool(w, 0x18, true));
+  REQUIRE(GameFlags::set_bool(w, 0x11, false));
+  REQUIRE(GameFlags::set_int(w, 0x22, -3));
+  REQUIRE(GameFlags::set_enum(w, 0x66, 0xabcdef01u));
+  REQUIRE(GameFlags::set_uint(w, 0x44, 7));
+  REQUIRE(GameFlags::set_key64(w, 0x8c44828386468bfull, true));
+  REQUIRE(GameFlags::set_key64(w, 5, false));
+  CHECK(coop::host::queued_flag_writes(w, kMgr, sink) == 7);
+  CHECK(got == std::vector<GameFlagWrite>{
+                   {GameFlagType::boolean, 0x18, 1},
+                   {GameFlagType::boolean, 0x11, 0},
+                   {GameFlagType::int32, 0x22, static_cast<std::uint32_t>(-3)},
+                   {GameFlagType::enum32, 0x66, 0xabcdef01u},
+                   {GameFlagType::uint32, 0x44, 7},
+                   {GameFlagType::key64, 0x8c44828386468bfull, 1},
+                   {GameFlagType::key64, 5, 0},
+               });
+  CHECK(coop::host::key_of(got[0]) == coop::host::FlagKey{0x18u, 0});
+  CHECK(coop::host::key_of(got[5]) == coop::host::FlagKey::key64_flag(0x8c44828386468bfull));
+
+  // The manager main points to when none is given; a Bool slot's other bytes are not its value.
+  got.clear();
+  w.mem.put_u32(kBoolQueue, 0xffffff00u);  // slot 0: value byte 0, junk above it
+  CHECK(coop::host::queued_flag_writes(w, 0, sink) == 7);
+  CHECK(got[0] == GameFlagWrite{GameFlagType::boolean, 0x18, 0});
+
+  // A count past the queue's size is held to it; an empty slot and a record index past the table are skipped.
+  got.clear();
+  w.mem.put_u32(kMgr + 0x10 + 0x30, 0x300fffffu);
+  w.mem.put_u32(kKeyQueue + 8 * 1 + 4, 77);
+  CHECK(coop::host::queued_flag_writes(w, 0, sink) == 6);
+  CHECK(got[0].id == 0x18);
+  CHECK(got[1].id == 0x11);
+  CHECK(got[2].type == GameFlagType::int32);
+  CHECK(got.back() == GameFlagWrite{GameFlagType::key64, 0x8c44828386468bfull, 1});
+
+  // After the applier emptied the queues: nothing. No manager: nothing.
+  for (const std::uint64_t word : {0x10 + 0x30, 0xd0 + 0x30, 0x250 + 0x30, 0x790 + 0x30, 0xc78}) {
+    w.mem.put_u32(kMgr + word, 0x40000000u);
+  }
+  CHECK(coop::host::queued_flag_writes(w, 0, sink) == 0);
+  w.mem.put_u64(FakeMemory::kBase + 0x4e842a8, 0);
+  CHECK(coop::host::queued_flag_writes(w, 0, sink) == 0);
+}
+
+TEST_CASE("game flags: with the game's setters a write waits in the call list, not in the game's queue") {
+  using coop::host::GameFlagType;
+  using coop::host::GameFlagWrite;
+  auto w = game();
+  coop::host::GameFlagCalls calls;
+  GameFlags::use_calls(&calls);
+  struct Off {
+    ~Off() { GameFlags::use_calls(nullptr); }
+  } off;
+  GameFlags flags(w);
+  GameFlagStore store(w);
+
+  CHECK(GameFlags::set_bool(w, 0x18, true));
+  CHECK(GameFlags::set_int(w, 0x22, 41));
+  CHECK(GameFlags::set_uint(w, 0x44, 3));
+  CHECK(GameFlags::set_enum(w, 0x66, 0x1234));
+  CHECK(GameFlags::set_key64(w, 9, true));
+  CHECK_FALSE(GameFlags::set_bool(w, 0x25, true));  // not a flag: refused as before
+  CHECK_FALSE(GameFlags::set_key64(w, 6, true));
+  CHECK(calls.size() == 5);
+  // Nothing went into the game's queues or tables.
+  for (const std::uint64_t word : {0x10 + 0x30, 0xd0 + 0x30, 0x250 + 0x30, 0x790 + 0x30}) {
+    CHECK(*coop::host::read_u32(w.mem, kMgr + word) == 0x30000000u);
+  }
+  CHECK(*coop::host::read_u32(w.mem, kMgr + 0xc78) == 0);
+  // A read sees the waiting write, as it sees a queued one.
+  CHECK(flags.get_bool(0x18) == true);
+  CHECK(flags.get_bool(0x11) == false);
+  CHECK(flags.get_int(0x22) == 41);
+  CHECK(flags.get_uint(0x44) == 3u);
+  CHECK(flags.get_enum(0x66) == 0x1234u);
+  CHECK(flags.get_key64(9) == true);
+  CHECK(flags.get_key64(5) == false);
+  // The store: a value that already waits takes no second place; never busy while the list has room.
+  const protocol::FlagEntry door{{0x18u, 0}, protocol::FlagKind::boolean, 1};
+  CHECK(store.write(door));
+  CHECK(calls.size() == 5);
+  CHECK_FALSE(store.busy({0x18u, 0}));
+  CHECK(store.write({{0x11u, 0}, protocol::FlagKind::boolean, 1}));
+  CHECK(calls.size() == 6);
+
+  // The calc thread hands them to the game's setter while its queue has room: (manager, value, hash or key).
+  CHECK(GameFlags::setter_has_room(w, GameFlagType::boolean));
+  CHECK(GameFlags::manager_address(w) == kMgr);
+  std::vector<GameFlagWrite> made;
+  CHECK(calls.run(64, [&](const GameFlagWrite& write) {
+    if (!GameFlags::setter_has_room(w, write.type)) return false;
+    made.push_back(write);
+    return true;
+  }) == 6);
+  CHECK(made.front() == GameFlagWrite{GameFlagType::boolean, 0x18, 1});
+  CHECK(made.back() == GameFlagWrite{GameFlagType::boolean, 0x11, 1});
+  CHECK(flags.get_bool(0x18) == false);  // (this test's setter wrote nothing: the table's value again)
+
+  // No room: half of the game's queue is taken (kQueueCap 8), so nothing of ours is handed over.
+  w.mem.put_u32(kMgr + 0x10 + 0x30, 0x30000004u);
+  CHECK_FALSE(GameFlags::setter_has_room(w, GameFlagType::boolean));
+  CHECK(GameFlags::setter_has_room(w, GameFlagType::int32));
+  CHECK(GameFlags::set_bool(w, 0x18, true));
+  CHECK(calls.run(64, [&](const GameFlagWrite& write) { return GameFlags::setter_has_room(w, write.type); }) == 0);
+  CHECK(calls.size() == 1);
+  CHECK(flags.get_bool(0x18) == true);
+}
+
+TEST_CASE("game flags: without the call list the setters write the game's queues as before") {
+  auto w = game();
+  GameFlags::use_calls(nullptr);
+  CHECK(GameFlags::set_bool(w, 0x18, true));
+  CHECK((*coop::host::read_u32(w.mem, kMgr + 0x10 + 0x30) & 0xfffff) == 1);
 }

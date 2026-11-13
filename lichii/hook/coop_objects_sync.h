@@ -54,6 +54,11 @@ struct Seen {
     // Issue 150: a boss's other AS slots (Gohma's eye guard, eyelids),
     // read only for bosses (IsBoss); empty otherwise.
     std::vector<coop::protocol::SlotAnimation> slots;
+    // Native boss sync (coop_boss_native.h): a boss's BSA component
+    // (0 when not read) and, for one of ours, its brain and action verbs as
+    // our game last set them (sent in its samples).
+    std::uint64_t bsa_component = 0;
+    std::optional<coop::protocol::BossBsa> bsa;
 };
 
 // An animation a copy should play (the owner's AS slot 0 command). The
@@ -331,6 +336,31 @@ public:
     // Hurt through the game's damage field (LifeWrite::hurt); off: write life.
     void SetHurt(bool on) { hurt_ = on; }
 
+    // Hookshot with patch 0007 (coop_actor_events.h): the game's own Life
+    // step says every hit it deals, so a hit of this game's on a copy is
+    // taken from that (GameHit, before the Tick) and no longer guessed from
+    // the life read falling. The fall is still read, only to pair it: a hit
+    // and its fall may come in either order (the walk and the game's threads
+    // do not wait for each other), a fall with a hurt of ours in flight is
+    // that hurt, and a fall no step explains within kStepWaitUs counts as a
+    // hit as before (LooseDrops says how much: life taken outside the step).
+    void SetLifeEvents(bool on) { life_events_ = on; }
+    bool LifeEvents() const { return life_events_; }
+    void GameHit(std::uint64_t address, std::int32_t amount);
+    // Life another game's change takes through the Life step itself (not
+    // the game's damage, so no GameHit comes for it): its fall is no hit.
+    void Stepped(std::uint64_t address, std::int32_t amount, std::uint64_t now_us);
+    static constexpr std::uint64_t kStepWaitUs = 300'000;
+    static constexpr std::uint64_t kStepGivenUs = 1'000'000;
+    std::size_t LooseDrops() const { return loose_drops_; }
+    // Hookshot with patch 0007: the game accepted a delete request for this
+    // actor (its own code asked: killed, broken, taken, or our own remove).
+    // It is gone at the first walk that misses it, not the second: off the
+    // list is no "lifted or changing hands" then. Kept kDeletedKeepUs (a
+    // dying actor stays listed a while; the address may be used again later).
+    void GameDeleted(std::uint64_t address, std::uint64_t now_us);
+    static constexpr std::uint64_t kDeletedKeepUs = 10'000'000;
+
     // Projectiles (coop_projectiles.h): true for a life drop at a place and
     // server time that a projectile copy's blast here may have made. A copy
     // bomb is the game's own bomb, so the owner's real bomb and our copy both
@@ -550,6 +580,9 @@ public:
     // lines; taken (and cleared) by the caller.
     std::vector<std::string> TakeNotes() { return std::exchange(notes_, {}); }
     std::optional<coop::protocol::ObjectId> IdOf(std::uint64_t address) const;
+    // Native boss sync: each copy's latest owner's boss verbs, by the
+    // copy's address (coop_boss_native.h puts them into the game).
+    std::vector<std::pair<std::uint64_t, coop::protocol::BossBsa>> BossVerbsIn() const;
     // The actors of the enemies we own, with their names (for the test drive).
     std::vector<std::pair<std::uint64_t, std::string>> Owned() const;
     // The player who owns the object at `address` (0: the server, none: not
@@ -582,6 +615,8 @@ private:
         std::optional<Mat3> rotation;
         std::optional<coop::protocol::Animation> animation;
         std::vector<coop::protocol::SlotAnimation> slots;  // issue 150: a boss's, as last read
+        std::optional<coop::protocol::BossBsa> bsa;         // native boss sync: ours, as last read
+        std::optional<coop::protocol::BossBsa> bsa_in;      // native boss sync: a copy's, the owner's latest
         coop::protocol::Vec3 velocity{};
         std::uint64_t seen_at = 0;
         std::string name;
@@ -596,6 +631,7 @@ private:
         std::optional<coop::protocol::Quat> sent_rotation;
         std::string sent_animation;
         std::string sent_slots;  // issue 150: the slot names last sent
+        std::optional<std::uint32_t> sent_bsa_seq;  // native boss sync: the boss verbs' seq last sent
         std::uint32_t sequence = 0;
         // Copy side.
         std::int32_t hit_sum = 0;
@@ -612,6 +648,18 @@ private:
         // much is the game taking that same hit.
         std::int32_t late_left = 0;
         std::uint64_t late_until = 0;
+        // With life events (SetLifeEvents). step_new: the game's hits
+        // since the last Tick; step_wait: hits whose fall is not seen yet;
+        // loose: a fall no hit explained yet; step_given: what we put
+        // through the step ourselves; step_rest: this Tick's unexplained fall.
+        std::int32_t step_new = 0;
+        std::int32_t step_wait = 0;
+        std::uint64_t step_wait_until = 0;
+        std::int32_t loose = 0;
+        std::uint64_t loose_until = 0;
+        std::int32_t step_given = 0;
+        std::uint64_t step_given_until = 0;
+        std::int32_t step_rest = 0;
         // Owner side: life a copy bomb's blast took here (BlastNear).
         std::int32_t blast_credit = 0;
         std::uint64_t blast_until = 0;
@@ -628,6 +676,7 @@ private:
         std::uint64_t event_until = 0;          // flagged by our event until then
         coop::protocol::Vec3 first_position{};  // where it was first seen
         int missed = 0;                         // walks in a row without it
+        std::uint64_t deleted_until = 0;        // GameDeleted: gone at the first miss until then
         // Chasing our Link (NoteDrift): the run of steps towards it.
         std::uint64_t chase_first = 0;
         std::uint64_t chase_last = 0;
@@ -660,6 +709,9 @@ private:
     static void ChaseStep(Object& o, std::uint64_t now_us);
 
     // Takes `o` down to `life`: a hurt when hurt is on, else a write.
+    // The hits the game's Life step dealt o that count now (SetLifeEvents);
+    // o.step_rest gets the part of `fell` that no step explains.
+    std::int32_t StepHits(Object& o, std::int32_t fell, std::int32_t life, std::uint64_t now_us);
     void Lower(Object& o, std::int32_t life, std::uint64_t now_us, std::vector<LifeWrite>& writes,
                std::uint8_t hitter);
 
@@ -747,6 +799,8 @@ private:
     std::vector<coop::protocol::ObjectGroupEntry> groups_sent_;  // as last sent
     std::map<coop::protocol::ObjectId, coop::protocol::ObjectId> group_links_;  // member to root
     bool hurt_ = false;
+    bool life_events_ = false;
+    std::size_t loose_drops_ = 0;
     std::uint8_t self_ = 0;
     // Take(): each key taken in this scene, and the actors that had it in the
     // two Ticks after it came (the first walk was collected before Taken()

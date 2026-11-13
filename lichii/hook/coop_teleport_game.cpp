@@ -48,6 +48,25 @@ bool OnByEnv() {
     return v == nullptr || std::string_view(v) != "0";
 }
 
+// LICHII_COOP_TELEPORT_EVENT=1: another scene is asked the game's own way, as an entrance does it (read from the
+// game by Hookshot's own teleport, host/hos_main.c "Cross-map teleport"): the event Dm_SY_BancChangeGo with the
+// arguments NextBanc, NextStartPos, BootEventName and IsCheckAir, started by our Link; the event calls the game's
+// ReserveBancChange and the sequence loads the map when it ends. Nothing is written into the request flags then.
+// Off by default until a run has shown it (docs/hookshot.md "World hooks").
+bool EventByEnv() {
+    const char* v = std::getenv("LICHII_COOP_TELEPORT_EVENT");
+    return v != nullptr && std::string_view(v) == "1";
+}
+constexpr const char* kBancChangeEvent = "Dm_SY_BancChangeGo";
+constexpr const char* kBancArriveEvent = "Dm_SY_BancChangeArrive";  // the plain arrival; some entrances have their own
+
+// The map change event's arguments for `scene` at its start point `start`.
+std::vector<CoopLiveEvents::Requester::Arg> BancChangeArgs(std::string_view scene, std::string_view start) {
+    using Arg = CoopLiveEvents::Requester::Arg;
+    return {Arg{"NextBanc", std::string(scene), false}, Arg{"NextStartPos", std::string(start), false},
+            Arg{"BootEventName", std::string(kBancArriveEvent), false}, Arg{"IsCheckAir", std::nullopt, false}};
+}
+
 // Main.module's native selector (_LocalModule_cf31571495c4, 0x3303ca0) picks
 // its BancChange case (ChangeBancOnMain.module) when this Bool is 1 (read at
 // 0x3304154). Its name is in no file of the game; nothing in the game writes
@@ -124,6 +143,9 @@ struct Answered {
 
 struct Glue {
     bool on = OnByEnv();
+    bool by_event = EventByEnv();
+    // by_event: the scene and start point of the trip's last ask, for the event's arguments.
+    std::string event_scene, event_start;
     std::mutex mutex;
     // Present thread -> network thread: what we would answer now.
     Answer answer;
@@ -338,7 +360,13 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
         g.events_open = g.trip.phase() == Trip::Phase::travelling && local.scene && !local.loading_banc;
     }
     for (auto& act : all) {
-        if ((act.cancel_scene || act.release) && main_base != 0) {
+        if ((act.cancel_scene || act.release) && main_base != 0 && g.by_event) {
+            // Nothing of ours is in the request flags: the game's own event reserved the scene, and clears it.
+            if (act.cancel_scene) {
+                g.event_scene.clear();
+                g.event_start.clear();
+            }
+        } else if ((act.cancel_scene || act.release) && main_base != 0) {
             ClearScene(system, main_base, act.cancel_scene, act.restore_start, g.saved_start);
             if (act.cancel_scene) {
                 g.saved_start.reset();  // the next trip reads it afresh
@@ -348,7 +376,12 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
         if (act.game_cleared) {
             LOG_INFO(Core, "coop: teleport: scene change cleared by the game after its arrival (nothing written)");
         }
-        if (act.scene) {
+        if (act.scene && g.by_event) {
+            g.event_scene = *act.scene;
+            g.event_start = act.start;
+            LOG_INFO(Core, "coop: teleport: the scene change to {} at {} goes by the game's map change event",
+                     *act.scene, act.start.empty() ? "-" : act.start);
+        } else if (act.scene) {
             // Always with a start point of that scene: without one the game
             // keeps the old scene's start name and the picture stays black.
             if (main_base == 0 || act.start.empty() ||
@@ -357,7 +390,19 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
                             act.start.empty() ? "-" : act.start);
             }
         }
-        if (act.start_event && main_base != 0) {
+        if (act.start_event && main_base != 0 && g.by_event) {
+            CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_base);
+            const std::uint64_t link = coop::host::PlayerReader(memory).find_player_actor().value_or(0);
+            if (g.event_scene.empty() || g.event_start.empty() || link == 0) {
+                LOG_WARNING(Core, "coop: teleport: the map change event not asked ({})",
+                            link == 0 ? "our Link's actor was not found" : "no scene or start point");
+            } else {
+                LOG_INFO(Core, "coop: teleport: asking the game's map change event {} for {} at {} (arrival {})",
+                         kBancChangeEvent, g.event_scene, g.event_start, kBancArriveEvent);
+                std::lock_guard lock(g.event_mutex);
+                g.events.WantWith(kBancChangeEvent, BancChangeArgs(g.event_scene, g.event_start), link);
+            }
+        } else if (act.start_event && main_base != 0) {
             LOG_INFO(Core, "coop: teleport: starting the event {} so the game takes the scene change",
                      Trip::kSceneEvent);
             std::lock_guard lock(g.event_mutex);

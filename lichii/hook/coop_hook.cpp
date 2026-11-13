@@ -61,6 +61,9 @@
 #include "coop_cheats.h"
 #include "coop_chests.h"
 #include "coop_flags.h"
+#ifdef COOP_HOOKSHOT
+#include "coop_flag_native.h"
+#endif
 #include "coop_save.h"
 #include "coop_game_build.h"
 #include "coop_game_scan.h"
@@ -521,6 +524,12 @@ public:
         if (memory) {  // docs/flags.md, "Saves": no scene for a while is the title screen
             session_->set_scene_readable(coop::host::PlayerReader(*memory).read_scene().has_value());
         }
+#ifdef COOP_HOOKSHOT
+        // The game's own flag writes since the last frame (the applier's wrap, coop_flag_native.h): the watcher
+        // reads those flags, not the whole list.
+        CoopFlagNative::Feed(*session_);
+        LogFlagEvents();
+#endif
         const auto report = session_->frame(reading, hold ? &*hold : nullptr);
         if (quests) {
             for (const auto& r : quests->take_raised()) {
@@ -580,9 +589,15 @@ public:
                         names.push_back(e);
                     }
                 }
-                const auto found = start_watch_.Frame(running_now, [&] {
-                    return CoopLiveEvents::FindRunningEvent(&ReadGuest, &*memory, base_, names);
-                });
+                // Our own start: on Hookshot the game's own request names it (the world hook's wrap); the search
+                // of the event session is the emulator's way, and Hookshot's net.
+                auto& requests = CoopLiveEvents::TheGameRequests();
+                const bool by_request = requests.Live();
+                const auto found = start_source_.Frame(
+                    by_request ? CoopLiveEvents::RequestedOf(requests.Since(start_cursor_), names) : std::nullopt,
+                    by_request, running_now,
+                    [&] { return CoopLiveEvents::FindRunningEvent(&ReadGuest, &*memory, base_, names); });
+                LogScanOnly(start_source_, start_scan_only_, "dungeon");
                 if (found) {
                     live_decider_.Ours(*found, hold_scene_);
                     coop::protocol::DungeonEvent e;
@@ -1528,6 +1543,27 @@ private:
     static constexpr std::uint64_t kDoubledNoEventMs = 1000;
     std::size_t pickups_given_ = 0;  // CoopPickups keys handed to the session
     bool holding_logged_ = false;  // issue 129: HoldFlagStore held something last frame
+#ifdef COOP_HOOKSHOT
+    // Every 10 s while the flag watcher goes by the game's events (coop_flag_native.h): what it read, and what its
+    // audit found that no event had named (0 when the applier's wrap sees every write).
+    void LogFlagEvents() {
+        if (!session_ || !CoopFlagNative::EventsLive() || !flag_events_log_.Due(CoopEvery::NowUs())) {
+            return;
+        }
+        const coop::host::FlagStats s = session_->flag_stats();
+        if (s.event_reads == flag_event_reads_ && s.event_misses == flag_event_misses_ &&
+            s.full_reads == flag_full_reads_) {
+            return;
+        }
+        flag_event_reads_ = s.event_reads;
+        flag_event_misses_ = s.event_misses;
+        flag_full_reads_ = s.full_reads;
+        LOG_INFO(Core, "coop: flags: by the game's events: {} flag reads for its writes, {} changes only the audit found, "
+                       "{} whole-list reads (loads)", s.event_reads, s.event_misses, s.full_reads);
+    }
+    CoopEvery::Every flag_events_log_{10 * CoopEvery::kSecondUs};
+    std::uint64_t flag_event_reads_ = 0, flag_event_misses_ = 0, flag_full_reads_ = 0;
+#endif
     CoopScrubTalk::Hold scrub_talk_;  // issue 144: scrub destroy flags wait for our event
     bool scrub_talk_on_ = EnvString("LICHII_COOP_SCRUB_TALK_HOLD") != "0";  // =0: off (the old softlock)
     bool live_events_ = false;     // LICHII_COOP_LIVE_EVENTS=1 (issue 129)
@@ -1572,11 +1608,22 @@ private:
     CoopLiveEvents::Decider live_decider_;
     std::mutex live_mutex_;  // the requester runs on the calc thread (CoopSvc caller)
     CoopLiveEvents::Requester live_requester_;
-    CoopLiveEvents::StartWatch start_watch_;
+    CoopLiveEvents::StartSource start_source_;  // our own gimmick event starts
+    std::uint64_t start_cursor_ = 0, start_scan_only_ = 0;
+    // An event start the search found that the game's request had not named, with the wrap there: logged, as the
+    // sign that some event does not start through the wrapped request.
+    static void LogScanOnly(const CoopLiveEvents::StartSource& source, std::uint64_t& said, const char* what) {
+        if (source.ScanOnly() != said) {
+            said = source.ScanOnly();
+            LOG_INFO(Core, "coop: {}: an event start found by the search that no request of the game named ({} so far)",
+                     what, said);
+        }
+    }
     // Shared story cutscenes (coop_shared_scenes.h).
     bool shared_scenes_ = false;  // LICHII_COOP_SHARED_CUTSCENES, needs live events
     CoopSharedScenes::Joiner shared_joiner_;
-    CoopLiveEvents::StartWatch story_watch_;  // our own story cutscene starts
+    CoopLiveEvents::StartSource story_source_;  // our own story cutscene starts
+    std::uint64_t story_cursor_ = 0, story_scan_only_ = 0;
     std::vector<coop::protocol::DungeonEvent> story_events_in_;  // under dungeon_events_mutex_  // deku-dungeon-2: our own gimmick event starts
     std::mutex dungeon_events_mutex_;         // DUNGEON_EVENT from the network thread
     std::vector<coop::protocol::DungeonEvent> dungeon_events_in_;
@@ -1636,9 +1683,13 @@ private:
                 const auto all = CoopSharedScenes::Names();
                 return std::vector<std::string_view>(all.begin(), all.end());
             }();
-            const auto found = story_watch_.Frame(running, [&] {
-                return CoopLiveEvents::FindRunningEvent(&ReadGuest, &*memory, base_, names);
-            });
+            auto& requests = CoopLiveEvents::TheGameRequests();
+            const bool by_request = requests.Live();
+            const auto found = story_source_.Frame(
+                by_request ? CoopLiveEvents::RequestedOf(requests.Since(story_cursor_), names) : std::nullopt,
+                by_request, running,
+                [&] { return CoopLiveEvents::FindRunningEvent(&ReadGuest, &*memory, base_, names); });
+            LogScanOnly(story_source_, story_scan_only_, "cutscene");
             if (found && shared_joiner_.Ours(*found, here.scene)) {
                 proto::DungeonEvent e;
                 e.scene = here.scene;

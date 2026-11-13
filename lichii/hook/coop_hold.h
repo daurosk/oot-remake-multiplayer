@@ -6,6 +6,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -77,6 +78,70 @@ inline std::array<std::uint8_t, kTableSize> Table(const std::vector<std::uint64_
     std::memcpy(out.data() + 4, &masks.and_mask, 4);
     std::memcpy(out.data() + 8, &masks.or_mask, 4);
     return out;
+}
+
+// Hookshot (native-plan row 6): no cave and no guest table. The hold hook
+// (patch 0001, main+0x369dfc) calls the module, which looks the component
+// up here, in our own memory. One writer (the Objects frame step) and any
+// number of readers (the game's job threads running the hook): a sequence
+// lock; a reader that meets a write in progress leaves the bits as they
+// are for that one call (the next frame holds it again).
+class HostTable {
+public:
+    void Publish(const std::vector<std::uint64_t>& components, const Masks& masks) noexcept {
+        const std::uint32_t s = seq_.load(std::memory_order_relaxed);
+        seq_.store(s + 1, std::memory_order_relaxed);  // odd: a write is going on
+        std::atomic_thread_fence(std::memory_order_release);
+        std::uint32_t count = 0;
+        for (const std::uint64_t c : components) {
+            if (c == 0 || count >= kMaxHeld) {
+                continue;
+            }
+            held_[count++].store(c, std::memory_order_relaxed);
+        }
+        count_.store(count, std::memory_order_relaxed);
+        and_.store(masks.and_mask, std::memory_order_relaxed);
+        or_.store(masks.or_mask, std::memory_order_relaxed);
+        seq_.store(s + 2, std::memory_order_release);
+    }
+    // The bits a component gets this frame: (bits & and) | or when held.
+    std::uint32_t Apply(std::uint64_t component, std::uint32_t bits) const noexcept {
+        if (component == 0) {
+            return bits;
+        }
+        const std::uint32_t s = seq_.load(std::memory_order_acquire);
+        if (s & 1) {
+            return bits;
+        }
+        const std::uint32_t count = count_.load(std::memory_order_relaxed);
+        bool held = false;
+        for (std::uint32_t i = 0; i < count && i < kMaxHeld; ++i) {
+            if (held_[i].load(std::memory_order_relaxed) == component) {
+                held = true;
+                break;
+            }
+        }
+        const std::uint32_t a = and_.load(std::memory_order_relaxed);
+        const std::uint32_t o = or_.load(std::memory_order_relaxed);
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (!held || seq_.load(std::memory_order_relaxed) != s) {
+            return bits;
+        }
+        return (bits & a) | o;
+    }
+    std::uint32_t Count() const noexcept { return count_.load(std::memory_order_acquire); }
+    void Clear() noexcept { Publish({}, Masks{}); }
+
+private:
+    std::atomic<std::uint32_t> seq_{0};
+    std::atomic<std::uint32_t> count_{0};
+    std::atomic<std::uint32_t> and_{0xffffffffu};
+    std::atomic<std::uint32_t> or_{0};
+    std::array<std::atomic<std::uint64_t>, kMaxHeld> held_{};
+};
+inline HostTable& TheHostTable() {
+    static HostTable table;
+    return table;
 }
 
 } // namespace CoopHold

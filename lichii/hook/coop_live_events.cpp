@@ -272,8 +272,88 @@ void Requester::Want(std::string name, std::string scene, std::uint64_t at_us, s
     const bool waiting =
         std::any_of(wanted_.begin(), wanted_.end(), [&](const Wanted& w) { return w.name == name; });
     if (!waiting && name != current_) {
-        wanted_.push_back(Wanted{std::move(name), std::move(scene), at_us, max_age_us});
+        wanted_.push_back(Wanted{std::move(name), std::move(scene), at_us, max_age_us, {}, 0});
     }
+}
+
+void Requester::WantWith(std::string name, std::vector<Arg> args, std::uint64_t starter) {
+    const std::size_t before = wanted_.size();
+    Want(name);
+    if (wanted_.size() == before) {
+        // Already waiting (or refused, with its note): the newest arguments are the ones to use.
+        for (Wanted& w : wanted_) {
+            if (w.name == name) {
+                w.args = std::move(args);
+                w.starter = starter;
+                return;
+            }
+        }
+        return;
+    }
+    wanted_.back().args = std::move(args);
+    wanted_.back().starter = starter;
+}
+
+bool Requester::WriteArgs(CoopPuppet::Guest& guest) {
+    std::uint32_t capacity = 0, count = 0;
+    std::uint64_t entries = 0;
+    if (!guest.Read(block_ + addr::kArgCapacity, &capacity, 4) || !guest.Read(block_ + addr::kArgEntries, &entries, 8) ||
+        !guest.Read(block_ + addr::kArgCount, &count, 4) || entries == 0) {
+        return false;
+    }
+    std::uint64_t used = 0;  // of our strings' room
+    for (const Arg& arg : current_args_) {
+        if (count >= capacity) {
+            return false;
+        }
+        const std::uint64_t entry = entries + addr::kArgEntrySize * count;
+        std::uint64_t name_buffer = 0;
+        std::uint32_t name_cap = 0;
+        if (!guest.Read(entry + addr::kEntryName, &name_buffer, 8) || !guest.Read(entry + addr::kEntryNameCap, &name_cap, 4) ||
+            name_buffer == 0 || arg.name.size() + 1 > name_cap ||
+            !guest.Write(name_buffer, arg.name.c_str(), arg.name.size() + 1)) {
+            return false;
+        }
+        std::uint32_t type = addr::kTypeBool;
+        if (arg.text) {
+            if (used + arg.text->size() + 1 > addr::kStringsSize) {
+                return false;
+            }
+            const std::uint64_t text = block_ + addr::kArgStrings + used;
+            if (!guest.Write(text, arg.text->c_str(), arg.text->size() + 1) ||
+                !guest.Write(entry + addr::kEntryValue, &text, 8)) {
+                return false;
+            }
+            used += arg.text->size() + 1;
+            type = addr::kTypeString;
+        } else {
+            const std::uint8_t value = arg.flag ? 1 : 0;
+            if (!guest.Write(entry + addr::kEntryValue, &value, 1)) {
+                return false;
+            }
+        }
+        ++count;
+        if (!guest.Write(entry + addr::kEntryType, &type, 4) || !guest.Write(block_ + addr::kArgCount, &count, 4)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::optional<CoopPuppet::Call> Requester::Ask(CoopPuppet::Guest& guest, std::uint64_t main) {
+    std::uint64_t holder = 0;
+    std::uint64_t manager = 0;
+    if (!guest.Read(main + addr::kManagerPtr, &holder, 8) || holder == 0 || !guest.Read(holder, &manager, 8) ||
+        manager == 0) {
+        notes_.push_back("live event " + current_ + ": no event manager; not asked");
+        return FreeFirst(guest, main);  // still free what the build made
+    }
+    CoopPuppet::Call c;
+    c.function = main + addr::kRequest;
+    c.x[0] = manager;
+    c.x[1] = block_;
+    next_ = Next::request;
+    return c;
 }
 
 std::vector<std::string> Requester::TakeNotes() {
@@ -333,19 +413,22 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
                 notes_.push_back("live event " + current_ + ": name not written; not asked");
                 return FreeFirst(guest, main);
             }
-            std::uint64_t holder = 0;
-            std::uint64_t manager = 0;
-            if (!guest.Read(main + addr::kManagerPtr, &holder, 8) || holder == 0 || !guest.Read(holder, &manager, 8) ||
-                manager == 0) {
-                notes_.push_back("live event " + current_ + ": no event manager; not asked");
-                return FreeFirst(guest, main);  // still free what the build made
+            if (!current_args_.empty() && !WriteArgs(guest)) {
+                notes_.push_back("live event " + current_ + ": its arguments do not fit the request; not asked");
+                return FreeFirst(guest, main);
             }
-            c.function = main + addr::kRequest;
-            c.x[0] = manager;
-            c.x[1] = block_;
-            next_ = Next::request;
-            return c;
+            if (current_starter_ != 0) {
+                c.function = main + addr::kSetLink;
+                c.x[0] = block_ + addr::kArgMember2;
+                c.x[1] = current_starter_;
+                c.x[2] = 0;
+                next_ = Next::link;
+                return c;
+            }
+            return Ask(guest, main);
         }
+        case Next::link:
+            return Ask(guest, main);
         case Next::request: {
             notes_.push_back("live event " + current_ + " asked of the game (result " + std::to_string(result & 0xff) +
                              ")");
@@ -361,6 +444,8 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
         }
         case Next::free2:
             current_.clear();
+            current_args_.clear();
+            current_starter_ = 0;
             return std::nullopt;  // one event a frame
         case Next::none:
             return std::nullopt;
@@ -374,7 +459,7 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
             return std::nullopt;
         }
         c.function = main + addr::kMalloc;
-        c.x[0] = addr::kArgSize;
+        c.x[0] = addr::kArgSize + addr::kStringsSize;  // the arg, then room for our string arguments
         next_ = Next::malloc;
         return c;
     }
@@ -386,6 +471,8 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
     }
     if (current_.empty()) {
         current_ = std::move(wanted_.front().name);
+        current_args_ = std::move(wanted_.front().args);
+        current_starter_ = wanted_.front().starter;
         wanted_.pop_front();
     }
     c.function = main + addr::kArgBuild;

@@ -500,10 +500,12 @@ TEST_CASE("shots: an arrow copy flies the owner's arc on the server clock") {
     sync.Receive(Wire(remove, 1));
     copies.clear();
     sync.Tick(kScene, 2, now + 33 * kMs, {}, live, send, copies);
-    REQUIRE(copies.size() == 1);
+    REQUIRE(copies.size() == 1);  // (no actor is made for the effect: the copy plays it)
     CHECK(copies[0].act == Act::show);
     CHECK(copies[0].position[0] == doctest::Approx(5.0f));
     CHECK(sync.Landed() == 1);
+    CHECK(copies[0].effect.empty());  // (not shown at the spot yet)
+    CHECK_FALSE(copies[0].real);
     // Held its full time after it is shown reaching the spot (100 ms late).
     copies.clear();
     const std::uint64_t got = now + 33 * kMs;
@@ -511,6 +513,12 @@ TEST_CASE("shots: an arrow copy flies the owner's arc on the server clock") {
     sync.Tick(kScene, 2, got + hold - kMs, {}, live, send, copies);
     REQUIRE(copies.size() == 1);
     CHECK(copies[0].act == Act::show);
+    // Issue 166: at the spot the copy itself plays the arrow's own hit effect (the director emits it once).
+    CHECK(copies[0].effect == "Hit_AdditionalAttacker");
+    CHECK_FALSE(copies[0].real);
+    CHECK(sync.HitEffects() == 1);
+    CHECK(shots::HitEffect(shots::Kind::seed) == "Hit_AdditionalAttacker");
+    CHECK(shots::HitEffect(shots::Kind::bomb).empty());
     copies.clear();
     sync.Tick(kScene, 2, got + hold, {}, live, send, copies);
     REQUIRE(copies.size() == 1);
@@ -583,8 +591,119 @@ TEST_CASE("shots: our seed's bounce is sent at once, and the log counts it") {
     CHECK(Of<proto::ObjectRemove>(send).size() == 1);
 }
 
+// Issue 166, the test route (LICHII_COOP_SHOT_EFFECTS=real): the game's own shot made at the spot. It is
+// on our own actor list as a seed or an arrow, and must never be sent as a shot of this game's.
+TEST_CASE("shots: the game's own shot made for a hit effect is never taken for a shot of ours") {
+    for (const std::string actor : {"Shootable_DekuSeed", "NormalArrow"}) {
+        CoopSpawn::Sync sync;
+        sync.SetHitEffects(CoopSpawn::Sync::HitEffectMode::real);
+        sync.SetImpacts(false);  // (the hook's default: no impact actors beside it)
+        std::vector<proto::Message> send;
+        std::vector<Copy> copies;
+        std::map<std::uint64_t, std::uint64_t> live;
+        std::uint64_t now = 10'000'000;
+        sync.Tick(kScene, 2, now, {}, live, send, copies);
+        proto::ObjectSpawn spawn;
+        spawn.id = {proto::ObjectKind::made, 1, 77};
+        spawn.actor = actor;
+        spawn.state.time = {now, 0};
+        spawn.state.position = proto::Vec3{0.0f, 5.0f, 0.0f};
+        spawn.state.velocity = proto::Vec3{40.0f, 0.0f, 0.0f};
+        sync.Receive(Wire(spawn, 1));
+        now += 33 * kMs;
+        copies.clear();
+        sync.Tick(kScene, 2, now, {}, live, send, copies);
+        REQUIRE(copies.size() == 1);
+        // The director made the copy (a stand-in: not on the shared names' list) and reported it, so the
+        // copy record has its actor and cannot claim another one by place.
+        live[copies[0].key] = 0x8800;
+        proto::ObjectRemove remove;
+        remove.id = spawn.id;
+        remove.reason = proto::RemoveReason::hit;
+        remove.position = {4.0f, 5.0f, 0.0f};
+        sync.Receive(Wire(remove, 1));
+        now += 33 * kMs;
+        copies.clear();
+        sync.Tick(kScene, 2, now, {}, live, send, copies);
+        // With the copy, the game's own shot is asked for at the spot, ahead of the moment.
+        REQUIRE(copies.size() == 2);
+        CHECK(copies[1].actor == actor);
+        CHECK(copies[1].real);  // never the pack's stand-in
+        CHECK_FALSE(copies[1].place);
+        CHECK(copies[1].position[0] == doctest::Approx(4.0f));
+        CHECK(copies[1].effect.empty());
+        CHECK(sync.HitEffects() == 1);
+        const std::uint64_t got = now;
+        // It shows up on our own list at the spot before the director reports it: claimed by its place.
+        CoopSpawn::Seen made;
+        made.address = 0x9900;
+        made.name = actor;
+        made.position = {4.0f, 5.0f, 0.0f};
+        send.clear();
+        copies.clear();
+        now += 16 * kMs;
+        sync.Tick(kScene, 2, now, {made}, live, send, copies);
+        CHECK(Of<proto::ObjectSpawn>(send).empty());
+        CHECK(sync.Mine() == 0);
+        // The copy reaches the spot: the effect is asked for on it now.
+        copies.clear();
+        sync.Tick(kScene, 2, got + shots::Track::kBehindUs, {made}, live, send, copies);
+        REQUIRE(copies.size() == 2);
+        CHECK(copies[1].effect == "Hit_AdditionalAttacker");
+        CHECK(Of<proto::ObjectSpawn>(send).empty());
+        // A second one of that name far from the spot is a shot of this game's, as ever.
+        CoopSpawn::Seen ours = made;
+        ours.address = 0xa000;
+        ours.position = {40.0f, 5.0f, 0.0f};
+        copies.clear();
+        sync.Tick(kScene, 2, got + shots::Track::kBehindUs + 16 * kMs, {made, ours}, live, send, copies);
+        CHECK(Of<proto::ObjectSpawn>(send).size() == 1);
+        // Its short life over: no longer asked for (the director deletes it).
+        copies.clear();
+        sync.Tick(kScene, 2, got + shots::Track::kBehindUs + shots::kImpactLifeUs, {made, ours}, live, send, copies);
+        for (const Copy& c : copies) {
+            CHECK_FALSE(c.real);
+        }
+    }
+}
+
+TEST_CASE("shots: a new scene drops the game's own shots made for hit effects") {
+    CoopSpawn::Sync sync;
+    sync.SetHitEffects(CoopSpawn::Sync::HitEffectMode::real);
+    sync.SetImpacts(false);  // (the hook's default: no impact actors beside it)
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    const std::map<std::uint64_t, std::uint64_t> live;
+    std::uint64_t now = 10'000'000;
+    sync.Tick(kScene, 2, now, {}, live, send, copies);
+    proto::ObjectSpawn spawn;
+    spawn.id = {proto::ObjectKind::made, 1, 78};
+    spawn.actor = "Shootable_DekuSeed";
+    spawn.state.time = {now, 0};
+    spawn.state.position = proto::Vec3{0.0f, 5.0f, 0.0f};
+    sync.Receive(Wire(spawn, 1));
+    proto::ObjectRemove remove;
+    remove.id = spawn.id;
+    remove.reason = proto::RemoveReason::hit;
+    remove.position = {4.0f, 5.0f, 0.0f};
+    sync.Receive(Wire(remove, 1));
+    now += 33 * kMs;
+    copies.clear();
+    sync.Tick(kScene, 2, now, {}, live, send, copies);
+    CHECK(std::any_of(copies.begin(), copies.end(), [](const Copy& c) { return c.real; }));
+    // Another scene: nothing of the old one is asked for.
+    copies.clear();
+    sync.Tick("Another_Scene", 2, now + 16 * kMs, {}, live, send, copies);
+    CHECK(copies.empty());
+    sync.Reset();
+    copies.clear();
+    sync.Tick(kScene, 2, now + 33 * kMs, {}, live, send, copies);
+    CHECK(copies.empty());
+}
+
 TEST_CASE("shots: rapid hits keep at most kMaxImpacts impact actors, the newest (issue 166)") {
     CoopSpawn::Sync sync;
+    sync.SetHitEffects(CoopSpawn::Sync::HitEffectMode::off);  // (the earlier way alone: LICHII_COOP_SHOT_IMPACTS=1)
     std::vector<proto::Message> send;
     std::vector<Copy> copies;
     const std::map<std::uint64_t, std::uint64_t> live;
@@ -651,6 +770,7 @@ TEST_CASE("shots: where a seed copy lands, its spark and sound are made once (is
     for (const bool on : {true, false}) {
         CoopSpawn::Sync sync;
         sync.SetImpacts(on);
+        sync.SetHitEffects(CoopSpawn::Sync::HitEffectMode::off);  // (the earlier way alone)
         std::vector<proto::Message> send;
         std::vector<Copy> copies;
         const std::map<std::uint64_t, std::uint64_t> live;

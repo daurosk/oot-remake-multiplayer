@@ -23,6 +23,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "common/fs/path_util.h"
@@ -33,19 +34,30 @@
 #include "coop_cheats_panel.h"
 #include "coop_chatbox.h"
 #include "coop_draw.h"
+#include "coop_flag_native.h"
+#include "coop_flags.h"
 #include "coop_game_build.h"
 #include "coop_hold.h"
+#include "coop_counters.h"
+#include "coop_actor_events.h"
+#include "coop_boss_native.h"
+#include "coop_enemy_shots.h"
 #include "coop_hook.h"
 #include "coop_hud.h"
 #include "coop_hud_hearts.h"
+#include "coop_live_events.h"
 #include "coop_png.h"
 #include "coop_puppet.h"
 #include "coop_puppet_config.h"
 #include "coop_runtime.h"
 #include "coop_settings.h"
 #include "coop_svc.h"
+#include "coop_time.h"
 #include "core/core.h"
 #include "hos_coop_api.h"
+#include "hos_coop_bosses.h"
+#include "hos_coop_world.h"
+#include "hos_coop_actors.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -61,8 +73,11 @@ namespace {
 
 const HosCoopApi* g_api = nullptr;
 std::string g_build;
-bool g_on = false;
+std::atomic<bool> g_on{false};  // (read on the game's threads by the world hooks)
+std::atomic<std::uint32_t> g_world_version{0};  // Hookshot's HOS_COOP_WORLD_VERSION, 0 until it says hello
+std::atomic<std::uint64_t> g_world_wraps{0};    // the wraps that Hookshot has, a bit for each id
 std::atomic<bool> g_present_seen{false};  // our patch's present site has run
+std::atomic<bool> g_flag_setters{false};  // our flag writes go through the game's setters (coop_flag_native.h)
 bool g_hold = false;
 Core::System g_system;
 
@@ -161,6 +176,133 @@ bool Refused(const CoopPuppet::Call& c) {
     return true;
 }
 
+// True while this thread runs one of the module's own game calls: a create
+// or a delete the game asks for inside it is ours (a copy, a remove), not
+// the game's own doing.
+thread_local bool t_own_call = false;
+struct OwnCall {
+    OwnCall() { t_own_call = true; }
+    ~OwnCall() { t_own_call = false; }
+    OwnCall(const OwnCall&) = delete;
+    OwnCall& operator=(const OwnCall&) = delete;
+};
+
+// The flag writes that wait for the game's own setters (coop_flag_native.h), made here on the calc thread. A setter
+// that cannot be called (no function there: another build of the lift) ends this: the writes go into the game's
+// queues again, the ones that wait first.
+void RunFlagSetters(void* ctx) {
+    if (!g_flag_setters.load(std::memory_order_relaxed)) {
+        return;
+    }
+    CoopHook::EmulatorMemory memory(g_system.ApplicationMemory(), CoopRuntime::MainBase());
+    const bool ok = CoopFlagNative::RunSetters(
+        memory, [ctx](std::uint64_t function, std::uint64_t x0, std::uint64_t x1, std::uint64_t x2) {
+            HosCoopCall k{};
+            k.function = function;
+            k.x[0] = x0;
+            k.x[1] = x1;
+            k.x[2] = x2;
+            std::uint64_t result = 0;
+            return g_api->call(ctx, &k, &result) != 0;
+        });
+    if (ok) {
+        return;
+    }
+    g_flag_setters.store(false);
+    coop::host::GameFlags::use_calls(nullptr);
+    std::size_t moved = 0, lost = 0;
+    CoopFlagNative::Calls().run(coop::host::GameFlagCalls::kMost, [&](const coop::host::GameFlagWrite& w) {
+        using coop::host::GameFlags;
+        using coop::host::GameFlagType;
+        const auto hash = static_cast<std::uint32_t>(w.id);
+        bool done = false;
+        switch (w.type) {
+        case GameFlagType::boolean:
+            done = GameFlags::set_bool(memory, hash, w.value != 0);
+            break;
+        case GameFlagType::int32:
+            done = GameFlags::set_int(memory, hash, static_cast<std::int32_t>(w.value));
+            break;
+        case GameFlagType::enum32:
+            done = GameFlags::set_enum(memory, hash, w.value);
+            break;
+        case GameFlagType::uint32:
+            done = GameFlags::set_uint(memory, hash, w.value);
+            break;
+        case GameFlagType::key64:
+            done = GameFlags::set_key64(memory, w.id, w.value != 0);
+            break;
+        }
+        ++(done ? moved : lost);
+        return true;
+    });
+    LOG_WARNING(Core, "coop: flags: a game setter could not be called: writes go into the game's queues from now on "
+                      "({} waiting writes moved there, {} lost)", moved, lost);
+}
+
+// Every 10 s while anything moved: what the applier's wrap and the setter calls did.
+void LogFlagNative() {
+    static std::int64_t said_ms = 0;
+    static std::uint64_t said_applies = 0, said_setters = 0;
+    const std::int64_t now = SteadyMs();
+    if (now - said_ms < 10'000) {
+        return;
+    }
+    const CoopFlagNative::Counters& c = CoopFlagNative::Counts();
+    const std::uint64_t applies = c.applies.load(), setters = c.setters.load();
+    if (applies == said_applies && setters == said_setters) {
+        return;
+    }
+    said_ms = now;
+    said_applies = applies;
+    said_setters = setters;
+    LOG_INFO(Core, "coop: flags native: the game's applier ran {} times, {} writes read from its queues ({} dropped), "
+                   "{} setter calls made for co-op ({} waiting, {} frames waited for room)",
+             applies, c.writes.load(), CoopFlagNative::Events().dropped(), setters, CoopFlagNative::Calls().size(),
+             c.no_room.load());
+}
+
+// Native boss sync (coop_boss_native.h): on when this hookshot.exe has
+// both wraps (the hook table's rows 4 and 5) and LICHII_COOP_BOSS_NATIVE is not
+// 0; the action verbs also need LICHII_COOP_BOSS_ACTIONS not 0.
+bool WrapIn(std::uint32_t id) {  // (as CoopHookshot::HasWrap)
+    return id < 64 && (g_world_wraps.load() >> id & 1) != 0;
+}
+void SetBossNative() {
+    const bool brain = WrapIn(HOS_COOP_WRAP_BRAIN_VERB) && Env("LICHII_COOP_BOSS_NATIVE") != "0";
+    const bool actions = brain && WrapIn(HOS_COOP_WRAP_ACTION_VERB) && Env("LICHII_COOP_BOSS_ACTIONS") != "0";
+    CoopBossNative::Table& t = CoopBossNative::TheTable();
+    if (t.BrainOn() == brain && t.ActionsOn() == actions) {
+        return;
+    }
+    t.SetOn(brain, actions);
+    LOG_INFO(Core, "coop: bosses: native sync {} (brain verbs {}, action verbs {}){}", brain ? "on" : "off",
+             WrapIn(HOS_COOP_WRAP_BRAIN_VERB) ? "wrapped" : "not wrapped in this hookshot.exe",
+             WrapIn(HOS_COOP_WRAP_ACTION_VERB) ? (actions ? "wrapped" : "wrapped, off") : "not wrapped",
+             brain ? "" : ": bosses as before (owner's animations, gohma-sync)");
+}
+
+// Every 10 s while a boss is synced natively: the counts (first proof lines).
+void LogBossNative() {
+    static std::uint64_t said_ms = 0;
+    static CoopBossNative::Counts said{};
+    const std::uint64_t now = SteadyMs();
+    if (now - said_ms < 10'000) {
+        return;
+    }
+    const CoopBossNative::Counts c = CoopBossNative::TheTable().Totals();
+    if (c.owner_brain == said.owner_brain && c.owner_action == said.owner_action && c.copy_skipped == said.copy_skipped &&
+        c.brain_applied == said.brain_applied && c.action_applied == said.action_applied) {
+        return;
+    }
+    said_ms = now;
+    said = c;
+    LOG_INFO(Core, "coop: bosses: ours sent {} brain + {} action verbs ({} by plug); copies: {} own skipped, {} brain + "
+                   "{} action verbs put in ({} waited for a node), {} busy",
+             c.owner_brain, c.owner_action, c.plug_actions, c.copy_skipped, c.brain_applied, c.action_applied,
+             c.action_waiting, c.busy);
+}
+
 void RunCalls(void* ctx) {
     BridgeGuest guest;
     CoopCallers::RunFrame(guest, SteadyMs(), CoopSvc::kCallsPerFrame, [ctx](const CoopPuppet::Call& c) {
@@ -173,6 +315,7 @@ void RunCalls(void* ctx) {
         std::memcpy(k.stack, c.stack.data(), sizeof k.stack);
         k.s0 = c.s0;
         std::uint64_t x0 = 0;
+        const OwnCall own;  // (what the game asks inside it is our own asking: World())
         if (!g_api->call(ctx, &k, &x0)) {
             LOG_WARNING(Core, "coop: no game function at {:#x}", c.function);
             return std::optional<std::uint64_t>();
@@ -574,6 +717,17 @@ bool Start(const HosCoopApi* api) {
         CoopPuppetConfig::Configure();  // as the emulator's cave (coop_puppet_config.h)
     }
     g_hold = EnvOn("LICHII_COOP_OBJECTS_AI_HOLD");
+    // Flags through the game's own functions (coop_flag_native.h): its writes as events from the applier's wrap, ours
+    // through its setters on the calc thread. LICHII_COOP_FLAG_EVENTS=0 / LICHII_COOP_FLAG_SETTERS=0: as on the
+    // emulator (the table diff, writes into the game's queues).
+    CoopFlagNative::Counts().events_on.store(Env("LICHII_COOP_FLAG_EVENTS") != "0");
+    g_flag_setters.store(Env("LICHII_COOP_FLAG_SETTERS") != "0");
+    coop::host::GameFlags::use_calls(g_flag_setters.load() ? &CoopFlagNative::Calls() : nullptr);
+    LOG_INFO(Core, "coop: flags: the game's writes {}, our writes {}",
+             CoopFlagNative::Counts().events_on.load() ? "as events from its applier (patch 0005's wrap)"
+                                                       : "by reading the tables (LICHII_COOP_FLAG_EVENTS=0)",
+             g_flag_setters.load() ? "through the game's setters on its calc thread"
+                                   : "into the game's queues (LICHII_COOP_FLAG_SETTERS=0)");
     CoopHook::Start();
     g_on = true;
     return true;
@@ -586,40 +740,237 @@ void Frame(void* ctx, int site) {
     if (site == HOS_COOP_SITE_PRESENT && !g_present_seen.exchange(true)) {
         LOG_INFO(Core, "coop: Hookshot calls co-op at each present (loads and pause included)");
     }
+    if (site != HOS_COOP_SITE_PRESENT && g_world_version.load() == 0) {
+        // A Hookshot built without patch 0005 never says hello (one with it does at the first hooked function the game
+        // runs): say so once, some thousand frame hooks in.
+        static std::atomic<std::uint32_t> frames{0};
+        if (frames.fetch_add(1) == 3600) {
+            LOG_WARNING(Core, "coop: world hooks: hookshot.exe has not said hello yet: built without patch 0005, or no "
+                              "hooked game function ran so far (until it does: no pause counters, no flag events)");
+        }
+    }
     const FrameWork w = WorkAt(site, g_present_seen.load());
     if (w.on_frame) {
         CoopHook::OnFrame(g_system);
     }
     if (w.calls && ctx != nullptr) {
+        RunFlagSetters(ctx);
+        LogFlagNative();
         RunCalls(ctx);
+        LogBossNative();
     }
 }
 
-// coop_hold.s: a held component's calc bits become (bits & and) | or.
+// (CREATE_FROM's caller and create argument until that thread's CREATE_REQUEST)
+thread_local std::uint64_t t_create_from = 0;
+thread_local std::uint64_t t_create_arg = 0;
+// (CREATE_REQUEST's verdict until that thread's CREATE_STOP)
+thread_local bool t_create_stop = false;
+// (SHOOT_FROM's shooter until that thread's next CREATE_REQUEST; used only for
+// the create the shoot code itself makes, by its return address)
+thread_local std::uint64_t t_shooter = 0;
+constexpr std::uint64_t kShootCreateReturn = 0xc17300;  // (after the bl at main+0xc172fc)
+
+// The world hooks (patch 0005): the game's C hands its world events here instead of into caves and guest rings.
+int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
+    if (!g_on) {
+        return 0;
+    }
+    switch (event) {
+    case HOS_COOP_WORLD_HELLO: {
+        // (the first patch 0005 sent a = 0: level 1, with the flag applier's wrap)
+        const WorldLevel level = HelloLevel(a, b);
+        g_world_wraps.store(level.wraps);
+        SetBossNative();
+        if (g_world_version.exchange(level.version) != level.version) {
+            LOG_INFO(Core, "coop: world hooks: hookshot.exe has level {} (this module {}), wraps {:#x}{}", level.version,
+                     HOS_COOP_WORLD_VERSION, level.wraps,
+                     level.version < HOS_COOP_WORLD_VERSION ? ": an older Hookshot build, some hooks are missing" : "");
+        }
+        return 1;
+    }
+    case HOS_COOP_WORLD_COUNTER_START: {  // (coop_counters.h: the Objects walk reads the ring)
+        CoopCounters::TheHostRing().Push(a);
+        static std::atomic<bool> said{false};
+        if (!said.exchange(true)) {
+            LOG_INFO(Core, "coop: world hooks: first pause counter start from hookshot.exe (node {:#x})", a);
+        }
+        return 1;
+    }
+    // The actor events (patch 0007, hos_coop_actors.h; coop_actor_events.h:
+    // the Objects step drains them on the frame hook). Only reads here.
+    case HOS_COOP_WORLD_SHOOT_FROM: {  // (a: its first 8 bytes are the shooter's actor)
+        std::uint64_t actor = 0;
+        t_shooter = a != 0 && CoopRuntime::Read(a, &actor, sizeof actor) ? actor : 0;
+        return 1;
+    }
+    case HOS_COOP_WORLD_CREATE_FROM: {  // (just before CREATE_REQUEST, on this thread)
+        t_create_from = a;
+        t_create_arg = b;
+        return 1;
+    }
+    case HOS_COOP_WORLD_CREATE_REQUEST: {
+        CoopActorEvents::Event e;
+        e.kind = CoopActorEvents::Kind::Create;
+        e.flags = t_own_call ? CoopActorEvents::kOwn : 0;
+        e.a = a;
+        e.b = b;
+        e.from = std::exchange(t_create_from, 0);
+        const std::uint64_t arg = std::exchange(t_create_arg, 0);
+        std::uint64_t text = 0;  // (x1: its first 8 bytes point at the name; on the caller's stack: read now)
+        char name[32] = {};
+        if (a != 0 && CoopRuntime::Read(a, &text, sizeof text) && text != 0 &&
+            CoopRuntime::Read(text, name, sizeof name - 1)) {
+            e.SetName(name);
+        }
+        float place[3] = {};
+        if (arg != 0 && CoopRuntime::Read(arg, place, sizeof place)) {
+            for (int i = 0; i < 3; ++i) {
+                std::memcpy(&e.place[i], &place[i], 4);
+            }
+        }
+        // A copy enemy's own shot is not made at all (coop_enemy_shots.h):
+        // the owner's game fires, and its shot comes as a copy, which is
+        // one of our own creates and never stopped.
+        // The shooter is the one the game's shoot code named, when this is
+        // that code's own create; any other create is judged by its place.
+        const std::uint64_t shooter = std::exchange(t_shooter, 0);
+        const bool shot = e.from != 0 && e.from == CoopRuntime::MainBase() + kShootCreateReturn;
+        t_create_stop = !t_own_call && name[0] != 0 &&
+                        CoopEnemyShots::StopAtCreate(name, {place[0], place[1], place[2]}, shot ? shooter : 0);
+        if (t_create_stop) {
+            e.flags |= CoopActorEvents::kStopped;
+        }
+        CoopActorEvents::TheRing().Push(e);
+        return 1;
+    }
+    case HOS_COOP_WORLD_CREATE_STOP: {  // (a: our C's uint32, in hookshot.exe's memory)
+        auto* stop = reinterpret_cast<std::uint32_t*>(static_cast<std::uintptr_t>(a));
+        if (stop != nullptr && std::exchange(t_create_stop, false)) {
+            *stop = 1;
+        }
+        return 1;
+    }
+    case HOS_COOP_WORLD_DELETE_REQUEST: {
+        CoopActorEvents::Event e;
+        e.kind = CoopActorEvents::Kind::Delete;
+        e.flags = t_own_call ? CoopActorEvents::kOwn : 0;
+        e.a = a;
+        e.b = b;
+        CoopActorEvents::TheRing().Push(e);
+        return 1;
+    }
+    case HOS_COOP_WORLD_LIFE_STEP: {  // (b: our C's int32 sum, in hookshot.exe's memory)
+        auto* sum = reinterpret_cast<std::int32_t*>(static_cast<std::uintptr_t>(b));
+        if (sum == nullptr) {
+            return 0;
+        }
+        if (!CoopActorEvents::LifeStepSeen().exchange(true, std::memory_order_relaxed)) {
+            LOG_INFO(Core, "coop: actors: the game's Life step calls the module (patch 0007): hits go in through it");
+        }
+        *sum = CoopActorEvents::Step(CoopActorEvents::TheRing(), CoopActorEvents::TheLifeTable(), a, *sum);
+        return 1;
+    }
+    default:
+        return 0;  // (a newer Hookshot's event this module does not know)
+    }
+}
+
+WorldLevel WorldHooks() {
+    return WorldLevel{g_world_version.load(), g_world_wraps.load()};
+}
+
+bool HasWrap(std::uint32_t id) {
+    return id < 64 && (g_world_wraps.load() >> id & 1) != 0;
+}
+
+// The wrapped game functions (patch 0005, nx2/coop_world_wraps.py). The game's function always runs (0 at phase 0).
+int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
+    if (!g_on || x == nullptr) {
+        return 0;
+    }
+    if (id == HOS_COOP_WRAP_EVENT_REQUEST) {
+        // The game asks for an event: its name at the request (phase 0: x1 is the request), whether the manager took
+        // it after the game's function (phase 1: x0). Both on the same game thread, one after the other.
+        thread_local char name[sizeof(CoopLiveEvents::GameRequest::name)];
+        thread_local bool named = false;
+        if (phase == 0) {
+            std::uint64_t text = 0;
+            named = x[1] != 0 && CoopRuntime::Read(x[1] + CoopLiveEvents::addr::kArgName, &text, sizeof text) &&
+                    text != 0 && CoopRuntime::Read(text, name, sizeof name - 1);
+            name[sizeof name - 1] = 0;
+        } else if (named) {
+            named = false;
+            CoopLiveEvents::TheGameRequests().Push(name, x[0] != 0);
+        }
+        return 0;
+    }
+    if (id == HOS_COOP_WRAP_BRAIN_VERB && phase == 0) {
+        // Native boss sync: a boss's brain verb change (x0 BSA, w1 verb, w2 force). A copy's own is skipped
+        // once the owner's verbs have come (1: the game's function does not run; x0 0 as a defined result, though
+        // no caller reads one).
+        if (!CoopBossNative::TheTable().OnBrainVerb(x[0], static_cast<std::int32_t>(x[1]), (x[2] & 1) != 0,
+                                                    t_own_call)) {
+            return 0;
+        }
+        x[0] = 0;
+        return 1;
+    }
+    if (id == HOS_COOP_WRAP_ACTION_VERB && phase == 0) {
+        // Native boss sync: a boss's action verb request (x0 BSA, x1 the request in guest memory).
+        CoopBossNative::Table& t = CoopBossNative::TheTable();
+        if (!t.ActionsOn() || x[1] == 0) {
+            return 0;
+        }
+        CoopBossNative::Request r{};
+        if (!CoopRuntime::Read(x[1], r.data(), r.size())) {
+            return 0;
+        }
+        if (!t.OnActionVerb(x[0], r, t_own_call)) {
+            return 0;
+        }
+        // Skipped: the result its callers pass up is what the game gives for a request it took (0, its main path
+        // main+0xc10f4; 2 and 3 are its refusals), so the asking node goes on as after its own request.
+        x[0] = CoopBossNative::addr::kActionTaken;
+        return 1;
+    }
+    if (id == HOS_COOP_WRAP_TIME_SET && phase == 0) {
+        // The game's own time change, with its exact time: the time sync's jump (coop_time_sync.h, GameSet).
+        CoopTime::OnGameSet(static_cast<std::uint32_t>(x[1]), static_cast<std::uint32_t>(x[2]),
+                            static_cast<std::int32_t>(x[3]));
+        return 0;
+    }
+    if (id == HOS_COOP_WRAP_FLAG_APPLY && phase == 0) {
+        // The writes the game is about to apply, read from its queues (x0 = the manager): the flag watcher's events.
+        CoopHook::EmulatorMemory memory(g_system.ApplicationMemory(), CoopRuntime::MainBase());
+        CoopFlagNative::OnApply(memory, x[0]);
+        // First proof: how often the game applies its queued flag writes (one line at the first, then every 10 s).
+        static std::atomic<std::uint64_t> runs{0};
+        static std::atomic<std::int64_t> said_ms{0};
+        const std::uint64_t n = runs.fetch_add(1, std::memory_order_relaxed) + 1;
+        const std::int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     std::chrono::steady_clock::now().time_since_epoch())
+                                     .count();
+        std::int64_t last = said_ms.load(std::memory_order_relaxed);
+        if ((n == 1 || now - last >= 10'000) && said_ms.compare_exchange_strong(last, now)) {
+            LOG_INFO(Core, "coop: world wraps: the game's flag applier ran {} times so far (x0 {:#x})", n, x[0]);
+        }
+    }
+    return 0;
+}
+
+// The AI hold (native-plan row 6): a held component's calc bits become
+// (bits & and) | or, from the set the Objects step published in our own
+// memory (CoopHold::TheHostTable; no guest table at main+0x3c46400).
 std::uint32_t Hold(std::uint64_t component, std::uint32_t bits) {
     if (!g_hold || component == 0) {
         return bits;
     }
-    const std::uint64_t table = CoopRuntime::MainBase() + CoopHold::kTableOffset;
-    std::uint32_t head[3] = {};
-    if (!CoopRuntime::Read(table, head, sizeof head) || head[0] == 0) {
-        return bits;
-    }
-    const std::uint32_t count =
-        head[0] < CoopHold::kMaxHeld ? head[0] : static_cast<std::uint32_t>(CoopHold::kMaxHeld);
-    std::uint64_t held[CoopHold::kMaxHeld] = {};
-    if (!CoopRuntime::Read(table + 0x10, held, 8 * count)) {
-        return bits;
-    }
-    for (std::uint32_t i = 0; i < count; ++i) {
-        if (held[i] == component) {
-            return (bits & head[1]) | head[2];
-        }
-    }
-    return bits;
+    return CoopHold::TheHostTable().Apply(component, bits);
 }
 
 void Stop() {
+    CoopHold::TheHostTable().Clear();  // (no copy stays held once co-op is off)
     if (g_on) {
         g_on = false;
         CoopHook::Shutdown();
@@ -658,6 +1009,13 @@ COOP_HOOKSHOT_EXPORT void hos_coop_frame(void* ctx, int site) {
 }
 COOP_HOOKSHOT_EXPORT uint32_t hos_coop_hold(uint64_t component, uint32_t bits) {
     return CoopHookshot::Hold(component, bits);
+}
+// The world hooks (hos_coop_world.h): Hookshot's host/coop_world.c, on the game's threads.
+COOP_HOOKSHOT_EXPORT int hos_coop_world(uint32_t event, uint64_t a, uint64_t b) {
+    return CoopHookshot::World(event, a, b);
+}
+COOP_HOOKSHOT_EXPORT int hos_coop_wrap(uint32_t id, int phase, uint64_t* x, void* ctx) {
+    return CoopHookshot::Wrap(id, phase, x, ctx);
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_stop(void) {
     CoopHookshot::Stop();

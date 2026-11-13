@@ -664,6 +664,20 @@ std::optional<proto::ObjectId> Sync::IdOf(std::uint64_t address) const {
     return it->second.id;
 }
 
+std::vector<std::pair<std::uint64_t, proto::BossBsa>> Sync::BossVerbsIn() const {
+    std::vector<std::pair<std::uint64_t, proto::BossBsa>> out;
+    for (const auto& [address, o] : objects_) {
+        if (!o.bsa_in) {
+            continue;
+        }
+        const auto owner = owners_.find(o.id);
+        if (owner != owners_.end() && owner->second.player != 0 && owner->second.player != self_) {
+            out.emplace_back(address, *o.bsa_in);
+        }
+    }
+    return out;
+}
+
 std::optional<std::uint8_t> Sync::OwnerOf(std::uint64_t address) const {
     const auto it = objects_.find(address);
     if (it == objects_.end()) {
@@ -705,6 +719,68 @@ void Sync::Written(std::uint64_t address, std::int32_t life, std::uint64_t now_u
     }
 }
 
+void Sync::GameHit(std::uint64_t address, std::int32_t amount) {
+    const auto it = objects_.find(address);
+    if (it != objects_.end() && amount > 0) {
+        it->second.step_new += amount;
+    }
+}
+
+void Sync::GameDeleted(std::uint64_t address, std::uint64_t now_us) {
+    const auto it = objects_.find(address);
+    if (it != objects_.end()) {
+        it->second.deleted_until = now_us + kDeletedKeepUs;
+    }
+}
+
+void Sync::Stepped(std::uint64_t address, std::int32_t amount, std::uint64_t now_us) {
+    const auto it = objects_.find(address);
+    if (it != objects_.end() && amount > 0) {
+        it->second.step_given += amount;
+        it->second.step_given_until = now_us + kStepGivenUs;
+    }
+}
+
+std::int32_t Sync::StepHits(Object& o, std::int32_t fell, std::int32_t life, std::uint64_t now_us) {
+    std::int32_t hits = 0;
+    std::int32_t stepped = std::exchange(o.step_new, 0);
+    if (o.loose > 0 && now_us >= o.loose_until) {
+        // No step came for that fall: something outside the Life step took
+        // the life. Counted as before the events, and said (LooseDrops).
+        hits += o.loose;
+        loose_drops_ += static_cast<std::size_t>(o.loose);
+        o.loose = 0;
+    }
+    if (o.step_wait > 0 && now_us >= o.step_wait_until) {
+        o.step_wait = 0;  // (the game clamped it, or took nothing)
+    }
+    if (o.step_given > 0 && now_us >= o.step_given_until) {
+        o.step_given = 0;
+    }
+    // A fall seen before its step: this step is that hit.
+    const std::int32_t late = std::min(stepped, o.loose);
+    o.loose -= late;
+    stepped -= late;
+    hits += late;
+    if (stepped > 0) {
+        o.step_wait += stepped;
+        o.step_wait_until = now_us + kStepWaitUs;
+    }
+    const std::int32_t now_hit = std::min(fell, o.step_wait);
+    o.step_wait -= now_hit;
+    hits += now_hit;
+    if (life <= 0) {
+        o.step_wait = 0;  // more than it had left: the rest never shows
+    }
+    // What another game's change put through the step (Stepped) is no hit.
+    std::int32_t rest = fell - now_hit;
+    const std::int32_t given = std::min(rest, o.step_given);
+    o.step_given -= given;
+    rest -= given;
+    o.step_rest = rest;
+    return hits;
+}
+
 std::uint8_t Sync::OwnerOf(const proto::ObjectId& id) const {
     const auto it = owners_.find(id);
     return it == owners_.end() ? 0 : it->second.player;
@@ -718,6 +794,9 @@ proto::ObjectState Sync::StateOf(Object& o, std::uint64_t now_us) {
     state.animation = o.animation;
     if (!o.slots.empty()) {
         state.slots = o.slots;  // issue 150: a boss's eye guard and the like
+    }
+    if (o.bsa) {
+        state.bsa = o.bsa;  // native boss sync: a boss's brain and action verbs
     }
     if (o.rotation) {
         state.rotation = QuatOf(*o.rotation);
@@ -1070,6 +1149,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
         o.animation = s.animation;
         o.slots = s.slots;
+        o.bsa = s.bsa;
         // A breakable's life can no longer be read once it has died (a crate
         // at 0 for one frame, then its life object is gone): read that as 0.
         std::optional<proto::ObjectLife> life = s.life;
@@ -1077,10 +1157,25 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             life = proto::ObjectLife{0, o.max};
         }
         if (life) {
-            if (o.life && life->life < *o.life) {
+            const std::int32_t fell = o.life && life->life < *o.life ? *o.life - life->life : 0;
+            // The game's own Life step said its hits (SetLifeEvents): those
+            // are this game's, whatever else the life lost.
+            const std::optional<std::int32_t> stepped =
+                life_events_ ? std::optional<std::int32_t>(StepHits(o, fell, life->life, now_us)) : std::nullopt;
+            if (fell > 0 || stepped.value_or(0) > 0) {
                 o.fight_until = now_us + kFightUs;
-                std::int32_t drop = *o.life - life->life;
-                if (o.hurt_left > 0) {
+                // (with step events: the part of the fall no step explained)
+                std::int32_t drop = stepped ? o.step_rest : fell;
+                o.step_rest = 0;
+                if (stepped && *stepped > 0 && o.hurt_until != 0) {
+                    // Our own hit while the owner's hurt is in flight: the
+                    // life to reach is that much lower (the owner takes our
+                    // hit too), so it is not written back up over it.
+                    o.hurt_target = std::max(0, o.hurt_target - *stepped);
+                }
+                if (drop == 0) {
+                    // (all of it the game's own hits)
+                } else if (o.hurt_left > 0) {
                     // Our own hurt landing (or the game taking more for it):
                     // not a hit of ours.
                     o.hurt_left = std::max(0, o.hurt_left - drop);
@@ -1101,6 +1196,16 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     drop -= back;
                     writes.push_back({o.address, life->life, 0, {}});
                     ++hurt_late_;
+                }
+                if (stepped) {
+                    // A fall nothing explains waits for its step (the walk
+                    // may read the life before the event is drained); one
+                    // that never comes counts as a hit after kStepWaitUs.
+                    if (drop > 0) {
+                        o.loose += drop;
+                        o.loose_until = now_us + kStepWaitUs;
+                    }
+                    drop = *stepped;
                 }
                 const auto owner = owners_.find(o.id);
                 if (drop > 0 && blast_near_ && owner != owners_.end() &&
@@ -1169,7 +1274,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             ++it;
             continue;
         }
-        if (++it->second.missed < kMissedWalks) {
+        // (the game's own delete request was seen for it: no second walk needed)
+        const bool deleted = it->second.deleted_until != 0 && now_us < it->second.deleted_until;
+        if (++it->second.missed < kMissedWalks && !deleted) {
             ++it;
             continue;
         }
@@ -1263,6 +1370,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.rotation = s->rotation;
         o.animation = s->animation;
         o.slots = s->slots;
+        o.bsa = s->bsa;
         o.seen_at = now_us;
         o.name = s->name;
         o.breakable = CoopWorld::IsBreakable(s->name);
@@ -1440,7 +1548,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             }
             const bool changed = life != o.sent_life || Moved(o.position, o.sent_position) ||
                                  Turned(rotation, o.sent_rotation) ||
-                                 animation != o.sent_animation || slots != o.sent_slots;
+                                 animation != o.sent_animation || slots != o.sent_slots ||
+                                 (o.bsa && o.sent_bsa_seq != o.bsa->seq);  // native boss sync: a new boss verb at once
             if (!o.sent_once || changed || now_us - o.sent_at >= kStillEveryUs) {
                 proto::ObjectSample sample;
                 sample.id = o.id;
@@ -1454,6 +1563,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 o.sent_rotation = rotation;
                 o.sent_animation = animation;
                 o.sent_slots = std::move(slots);
+                if (o.bsa) {
+                    o.sent_bsa_seq = o.bsa->seq;
+                }
             }
         }
     }
@@ -1922,6 +2034,9 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             if (own != owners_.end() && sample->epoch < own->second.epoch) {
                 continue;  // from an owner before the last change
             }
+            if (sample->state.bsa) {
+                o->bsa_in = sample->state.bsa;  // native boss sync: the owner's boss verbs
+            }
             if (sample->state.position && Finite(*sample->state.position)) {
                 const std::uint64_t t = sample->state.time.server_time_us;
                 if (o->received.empty() || t > o->received.back().time) {
@@ -2127,7 +2242,9 @@ std::vector<std::uint64_t> Sync::Holds(std::uint64_t now_us) const {
     std::vector<std::uint64_t> out;
     for (const PoseWrite& w : placed) {
         const auto o = objects_.find(w.address);
-        if (o != objects_.end() && o->second.reacts) {
+        // Native boss sync: a boss copy that takes its owner's verbs (native boss sync)
+        // must run its own AI, so it is never held.
+        if (o != objects_.end() && o->second.reacts && !o->second.bsa_in) {
             out.push_back(w.address);
         }
     }

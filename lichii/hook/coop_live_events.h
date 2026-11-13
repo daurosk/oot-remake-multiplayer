@@ -21,7 +21,9 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <deque>
 #include <optional>
 #include <set>
@@ -30,6 +32,7 @@
 #include <string_view>
 #include <vector>
 
+#include "coop/host/bounded_queue.hpp"
 #include "coop_puppet.h"
 
 namespace CoopLiveEvents {
@@ -46,6 +49,25 @@ inline constexpr std::uint64_t kArgName = 0x1a90;          // char* (inline buff
 inline constexpr std::uint64_t kArgNameCap = 0x1a98;       // u32
 inline constexpr std::uint64_t kArgMember1 = 0x1968;       // freed first, as the node does
 inline constexpr std::uint64_t kArgMember2 = 0x1950;
+// An event's arguments, as the game's QueryBancChangeEventRequestArg (0x29bf380) fills them for a map change: an
+// array of 200-byte entries at +kArgEntries (capacity u32 at +0, count u32 at +kArgCount). Entry: +0 its type (1 a
+// string pointer, 4 a bool), +8 its name's buffer, +16 that buffer's size, +152 the value. A string value is a
+// pointer the request does not copy, so ours live after the arg in our own block (kArgStrings).
+inline constexpr std::uint64_t kArgCapacity = 0x0;         // u32
+inline constexpr std::uint64_t kArgEntries = 0x8;          // -> entries
+inline constexpr std::uint64_t kArgCount = 0x10;           // u32
+inline constexpr std::uint64_t kArgEntrySize = 200;
+inline constexpr std::uint64_t kEntryType = 0;             // u32
+inline constexpr std::uint64_t kEntryName = 8;             // char*
+inline constexpr std::uint64_t kEntryNameCap = 16;         // u32
+inline constexpr std::uint64_t kEntryValue = 152;
+inline constexpr std::uint32_t kTypeString = 1;
+inline constexpr std::uint32_t kTypeBool = 4;
+inline constexpr std::uint64_t kArgStrings = kArgSize;     // our strings, in the block after the arg
+inline constexpr std::uint64_t kStringsSize = 0x200;
+// The event's starter actor: 0x2bc440(arg + kArgMember2, actor, 0) links it, as the game's
+// OneShotEventMemberRequestEventByEventName does; the frees after the request let it go again.
+inline constexpr std::uint64_t kSetLink = 0x2bc440;
 inline constexpr std::uint64_t kEventStatePtr = 0x4e94840;  // as coop_boss_game.cpp
 inline constexpr std::uint64_t kEventSession = 0x68;        // set while an event runs
 inline constexpr std::uint64_t kSessionCount = 0xeb0;       // u32, as coop_boss_game.cpp
@@ -159,6 +181,16 @@ public:
     // `scene`: where it was decided (empty: any); `at_us` when; `max_age_us`
     // how long it may wait for a free moment (0: no limit). See Expire.
     void Want(std::string name, std::string scene = {}, std::uint64_t at_us = 0, std::uint64_t max_age_us = 0);
+    // One argument of an event: a string (text) or a bool.
+    struct Arg {
+        std::string name;
+        std::optional<std::string> text;  // a string argument; none: a bool
+        bool flag = false;
+    };
+    // As Want, for an event that takes arguments and a starter actor (0: none): the game's map change is the
+    // event Dm_SY_BancChangeGo with NextBanc, NextStartPos, BootEventName and IsCheckAir, started by Link
+    // (coop_teleport_game.cpp). The arguments are written into the request after the game built it.
+    void WantWith(std::string name, std::vector<Arg> args, std::uint64_t starter);
     // review-p11-interactions: one requester takes gimmick and story events,
     // and an event waits while another runs. Once a frame, under the same
     // lock as Step: drops each name still waiting (not one being asked now)
@@ -197,7 +229,11 @@ public:
     std::uint64_t Block() const { return block_; }
 
 private:
-    enum class Next { none, malloc, build, request, free1, free2 };
+    enum class Next { none, malloc, build, link, request, free1, free2 };
+    // The current event's arguments into the built request; false when one does not fit.
+    bool WriteArgs(CoopPuppet::Guest& guest);
+    // The request call itself (after the build, and the starter's link if any); the frees when there is no manager.
+    std::optional<CoopPuppet::Call> Ask(CoopPuppet::Guest& guest, std::uint64_t main);
     // The two string members' frees, as the node does them; every path after
     // a build goes through them, so the reused block is never built over
     // live members.
@@ -208,13 +244,150 @@ private:
         std::string scene;
         std::uint64_t at_us = 0;
         std::uint64_t max_age_us = 0;
+        std::vector<Arg> args;
+        std::uint64_t starter = 0;
     };
     std::deque<Wanted> wanted_;
     std::string current_;
+    std::vector<Arg> current_args_;
+    std::uint64_t current_starter_ = 0;
     std::uint64_t block_ = 0;
     Next next_ = Next::none;  // the call made last, whose return comes next
     bool malloc_failed_ = false;
     std::vector<std::string> notes_;
+};
+
+// The game's own event requests, on Hookshot (docs/hookshot.md "World hooks", HOS_COOP_WRAP_EVENT_REQUEST): every
+// event the game asks for goes through main + kRequest (manager, arg), with the event's name in the arg (kArgName)
+// and x0 not 0 when the manager took it. The wrap hands each to Push on the game's thread; the hook's frame reads
+// them. So which event our game started is known at the request, by name, with no search of the event session.
+struct GameRequest {
+    char name[0x80] = {};  // 0-terminated (the arg's buffer is 0x80 bytes)
+    bool taken = false;    // the manager took the request
+};
+
+class GameRequests {
+public:
+    static constexpr std::size_t kKept = 64;  // the newest requests a reader can still get
+
+    // Any thread (the game's): no lock, nothing allocated.
+    void Push(std::string_view name, bool taken) {
+        GameRequest r;
+        const std::size_t n = (std::min)(name.size(), sizeof r.name - 1);
+        std::memcpy(r.name, name.data(), n);
+        r.taken = taken;
+        seen_.fetch_add(1, std::memory_order_relaxed);
+        // Full (no reader took any for a while: flags not shared, a long load): the oldest goes, so the ring always
+        // holds the newest and never stays full.
+        while (!ring_.push(r)) {
+            GameRequest oldest;
+            if (ring_.pop(oldest)) {
+                dropped_.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    }
+    // True once any request came: the wrap is in this hookshot.exe and runs.
+    bool Live() const {
+        return seen_.load(std::memory_order_relaxed) != 0;
+    }
+    std::uint64_t Seen() const {
+        return seen_.load(std::memory_order_relaxed);
+    }
+    // Requests that left the ring unread (it was full).
+    std::uint64_t Dropped() const {
+        return dropped_.load(std::memory_order_relaxed);
+    }
+    // One thread (the hook's frame). The requests after `cursor` (0 at first), oldest first; `cursor` moves past
+    // them. Each reader keeps its own cursor, so two readers both get every request (of the newest kKept).
+    std::vector<GameRequest> Since(std::uint64_t& cursor) {
+        GameRequest r;
+        while (ring_.pop(r)) {
+            kept_.push_back(r);
+            ++last_;
+            if (kept_.size() > kKept) {
+                kept_.pop_front();
+            }
+        }
+        std::vector<GameRequest> out;
+        const std::uint64_t first = last_ - kept_.size();  // the number before kept_.front()
+        for (std::uint64_t n = (std::max)(cursor, first); n < last_; ++n) {
+            out.push_back(kept_[static_cast<std::size_t>(n - first)]);
+        }
+        cursor = last_;
+        return out;
+    }
+
+private:
+    coop::host::BoundedQueue<GameRequest, 64> ring_;
+    std::atomic<std::uint64_t> seen_{0}, dropped_{0};
+    std::deque<GameRequest> kept_;  // the reader's side
+    std::uint64_t last_ = 0;        // requests taken out of the ring so far
+};
+
+inline GameRequests& TheGameRequests() {
+    static GameRequests requests;
+    return requests;
+}
+
+// The first of `requests` the manager took that is one of `names`.
+inline std::optional<std::string> RequestedOf(const std::vector<GameRequest>& requests,
+                                              const std::vector<std::string_view>& names) {
+    for (const GameRequest& r : requests) {
+        if (!r.taken) {
+            continue;
+        }
+        const std::string_view name(r.name);
+        for (const std::string_view n : names) {
+            if (n == name) {
+                return std::string(name);
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+// Which of `names` our game just started, once per start: by the game's own request when the wrap is there
+// (`requested`: RequestedOf this frame's requests), else by StartWatch's search of the running event. With the
+// wrap, the search still runs as a net: an event it finds that no request named is given as before and counted
+// (ScanOnly), and one the request already named is not given twice.
+class StartSource {
+public:
+    static constexpr int kForgetFrames = 1800;  // a request whose event never ran is forgotten after this
+
+    template <typename Find>
+    std::optional<std::string> Frame(std::optional<std::string> requested, bool wrap_live, bool running, Find&& find) {
+        if (!by_request_.empty()) {
+            ran_ = ran_ || running;
+            if ((ran_ && !running) || ++frames_ > kForgetFrames) {
+                by_request_.clear();  // its event is over
+            }
+        }
+        std::optional<std::string> found = watch_.Frame(running, std::forward<Find>(find));
+        if (requested) {
+            by_request_ = *requested;
+            ran_ = running;
+            frames_ = 0;
+            return requested;
+        }
+        if (found && *found == by_request_) {
+            return std::nullopt;  // the request said so already
+        }
+        if (found && wrap_live) {
+            ++scan_only_;
+        }
+        return found;
+    }
+    // Starts the search found that no request had named, while the wrap was there.
+    std::uint64_t ScanOnly() const {
+        return scan_only_;
+    }
+
+private:
+    StartWatch watch_;
+    std::string by_request_;  // the start the request named, until its event is over
+    bool ran_ = false;
+    int frames_ = 0;
+    std::uint64_t scan_only_ = 0;
 };
 
 } // namespace CoopLiveEvents

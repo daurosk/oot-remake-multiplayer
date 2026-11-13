@@ -569,7 +569,17 @@ void Open(CoopPauseMenu::Page page) {
 
 std::string Doing() {
     std::lock_guard lock(g_mutex);
-    return g_doing;
+    if (g_doing.empty()) {
+        return {};
+    }
+    switch (Status().state) {   // (what it is now: a join still waiting is not "joined", a failed one is nothing)
+    case HOS_COOP_STARTING:
+    case HOS_COOP_HOSTING: return g_doing == "hosting" ? "hosting" : "";
+    case HOS_COOP_JOINING:
+    case HOS_COOP_WAIT_HOST: return g_doing == "joined" ? "joining" : "";
+    case HOS_COOP_CONNECTED: return g_doing;
+    default: return {};
+    }
 }
 
 }  // namespace CoopPause

@@ -50,7 +50,8 @@ bool KeysTaken();
 void Open(CoopPauseMenu::Page page);
 
 // What co-op does since the tab started it, for the title's prompt:
-// "hosting", "joined" or "".
+// "hosting", "joining" (not connected yet), "joined", or "" (none, or it
+// failed).
 std::string Doing();
 
 }  // namespace CoopPause

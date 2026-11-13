@@ -4,11 +4,15 @@
 #include <doctest/doctest.h>
 
 #include <cstddef>
+#include <cmath>
 #include <cstdint>
+#include <map>
 #include <memory>
+#include <set>
 #include <optional>
 #include <ostream>
 #include <string>
+#include <vector>
 
 #include "coop/protocol/difficulty.hpp"
 #include "coop_difficulty.h"
@@ -359,4 +363,100 @@ TEST_CASE("difficulty: extra enemies are picked by the placement key alone") {
     CHECK(share > (pct - 100) / 100.0 - 0.04);
     CHECK(share < (pct - 100) / 100.0 + 0.04);
   }
+}
+
+TEST_CASE("difficulty: which placed enemies get extras") {
+  using CoopDifficulty::GetsExtras;
+  constexpr std::uint64_t kPlaced = 0x1234'5678'9abc'def0ULL;
+  CHECK(GetsExtras("Enemy_Keese", kPlaced, true, false));
+  CHECK(GetsExtras("Enemy_Dekubaba", kPlaced, true, false));
+  CHECK(GetsExtras("Enemy_Octorok", kPlaced, true, false));
+  CHECK_FALSE(GetsExtras("Enemy_Keese", 0, true, false));  // made by the game, not placed
+  CHECK_FALSE(GetsExtras("Enemy_Keese", ~std::uint64_t{0}, true, false));
+  CHECK_FALSE(GetsExtras("Enemy_Keese", kPlaced, false, false));  // no life read: a helper
+  CHECK_FALSE(GetsExtras("Enemy_Keese", kPlaced, true, true));    // the sync's own kind
+  CHECK_FALSE(GetsExtras("Animal_Cucco", kPlaced, true, false));
+  CHECK_FALSE(GetsExtras("Npc_Kokiri", kPlaced, true, false));
+  for (const char* never : {"Enemy_DungeonBoss_Gohma", "Enemy_MiddleBoss_DarkLink", "Enemy_Dodongo_Attention",
+                            "Enemy_FlockGuayManager", "Enemy_Guay_Flock", "Enemy_Skullwalltula",
+                            "Enemy_DeadHand_Hand", "Enemy_Gohma_Larva", "Enemy_BabyDodongo", "Enemy_Gohma_Egg",
+                            "Enemy_Skulltula_Gold", "Enemy_Scrub_Business_Seed", "Enemy_Open_DodongoCave_01",
+                            "Enemy_PhantomGanonHorse", "Enemy_Peahat_AircraftCarrier", "Enemy_MoblinClub_ShockWave",
+                            "Enemy_Stalchild_LandBattle", "Enemy_KotakeKoumeBattleManager"}) {
+    CHECK_MESSAGE(!GetsExtras(never, kPlaced, true, false), std::string(never));
+  }
+}
+
+TEST_CASE("difficulty: an extra's placement id and place are the same in every game") {
+  using CoopDifficulty::ExtraHash;
+  std::set<std::uint64_t> ids;
+  for (std::uint64_t hash : {1ULL, 2ULL, 0x8000'0000'0000'0000ULL, 0x1234'5678'9abc'def0ULL}) {
+    for (unsigned i = 0; i < 3; ++i) {
+      const std::uint64_t id = ExtraHash(hash, i);
+      CHECK(id == ExtraHash(hash, i));
+      CHECK(id != 0);
+      CHECK(id != ~std::uint64_t{0});
+      CHECK(id != hash);
+      ids.insert(id);
+    }
+  }
+  CHECK(ids.size() == 12);  // all different
+  const std::array<float, 3> at{10.0f, 2.0f, -5.0f};
+  for (std::uint64_t id = 0; id < 16; ++id) {
+    const auto p = CoopDifficulty::ExtraPlace(at, id);
+    CHECK(p[1] == at[1]);  // the same height: on the original's floor
+    const float dx = p[0] - at[0];
+    const float dz = p[2] - at[2];
+    CHECK(std::sqrt(dx * dx + dz * dz) == doctest::Approx(CoopDifficulty::kExtraOffsetM));
+  }
+}
+
+TEST_CASE("difficulty: a scene visit's extras are planned once, bound to their actors, and forgotten after it") {
+  CoopDifficulty::Extras x;
+  using Original = CoopDifficulty::Extras::Original;
+  std::vector<Original> walk;
+  for (std::uint64_t i = 1; i <= 4; ++i) {
+    walk.push_back({"Enemy_Keese", 0x5a17c0de00000000ULL + i, {float(i), 0.0f, 0.0f}});
+  }
+  CHECK(x.Plan("Dungeon", walk, 100, false, 0) == 0);  // the game as it is
+  CHECK(x.Plan("Dungeon", walk, 200, true, 0) == 0);   // a boss here: none
+  CHECK(x.All().empty());
+  CHECK(x.Plan("Dungeon", walk, 200, false, 1000) == 4);  // one each
+  CHECK(x.Plan("Dungeon", walk, 200, false, 1100) == 0);  // once
+  REQUIRE(x.All().size() == 4);
+  for (std::size_t i = 0; i < 4; ++i) {
+    CHECK(x.All()[i].name == "Enemy_Keese");
+    CHECK(x.All()[i].hash == CoopDifficulty::ExtraHash(walk[i].hash, 0));
+  }
+  // Raised to 300: one more each; lowered: none taken away.
+  CHECK(x.Plan("Dungeon", walk, 300, false, 1200) == 4);
+  CHECK(x.Plan("Dungeon", walk, 150, false, 1300) == 0);
+  CHECK(x.All().size() == 8);
+  // Until the director made it, a made Keese may be one of ours.
+  CHECK(x.Holds("Enemy_Keese", 2000));
+  CHECK_FALSE(x.Holds("Enemy_Octorok", 2000));
+  CHECK_FALSE(x.Holds("Enemy_Keese", 1200 + CoopDifficulty::Extras::kBindWaitMs));  // waited long enough
+  std::map<std::uint64_t, std::uint64_t> live;
+  for (const auto& e : x.All()) {
+    live[e.key] = 0x7000 + e.key * 0x10;
+  }
+  live[999] = 0x9999;  // another copy of the director's
+  x.Bind(live);
+  CHECK_FALSE(x.Holds("Enemy_Keese", 2000));
+  CHECK(x.HashOf(0x7000 + x.All()[2].key * 0x10) == x.All()[2].hash);
+  CHECK_FALSE(x.HashOf(0x9999).has_value());
+  // At most kMost in a visit.
+  std::vector<Original> many;
+  for (std::uint64_t i = 0; i < 100; ++i) {
+    many.push_back({"Enemy_Octorok", 0x0c70'0000'0000ULL + i, {}});
+  }
+  x.Plan("Dungeon", many, 300, false, 3000);
+  CHECK(x.All().size() == CoopDifficulty::Extras::kMost);
+  // Another scene: the old ones are forgotten (gone with their scene).
+  CHECK(x.Plan("Field", {}, 300, false, 4000) == 0);
+  CHECK(x.All().empty());
+  CHECK_FALSE(x.HashOf(0x7000 + 1 * 0x10).has_value());
+  // Back in the first scene: its enemies get their extras again, with the same ids.
+  CHECK(x.Plan("Dungeon", walk, 200, false, 5000) == 4);
+  CHECK(x.All()[0].hash == CoopDifficulty::ExtraHash(walk[0].hash, 0));
 }

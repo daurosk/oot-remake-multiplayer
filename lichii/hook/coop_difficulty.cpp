@@ -295,4 +295,120 @@ unsigned ExtraCount(std::uint64_t key, std::uint16_t count_pct) {
     return whole + (x % 100u < count_pct % 100u ? 1u : 0u);
 }
 
+namespace {
+
+std::uint64_t Mix(std::uint64_t x) {
+    // splitmix64's finalizer
+    x += 0x9e3779b97f4a7c15ULL;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    return x ^ (x >> 31);
+}
+
+} // namespace
+
+bool GetsExtras(std::string_view name, std::uint64_t hash, bool has_life, bool special) {
+    if (special || !has_life || hash == 0 || hash == ~std::uint64_t{0} || !name.starts_with("Enemy_")) {
+        return false;
+    }
+    if (name.starts_with("Enemy_DungeonBoss_") || name.starts_with("Enemy_MiddleBoss_")) {
+        return false;
+    }
+    // Parts, helpers and enemies whose place is their whole point.
+    for (const std::string_view word : {"Attention", "Manager", "Flock", "Dictionary", "Prefab", "Open_",
+                                        "Wall", "walltula", "Hand", "Larva", "Baby", "Egg", "Spawn", "Skulltula_Gold",
+                                        "Scrub", "WipedOut", "Shabom", "Horse", "AircraftCarrier", "Bullet",
+                                        "ShockWave", "Beam", "Battle"}) {
+        if (name.find(word) != std::string_view::npos) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::uint64_t ExtraHash(std::uint64_t hash, unsigned index) {
+    std::uint64_t h = Mix(hash ^ Mix(0xd1ff1c0175ULL + index));
+    if (h == 0 || h == ~std::uint64_t{0} || h == hash) {
+        h = Mix(h + 1) | 1;  // a second try (odd, so never 0)
+    }
+    return h;
+}
+
+std::array<float, 3> ExtraPlace(const std::array<float, 3>& at, std::uint64_t extra_hash) {
+    // Eight directions: an angle from the id, the same in every game.
+    constexpr float kDiagonal = 0.70710678f;
+    constexpr std::array<std::array<float, 2>, 8> kWays{{{1.0f, 0.0f},
+                                                         {kDiagonal, kDiagonal},
+                                                         {0.0f, 1.0f},
+                                                         {-kDiagonal, kDiagonal},
+                                                         {-1.0f, 0.0f},
+                                                         {-kDiagonal, -kDiagonal},
+                                                         {0.0f, -1.0f},
+                                                         {kDiagonal, -kDiagonal}}};
+    const auto& way = kWays[extra_hash % kWays.size()];
+    return {at[0] + way[0] * kExtraOffsetM, at[1], at[2] + way[1] * kExtraOffsetM};
+}
+
+std::size_t Extras::Plan(std::string_view scene, const std::vector<Original>& walk, std::uint16_t count_pct,
+                         bool boss_here, std::uint64_t now_ms) {
+    if (scene != scene_) {
+        Reset();
+        scene_ = std::string(scene);
+    }
+    if (boss_here || count_pct <= 100) {
+        return 0;
+    }
+    std::size_t added = 0;
+    for (const Original& o : walk) {
+        const unsigned want = ExtraCount(o.hash, count_pct);
+        unsigned& have = planned_[o.hash];
+        while (have < want && extras_.size() < kMost) {
+            Extra e;
+            e.key = next_key_++;
+            e.hash = ExtraHash(o.hash, have);
+            e.name = o.name;
+            e.position = ExtraPlace(o.position, e.hash);
+            e.asked_ms = now_ms;
+            extras_.push_back(std::move(e));
+            ++have;
+            ++added;
+        }
+    }
+    return added;
+}
+
+void Extras::Bind(const std::map<std::uint64_t, std::uint64_t>& live) {
+    for (Extra& e : extras_) {
+        const auto it = live.find(e.key);
+        if (it != live.end() && it->second != 0 && e.address != it->second) {
+            if (e.address != 0) {
+                by_address_.erase(e.address);
+            }
+            e.address = it->second;
+            by_address_[e.address] = e.hash;
+        }
+    }
+}
+
+std::optional<std::uint64_t> Extras::HashOf(std::uint64_t address) const {
+    const auto it = by_address_.find(address);
+    if (it == by_address_.end()) {
+        return std::nullopt;
+    }
+    return it->second;
+}
+
+bool Extras::Holds(std::string_view name, std::uint64_t now_ms) const {
+    return std::any_of(extras_.begin(), extras_.end(), [&](const Extra& e) {
+        return e.address == 0 && e.name == name && now_ms - e.asked_ms < kBindWaitMs;
+    });
+}
+
+void Extras::Reset() {
+    scene_.clear();
+    extras_.clear();
+    planned_.clear();
+    by_address_.clear();
+}
+
 } // namespace CoopDifficulty

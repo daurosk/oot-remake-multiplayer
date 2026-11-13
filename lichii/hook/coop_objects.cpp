@@ -145,6 +145,8 @@ constexpr u32 kWarpBit = u32{1} << 23;
 constexpr u64 kRequestDelete = 0xa6490;  // (actor, 0), as docs/puppet.md
 // Rolled enemies' copies in the spawn director: their keys have the top bit.
 constexpr u64 kEnemyKey = u64{1} << 63;
+// Difficulty's extra enemies (coop_difficulty.h Extras) on the director's enemy list: their own keys there.
+constexpr u64 kExtraKey = kEnemyKey | u64{1} << 62;
 constexpr unsigned kMoverCallerOrder = 30;  // after the puppets, spawn copies (10) and fairies (20)
 constexpr unsigned kGrassCallerOrder = 40;  // the others' field grass cuts (coop_world.h)
 
@@ -1294,6 +1296,7 @@ public:
                 LOG_INFO(Core, "coop: objects: rolls decided by player {}, {} copies to make, {} own rolls deleted",
                          decider_logged_, enemies_logged_, refused_logged_);
             }
+            PlanExtras(*scene, seen, enemies);
             CoopSpawn::TheDirector().SetEnemies(main_, std::move(enemies));
         }
         for (const auto& note : sync_.TakeNotes()) {
@@ -1826,6 +1829,7 @@ private:
             names_.clear();
             sync_.Reset();
             world_.Reset();
+            extras_.Reset();  // difficulty: that run's extra enemies are gone with it
             {
                 ScrubsBox& box = TheScrubs();  // a new game run: its block is gone
                 std::lock_guard lock(box.mutex);
@@ -2232,6 +2236,17 @@ private:
         std::optional<coop::protocol::Vec3> player;
         std::unordered_map<u64, std::pair<std::string, u64>> names;
         std::unordered_map<u64, u64> life_components;
+        {
+            // Difficulty: the extra enemies the director made so far (coop_difficulty.h Extras).
+            std::map<u64, u64> live;
+            for (const auto& [key, actor] : CoopSpawn::TheDirector().Live()) {
+                if ((key & kExtraKey) == kExtraKey) {
+                    live[key & ~kExtraKey] = actor;
+                }
+            }
+            extras_.Bind(live);
+        }
+        const u64 now_ms = SteadyNowMs();
         for (const u64 a : actors) {
             auto it = names_.find(a);
             std::pair<std::string, u64> known;
@@ -2251,6 +2266,12 @@ private:
                              known.first, vt - main_, slot - main_);
                 }
             }
+            if (const auto extra = extras_.HashOf(a)) {
+                known.second = *extra;  // difficulty: an extra enemy is shared by its own placement id
+            }
+            // Difficulty: a made actor that may be an extra the director has not bound yet waits for it.
+            const bool extra_unbound = (known.second == 0 || known.second == ~u64{0}) &&
+                                       extras_.Holds(known.first, now_ms);
             if (CoopDifficulty::IsEnemy(known.first, CoopEnemyShots::IsEnemyShot(known.first))) {
                 CoopDifficulty::TheKinds().Mark(a, CoopDifficulty::Kind::enemy);  // difficulty: an attacker
             }
@@ -2339,9 +2360,10 @@ private:
                 }
                 gimmicks_.push_back(std::move(g));
             }
-            if (IsShared(known.first) || CoopWorld::IsWorldObject(known.first) ||
-                CoopWorld::IsBlockAnchor(known.first) ||  // moved with its block (issue 147)
-                (known.second != 0 && known.second != ~u64{0} && sync_.Taken(known.second))) {
+            if (!extra_unbound &&
+                (IsShared(known.first) || CoopWorld::IsWorldObject(known.first) ||
+                 CoopWorld::IsBlockAnchor(known.first) ||  // moved with its block (issue 147)
+                 (known.second != 0 && known.second != ~u64{0} && sync_.Taken(known.second)))) {
                 Seen s;
                 s.address = a;
                 s.name = known.first;
@@ -2545,6 +2567,41 @@ private:
     // actor of that name to our Link with a life takes a hit from our Link of
     // its whole life, through the game's damage, so it dies as from a real hit
     // (and drops what it drops: a Gold Skulltula its token).
+    // Difficulty (coop_difficulty.h Extras): the extra enemies of this scene
+    // visit, planned from the walk's placed enemies at the count in force, go
+    // on the director's enemy list as the game's own actors, made once each.
+    void PlanExtras(const std::string& scene, const std::vector<Seen>& seen, std::vector<CoopSpawn::Copy>& enemies) {
+        std::vector<CoopDifficulty::Extras::Original> originals;
+        bool boss = false;
+        for (const Seen& s : seen) {
+            boss = boss || IsBoss(s.name);
+            const bool special = IsRolled(s.name) || IsHatchingEgg(s.name) || IsHatchling(s.name) ||
+                                 IsAnnounced(s.name) || IsOwnPuzzle(s.name) || IsFish(s.name) ||
+                                 extras_.HashOf(s.address).has_value();  // an extra gets none of its own
+            if (CoopDifficulty::GetsExtras(s.name, s.hash, s.life && s.life->max > 0, special)) {
+                originals.push_back({s.name, s.hash, {s.position[0], s.position[1], s.position[2]}});
+            }
+        }
+        const std::uint16_t count = CoopDifficulty::Now().count_pct;
+        if (const std::size_t added = extras_.Plan(scene, originals, count, boss, SteadyNowMs())) {
+            LOG_INFO(Core, "coop: difficulty: {} extra enemies to make in {} (enemies {}%, {} in this visit)", added,
+                     scene, count, extras_.All().size());
+        }
+        for (const auto& e : extras_.All()) {
+            CoopSpawn::Copy c;
+            c.key = kExtraKey | e.key;
+            c.actor = e.name;
+            c.position = {e.position[0], e.position[1], e.position[2]};
+            // Once made and bound, the director lets it go (its slot is free for
+            // the shots and drops); the actor stays, the sync's like any enemy.
+            c.act = e.address != 0 ? CoopSpawn::Act::release : CoopSpawn::Act::show;
+            c.place = false;  // its own AI moves it; the sync places it where it is a copy
+            c.remakes = 0;    // one that went is not made again
+            c.real = true;    // the game's own enemy, never a stand-in
+            enemies.push_back(std::move(c));
+        }
+    }
+
     void TestKills(const std::vector<Seen>& seen, std::vector<LifeWrite>& writes) {
         std::vector<std::string> names;
         {
@@ -3121,6 +3178,7 @@ private:
     std::uint8_t decider_logged_ = 0;
     std::unordered_map<u64, std::pair<std::string, u64>> names_;  // name, hash by actor
     std::unordered_map<u64, u64> life_components_;  // the actor by its Life component (shared actors with a life)
+    CoopDifficulty::Extras extras_;  // difficulty: this scene visit's extra enemies
     u64 share_now_us_ = 0;  // this Share's server time (WriteLife)
     Sync sync_;
     Kernel::KProcess* process_ = nullptr;

@@ -14,6 +14,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -180,6 +181,74 @@ Kinds& TheKinds();
 // a hundred get one more. Which ones is decided by the key alone, so every
 // game picks the same enemies every time.
 unsigned ExtraCount(std::uint64_t key, std::uint16_t count_pct);
+
+// The extra enemies (count above 100%). Every game makes the same ones: for
+// each placed enemy it has loaded, ExtraCount of the same actor, with the
+// game's own create request (CoopSpawn's director), beside it. Each extra
+// takes a placement id of its own, made from its original's (ExtraHash), so
+// the enemy sync shares it as it shares a placed enemy: one owner, samples,
+// hits, its death and its drop as that enemy's own. The ones of a scene
+// visit stay until the scene changes; a lower count later takes none away.
+
+// Which placed enemy gets extras: an Enemy_ actor with a placement hash and
+// a life, never a boss or a part of one, nor an enemy the sync treats in its
+// own way (`special`: rolled, hatching, announced, a puzzle, a shot), nor
+// one a copy beside it could spoil (on a wall, a hand of another, a
+// manager, a flock).
+bool GetsExtras(std::string_view name, std::uint64_t hash, bool has_life, bool special);
+// The placement id of extra `index` (0 on) of the enemy placed with `hash`:
+// never 0 or ~0 (a made actor's), never `hash` itself.
+std::uint64_t ExtraHash(std::uint64_t hash, unsigned index);
+// Where extra `index` is made: `at` moved kExtraOffsetM sideways (x, z) in
+// a direction picked by its placement id, so it does not stand inside its
+// original.
+inline constexpr float kExtraOffsetM = 0.6f;
+std::array<float, 3> ExtraPlace(const std::array<float, 3>& at, std::uint64_t extra_hash);
+
+// One scene visit's extras (present thread).
+class Extras {
+public:
+    static constexpr std::size_t kMost = 32;          // in one scene visit
+    static constexpr std::uint64_t kBindWaitMs = 4000;  // a made one not yet bound to its actor
+
+    struct Original {
+        std::string name;
+        std::uint64_t hash = 0;
+        std::array<float, 3> position{};
+    };
+    struct Extra {
+        std::uint64_t key = 0;   // the director's key (1 on, unique in this run)
+        std::uint64_t hash = 0;  // its placement id (ExtraHash)
+        std::string name;
+        std::array<float, 3> position{};
+        std::uint64_t asked_ms = 0;
+        std::uint64_t address = 0;  // its actor, once the director made it
+    };
+
+    // A walk's placed enemies that get extras (GetsExtras), in `scene`, at
+    // `count_pct`. Nothing new while a boss is here. A new scene forgets the
+    // old one's extras first. Answers how many were added.
+    std::size_t Plan(std::string_view scene, const std::vector<Original>& walk, std::uint16_t count_pct,
+                     bool boss_here, std::uint64_t now_ms);
+    // The director's actors (key to actor) after it made some.
+    void Bind(const std::map<std::uint64_t, std::uint64_t>& live);
+    // The placement id of the extra whose actor is at `address`.
+    std::optional<std::uint64_t> HashOf(std::uint64_t address) const;
+    // Whether a made actor named `name` with no actor bound to it yet may be
+    // one of ours: it is not shared until bound (or kBindWaitMs after the ask).
+    bool Holds(std::string_view name, std::uint64_t now_ms) const;
+    // Every extra of this visit, for the director (made once each; one that
+    // died is not made again).
+    const std::vector<Extra>& All() const { return extras_; }
+    void Reset();
+
+private:
+    std::string scene_;
+    std::vector<Extra> extras_;
+    std::map<std::uint64_t, unsigned> planned_;  // original's hash -> extras asked for it
+    std::map<std::uint64_t, std::uint64_t> by_address_;  // actor -> placement id
+    std::uint64_t next_key_ = 1;
+};
 
 // ---------------------------------------------------------------------------
 // The session (coop_difficulty_game.cpp)

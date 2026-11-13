@@ -52,7 +52,7 @@ $kit = Split-Path -Parent $PSScriptRoot
 $hs = Join-Path $kit 'hookshot'
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
 
-function Fail([string]$Text) { Write-Host ''; Write-Host "Build-Hookshot-Coop: $Text" -ForegroundColor Red; exit 1 }
+function Fail([string]$Text) { Write-Host ''; Write-Host "Hookshot build: $Text" -ForegroundColor Red; exit 1 }
 function Step([string]$Text) { Write-Host ''; Write-Host "== $Text" -ForegroundColor Cyan }
 function Read-KeyFile([string]$Path) {
     $map = @{}

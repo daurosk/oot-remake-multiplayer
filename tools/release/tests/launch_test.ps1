@@ -200,6 +200,13 @@ try {
     Write-File $man '{ not json'
     Check ((Get-PuppetPackHint $man $tool) -match 'could not be read') 'a broken coop_puppet.json: a line, no throw'
     Check ((Get-PuppetPackHint (Join-Path $ph 'none.json') $tool) -match 'could not be read') 'a missing coop_puppet.json: a line, no throw'
+    # A Hookshot-only kit has no make-puppet-pack.cmd: play.ps1 points the hints at the launcher.
+    $packRemake = $script:KitPackRemake
+    $script:KitPackRemake = 'Start "Start OoT Co-op.bat" again: it makes the pack again.'
+    Write-File $man '{"actors": [], "sound": true}'
+    $h = Get-PuppetPackHint $man $tool
+    Check ($h -match 'Start OoT Co-op\.bat' -and $h -notmatch 'make-puppet-pack') "a Hookshot-only kit: the pack hint names the launcher [$h]"
+    $script:KitPackRemake = $packRemake
     # Your own Link in your colour (#202): the nearest preset, as coop_colors.cpp TunicOf.
     Check ((Get-KitTunic 'red') -eq 'red') 'tunic: red'
     Check ((Get-KitTunic ' Blue ') -eq 'blue') 'tunic: a name, any case'

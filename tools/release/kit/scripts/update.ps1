@@ -171,7 +171,7 @@ function Get-KitManualSteps([string]$Page) {
         '  3. Copy the folder emulator\user (keys, firmware, saves, settings, your name, the puppet pack)',
         '     and the file coop-options.ini from this kit into the new folder. Missing switches are added',
         '     to coop-options.ini when you start the new kit.',
-        '  4. Play from the new folder (Host.bat or Join.bat).')
+        '  4. Play from the new folder ("Start OoT Co-op.bat", or Host.bat / Join.bat in an emulator kit).')
 }
 
 # --- Releases ---------------------------------------------------------------------------
@@ -684,13 +684,13 @@ function Invoke-KitUpdate {
         # new one. The emulator is never stopped (the game may not be saved).
         $servers = @($running | Where-Object { $_.Name -ieq 'coop_server' })
         if ($Launch -and $servers.Count) {
-            Write-Host "Stopping this kit's co-op server (the old version); Host.bat starts the new one."
+            Write-Host "Stopping this kit's co-op server (the old version); hosting again starts the new one."
             $servers | Stop-Process -Force -ErrorAction SilentlyContinue
             $servers | ForEach-Object { try { $_.WaitForExit(5000) | Out-Null } catch { } }
             continue
         }
         Write-Host "Close these first (they run from this kit): $(($running | ForEach-Object { $_.Name + '.exe' } | Sort-Object -Unique) -join ', ')"
-        if ($Yes) { throw "This kit's emulator or server is still running: close it, then start Host.bat or Join.bat (or Update.bat) again." }
+        if ($Yes) { throw "This kit's emulator or server is still running: close it, then start the kit (""Start OoT Co-op.bat"", Host.bat or Join.bat) or Update.bat again." }
         Read-Host 'Press Enter when they are closed' | Out-Null
     }
     if (-not $Yes) {
@@ -737,6 +737,8 @@ function Invoke-KitUpdate {
             (Test-KitEmulatorChanged (Join-Path $dir 'emulator\lichii.exe') (Join-Path $newKit 'emulator\lichii.exe'))
         $hadEmu = Test-Path -LiteralPath (Join-Path $dir 'emulator\lichii.exe')
         $n = Install-KitFiles $newKit $dir $backup $newest.Tag $newEmu $from
+        # After the install: an emulator kit updated to a Hookshot-only one has the new launcher now.
+        $hsOnly = Test-Path -LiteralPath (Join-Path $dir 'Start OoT Co-op.bat')
         Write-Host "Updated to $($newest.Tag): $n files. The replaced files are in $backup (delete it once the new version works)."
         if ($script:ShadersMoved) {
             Write-Host "The emulator changed, so its old shader cache was moved to $backup\$ShaderCache. The first minutes of play may stutter while a new one is built."
@@ -748,7 +750,8 @@ function Invoke-KitUpdate {
         }
         foreach ($l in Complete-KitHookshotOnly $dir $hadEmu) { Write-Host $l }
         if ($script:PackToolChanged) {
-            Write-Host 'The puppet pack tool changed: run make-puppet-pack.cmd once more before you play, for the other players'' sounds and the latest puppet fixes.'
+            if ($hsOnly) { Write-Host 'The puppet pack tool changed: "Start OoT Co-op.bat" makes the pack again when it starts.' }
+            else { Write-Host 'The puppet pack tool changed: run make-puppet-pack.cmd once more before you play, for the other players'' sounds and the latest puppet fixes.' }
         }
         Write-Host 'Every player needs the same version: tell the others to update too.'
         if ($Launch) { return 3 }

@@ -55,6 +55,7 @@ if (-not $Hookshot -and -not (Test-Path $exe)) { Write-Host "Not found: $exe"; e
 # A Hookshot-only kit (make_kit_hookshot.ps1) has one launcher and no Build-Hookshot-Coop.bat or Host/Join .bat files.
 $hsOnly = Test-Path -LiteralPath (Join-Path $kit 'Start OoT Co-op.bat')
 $hsRetry = if ($hsOnly) { 'Start "Start OoT Co-op.bat" again' } else { 'Run Build-Hookshot-Coop.bat' }
+if ($hsOnly) { $script:KitPackRemake = 'Start "Start OoT Co-op.bat" again: it makes the pack again.' }
 
 # Yes or no, yes when no key comes in $Seconds (an unattended start still updates).
 function Read-YesNo([string]$Question, [int]$Seconds) {

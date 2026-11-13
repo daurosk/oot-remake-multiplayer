@@ -2,7 +2,7 @@
 
 Online co-op for the Ocarina of Time remake, on [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexed and contributors, GPL-3.0): a native PC version of the game that the kit builds on your PC from your own copy. There is no emulator: the game runs as a normal Windows program. This is an early test build (the newest is on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases)); [known-issues.md](known-issues.md) lists what works and what does not yet.
 
-The kit has one file to start: **`Start OoT Co-op.bat`**. Everything else is done by it or in the game. (The older emulator kits, with `Host.bat` and `Join.bat`, have their own guide: [setup-emulator.md](setup-emulator.md).)
+The kit has one file to start: **`Start OoT Co-op.bat`**. Everything else is done by it or in the game. (The older emulator kits, with `Host.bat` and `Join.bat`, have their own guide: [setup-emulator.md](setup-emulator.md). A player on an emulator kit cannot join a game hosted with this kit, nor the other way round: every player needs this kit, the same version.)
 
 ## What you need
 
@@ -21,7 +21,7 @@ The kit has one file to start: **`Start OoT Co-op.bat`**. Everything else is don
 2. **Unzip it.** Right-click the zip, choose **Extract All...**, and extract it to a short folder on a drive with 60 GB free, for example `C:\OoT-Coop`. Not inside the zip, not in OneDrive (your Desktop and Documents are often in OneDrive), not under Program Files.
 3. **Double-click `Start OoT Co-op.bat`** in that folder. A window opens and checks the kit first (see [If something goes wrong](#if-something-goes-wrong)).
 4. **The first time, give it your game.** It asks you to drag your game's `.nup` file into the window and press Enter (for a `romfs` folder it then asks for the `exefs` folder). It remembers the file; it never asks again. Then it builds the game: **10 to 45 minutes, once**. The window shows each stage; the PC stays usable. It also makes the puppet pack (the other players' Link and tunic colours) from your game, and puts a **Play OoT Co-op** shortcut on your desktop.
-5. **The game starts.** On the title screen, **Host** and **Join** are under the game's own rows (also in the pause menu, **Multiplayer**; **Minus** opens them if they are not there).
+5. **The game starts.** On the title screen, **Host** and **Join** are under the game's own rows (**Minus** opens them if they are not there).
    - **Host:** one press. The invite code is copied for you: send it to your friends (Discord, a text). For friends in the same house or on a VPN, the Host screen has **Same network or VPN**.
    - **Join:** paste your friend's code (it is filled in already when it is on your clipboard), then OK.
    - **Co-op Settings:** your name, your colour, the number of players when you host, voice chat.

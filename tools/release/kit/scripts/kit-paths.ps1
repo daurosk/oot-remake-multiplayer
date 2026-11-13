@@ -546,9 +546,9 @@ function Get-KitHookshotGame([string]$Kit) {
     return (Join-Path $Kit 'hookshot\game')
 }
 
-# hookshot.exe of a game folder (a builder's game folder has it in bin\), or $null.
+# longshot.exe of a game folder (a builder's game folder has it in bin\), or $null.
 function Get-KitHookshotExe([string]$Game) {
-    foreach ($p in (Join-Path $Game 'bin\hookshot.exe'), (Join-Path $Game 'hookshot.exe')) {
+    foreach ($p in (Join-Path $Game 'bin\longshot.exe'), (Join-Path $Game 'longshot.exe')) {
         if (Test-Path -LiteralPath $p) { return $p }
     }
     return $null

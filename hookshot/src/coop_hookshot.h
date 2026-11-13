@@ -129,7 +129,7 @@ inline bool BuildSupported(const std::string& build_id_hex) {
 // Hookshot patch 0002 (nx2/coop_puppet_guard.py, host/coop_null_page.c) makes
 // them read 0 there too. AllowLinkPuppets: LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1
 // / 0 force it; unset, Link puppets are made when the guard is in this
-// hookshot.exe (always on Linux, where the guest window is readable whole).
+// longshot.exe (always on Linux, where the guest window is readable whole).
 inline bool AllowLinkPuppets(const std::string& env, bool guard_in_exe) {
     if (!env.empty()) {
         return env != "0";

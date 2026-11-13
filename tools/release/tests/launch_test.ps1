@@ -476,7 +476,7 @@ try {
     $kit = Join-Path $tmp 'kit hookshot'; New-Kit $kit 'v0.1.0-beta4' 'hs'
     $hsGame = Join-Path $kit 'hookshot\game'
     New-Item -ItemType Directory -Force -Path $hsGame | Out-Null
-    [System.IO.File]::WriteAllBytes((Join-Path $hsGame 'hookshot.exe'), [System.IO.File]::ReadAllBytes((Join-Path $env:SystemRoot 'System32\rundll32.exe')))
+    [System.IO.File]::WriteAllBytes((Join-Path $hsGame 'longshot.exe'), [System.IO.File]::ReadAllBytes((Join-Path $env:SystemRoot 'System32\rundll32.exe')))
     Write-File (Join-Path $hsGame 'hookshot_coop.dll') 'module'
     $hsPack = Join-Path $hsGame 'mods\contents\0400486024DEC000\coop-puppet'
     New-Item -ItemType Directory -Force -Path (Join-Path $hsPack 'coop_self') | Out-Null
@@ -551,7 +551,7 @@ try {
     Write-File "$kit\emulator\user\config\coop.ini" "server = 26.1.2.3`r`nport = 27600`r`nname = Saria`r`npassword = afriendspassword`r`n"
     $hsGame = Join-Path $kit 'hookshot\game'
     New-Item -ItemType Directory -Force -Path $hsGame | Out-Null
-    [System.IO.File]::WriteAllBytes((Join-Path $hsGame 'hookshot.exe'), [System.IO.File]::ReadAllBytes((Join-Path $env:SystemRoot 'System32\rundll32.exe')))
+    [System.IO.File]::WriteAllBytes((Join-Path $hsGame 'longshot.exe'), [System.IO.File]::ReadAllBytes((Join-Path $env:SystemRoot 'System32\rundll32.exe')))
     Write-File (Join-Path $hsGame 'hookshot_coop.dll') 'module'
     Write-File (Join-Path $hsGame 'coop.ini') "server = 127.0.0.1`r`nport = 27510`r`nname = Saria`r`n"
     $env:OOT_COOP_UPDATE_API = Join-Path $tmp 'no-such-releases.json'
@@ -625,7 +625,7 @@ try {
     Write-File (Join-Path $hk 'hookshot\hookshot_coop.dll') 'MODULE 1'
     Check ((Get-KitHookshotNeed $hk) -eq 'game') 'hookshot need: no game built yet -> game'
     $g = Join-Path $hk 'hookshot\game'
-    Write-File (Join-Path $g 'hookshot.exe') 'exe'
+    Write-File (Join-Path $g 'longshot.exe') 'exe'
     Write-File (Join-Path $g 'coop-built-from.txt') (Get-KitHookshotStamp $hk)
     Write-File (Join-Path $g 'hookshot_coop.dll') 'MODULE 1'
     Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: no puppet pack -> module (the pack is made)'
@@ -651,8 +651,8 @@ try {
     $other = Join-Path $hk 'elsewhere'
     Write-File (Join-Path $hk 'hookshot\game-folder.txt') "$other`n"
     Check ((Get-KitHookshotGame $hk) -eq $other -and (Get-KitHookshotNeed $hk) -eq 'game') 'hookshot need: game-folder.txt is followed'
-    Write-File (Join-Path $other 'bin\hookshot.exe') 'exe'
-    Check ((Get-KitHookshotExe $other) -eq (Join-Path $other 'bin\hookshot.exe')) 'hookshot exe: bin\ first'
+    Write-File (Join-Path $other 'bin\longshot.exe') 'exe'
+    Check ((Get-KitHookshotExe $other) -eq (Join-Path $other 'bin\longshot.exe')) 'hookshot exe: bin\ first'
     foreach ($n in 'game', 'pin', 'patches', 'module') { Check ([bool](Get-KitHookshotNeedText $n)) "hookshot need text: $n" }
     Check ((Get-KitHookshotNeedText 'pin') -match 'about 15 minutes') 'hookshot need text: a pin move says about 15 minutes'
     Check (-not (Get-KitHookshotNeedText '')) 'hookshot need text: nothing to say when nothing is needed'

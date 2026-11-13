@@ -23,7 +23,7 @@
 # 3. Hookshot's own builder, nx2\make_game.py, on your .nup (or romfs + exefs): 10 to 45 minutes and
 #    about 60 GB free while it runs. Its work folder is hookshot\work in this kit (kept: the next
 #    build after a co-op update compiles only what changed).
-# 4. Co-op into the game folder: hookshot_coop.dll beside hookshot.exe, coop.ini (server and name,
+# 4. Co-op into the game folder: hookshot_coop.dll beside longshot.exe, coop.ini (server and name,
 #    from this kit's emulator\user\config\coop.ini when you have one), coop-options.ini, and the
 #    puppet pack (built from your game) in the game's mods folder.
 # Steps 1 to 3 are skipped when the tools, pin and patches are the ones the game was built with,
@@ -62,18 +62,25 @@ function Read-KeyFile([string]$Path) {
     return $map
 }
 function Get-Sha256([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
-function Get-Download([string]$Url, [string]$To, [string]$Sha256, [string]$What = '') {
+# $Urls are tried in order (tools.lock gives mirrors): the first that gives the file with the right SHA-256 wins.
+function Get-Download([string[]]$Urls, [string]$To, [string]$Sha256, [string]$What = '') {
     if ((Test-Path -LiteralPath $To) -and (Get-Sha256 $To) -eq $Sha256) { return }
     Write-Host "  downloading $(Split-Path -Leaf $To) ..."
     $part = "$To.part"
-    try { Invoke-WebRequest -Uri $Url -OutFile $part -UseBasicParsing }
-    catch { Fail "The download of $Url failed: $($_.Exception.Message). Check the internet connection and run this again." }
-    if ($Sha256 -and (Get-Sha256 $part) -ne $Sha256) {
-        Remove-Item -LiteralPath $part -Force
-        if (-not $What) { $What = "$(Split-Path -Leaf $To) is not the file Hookshot published" }
-        Fail "$What (SHA-256 differs). Run this again; if it repeats, tell the co-op testers."
+    $why = ''
+    foreach ($url in $Urls) {
+        try { Invoke-WebRequest -Uri $url -OutFile $part -UseBasicParsing }
+        catch { $why = "The download of $url failed: $($_.Exception.Message). Check the internet connection and run this again."; continue }
+        if ($Sha256 -and (Get-Sha256 $part) -ne $Sha256) {
+            Remove-Item -LiteralPath $part -Force
+            if (-not $What) { $What = "$(Split-Path -Leaf $To) is not the file Longshot published" }
+            $why = "$What (SHA-256 differs). Run this again; if it repeats, tell the co-op testers."
+            continue
+        }
+        Move-Item -LiteralPath $part -Destination $To -Force
+        return
     }
-    Move-Item -LiteralPath $part -Destination $To -Force
+    Fail $why
 }
 function Expand-Zip([string]$Zip, [string]$To, [int]$Strip = 0) {
     New-Item -ItemType Directory -Force -Path $To | Out-Null
@@ -90,7 +97,7 @@ function Copy-Tree([string]$From, [string]$To, [switch]$OnlyNew) {
 }
 
 # --- What this kit has ---------------------------------------------------------------------
-if (-not [Environment]::Is64BitOperatingSystem) { Fail 'Hookshot needs 64-bit Windows.' }
+if (-not [Environment]::Is64BitOperatingSystem) { Fail 'Longshot needs 64-bit Windows.' }
 foreach ($need in 'PIN', 'TOOLS.txt') {
     if (-not (Test-Path -LiteralPath (Join-Path $hs $need))) { Fail "This kit has no hookshot\$need. Get a kit with Hookshot support (Update.bat)." }
 }
@@ -99,10 +106,11 @@ if (-not $patches) { Fail 'This kit has no hookshot\patches\*.patch.' }
 $pin = Read-KeyFile (Join-Path $hs 'PIN')
 $toolsPin = Read-KeyFile (Join-Path $hs 'TOOLS.txt')
 foreach ($k in 'repo', 'commit') { if (-not $pin[$k]) { Fail "hookshot\PIN has no $k=." } }
-foreach ($k in 'release', 'setup_sha256', 'source_commit', 'source_sha256') { if (-not $toolsPin[$k]) { Fail "hookshot\TOOLS.txt has no $k=." } }
+foreach ($k in 'release', 'lock_sha256', 'source_commit', 'source_sha256') { if (-not $toolsPin[$k]) { Fail "hookshot\TOOLS.txt has no $k=." } }
 if ($pin.commit -notmatch '^[0-9a-f]{40}$') { Fail "hookshot\PIN: commit=$($pin.commit) is not a full commit id." }
-if ($pin.repo -notmatch '^https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(\.git)?$') { Fail "hookshot\PIN: repo=$($pin.repo) is not a GitHub repository." }
-$repoPath = $Matches[1]
+# (Longshot lives on Team MagicBean's Forgejo; its release files and source archive come from there)
+if ($pin.repo -notmatch '^(https://git\.magicbean\.dev)/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(\.git)?$') { Fail "hookshot\PIN: repo=$($pin.repo) is not a git.magicbean.dev repository." }
+$repoUrl = "$($Matches[1])/$($Matches[2])"
 # The source archive's SHA-256 in TOOLS.txt is for one commit: it must be PIN's.
 if ($toolsPin.source_commit -ne $pin.commit) {
     Fail "hookshot\TOOLS.txt pins the source archive of $($toolsPin.source_commit), but hookshot\PIN says $($pin.commit). This kit is broken: tell the co-op testers."
@@ -130,7 +138,7 @@ $samePin = -not $toolsReady -and (Test-Path -LiteralPath $toolsStamp) -and (Test
     (Test-Path -LiteralPath (Join-Path $keep 'manifest.txt')) -and
     ([System.IO.File]::ReadAllText($toolsStamp).StartsWith($baseStamp))
 if ($samePin) {
-    Step "Hookshot's source: the co-op patches changed ($($patches.Count) patch(es); the tools and pin stay)"
+    Step "Longshot's source: the co-op patches changed ($($patches.Count) patch(es); the tools and pin stay)"
     & $python -I -B (Join-Path $PSScriptRoot 'apply_patch.py') --refresh $keep $tools @($patches | ForEach-Object FullName)
     if ($LASTEXITCODE -eq 0) {
         [System.IO.File]::WriteAllText($toolsStamp, $stamp)
@@ -142,62 +150,58 @@ if ($samePin) {
     }
 }
 if ($toolsReady) {
-    Step "Hookshot's tools: ready ($($toolsPin.release) tools, Hookshot $($pin.commit.Substring(0, 12)) with $($patches.Count) co-op patch(es))"
+    Step "Longshot's tools: ready ($($toolsPin.release) tools, Longshot $($pin.commit.Substring(0, 12)) with $($patches.Count) co-op patch(es))"
 } else {
-    Step "Hookshot's build tools ($($toolsPin.release)) and source ($($pin.commit.Substring(0, 12)))"
+    Step "Longshot's build tools ($($toolsPin.release)) and source ($($pin.commit.Substring(0, 12)))"
     New-Item -ItemType Directory -Force -Path $downloads | Out-Null
-    $setup = Join-Path $downloads "hookshot-setup-$($toolsPin.release).txt"
-    Get-Download "https://github.com/$repoPath/releases/download/$($toolsPin.release)/hookshot-setup.txt" $setup $toolsPin.setup_sha256
-    # hookshot-setup.txt: "part <sha256> <size> <folder> <top folder in the zip or -> <its new name or -> <url>".
-    # Of the builder's own parts, app is used only for its tools\work folder (the play profile and the
-    # hot-function lists); .NET and emsdk (llvm-mingw builds instead) are not fetched.
-    $wanted = 'HookshotBuilder-(app|python|cpm|third_party|wgpu-native)-|/llvm-mingw-[^/]*ucrt-x86_64\.zip$'
+    $lock = Join-Path $downloads "tools-$($toolsPin.release).lock"
+    Get-Download "$repoUrl/releases/download/$($toolsPin.release)/tools.lock" $lock $toolsPin.lock_sha256.ToLowerInvariant()
+    # tools.lock: "tool <name> <version> <system> <sha256> <size> <dest> <prefix> <url> [<url> ...]"; the URLs are
+    # tried in order (Longshot's Cloudflare copy, git.magicbean.dev, then upstream). Of the windows-x64 tools, emsdk
+    # is not fetched (llvm-mingw builds the game; the builder sets EMSDK only when its folder is there).
+    $wanted = @('llvm-mingw', 'python', 'cpm', 'wgpu-native', 'third-party')
     $parts = @()
-    foreach ($line in Get-Content -LiteralPath $setup) {
-        $f = $line -split '\s+'
-        if ($f[0] -ne 'part' -or $f.Count -lt 7) { continue }
-        if ($f[6] -notmatch $wanted) { continue }
-        if ($f[6] -notmatch '^https://github\.com/') { Fail "hookshot-setup.txt names a download outside GitHub: $($f[6])" }
-        $parts += [pscustomobject]@{ Sha = $f[1].ToLowerInvariant(); Folder = $f[3]; Top = $f[4]; Rename = $f[5]; Url = $f[6]; File = (Join-Path $downloads (Split-Path -Leaf $f[6])) }
+    foreach ($line in Get-Content -LiteralPath $lock) {
+        $f = $line.Trim() -split '\s+'
+        if ($f[0] -ne 'tool' -or $f.Count -lt 9 -or $f[3] -ne 'windows-x64' -or $wanted -notcontains $f[1]) { continue }
+        if ($f[6] -notmatch '^LongshotBuilder/tools/([A-Za-z0-9_.-]+)$') { Fail "tools.lock puts $($f[1]) outside LongshotBuilder/tools: $($f[6])" }
+        $folder = $Matches[1]
+        $urls = @($f[8..($f.Count - 1)] | Where-Object { $_ -match '^https://' })
+        if (-not $urls) { Fail "tools.lock has no https download for $($f[1])." }
+        $parts += [pscustomobject]@{ Name = $f[1]; Sha = $f[4].ToLowerInvariant(); Folder = $folder; Prefix = $f[7]; Urls = $urls
+                                      File = (Join-Path $downloads "$($f[1])-$($f[4].Substring(0, 12)).zip") }
     }
-    if ($parts.Count -ne 6) { Fail "hookshot-setup.txt of $($toolsPin.release) does not list the six parts this script needs (found $($parts.Count))." }
-    foreach ($p in $parts) { Get-Download $p.Url $p.File $p.Sha }
-    # GitHub's source archive at PIN's commit, checked against TOOLS.txt's source_sha256 (a copy
+    if ($parts.Count -ne $wanted.Count) { Fail "tools.lock of $($toolsPin.release) does not list the $($wanted.Count) windows-x64 tools this script needs (found $($parts.Count))." }
+    foreach ($p in $parts) { Get-Download $p.Urls $p.File $p.Sha }
+    # Forgejo's source archive at PIN's commit, checked against TOOLS.txt's source_sha256 (a copy
     # already here is checked too, and fetched again when it differs).
-    $sourceZip = Join-Path $downloads "hookshot-$($pin.commit).zip"
-    Get-Download "https://codeload.github.com/$repoPath/zip/$($pin.commit)" $sourceZip $toolsPin.source_sha256.ToLowerInvariant() "Hookshot's source archive differs from the one this kit was made with"
+    $sourceZip = Join-Path $downloads "longshot-$($pin.commit).zip"
+    Get-Download "$repoUrl/archive/$($pin.commit).zip" $sourceZip $toolsPin.source_sha256.ToLowerInvariant() "Longshot's source archive differs from the one this kit was made with"
 
     Write-Host '  unpacking ...'
     $staging = "$tools.new"
     $parts_root = "$tools.parts"
     foreach ($d in $staging, $parts_root) { if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force } }
-    # The source: the archive's one top folder (Hookshot-<commit>) left out.
+    # The source: the archive's one top folder (longshot/) left out.
     Expand-Zip $sourceZip $staging 1
-    if (-not (Test-Path -LiteralPath (Join-Path $staging 'nx2\make_game.py'))) { Fail "Hookshot's source archive has no nx2\make_game.py." }
-    # The parts, as the builder's setup lays them out (HookshotBuilder\tools\...).
+    if (-not (Test-Path -LiteralPath (Join-Path $staging 'nx2\make_game.py'))) { Fail "Longshot's source archive has no nx2\make_game.py." }
+    # Each tool as the builder's setup lays it out: <prefix> in the zip (or the whole zip) becomes tools\<folder>.
     foreach ($p in $parts) {
-        $dest = if ($p.Folder -eq '.') { $parts_root } else { Join-Path $parts_root ($p.Folder -replace '/', '\') }
-        Expand-Zip $p.File $dest
-        if ($p.Top -ne '-' -and $p.Rename -ne '-') {
-            if (Test-Path -LiteralPath (Join-Path $dest $p.Rename)) { Remove-Item -LiteralPath (Join-Path $dest $p.Rename) -Recurse -Force }
-            Rename-Item -LiteralPath (Join-Path $dest $p.Top) -NewName $p.Rename
-        }
+        $unz = Join-Path $parts_root $p.Name
+        Expand-Zip $p.File $unz
+        $from = if ($p.Prefix -eq '-') { $unz } else { Join-Path $unz ($p.Prefix -replace '/', '\') }
+        if (-not (Test-Path -LiteralPath $from)) { Fail "The $($p.Name) archive of $($toolsPin.release) has no $($p.Prefix) folder." }
+        # Whole folders a source archive does not have; of third_party only the files the source lacks
+        # (the prebuilt .dll/.exe/.lib/.sha1), as Longshot's readme says. (No play profile: it is optional.)
+        if ($p.Folder -eq 'third_party') { Copy-Tree $from (Join-Path $staging $p.Folder) -OnlyNew }
+        else { Copy-Tree $from (Join-Path $staging $p.Folder) }
     }
-    $builderTools = Join-Path $parts_root 'HookshotBuilder\tools'
-    # Whole folders a clone does not have; then, of third_party and work, only the files the source
-    # lacks (the prebuilt .dll/.exe/.lib/.sha1 and the play profile), as Hookshot's readme says.
-    # Nothing else of the release's own source copy: the pinned source is the one built.
-    foreach ($d in 'python', 'cpm', 'wgpu-native', 'llvm-mingw') {
-        if (-not (Test-Path -LiteralPath (Join-Path $builderTools $d))) { Fail "The $($toolsPin.release) parts have no tools\$d." }
-        Copy-Tree (Join-Path $builderTools $d) (Join-Path $staging $d)
-    }
-    foreach ($d in 'third_party', 'work') { Copy-Tree (Join-Path $builderTools $d) (Join-Path $staging $d) -OnlyNew }
     Remove-Item -LiteralPath $parts_root -Recurse -Force
 
     Write-Host "  applying $($patches.Count) co-op patch(es) ..."
     # (--refresh keeps the originals of what the patches change: a later patch change refreshes only those)
     & (Join-Path $staging 'python\python.exe') -I -B (Join-Path $PSScriptRoot 'apply_patch.py') --refresh (Join-Path $staging '.coop-orig') $staging @($patches | ForEach-Object FullName)
-    if ($LASTEXITCODE -ne 0) { Fail "The co-op patches do not apply to Hookshot $($pin.commit). This kit is broken: tell the co-op testers." }
+    if ($LASTEXITCODE -ne 0) { Fail "The co-op patches do not apply to Longshot $($pin.commit). This kit is broken: tell the co-op testers." }
     [System.IO.File]::WriteAllText((Join-Path $staging 'coop-tools.txt'), $stamp)
     if (Test-Path -LiteralPath $tools) { Remove-Item -LiteralPath $tools -Recurse -Force }
     Move-Item -LiteralPath $staging -Destination $tools
@@ -206,9 +210,9 @@ if ($toolsReady) {
 
 # --- 3: the game ---------------------------------------------------------------------------
 function Find-HookshotExe([string]$Folder) {
-    foreach ($p in (Join-Path $Folder 'bin\hookshot.exe'), (Join-Path $Folder 'hookshot.exe')) {
+    foreach ($p in (Join-Path $Folder 'bin\longshot.exe'), (Join-Path $Folder 'longshot.exe')) {
         if (Test-Path -LiteralPath $p) {
-            # A builder's game folder has its launcher as hookshot.exe and the game in bin\.
+            # A builder's game folder has its launcher as longshot.exe and the game in bin\.
             return $p
         }
     }
@@ -261,20 +265,20 @@ if ($Game) {
     }
 }
 
-# make_game.py runs in Hookshot's tools folder with the builder's own compiler, headers and
-# libraries, as Hookshot Builder runs it (builder/HookshotBuilder/Runner.cs).
+# make_game.py runs in Longshot's tools folder with the builder's own compiler, headers and
+# libraries, as Longshot Builder runs it (builder/LongshotBuilder/Runner.cs).
 function Invoke-MakeGame([string[]]$MoreArgs, [string]$Log = '') {
     $env:PYTHONIOENCODING = 'utf-8'
     $env:RX_CPM = Join-Path $tools 'cpm'
     $env:WGPU_NATIVE = Join-Path $tools 'wgpu-native'
-    $env:HOOKSHOT_MINGW = Join-Path $tools 'llvm-mingw'
-    foreach ($v in 'HOOKSHOT_NGX_SDK', 'HOOKSHOT_FFX_SDK', 'HOOKSHOT_MSVC', 'EMSDK', 'HOOKSHOT_BUILDER_EXE', 'HOOKSHOT_TOOLS') {
+    $env:LONGSHOT_MINGW = Join-Path $tools 'llvm-mingw'
+    foreach ($v in 'LONGSHOT_NGX_SDK', 'LONGSHOT_FFX_SDK', 'LONGSHOT_MSVC', 'EMSDK', 'LONGSHOT_BUILDER_EXE', 'LONGSHOT_TOOLS') {
         Remove-Item "Env:\$v" -ErrorAction SilentlyContinue
     }
     # (a shared work folder keeps all its build files, the translated C too: the next build of this pin
-    # skips the translation unless a lift file changed. A kit's own folder keeps Hookshot's default.)
-    if ($sharedWork) { $env:HOOKSHOT_KEEP_BUILD_FILES = '1' }
-    # (Hookshot's lift key hashes every A64_/OOT_/RX_ variable it is started with: co-op's own OOT_COOP_* ones
+    # skips the translation unless a lift file changed. A kit's own folder keeps Longshot's default.)
+    if ($sharedWork) { $env:LONGSHOT_KEEP_BUILD_FILES = '1' }
+    # (Longshot's lift key hashes every A64_/OOT_/RX_ variable it is started with: co-op's own OOT_COOP_* ones
     # (the test cache, the test password) would make a new key, and a whole new translation, for nothing)
     Get-ChildItem Env: | Where-Object { $_.Name -like 'OOT_COOP_*' } | ForEach-Object { Remove-Item "Env:\$($_.Name)" }
     $logArgs = if ($Log) { @('--log', $Log) } else { @() }
@@ -300,8 +304,8 @@ if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
     if (-not $gameArgs) { Fail 'No game files given.' }
     Step 'Checking your game files'
     $code = Invoke-MakeGame ($gameArgs + @('--check'))
-    if ($code -ne 0) { Fail 'Hookshot cannot build from these files (it said why above). It needs program 0400486024DEC000, update v131072, build e0f3ccfa.' }
-    if ($CheckOnly) { Write-Host ''; Write-Host 'Your game files are right for Hookshot. Run this again without -CheckOnly to build.' -ForegroundColor Green; exit 0 }
+    if ($code -ne 0) { Fail 'Longshot cannot build from these files (it said why above). It needs program 0400486024DEC000, update v131072, build e0f3ccfa.' }
+    if ($CheckOnly) { Write-Host ''; Write-Host 'Your game files are right for Longshot. Run this again without -CheckOnly to build.' -ForegroundColor Green; exit 0 }
     $drive = [System.IO.Path]::GetPathRoot($work)
     $free = (Get-PSDrive -Name $drive.Substring(0, 1) -ErrorAction SilentlyContinue).Free
     if ($free -and $free -lt 60GB -and -not (Test-Path -LiteralPath (Join-Path $work 'sa'))) {
@@ -315,7 +319,7 @@ if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
     $code = Invoke-MakeGame $buildArgs $buildLog
     if ($code -ne 0) { Fail "The build stopped (exit $code). Its log: $buildLog" }
     $exe = Find-HookshotExe $Out
-    if (-not $exe) { Fail "The build finished but there is no hookshot.exe in $Out. Its log: $buildLog" }
+    if (-not $exe) { Fail "The build finished but there is no longshot.exe in $Out. Its log: $buildLog" }
     [System.IO.File]::WriteAllText($gameStamp, $stamp)
 }
 # Where the game is, for Host-Hookshot.bat and Join-Hookshot.bat (play.ps1 -Hookshot).
@@ -324,7 +328,7 @@ if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
 # --- 4: co-op into the game ----------------------------------------------------------------
 Step 'Co-op into the game'
 $exeDir = Split-Path -Parent $exe
-# The module and the Visual C++ runtime it needs (when the kit carries it), beside hookshot.exe.
+# The module and the Visual C++ runtime it needs (when the kit carries it), beside longshot.exe.
 # (a kit always has it; a hand-made test folder may not yet: the game is built, and co-op is off until it is there)
 $module = Join-Path $hs 'hookshot_coop.dll'
 if (-not (Test-Path -LiteralPath $module)) {
@@ -336,7 +340,7 @@ Get-ChildItem -LiteralPath $hs -Filter '*.dll' -File | Where-Object { $_.Name -n
     Where-Object { -not (Test-Path -LiteralPath (Join-Path $exeDir $_.Name)) } | Copy-Item -Destination $exeDir
 Write-Host "  hookshot_coop.dll -> $exeDir"
 
-# coop.ini beside hookshot.exe (the module reads it there): the player's own server and name from
+# coop.ini beside longshot.exe (the module reads it there): the player's own server and name from
 # this kit's emulator when the game has none yet.
 $ini = Join-Path $exeDir 'coop.ini'
 $kitIni = Join-Path $kit 'emulator\user\config\coop.ini'
@@ -402,6 +406,6 @@ if (-not $PSBoundParameters.ContainsKey('Out') -and -not $Tools -and (Test-Path 
 Write-Host ''
 Write-Host 'Done. To play co-op on Hookshot: Play-OoT-Coop.bat (or the desktop shortcut) starts the game, Host and Join are on its title screen; Host-Hookshot.bat hosts, Join-Hookshot.bat joins (as Host.bat and' -ForegroundColor Green
 Write-Host "  Join.bat, with the Hookshot game in place of the emulator). The game: $exe"
-Write-Host "  Its hookshot_log.txt says 'coop: module loaded' and 'coop: connected'. HOS_COOP=0 starts it without co-op."
+Write-Host "  Its longshot_log.txt says 'coop: module loaded' and 'coop: connected'. HOS_COOP=0 starts it without co-op."
 Write-Host '  Updates come by themselves: the launchers check for a new version and bring the game up to date.'
 exit 0

@@ -192,7 +192,7 @@ bool WriteText(const fs::path& p, const std::string& text) {
 }
 
 // The kit this game belongs to: OOT_COOP_KIT, the first line of coop-kit.txt
-// beside hookshot.exe, or the nearest folder above the game that has
+// beside longshot.exe, or the nearest folder above the game that has
 // server\coop_server.exe and start-server.cmd (the kit's hookshot\game\).
 std::optional<fs::path> FindKit() {
     auto is_kit = [](const fs::path& d) {

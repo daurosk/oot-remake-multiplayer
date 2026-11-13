@@ -348,7 +348,7 @@ TEST_CASE("link sound: a short name at the end of a mapped page is read") {
     CHECK(TakeCaught() == std::vector<std::string>{"Pl_Run"});
 }
 
-TEST_CASE("link sound: each started sound has its own handle; full, the oldest is stopped first") {
+TEST_CASE("link sound: each started sound has its own handle, and when all are taken the oldest is stopped first") {
     FakeGuest g = Puppet();
     Player p;
     Budget b;

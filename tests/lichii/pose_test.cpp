@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "coop/protocol/codec.hpp"
 #include "coop_pose.h"
 #include "coop_puppet.h"
 

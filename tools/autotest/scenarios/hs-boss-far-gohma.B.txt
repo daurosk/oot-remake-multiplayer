@@ -1,0 +1,25 @@
+# hs-boss-far-gohma, B: stays at the Deku Tree's entrance the whole run (see the A file).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-landed
+wait 2520               # A's setup and the walk to the door
+mark b-in
+wait 300
+mark b-intro
+wait 2220
+mark b-kill
+wait 300
+mark b-death
+rstick 1 0 60           # turn: the picture moves, B is free
+wait 2340
+mark end

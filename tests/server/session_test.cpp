@@ -4759,3 +4759,86 @@ TEST_CASE("local players: seats' envelopes do not use up their game's own messag
   REQUIRE(got.size() == 1);
   CHECK(got[0].player_number == 1);
 }
+
+TEST_CASE("boss heart: two claims at once give one heart container, the first one's, to everyone") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  // Both games picked it up in the same moment; the server takes the first it got.
+  h.receive(2, BossHeart{0, 4, false, 16}, kChannelSession);
+  h.receive(1, BossHeart{0, 4, false, 16}, kChannelSession);
+  const BossHeart won{2, 4, true, 16};
+  // Player 1 (the loser) gets the winner's answer twice (the broadcast, then its own claim's), the
+  // others once: every game raises to 16 and never past it, so each gets exactly one +1.
+  for (ConnectionId id : {1u, 2u, 3u}) {
+    for (const auto& s : h.to(id)) {
+      const auto* m = std::get_if<BossHeart>(&s.message);
+      REQUIRE(m != nullptr);
+      CHECK(*m == won);
+    }
+  }
+  CHECK(h.to(1).size() == 2);
+  CHECK(h.to(2).size() == 1);
+  CHECK(h.to(3).size() == 1);
+  CHECK(h.session.stats().boss_hearts_given == 1);
+  CHECK(h.session.stats().boss_hearts_late == 1);
+  // Another boss is its own container.
+  h.clear();
+  h.receive(3, BossHeart{0, 5, false, 20}, kChannelSession);
+  CHECK(only_message_to<BossHeart>(h, 1) == BossHeart{3, 5, true, 20});
+}
+
+TEST_CASE("boss heart: the winner leaving right after its claim takes nothing from the others") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.receive(1, BossHeart{0, 0, false, 16}, kChannelSession);
+  h.session.disconnected(1, h.now);  // in the grab's moment
+  CHECK(h.session.stats().boss_hearts_given == 1);
+  bool got = false;
+  for (const auto& s : h.to(2)) {
+    if (const auto* m = std::get_if<BossHeart>(&s.message)) got = *m == BossHeart{1, 0, true, 16};
+  }
+  CHECK(got);
+  // Its game coming back (or the other's late pickup) gets the same answer, no second heart.
+  h.clear();
+  h.receive(2, BossHeart{0, 0, false, 20}, kChannelSession);
+  int answers = 0;  // (the leave's own messages may come with it)
+  for (const auto& s : h.to(2)) {
+    if (const auto* m = std::get_if<BossHeart>(&s.message)) {
+      ++answers;
+      CHECK(*m == BossHeart{1, 0, true, 16});
+    }
+  }
+  CHECK(answers == 1);
+  CHECK(h.session.stats().boss_hearts_given == 1);
+}
+
+TEST_CASE("boss heart: a client cannot send the server's answer") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.receive(1, BossHeart{0, 0, true, 16}, kChannelSession);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().boss_hearts_refused == 1);
+  h.receive(1, BossHeart{0, 0, false, 16}, kChannelSession);  // a claim still counts afterwards
+  CHECK(h.session.stats().boss_hearts_given == 1);
+}
+
+TEST_CASE("boss scene: relayed to everyone else with the sender's number") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  h.receive(1, BossScene{0, "InsideTheDekuTree", 0, BossSceneKind::intro_start, {1.0f, 2.0f, 3.0f}},
+            kChannelSession);
+  const BossScene relayed{1, "InsideTheDekuTree", 0, BossSceneKind::intro_start, {1.0f, 2.0f, 3.0f}};
+  CHECK(only_message_to<BossScene>(h, 2) == relayed);
+  CHECK(only_message_to<BossScene>(h, 3) == relayed);
+  CHECK(h.to(1).empty());
+}

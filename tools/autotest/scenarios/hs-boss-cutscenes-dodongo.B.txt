@@ -1,0 +1,24 @@
+# hs-boss-cutscenes-dodongo, B: lands in DodongoStage with A and only watches (see the A file).
+mark start
+warp DodongoStage DodongoStage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+wait 300
+mark b-intro
+wait 1500
+mark b-fight
+wait 720
+mark b-kill
+wait 300
+mark b-death
+wait 2400
+mark end

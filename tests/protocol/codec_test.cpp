@@ -2293,3 +2293,59 @@ TEST_CASE("local players: an envelope carries only its own kinds, whole, and nev
   wire2.insert(wire2.end(), body2.begin(), body2.end());
   CHECK(decode_bytes(wire2) == Error::bad_value);
 }
+
+TEST_CASE("boss cutscene messages: types 520 and 521, on the session channel, both ways") {
+  CHECK(static_cast<int>(MessageType::boss_scene) == 520);
+  CHECK(static_cast<int>(MessageType::boss_heart) == 521);
+  CHECK(channel_of(MessageType::boss_scene) == kChannelSession);
+  CHECK(channel_of(MessageType::boss_heart) == kChannelSession);
+  CHECK_FALSE(allowed_on_channel(MessageType::boss_heart, kChannelOwnership));
+
+  Message scene = BossScene{0, "DodongoCavern", 1, BossSceneKind::intro_end, {24.0f, 73.4f, -77.5f}};
+  CHECK(check_received(scene, Sender::client, kChannelSession) == Error::none);
+  CHECK(set_sender(scene, 3));
+  CHECK(check_received(scene, Sender::server, kChannelSession) == Error::none);
+  Bytes b = must_encode(scene);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == scene);
+
+  Message claim = BossHeart{0, 4, false, 20};
+  CHECK(check_received(claim, Sender::client, kChannelSession) == Error::none);
+  b = must_encode(claim);
+  REQUIRE(b.size() == kHeaderSize + 7);
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == claim);
+  Message given = BossHeart{2, 4, true, 20};
+  CHECK(check_received(given, Sender::server, kChannelSession) == Error::none);
+  CHECK(check_received(given, Sender::client, kChannelSession) == Error::wrong_sender);  // a client names itself 0
+}
+
+TEST_CASE("bad boss cutscene messages are refused") {
+  Bytes out;
+  CHECK(encode(BossScene{0, "", 0, BossSceneKind::intro_start, {}}, out) == Error::bad_value);
+  CHECK(encode(BossScene{0, "X", kMaxSceneBoss + 1, BossSceneKind::intro_start, {}}, out) == Error::bad_value);
+  CHECK(encode(BossScene{0, "X", 0, static_cast<BossSceneKind>(0), {}}, out) == Error::bad_value);
+  CHECK(encode(BossScene{0, "X", 0, static_cast<BossSceneKind>(5), {}}, out) == Error::bad_value);
+  CHECK(encode(BossScene{0, "X", 0, BossSceneKind::intro_start, {std::nanf(""), 0.0f, 0.0f}}, out) ==
+        Error::bad_value);
+  CHECK(encode(BossHeart{0, 0, false, 0}, out) == Error::bad_value);
+  CHECK(encode(BossHeart{0, 0, false, kMaxBossHeartLife + 1}, out) == Error::bad_value);
+  CHECK(encode(BossHeart{0, kMaxSceneBoss + 1, false, 16}, out) == Error::bad_value);
+  CHECK(encode(BossHeart{kMaxPlayers + 1, 0, true, 16}, out) == Error::bad_value);
+  CHECK(out.empty());
+
+  Message back;
+  Bytes b = must_encode(BossScene{0, "X", 0, BossSceneKind::intro_start, {}});
+  b[kHeaderSize + 5] = 9;  // kind: after u8 player, u16 length + "X", u8 boss
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(BossScene{0, "X", 0, BossSceneKind::intro_start, {}});
+  b[kHeaderSize + 4] = kMaxSceneBoss + 1;  // boss
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(BossHeart{0, 0, false, 16});
+  b[kHeaderSize + 2] = 2;  // given
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(BossHeart{0, 0, false, 16});
+  b[kHeaderSize + 3] = 81;  // max life (u32 little end first byte)
+  CHECK(decode(b, back) == Error::bad_value);
+}

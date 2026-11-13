@@ -487,6 +487,10 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_dbno_revive(id, c, message);
     return;
   }
+  if (const auto* heart = std::get_if<BossHeart>(&message)) {
+    on_boss_heart(id, c, *heart);
+    return;
+  }
   if (const auto* st = std::get_if<DbnoStatus>(&message)) {
     c.dbno = st->state;  // then relayed to everyone, below
   }
@@ -701,6 +705,31 @@ void Session::on_dbno_revive(ConnectionId id, Connection& c, Message& message) {
   send(*to, kChannelOwnership, message);
   ++stats_.dbno_revives_relayed;
   ++stats_.relayed;
+}
+
+// One heart container per boss, for everyone (boss-cutscenes): the first
+// claim the server gets wins, whoever sent it and whatever came after. The
+// winner's answer goes to everyone, the claimer too, at once (a winner who
+// leaves right after takes nothing from the others); a later claim of the
+// same boss, from the loser of a race or a game that comes back, gets the
+// same answer for itself alone. Games raise their maximum to max_life and
+// never lower it, so two answers never give two hearts.
+void Session::on_boss_heart(ConnectionId id, Connection& c, const BossHeart& m) {
+  if (m.given) {
+    ++stats_.boss_hearts_refused;
+    return;
+  }
+  const auto [it, first] = boss_hearts_.try_emplace(m.boss, BossHeart{c.number, m.boss, true, m.max_life});
+  if (!first) {
+    ++stats_.boss_hearts_late;
+    send(id, kChannelSession, it->second);
+    return;
+  }
+  ++stats_.boss_hearts_given;
+  send(id, kChannelSession, it->second);
+  send_to_others(id, kChannelSession, it->second);
+  log("boss " + std::to_string(m.boss) + "'s heart container taken by player " + std::to_string(c.number) +
+      ": everyone's maximum life " + std::to_string(m.max_life));
 }
 
 // To the named player only. The codec has made sure the player field is 0

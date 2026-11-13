@@ -278,4 +278,14 @@ bool AskSceneChange(Core::System& system, std::uint64_t main_base, std::string_v
 // - our Link moved to `to` in this scene, the boss pull's free-play move.
 bool MoveLink(Core::System& system, std::uint64_t main_base, const Vec& to);
 
+// Boss cutscenes for the area (coop_boss_scenes.h), present thread, for the hook:
+// - our game's PlayerStatus.MaxLife this frame (nothing: unread);
+void SetMaxLife(std::optional<std::int32_t> max_life);
+// - a maximum life to write in our game (the one shared heart container), once;
+std::optional<std::int32_t> TakeMaxLifeWrite();
+// - boss events to ask our game for by name (the live-event requester);
+std::vector<std::string> TakeWantedEvents();
+// - lines for the chat box ("<name> entered the boss room of ...").
+std::vector<std::string> TakeLines();
+
 } // namespace CoopBoss

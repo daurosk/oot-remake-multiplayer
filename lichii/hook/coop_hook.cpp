@@ -51,6 +51,7 @@
 #include "coop/presence/presence.hpp"
 #include "coop/version.hpp"
 #include "coop_boss.h"
+#include "coop_boss_scenes.h"
 #include "coop_teleport_game.h"
 #include "coop_pvp_game.h"
 #include "coop_dbno_game.h"
@@ -642,6 +643,15 @@ public:
         if (shared_scenes_) {
             SharedScenes(view, reading, memory, report.server_now_us);
         }
+        // Boss cutscenes (coop_boss_scenes.h): another player's boss intro or
+        // death, asked of our game by name, as a story cutscene's.
+        if (live_events_) {
+            for (auto& name : CoopBoss::TakeWantedEvents()) {
+                std::lock_guard lock(live_mutex_);
+                live_requester_.Want(std::move(name), view.scene.value_or(std::string()), CoopEvery::NowUs(),
+                                     CoopBossScenes::Director::kJoinUs);
+            }
+        }
         // review-p11-interactions: a gimmick or story event still waiting in
         // the requester is dropped when we left its scene, when it waited too
         // long (story cutscenes: kJoinUs) or when our game has it played.
@@ -817,6 +827,17 @@ public:
             CoopObjects::SetMaxLife(max_life && max_life->kind == coop::protocol::FlagKind::int32
                                         ? std::optional<std::int32_t>(static_cast<std::int32_t>(max_life->value))
                                         : std::nullopt);
+            // Boss cutscenes (coop_boss_scenes.h): the one shared heart container sees our maximum and may set it.
+            const bool known = max_life && max_life->kind == coop::protocol::FlagKind::int32;
+            CoopBoss::SetMaxLife(known ? std::optional<std::int32_t>(static_cast<std::int32_t>(max_life->value))
+                                       : std::nullopt);
+            if (const auto to = CoopBoss::TakeMaxLifeWrite(); to && known) {
+                auto set = *max_life;
+                set.value = static_cast<std::uint32_t>(*to);
+                const bool ok = game_store->write(set);
+                LOG_INFO(Core, "coop: boss: our maximum life {} -> {} (the boss's one heart container){}",
+                         static_cast<std::int32_t>(max_life->value), *to, ok ? "" : ": the write failed");
+            }
         }
         // Issue 144: changes from the others to actors near our Link wait while
         // our Link is in an event (a talk, a cutscene).
@@ -904,6 +925,9 @@ public:
         // /teleport <player> (docs/setup.md "Chat commands"), after the boss
         // rooms: it reads whether our boss fight runs.
         CoopTeleport::Frame(system, view.game ? base_ : 0, reading, report.connected ? session_.get() : nullptr);
+        for (auto& line : CoopBoss::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
         // LICHII_COOP_SCENE_PROBE=1 only (docs/scenes.md "Free-play scene change").
         CoopSceneProbe::Frame(system, view.game ? base_ : 0, reading);
         for (auto& line : CoopTeleport::TakeLines()) {

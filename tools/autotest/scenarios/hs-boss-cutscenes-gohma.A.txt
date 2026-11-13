@@ -1,0 +1,62 @@
+# hs-boss-cutscenes-gohma (Hookshot, branch boss-cutscenes): Queen Gohma's intro and death for everyone in
+# the boss's area (docs/dungeons-boss.md, "Boss cutscenes"). A walks in through the door (the game's own
+# trigger: A is the starter); B waits in the corridor before the door (inside the area) and must play the
+# same intro at once, be put at its spot in the room, and end it with A's. Then A kills Gohma (test kill):
+# both play Dm_Deku_BossOut together.
+# NEEDS a hookshot.exe with the event request wrap (HOS_COOP_WRAP_EVENT_REQUEST, patch 0005).
+# BEFORE the run: clear the six Deku boss flags in both pairs' baselines as hs-gohma-door says.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-boss-cutscenes-gohma
+# PASS (proof lines):
+#  1. Both: "coop: boss: intros and deaths are shared with the boss's area".
+#  2. A: "Dm_Deku_BossIn: our game started it: the others in the area play it too", then "sent cutscene 1".
+#  3. B within 1 s of A's line: "Dm_Deku_BossIn: playing it here too (player 1 started it)", "moving in to
+#     the room's start (try 1)", then "Dm_Deku_BossIn: playing with player 1's" (B's game took it).
+#  4. A: "Dm_Deku_BossIn: ours is over: the others' end too"; B: "the starter's intro is over: skipping ours"
+#     (or B's ended first: "player 1's still runs"). Screens at a-intro / b-intro: both show the intro;
+#     at a-fight / b-fight: both in the room, free to move, the door shut behind both.
+#  5. A after a-kill: "Dm_Deku_BossOut: our game started the death"; B: "Dm_Deku_BossOut: playing it here too".
+#     Screens at a-death / b-death: the death on both.
+#  6. Neither log: "moving in" from the older rules ("another player is in the boss room").
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 600
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+wait 120
+place -12.0 48.5 66.5   # the corridor, 11 m before the door (as gohma-door)
+wait 600                # B is placed there too
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door: the game's own boss trigger
+mark a-in
+wait 300
+mark a-intro
+wait 1500               # the door's event and the intro
+mark a-fight
+wait 600
+kill Enemy_DungeonBoss_Gohma
+wait 120
+mark a-kill
+wait 300
+mark a-death
+wait 2400
+mark end

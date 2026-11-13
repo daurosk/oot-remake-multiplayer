@@ -19,6 +19,8 @@
 // We do the same from the cave.
 
 #include "coop_boss.h"
+#include "coop_boss_scenes.h"
+#include "coop_live_events.h"
 #include "coop_objects.h"
 
 #include <chrono>
@@ -26,6 +28,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -158,9 +161,20 @@ struct Glue {
     std::uint64_t debug_at = 0;
     Sync sync;
     Mover mover;
+    // Boss cutscenes for the area (coop_boss_scenes.h): on where our game's own event requests are seen by name
+    // (Hookshot's event request wrap); LICHII_COOP_BOSS_SCENES=0 turns it off (the older rules then move and skip).
+    CoopBossScenes::Director scenes;
+    bool scenes_on = true;
+    bool scenes_live = false;  // logged once
+    std::uint64_t requests_cursor = 0;
+    std::optional<std::int32_t> max_life;          // set by the hook (SetMaxLife)
+    std::optional<std::int32_t> max_life_write;    // for the hook (TakeMaxLifeWrite)
+    std::vector<std::string> wanted;               // events for the live-event requester (TakeWantedEvents)
+    std::vector<std::string> lines;                // chat lines (TakeLines)
 
     Glue() {
         on = Env("LICHII_COOP_BOSS") != "0";
+        scenes_on = Env("LICHII_COOP_BOSS_SCENES") != "0";
         by_scene = Env("LICHII_COOP_BOSS_MOVE") != "matrix";
         const auto d = Env("LICHII_COOP_DEBUG_BOSS");
         debug = !d.empty() && d != "0";
@@ -204,6 +218,9 @@ struct Glue {
         return true;
     }
 
+    bool Scenes(Core::System& system, std::uint64_t main, const Local& local, bool event,
+                coop::host::Session* session, std::uint64_t now_us);
+
     void Frame(Core::System& system, std::uint64_t main, const std::optional<std::string>& scene,
                const std::optional<coop::protocol::Vec3>& position, bool event, std::optional<bool> shut_in,
                coop::host::Session* session, std::uint64_t now_us) {
@@ -221,6 +238,7 @@ struct Glue {
         if (main == 0 || now_us == 0 || session == nullptr) {
             if (connected) {
                 sync.Reset();
+                scenes.Reset();
                 connected = false;
             }
             return;
@@ -243,6 +261,12 @@ struct Glue {
         Actions act = sync.Tick(local, now_us);
         for (const auto& line : act.log) {
             LOG_INFO(Core, "coop: boss: {}", line);
+        }
+        if (Scenes(system, main, local, event, session, now_us)) {
+            // The area's rules move and skip (boss-cutscenes): the older dungeon-wide pull and its "any intro
+            // over" skip would move players from anywhere in the dungeon.
+            act.pull.reset();
+            act.skip_intro = false;
         }
         if (debug && now_us - debug_at >= kDebugEveryUs) {
             debug_at = now_us;
@@ -278,6 +302,64 @@ struct Glue {
     }
 };
 
+// Boss cutscenes (coop_boss_scenes.h). True when its rules are the ones in force.
+bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, bool event,
+                  coop::host::Session* session, std::uint64_t now_us) {
+    auto& requests = CoopLiveEvents::TheGameRequests();
+    if (!scenes_on || !requests.Live()) {
+        return false;
+    }
+    if (!scenes_live) {
+        scenes_live = true;
+        LOG_INFO(Core, "coop: boss: intros and deaths are shared with the boss's area (our game's event requests "
+                       "are seen by name)");
+    }
+    std::vector<CoopBossScenes::Request> ours;
+    for (const auto& r : requests.Since(requests_cursor)) {
+        ours.push_back({r.name, r.taken});
+    }
+    CoopBossScenes::Local here;
+    here.scene = local.scene;
+    here.position = local.position;
+    here.event = event;
+    here.self = local.self;
+    here.max_life = max_life;
+    CoopBossScenes::Actions a = scenes.Tick(here, ours, now_us);
+    for (const auto& line : a.log) {
+        LOG_INFO(Core, "coop: boss: {}", line);
+    }
+    if (a.play) {
+        wanted.push_back(std::move(*a.play));
+    }
+    if (a.move_to) {
+        AskMove(system, main, *a.move_to);
+    }
+    if (a.skip) {
+        mover.WantSkip(main);
+    }
+    if (a.set_max_life) {
+        max_life_write = a.set_max_life;
+    }
+    session->with_client([&](coop::net::Client& c) {
+        for (auto& m : a.send) {
+            const bool sent = c.send(coop::protocol::Message{m});
+            LOG_INFO(Core, "coop: boss: sent cutscene {} of boss {}{}", static_cast<int>(m.kind), m.boss,
+                     sent ? "" : " (not sent)");
+        }
+        for (auto& m : a.claims) {
+            const bool sent = c.send(coop::protocol::Message{m});
+            LOG_INFO(Core, "coop: boss: heart container claim for boss {}{}", m.boss, sent ? "" : " (not sent)");
+        }
+        for (auto& line : a.chat) {
+            const auto* p = c.find_player(line.player);
+            lines.push_back((p != nullptr ? p->nickname : "player " + std::to_string(line.player)) + " " +
+                            line.text);
+        }
+        return 0;
+    });
+    return true;
+}
+
 Glue& TheGlue() {
     static Glue glue;  // kept for the whole run: the cave holds its mover
     return glue;
@@ -308,12 +390,29 @@ bool MoveLink(Core::System& system, std::uint64_t main_base, const Vec& to) {
 void OnEvent(const coop::net::Event& event) {
     if (event.kind == coop::net::EventKind::message) {
         TheGlue().sync.Receive(event.message);
+        TheGlue().scenes.Receive(event.message);
         const auto* m = std::get_if<coop::protocol::BossRoom>(&event.message);
         if (m != nullptr && m->state != coop::protocol::BossState::in_room) {
             LOG_INFO(Core, "coop: boss: player {} says {} for {}", m->player_number, static_cast<int>(m->state),
                      m->scene);
         }
     }
+}
+
+void SetMaxLife(std::optional<std::int32_t> max_life) {
+    TheGlue().max_life = max_life;
+}
+
+std::optional<std::int32_t> TakeMaxLifeWrite() {
+    return std::exchange(TheGlue().max_life_write, std::nullopt);
+}
+
+std::vector<std::string> TakeWantedEvents() {
+    return std::exchange(TheGlue().wanted, {});
+}
+
+std::vector<std::string> TakeLines() {
+    return std::exchange(TheGlue().lines, {});
 }
 
 } // namespace CoopBoss

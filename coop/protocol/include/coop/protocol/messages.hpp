@@ -134,6 +134,8 @@ enum class MessageType : std::uint16_t {
   local_leave = 462,
   local_sample = 463,
   local_message = 464,
+  boss_scene = 520,  // 520 to 524: boss intro and death cutscenes (docs/protocol.md, "Boss cutscenes")
+  boss_heart = 521,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -1446,6 +1448,44 @@ struct DbnoRevive {
   bool operator==(const DbnoRevive&) const = default;
 };
 
+// BOSS_SCENE (boss-cutscenes, docs/dungeons-boss.md "Boss cutscenes"): the
+// sender's game started or ended a boss's intro or death cutscene. Relayed to
+// everyone else; each game decides whether it is in the boss's area (the
+// boss room and its antechamber) and plays it too, or only says so in chat.
+enum class BossSceneKind : std::uint8_t {
+  intro_start = 1,  // the sender's game took the boss's intro event (it is its starter)
+  intro_end = 2,    // the starter's intro ended (played out or skipped): every intro ends
+  outro_start = 3,  // the sender's game took the boss's death event
+  outro_end = 4,
+};
+inline constexpr std::uint8_t kMaxSceneBoss = 15;  // CoopBossScenes::Bosses() index
+
+struct BossScene {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;      // the sender's scene, 1 to 64 characters
+  std::uint8_t boss = 0;  // 0 to kMaxSceneBoss
+  BossSceneKind kind = BossSceneKind::intro_start;
+  Vec3 position{};        // the sender's Link when it sent (finite)
+  bool operator==(const BossScene&) const = default;
+};
+
+// BOSS_HEART: one shared heart container per boss. A client sends a claim
+// (given false) when its own game's maximum life rose in a beaten boss's
+// area; `max_life` is that new maximum. The server takes the first claim of
+// each boss as the winner and sends given true, player_number the winner,
+// to everyone (the sender too); a later claim of that boss is answered to
+// its sender alone with the same winner and value. Every game raises its
+// maximum to max_life (never lowers it), so the container gives one +1 to all.
+inline constexpr std::int32_t kMaxBossHeartLife = 80;  // 20 hearts of 4 quarters
+
+struct BossHeart {
+  std::uint8_t player_number = kPlayerSelf;  // claim: the claimer; given: the winner
+  std::uint8_t boss = 0;                     // 0 to kMaxSceneBoss
+  bool given = false;                        // false: a claim (client); true: the server's answer
+  std::int32_t max_life = 0;                 // 1 to kMaxBossHeartLife
+  bool operator==(const BossHeart&) const = default;
+};
+
 // VOICE_FRAME (protocol 11, branch proximity-voip): 20 ms of the sender's
 // microphone as one Opus packet (48 kHz mono), or an empty packet with
 // voice::end that closes a talk spurt (the gate closed). Channel 5,
@@ -1569,7 +1609,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              OcarinaNote, PlatformClock, PlatformCounter,
                              DbnoMode, DbnoStatus, DbnoRevive, Difficulty, VoiceFrame,
                              ModList, ModSettings, LocalJoin, LocalJoined,
-                             LocalLeave, LocalSample, LocalMessage>;
+                             LocalLeave, LocalSample, LocalMessage, BossScene, BossHeart>;
 
 MessageType type_of(const Message& message);
 

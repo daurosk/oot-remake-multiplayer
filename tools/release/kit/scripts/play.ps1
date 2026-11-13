@@ -163,7 +163,7 @@ if ($Hookshot) {
         Write-Host (Get-KitHookshotNeedText $need $hsGame)
         # The long builds ask first (yes by itself after a minute, so an unattended start still builds).
         $question = Get-KitHookshotNeedQuestion $need
-        if ($question -and -not (Read-YesNo "$question (then the game starts)" 60)) {
+        if ($question -and -not (Read-YesNo "$question (then the game starts; closing this window cancels)" 60)) {
             Write-Host 'Not now. Build-Hookshot-Coop.bat sets it up (SETUP.md, "Play on Hookshot"); then start this again.'
             exit 1
         }

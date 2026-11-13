@@ -119,4 +119,6 @@ The table (version 1): `log`, `main_base`, `read`, `write` (guest addresses; off
 
 Mods are loaded first row first and started at the first frame. `coop_mod_stop` (optional) runs at exit.
 
+A whole sample is in `hookshot/samples/hello-mod` (`mod.json` + `hello_mod.c`; the tests build it as `hello_mod.dll`): copy both files into `modshello-mod`, start the game, and F7 shows its message in the corner.
+
 The interface is ours, modelled on NX2navi's plugin interface, and does not depend on Hookshot: the same mod is meant to load on Longshot once our module runs there.

@@ -377,3 +377,41 @@ TEST_CASE("mod plugins: coop-mods.starting text") {
     CHECK_FALSE(CoopMods::ParseStarting("coop-mods-starting 1 12\n\n"));
     CHECK_FALSE(CoopMods::ParseStarting("coop-mods-starting 1 12\na\nb\n"));
 }
+
+TEST_CASE("mod plugins: the sample mod (hookshot/samples/hello-mod) through the system's loader") {
+    const fs::path root = fs::temp_directory_path() / "coop-mod-plugins-sample";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "hello-mod");
+    fs::copy_file(COOP_SAMPLE_MOD, root / "hello-mod" / "hello_mod.dll");
+    fs::copy_file(COOP_SAMPLE_MOD_JSON, root / "hello-mod" / "mod.json");
+    std::vector<std::string> log;
+    {
+        CoopMods::Loader loader(root, {[&](const std::string& l) { log.push_back("mods: " + l); }, 1});
+        loader.Start();
+        Game game;
+        game.log = [&](const std::string& l) { log.push_back(l); };
+        Host host(loader, SystemLibrary(), game);
+        host.Start();
+        REQUIRE(host.Running() == std::vector<std::string>{"hello-mod"});
+        host.Frame();
+        host.Frame();
+        CHECK(host.WantsOverlay());
+        CHECK(host.Key(0x76, true, false));  // F7: taken
+        CHECK_FALSE(host.Key(0x41, true, false));
+        CHECK(loader.Set("hello-mod", "message", "hi there"));
+        host.Stop();
+        const auto has = [&](const std::string& part) {
+            for (const auto& l : log) {
+                if (l.find(part) != std::string::npos) return true;
+            }
+            return false;
+        };
+        CHECK(has("mod hello-mod: hello from hookshot"));
+        CHECK(has("mod hello-mod: shown"));
+        CHECK(has("mod hello-mod: message changed"));
+        CHECK(has("mod hello-mod: goodbye"));
+        CHECK_FALSE(fs::exists(root / CoopMods::kStartingFile));
+    }
+    // The library stays loaded until the process ends (a mod's thread may still run), so the folder is left behind.
+}

@@ -136,3 +136,11 @@ add_test(NAME coop_test_two_clients COMMAND coop_test --clients 2 --seconds 3 --
 
 # Where the test data files are (source paths are trimmed out of __FILE__, cmake/trim_paths.cmake).
 target_compile_definitions(coop_tests PRIVATE COOP_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
+# The sample code mod (hookshot/samples/hello-mod), loaded through the real loader by mod_plugins_test.cpp.
+add_library(coop_sample_mod MODULE ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/samples/hello-mod/hello_mod.c)
+target_include_directories(coop_sample_mod PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src)
+set_target_properties(coop_sample_mod PROPERTIES PREFIX "" OUTPUT_NAME hello_mod C_VISIBILITY_PRESET hidden)
+add_dependencies(coop_tests coop_sample_mod)
+target_compile_definitions(coop_tests PRIVATE COOP_SAMPLE_MOD="$<TARGET_FILE:coop_sample_mod>"
+  COOP_SAMPLE_MOD_JSON="${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/samples/hello-mod/mod.json")

@@ -1905,6 +1905,109 @@ Error decode_body(Reader& r, PlatformCounter& m) {
   return check_platform_counter(m);
 }
 
+// ---------------------------------------------------------------- mods
+
+// A mod id: [a-z0-9][a-z0-9._-]*, 1 to kMaxModIdChars. A setting key: [a-z0-9_], 1 to kMaxModSettingKeyChars.
+bool valid_mod_id(std::string_view id) {
+  if (id.empty() || id.size() > kMaxModIdChars) return false;
+  for (std::size_t i = 0; i < id.size(); ++i) {
+    const char c = id[i];
+    const bool alnum = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+    if (!alnum && (i == 0 || (c != '.' && c != '_' && c != '-'))) return false;
+  }
+  return true;
+}
+bool valid_mod_key(std::string_view key) {
+  if (key.empty() || key.size() > kMaxModSettingKeyChars) return false;
+  for (const char c : key) {
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) return false;
+  }
+  return true;
+}
+
+Error check_mod_list(const ModList& m) {
+  if (!valid_player_or_self(m.player_number) || m.mods.size() > kMaxModEntries) return Error::bad_value;
+  for (std::size_t i = 0; i < m.mods.size(); ++i) {
+    if (!valid_mod_id(m.mods[i].id)) return Error::bad_value;
+    COOP_TRY(check_string(m.mods[i].version, kMaxModVersionChars));
+    for (std::size_t j = 0; j < i; ++j) {
+      if (m.mods[j].id == m.mods[i].id) return Error::bad_value;
+    }
+  }
+  return Error::none;
+}
+
+// MOD_LIST: u8 player, u8 count, then per mod: str id, str version, 16 bytes hash.
+Error encode_body(const ModList& m, Writer& w) {
+  COOP_TRY(check_mod_list(m));
+  w.u8(m.player_number);
+  w.u8(static_cast<std::uint8_t>(m.mods.size()));
+  for (const ModEntry& e : m.mods) {
+    w.str(e.id);
+    w.str(e.version);
+    w.bytes(e.hash.data(), e.hash.size());
+  }
+  return Error::none;
+}
+
+Error decode_body(Reader& r, ModList& m) {
+  m = ModList{};
+  std::uint8_t count = 0;
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(count));
+  if (count > kMaxModEntries) return Error::bad_value;
+  m.mods.resize(count);
+  for (ModEntry& e : m.mods) {
+    COOP_TRY(r.str(e.id, kMaxModIdChars));
+    COOP_TRY(r.str(e.version, kMaxModVersionChars));
+    std::span<const std::uint8_t> hash;
+    COOP_READ(r.take(e.hash.size(), hash));
+    std::copy(hash.begin(), hash.end(), e.hash.begin());
+  }
+  return check_mod_list(m);
+}
+
+Error check_mod_settings(const ModSettings& m) {
+  if (!valid_player_or_self(m.player_number) || m.settings.size() > kMaxModSettingEntries) return Error::bad_value;
+  for (std::size_t i = 0; i < m.settings.size(); ++i) {
+    const ModSetting& s = m.settings[i];
+    if (!valid_mod_id(s.mod_id) || !valid_mod_key(s.key)) return Error::bad_value;
+    COOP_TRY(check_string(s.value, kMaxModSettingValueChars));
+    for (std::size_t j = 0; j < i; ++j) {
+      if (m.settings[j].mod_id == s.mod_id && m.settings[j].key == s.key) return Error::bad_value;
+    }
+  }
+  return Error::none;
+}
+
+// MOD_SETTINGS: u8 player, u8 count, then per setting: str mod id, str key, str value.
+Error encode_body(const ModSettings& m, Writer& w) {
+  COOP_TRY(check_mod_settings(m));
+  w.u8(m.player_number);
+  w.u8(static_cast<std::uint8_t>(m.settings.size()));
+  for (const ModSetting& s : m.settings) {
+    w.str(s.mod_id);
+    w.str(s.key);
+    w.str(s.value);
+  }
+  return Error::none;
+}
+
+Error decode_body(Reader& r, ModSettings& m) {
+  m = ModSettings{};
+  std::uint8_t count = 0;
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(count));
+  if (count > kMaxModSettingEntries) return Error::bad_value;
+  m.settings.resize(count);
+  for (ModSetting& s : m.settings) {
+    COOP_TRY(r.str(s.mod_id, kMaxModIdChars));
+    COOP_TRY(r.str(s.key, kMaxModSettingKeyChars));
+    COOP_TRY(r.str(s.value, kMaxModSettingValueChars));
+  }
+  return check_mod_settings(m);
+}
+
 // SIGN_CUT: head, u16 count, then count x (u64 key, u64 value).
 Error check_sign_cut(const SignCut& m) {
   COOP_TRY(check_world(m.player_number, m.scene, m.hash));
@@ -2251,6 +2354,7 @@ MessageType type_of(const Message& message) {
       MessageType::ocarina_note,
       MessageType::platform_clock,
       MessageType::platform_counter,
+      MessageType::mod_list,      MessageType::mod_settings,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -2326,6 +2430,8 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::save_ask:
     case MessageType::save_part:
     case MessageType::pvp_mode:
+    case MessageType::mod_list:
+    case MessageType::mod_settings:
     case MessageType::ocarina_note:
       return channel == kChannelSession;
     case MessageType::flag_set:
@@ -2422,6 +2528,8 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::save_ask:
     case MessageType::save_part:
     case MessageType::pvp_mode:
+    case MessageType::mod_list:
+    case MessageType::mod_settings:
     case MessageType::pvp_hit:
     case MessageType::pvp_hurt:
     case MessageType::ocarina_note:
@@ -2461,7 +2569,8 @@ auto* player_field(M& message) {
                       std::is_same_v<T, PlayerRide> ||
                       std::is_same_v<T, OcarinaNote> ||
                       std::is_same_v<T, PlatformClock> ||
-                      std::is_same_v<T, PlatformCounter>) {
+                      std::is_same_v<T, PlatformCounter> ||
+                      std::is_same_v<T, ModList> || std::is_same_v<T, ModSettings>) {
           field = &m.player_number;
         }
       },
@@ -2580,6 +2689,8 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::dungeon_event: return decode_as<DungeonEvent>(body, out);
     case MessageType::platform_clock: return decode_as<PlatformClock>(body, out);
     case MessageType::platform_counter: return decode_as<PlatformCounter>(body, out);
+    case MessageType::mod_list: return decode_as<ModList>(body, out);
+    case MessageType::mod_settings: return decode_as<ModSettings>(body, out);
     case MessageType::drop_spawn: return decode_as<DropSpawn>(body, out);
     case MessageType::drop_take: return decode_as<DropTake>(body, out);
     case MessageType::drop_ask: return decode_as<DropAsk>(body, out);

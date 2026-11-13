@@ -118,6 +118,8 @@ enum class MessageType : std::uint16_t {
   player_ride = 385,  // 385 to 389: riding Epona (docs/protocol.md, "Riding")
   platform_clock = 400,  // 400 to 404: moving platforms' clocks (docs/protocol.md, "Moving platforms")
   platform_counter = 401,  // looping platforms' pause counters (docs/protocol.md, "Moving platforms")
+  mod_list = 490,  // 490 to 499: mods (docs/protocol.md, "Mods")
+  mod_settings = 491,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -1311,6 +1313,52 @@ struct DungeonEvent {
   bool operator==(const DungeonEvent&) const = default;
 };
 
+// Mods (protocol 11; docs/protocol.md "Mods", docs/mods.md). Every game
+// tells the others which mods it runs, so a player with other mods than the
+// host's is warned; the host's "shared" mod settings (a randomizer's seed)
+// are everyone's.
+inline constexpr std::size_t kMaxModEntries = 32;
+inline constexpr std::size_t kMaxModIdChars = 48;
+inline constexpr std::size_t kMaxModVersionChars = 32;
+inline constexpr std::size_t kMaxModSettingEntries = 32;
+inline constexpr std::size_t kMaxModSettingKeyChars = 32;
+inline constexpr std::size_t kMaxModSettingValueChars = 256;
+using ModHash = std::array<std::uint8_t, 16>;
+
+struct ModEntry {
+  std::string id;       // 1 to kMaxModIdChars, [a-z0-9._-]
+  std::string version;  // 0 to kMaxModVersionChars
+  ModHash hash{};       // the mod's game files and code (all zero: not known yet)
+  bool operator==(const ModEntry&) const = default;
+};
+
+// MOD_LIST: the mods a game runs that every player needs alike (mod.json
+// "coop" not "own"), in its load order. Sent once per connection, when the
+// game has hashed its mods; the server writes the sender's number, keeps the
+// last one of each player and gives a joiner everyone else's.
+struct ModList {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from the sender, 1 to 16 relayed
+  std::vector<ModEntry> mods;                // 0 to kMaxModEntries, ids unique
+  bool operator==(const ModList&) const = default;
+};
+
+struct ModSetting {
+  std::string mod_id;  // as ModEntry::id
+  std::string key;     // 1 to kMaxModSettingKeyChars, [a-z0-9_]
+  std::string value;   // 0 to kMaxModSettingValueChars
+  bool operator==(const ModSetting&) const = default;
+};
+
+// MOD_SETTINGS: the host's values of its mods' "shared" settings, all of them
+// each time. Taken from the host only (anyone else's is dropped); the server
+// keeps the last one, relays it to the others and gives it to each joiner.
+// A new host's own values count from its first MOD_SETTINGS on.
+struct ModSettings {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from the host, its number relayed
+  std::vector<ModSetting> settings;          // 0 to kMaxModSettingEntries
+  bool operator==(const ModSettings&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
@@ -1322,7 +1370,8 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin,
                              JoinChallenge, JoinProof, SaveAsk, SavePart, PlayerLife,
                              PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim, DungeonEvent, PlayerRide,
-                             OcarinaNote, PlatformClock, PlatformCounter>;
+                             OcarinaNote, PlatformClock, PlatformCounter,
+                             ModList, ModSettings>;
 
 MessageType type_of(const Message& message);
 

@@ -371,6 +371,13 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   // PvP on: told at join, after HOST. Off is not told: every
   // game starts each connection with PvP off (docs/protocol.md, "PvP").
   if (pvp_) send(id, kChannelSession, PvpMode{pvp_set_by_, pvp_});
+  // Mods: everyone else's list and the host's shared mod settings.
+  for (const auto& entry : connections_) {
+    if (entry.first != id && entry.second.state == State::joined && entry.second.mods) {
+      send(id, kChannelSession, *entry.second.mods);
+    }
+  }
+  if (mod_settings_) send(id, kChannelSession, *mod_settings_);
   send_snapshot(id);
   log("player " + std::to_string(c.number) + " joined: " + c.nickname);
 }
@@ -430,6 +437,10 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   }
   if (const auto* mode = std::get_if<PvpMode>(&message)) {
     on_pvp_mode(id, c, *mode);
+    return;
+  }
+  if (std::holds_alternative<ModList>(message) || std::holds_alternative<ModSettings>(message)) {
+    on_mods(id, c, message);
     return;
   }
   if (std::holds_alternative<PvpHit>(message)) {
@@ -529,6 +540,24 @@ void Session::on_pvp_mode(ConnectionId id, Connection& c, const PvpMode& m) {
   send_to_others(id, kChannelSession, now);
   log(std::string("PvP turned ") + (pvp_ ? "on" : "off") + " by player " +
       std::to_string(c.number));
+}
+
+// Mods (docs/protocol.md, "Mods"). A MOD_LIST is kept per player and passed
+// on; MOD_SETTINGS only from the host, kept for the joiners.
+void Session::on_mods(ConnectionId id, Connection& c, Message& message) {
+  if (std::holds_alternative<ModSettings>(message) && (!host_ || *host_ != id)) {
+    ++stats_.mod_settings_refused;
+    return;
+  }
+  set_sender(message, c.number);
+  if (const auto* list = std::get_if<ModList>(&message)) {
+    c.mods = *list;
+    log("player " + std::to_string(c.number) + " runs " + std::to_string(list->mods.size()) + " shared mods");
+  } else {
+    mod_settings_ = std::get<ModSettings>(message);
+  }
+  send_to_others(id, kChannelSession, message);
+  ++stats_.relayed;
 }
 
 // To the victim only, and only while PvP is on: a game with PvP off never
@@ -1932,6 +1961,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     host_.reset();
     pvp_ = config_.pvp;
     pvp_set_by_ = 0;
+    mod_settings_.reset();
     flags_.clear();
     objects_.clear();
     grass_.clear();

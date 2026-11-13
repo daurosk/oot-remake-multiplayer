@@ -53,6 +53,7 @@
 #include "coop_boss.h"
 #include "coop_teleport_game.h"
 #include "coop_pvp_game.h"
+#include "coop_mod_share.h"
 #include "coop_scene_probe.h"
 #include "coop_camera.h"
 #include "coop_colors.h"
@@ -294,6 +295,7 @@ public:
             CoopBoss::OnEvent(event);  // docs/dungeons-boss.md
             CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
             CoopPvp::OnEvent(event, client);  // PvP (docs/play-online.md "PvP")
+            CoopModShare::OnEvent(event, client);  // mods (docs/mods.md "Mods in co-op")
             CoopSave::OnEvent(event, client);  // the host's save for the guests (issue 167)
             CoopHud::OnEvent(event);  // the others' hearts for the HUD (PLAYER_LIFE)
             if (event.kind == coop::net::EventKind::message) {  // deku-dungeon-2
@@ -871,6 +873,11 @@ public:
         CoopPvp::Frame(view.scene, reading, report.connected ? session_.get() : nullptr,
                        report.server_now_us);
         for (auto& line : CoopPvp::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
+        // Mods (docs/mods.md "Mods in co-op"): our list, the host's shared settings, a warning when they differ.
+        CoopModShare::Frame(report.connected ? session_.get() : nullptr);
+        for (auto& line : CoopModShare::TakeLines()) {
             chat_.Add(std::move(line), true);
         }
         Place(view);

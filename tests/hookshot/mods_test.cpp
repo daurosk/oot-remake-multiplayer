@@ -482,3 +482,40 @@ TEST_CASE("mods: an applied file from another process is an earlier run's") {
     loader.Start();
     CHECK_FALSE(loader.ExeReadsList());
 }
+
+TEST_CASE("mods: in co-op the host's value of a shared setting is shown locked and heard by the mod") {
+    TempMods t("coop-mods-host-values-test");
+    t.Json("rando", R"({"id": "rando", "settings": [
+        {"key": "seed", "type": "text", "shared": true, "restart": true},
+        {"key": "hints", "type": "toggle"}]})");
+    t.Json("mine", R"({"id": "mine", "coop": "own", "settings": [{"key": "x", "type": "toggle", "shared": true}]})");
+    Loader loader(t.root, {nullptr, 1});
+    loader.Start();
+    REQUIRE(loader.Set("rando", "seed", "MINE"));
+    CHECK(loader.SharedValues() == std::vector<SharedValue>{{"rando", "seed", "MINE"}});  // not "own" mods, not unshared
+
+    std::vector<std::string> heard;
+    loader.OnSetting([&](const std::string& id, const std::string& k, const std::string& v) {
+        heard.push_back(id + "." + k + "=" + v);
+    });
+    loader.SetHostValues(std::vector<SharedValue>{{"rando", "seed", "HOST"}, {"rando", "hints", "1"}, {"gone", "a", "b"}});
+    CHECK(heard == std::vector<std::string>{"rando.seed=HOST"});  // hints is not shared: the host's value is not taken
+    CHECK(loader.Value("rando", "seed") == "HOST");
+    const auto rows = loader.Settings("rando");
+    REQUIRE(rows.size() == 2);
+    CHECK(rows[0].locked);
+    CHECK(rows[0].value == "HOST");
+    CHECK_FALSE(rows[1].locked);
+    std::string problem;
+    CHECK_FALSE(loader.Set("rando", "seed", "AGAIN", &problem));
+    CHECK(problem == "In this co-op game the host sets this.");
+    CHECK(loader.RestartNeeded().needed);  // a "restart" setting changed by the host
+    // Our own value is still ours, to send when we host.
+    CHECK(loader.SharedValues() == std::vector<SharedValue>{{"rando", "seed", "MINE"}});
+
+    heard.clear();
+    loader.SetHostValues(std::nullopt);  // left the session
+    CHECK(heard == std::vector<std::string>{"rando.seed=MINE"});
+    CHECK_FALSE(loader.Settings("rando")[0].locked);
+    CHECK(loader.Set("rando", "seed", "AGAIN"));
+}

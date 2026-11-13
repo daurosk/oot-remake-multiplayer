@@ -36,6 +36,7 @@
 #include "coop_game_build.h"
 #include "coop_save.h"
 #include "coop_hold.h"
+#include "coop_mods_runtime.h"
 #include "coop_hook.h"
 #include "coop_hud.h"
 #include "coop_hud_hearts.h"
@@ -634,6 +635,7 @@ bool Start(const HosCoopApi* api) {
     g_hold = EnvOn("LICHII_COOP_OBJECTS_AI_HOLD");
     CoopHook::Start();
     g_on = true;
+    CoopModsRuntime::Start();  // the mods folder and the code mods (docs/mods.md)
     CoopTitle::Init(api, server);
     return true;
 }
@@ -644,6 +646,9 @@ void Frame(void* ctx, int site) {
     }
     if (!g_on) {
         return;
+    }
+    if (site == HOS_COOP_SITE_FRAME) {
+        CoopModsRuntime::Frame();
     }
     if (site == HOS_COOP_SITE_PRESENT && !g_present_seen.exchange(true)) {
         LOG_INFO(Core, "coop: Hookshot calls co-op at each present (loads and pause included)");
@@ -682,6 +687,7 @@ std::uint32_t Hold(std::uint64_t component, std::uint32_t bits) {
 }
 
 void Stop() {
+    CoopModsRuntime::Stop();
     HostMenu().Leave();  // our own server goes after our own client
     if (g_on) {
         g_on = false;
@@ -774,7 +780,7 @@ COOP_HOOKSHOT_EXPORT void hos_coop_status(HosCoopStatus* out) {
 }
 // Typing (hos_coop_api.h): the chat box.
 COOP_HOOKSHOT_EXPORT int hos_coop_key(uint32_t vk, int repeat) {
-    return CoopHookshot::TypeKey(vk, repeat != 0) ? 1 : 0;
+    return CoopHookshot::TypeKey(vk, repeat != 0) || CoopModsRuntime::Key(vk, repeat != 0) ? 1 : 0;
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_char(uint32_t ch) {
     return CoopHookshot::TypeChar(ch) ? 1 : 0;
@@ -797,7 +803,7 @@ COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) {
     return g_on && stick != nullptr ? CoopTitle::OnPad(buttons, stick) : buttons;
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void) {
-    return g_on && CoopDraw::Wanted(CoopHookshot::DrawScene()) ? 1 : 0;
+    return g_on && (CoopDraw::Wanted(CoopHookshot::DrawScene()) || CoopModsRuntime::OverlayWanted()) ? 1 : 0;
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_draw(const HosCoopDraw* d) {
     if (g_on && d != nullptr) {
@@ -820,6 +826,7 @@ COOP_HOOKSHOT_EXPORT void hos_coop_draw(const HosCoopDraw* d) {
         t.text = d->text;
         t.text_width = d->text_width;
         CoopDraw::Draw(t, CoopHookshot::DrawScene());
+        CoopModsRuntime::Overlay(t);
     }
 }
 // The game's camera for the name tags (hos_coop_draw.h), on the thread that records Hookshot's draws: published as
@@ -847,6 +854,7 @@ COOP_HOOKSHOT_EXPORT void hos_coop_draw2(const HosCoopDraw* d) {
                      static_cast<int>(d->width), static_cast<int>(d->height));
         }
         CoopHookshot::DrawWithLook(*d);
+        CoopModsRuntime::Overlay(*d);
     }
 }
 }

@@ -14,6 +14,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -44,6 +45,14 @@ struct SettingRow {
     Setting setting;
     std::string value;
     bool locked = false;  // in a co-op game the host's value: Set is refused for a guest
+};
+
+// A "shared" setting's value (mod.json "shared": in co-op the host's value is everyone's).
+struct SharedValue {
+    std::string id;  // the mod's id
+    std::string key;
+    std::string value;
+    bool operator==(const SharedValue&) const = default;
 };
 
 struct Restart {
@@ -88,6 +97,12 @@ public:
     using SettingFn = std::function<void(const std::string& id, const std::string& key, const std::string& value)>;
     void OnSetting(SettingFn fn);
 
+    // Co-op (coop_mod_share.h). This game's own values of the shared settings of the mods that are on, for the host
+    // to send. Then, in a guest's game, the host's values (nullopt: none, as when hosting or alone): a shared setting
+    // the host has a valid value for shows it, locked, and the mods hear each value that changes by it (OnSetting).
+    std::vector<SharedValue> SharedValues() const;
+    void SetHostValues(std::optional<std::vector<SharedValue>> values);
+
     Restart RestartNeeded() const;
     // Something changed a mod's files under the running game (the randomizer made a new seed): a restart is needed
     // until the game is started again. One reason per mod, the last one given.
@@ -104,6 +119,8 @@ public:
 
 private:
     const Mod* Find(std::string_view name) const;  // locked
+    std::string Effective(const Mod& m, const Setting& s) const;  // locked: the host's value or the player's
+    bool HostSets(const Mod& m, const Setting& s) const;          // locked
     bool SaveLocked(std::string* problem);
     void Say(const std::string& line) const;
 
@@ -119,6 +136,8 @@ private:
     std::map<std::string, std::string> restart_values_;  // "id\nkey" -> the value at the start, "restart" settings
     std::map<std::string, std::string> changed_;         // name -> reason (NoteChanged)
     std::vector<SettingFn> on_setting_;
+    std::optional<std::map<std::string, std::string>> host_values_;  // "id
+key" -> the host's value
 };
 
 }  // namespace CoopMods

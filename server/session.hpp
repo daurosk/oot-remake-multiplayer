@@ -276,6 +276,7 @@ struct Stats {
   std::uint64_t pvp_hits_relayed = 0;   // PVP_HIT passed on to its victim
   std::uint64_t pvp_hits_dropped = 0;   // PVP_HIT while PvP is off, or to nobody
   std::uint64_t pvp_mode_refused = 0;   // PVP_MODE from a player who does not host
+  std::uint64_t mod_settings_refused = 0;  // MOD_SETTINGS from a player who does not host
   // Connections refused at connect: their address already had
   // max_half_open_per_address waiting for HELLO. Not packets, so not in
   // dropped().
@@ -456,6 +457,8 @@ class Session {
     std::optional<protocol::RejoinTokenBytes> rejoin_claim;
     std::uint8_t number = 0;  // 1 to max_players once joined
     std::string nickname;
+    // Its last MOD_LIST, with its number (docs/protocol.md, "Mods").
+    std::optional<protocol::ModList> mods;
     // The scene the player is in, from its latest OBJECT_PRESENT or
     // PLAYER_SAMPLE scene; empty while not known.
     std::string scene;
@@ -562,6 +565,7 @@ class Session {
                          protocol::Message& message, std::uint64_t now_us);
   void on_damage(ConnectionId id, Connection& c, protocol::Damage& d, std::uint64_t now_us);
   void on_pvp_mode(ConnectionId id, Connection& c, const protocol::PvpMode& m);
+  void on_mods(ConnectionId id, Connection& c, protocol::Message& message);
   void on_pvp_hit(ConnectionId id, Connection& c, protocol::Message& message);
   void on_object_group(ConnectionId id, Connection& c, const protocol::ObjectGroup& g);
   void on_fish_lure(Connection& c, const protocol::FishLure& m, std::uint64_t now_us);
@@ -678,6 +682,10 @@ class Session {
   // the session empties. `pvp_set_by_` is PVP_MODE's set_by (0: the server).
   bool pvp_ = false;
   std::uint8_t pvp_set_by_ = 0;
+  // The host's last MOD_SETTINGS (docs/protocol.md, "Mods"): kept when the
+  // host leaves until the new host sends its own; forgotten when the session
+  // empties.
+  std::optional<protocol::ModSettings> mod_settings_;
   // Every shared flag value the host has sent, by key. Kept when
   // the host leaves; forgotten when the session empties.
   std::map<protocol::FlagKey, protocol::FlagEntry> flags_;

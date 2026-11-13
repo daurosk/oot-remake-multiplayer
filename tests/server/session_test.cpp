@@ -3724,6 +3724,45 @@ TEST_CASE("pvp: only the host changes it, for everyone, and an empty session goe
   CHECK_FALSE(h.session.pvp());
 }
 
+TEST_CASE("mods: each player's list is passed on and given to joiners; shared settings only from the host") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  const ModList link{0, {{"rando", "1.0", {}}}};
+  h.receive(1, link, kChannelSession);
+  CHECK(only_message_to<ModList>(h, 2) == ModList{1, link.mods});
+  CHECK(messages_to<ModList>(h, 1).empty());
+  h.receive(2, ModList{}, kChannelSession);
+  CHECK(only_message_to<ModList>(h, 1) == ModList{2, {}});
+
+  h.clear();
+  const ModSettings seed{0, {{"rando", "seed", "AB12"}}};
+  h.receive(2, seed, kChannelSession);  // a guest's are dropped
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().mod_settings_refused == 1);
+  h.receive(1, seed, kChannelSession);
+  CHECK(only_message_to<ModSettings>(h, 2) == ModSettings{1, seed.settings});
+
+  // A newcomer gets both lists and the host's settings.
+  h.clear();
+  h.join(3, "Saria");
+  CHECK(messages_to<ModList>(h, 3) == std::vector<ModList>{ModList{1, link.mods}, ModList{2, {}}});
+  CHECK(messages_to<ModSettings>(h, 3) == std::vector<ModSettings>{ModSettings{1, seed.settings}});
+  // A list of a player who left is not given.
+  h.session.disconnected(2, h.now);
+  h.collect();
+  h.clear();
+  h.join(4, "Ruto");
+  CHECK(messages_to<ModList>(h, 4) == std::vector<ModList>{ModList{1, link.mods}});
+  // Everyone leaves: the settings are forgotten.
+  for (ConnectionId id : {1u, 3u, 4u}) h.session.disconnected(id, h.now);
+  h.collect();
+  h.clear();
+  h.join(5, "Nabooru");
+  CHECK(messages_to<ModSettings>(h, 5).empty());
+}
+
 // Issue 151 (fishing-3): a fish goes to the game whose lure is nearest it.
 namespace {
 FishLure lure_at(std::uint16_t cm, std::uint8_t flags = 0) {

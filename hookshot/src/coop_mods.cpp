@@ -256,7 +256,7 @@ std::vector<SettingRow> Loader::Settings(std::string_view name) const {
     std::vector<SettingRow> rows;
     if (const Mod* m = Find(name); m != nullptr) {
         for (const Setting& s : m->manifest.settings) {
-            rows.push_back({s, ValueOf(*m, s, state_), false});
+            rows.push_back({s, Effective(*m, s), HostSets(*m, s)});
         }
     }
     return rows;
@@ -281,6 +281,9 @@ bool Loader::Set(std::string_view name, std::string_view key, std::string_view v
                                     [&](const Setting& have) { return have.key == key; });
         if (s == m->manifest.settings.end()) {
             return fail("This mod has no such setting.");
+        }
+        if (HostSets(*m, *s)) {
+            return fail("In this co-op game the host sets this.");
         }
         if (!ValidValue(*s, value)) {
             return fail("That is not a value this setting can have.");
@@ -309,11 +312,80 @@ std::string Loader::Value(std::string_view id, std::string_view key) const {
         }
         for (const Setting& s : m.manifest.settings) {
             if (s.key == key) {
-                return ValueOf(m, s, state_);
+                return Effective(m, s);
             }
         }
     }
     return {};
+}
+
+bool Loader::HostSets(const Mod& m, const Setting& s) const {
+    if (!s.shared || !host_values_) {
+        return false;
+    }
+    const auto it = host_values_->find(RestartKey(m, s));
+    return it != host_values_->end() && ValidValue(s, it->second);
+}
+
+std::string Loader::Effective(const Mod& m, const Setting& s) const {
+    return HostSets(m, s) ? host_values_->at(RestartKey(m, s)) : ValueOf(m, s, state_);
+}
+
+std::vector<SharedValue> Loader::SharedValues() const {
+    const std::lock_guard lock(mutex_);
+    std::vector<SharedValue> out;
+    for (const Mod* m : InOrder(mods_, state_)) {
+        if (!Wanted(*m, state_) || m->manifest.share != Share::Everyone) {
+            continue;
+        }
+        for (const Setting& s : m->manifest.settings) {
+            if (s.shared) {
+                out.push_back({m->manifest.id, s.key, ValueOf(*m, s, state_)});
+            }
+        }
+    }
+    return out;
+}
+
+void Loader::SetHostValues(std::optional<std::vector<SharedValue>> values) {
+    std::vector<SettingFn> tell;
+    std::vector<SharedValue> changed;
+    {
+        const std::lock_guard lock(mutex_);
+        std::map<std::string, std::string> before;
+        for (const Mod& m : mods_) {
+            for (const Setting& s : m.manifest.settings) {
+                if (s.shared) {
+                    before[RestartKey(m, s)] = Effective(m, s);
+                }
+            }
+        }
+        if (values) {
+            host_values_.emplace();
+            for (SharedValue& v : *values) {
+                (*host_values_)[v.id + "
+" + v.key] = std::move(v.value);
+            }
+        } else {
+            host_values_.reset();
+        }
+        for (const Mod& m : mods_) {
+            for (const Setting& s : m.manifest.settings) {
+                if (s.shared) {
+                    std::string now = Effective(m, s);
+                    if (now != before[RestartKey(m, s)]) {
+                        changed.push_back({m.manifest.id, s.key, std::move(now)});
+                    }
+                }
+            }
+        }
+        tell = on_setting_;
+    }
+    for (const SharedValue& v : changed) {
+        for (const SettingFn& fn : tell) {
+            fn(v.id, v.key, v.value);
+        }
+    }
 }
 
 void Loader::OnSetting(SettingFn fn) {
@@ -383,7 +455,7 @@ Restart Loader::RestartNeeded() const {
     for (const Mod& m : mods_) {
         for (const Setting& s : m.manifest.settings) {
             const auto was = restart_values_.find(RestartKey(m, s));
-            if (s.restart && was != restart_values_.end() && was->second != ValueOf(m, s, state_)) {
+            if (s.restart && was != restart_values_.end() && was->second != Effective(m, s)) {
                 say(m.manifest.name + ": \"" + s.name + "\" changes at the next start.");
             }
         }

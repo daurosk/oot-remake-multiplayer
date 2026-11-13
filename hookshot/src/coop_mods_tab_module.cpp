@@ -1,4 +1,4 @@
-// coop_mods_tab.h, the module's part: the one Tab, handed to Hookshot as tab 1 (hos_coop_menu.h) through
+// coop_mods_tab.h, the module's part: the one Tab, handed to Hookshot as tab 2 (hos_coop_menu.h) through
 // coop_pause.cpp's exports. Only in hookshot_coop.dll (the tests drive Tab itself).
 #include "coop_mods_tab.h"
 

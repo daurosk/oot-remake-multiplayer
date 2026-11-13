@@ -676,6 +676,42 @@ TEST_CASE("client: an unknown refusal reason is kept") {
   CHECK(refuse_reason_text(refused.refuse_reason) == "unknown reason");
 }
 
+TEST_CASE("client: kicked or banned by the host after WELCOME, it stops and does not join again") {
+  for (const auto reason : {proto::RefuseReason::kicked, proto::RefuseReason::banned}) {
+    CAPTURE(static_cast<int>(reason));
+    FakeServer server;
+    Client client(config_for(server));
+    Events events;
+    REQUIRE(client.start());
+    welcome_client(client, server);
+    REQUIRE(wait_event(client, server, events, EventKind::welcomed));
+    server.send(proto::Refused{reason}, proto::kChannelSession);
+    REQUIRE(wait_event(client, server, events, EventKind::refused));
+    CHECK(events.all[*events.find(EventKind::refused)].refuse_reason == reason);
+    CHECK(client.state() == State::refused);
+    CHECK(client.players().empty());
+    CHECK_FALSE(client.send(proto::Chat{0, "still here?"}));
+    CHECK(refuse_reason_text(reason).find("host") != std::string_view::npos);
+    // Well past the first retry delay: no second attempt.
+    pump(client, server, [] { return false; }, 400);
+    CHECK(server.connects == 1);
+    CHECK(events.count(EventKind::disconnected) == 0);
+  }
+}
+
+TEST_CASE("client: another REFUSED after WELCOME is still ignored") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_client(client, server);
+  REQUIRE(wait_event(client, server, events, EventKind::welcomed));
+  server.send(proto::Refused{proto::RefuseReason::server_full}, proto::kChannelSession);
+  pump(client, server, [] { return false; }, 100);
+  CHECK(client.state() == State::connected);
+  CHECK(events.count(EventKind::refused) == 0);
+}
+
 TEST_CASE("client: comes back after the server drops it") {
   FakeServer server;
   Client client(config_for(server));
@@ -871,7 +907,9 @@ TEST_CASE("client: every refusal reason the protocol has is named") {
   CHECK(refuse_reason_text(proto::RefuseReason::name_taken) == "name taken");
   CHECK(refuse_reason_text(proto::RefuseReason::bad_name) == "bad name");
   CHECK(refuse_reason_text(proto::RefuseReason::bad_password).starts_with("wrong join password"));
-  CHECK(refuse_reason_text(static_cast<proto::RefuseReason>(7)) == "unknown reason");
+  CHECK(refuse_reason_text(proto::RefuseReason::kicked).starts_with("the host took you out"));
+  CHECK(refuse_reason_text(proto::RefuseReason::banned).starts_with("the host banned you"));
+  CHECK(refuse_reason_text(static_cast<proto::RefuseReason>(9)) == "unknown reason");
 }
 
 TEST_CASE("client: send_chat sends CHAT and refuses empty, long or bad text") {

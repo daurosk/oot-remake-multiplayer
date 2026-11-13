@@ -314,6 +314,12 @@ struct Stats {
   std::uint64_t dbno_revives_dropped = 0;  // mode off, to nobody, or to themselves
   std::uint64_t difficulty_refused = 0;  // DIFFICULTY from a player who does not host
   std::uint64_t mod_settings_refused = 0;  // MOD_SETTINGS from a player who does not host
+  // The Lobby (docs/protocol.md "Lobby"): the host's kicks, bans and mutes.
+  std::uint64_t lobby_done = 0;      // LOBBY_ACTIONs carried out
+  std::uint64_t lobby_refused = 0;   // LOBBY_ACTION from a player who does not host
+  std::uint64_t lobby_banned = 0;    // HELLOs and LOCAL_JOINs refused: a banned player
+  std::uint64_t chat_muted = 0;      // CHAT from a player the host muted: dropped
+  std::uint64_t voice_muted = 0;     // VOICE_FRAME from a player the host muted: dropped
   // Connections refused at connect: their address already had
   // max_half_open_per_address waiting for HELLO. Not packets, so not in
   // dropped().
@@ -541,6 +547,8 @@ class Session {
     // comes back to it or to its siblings.
     std::optional<ConnectionId> parent;
     std::uint8_t seat = 0;
+    // The Lobby: the player key its HELLO had (none: an old build).
+    std::optional<protocol::PlayerKey> player_key;
   };
 
   // One shared object (docs/objects.md "Server").
@@ -631,6 +639,16 @@ class Session {
   // values in force are the ones told before, as with the host's own choice.
   void tell_difficulty_change(ConnectionId except);
   void on_mods(ConnectionId id, Connection& c, protocol::Message& message);
+  // The Lobby: the host's kick, ban and mutes (docs/protocol.md "Lobby").
+  void on_lobby(ConnectionId id, const protocol::LobbyAction& a, std::uint64_t now_us);
+  std::uint8_t lobby_mutes_of(const Connection& c) const;
+  // Who a player is to the Lobby: its player key (HELLO, protocol 11) when it
+  // sent one, a split-screen seat by its game's key and seat; the name only
+  // without a key. Mutes and bans follow this, so a new name escapes nothing.
+  std::string lobby_id(const std::string& nickname, const std::optional<protocol::PlayerKey>& key,
+                       std::optional<ConnectionId> parent, std::uint8_t seat) const;
+  std::string lobby_id(const Connection& c) const;
+  bool lobby_banned(const std::string& id, std::optional<std::uint32_t> address) const;
   void on_pvp_hit(ConnectionId id, Connection& c, protocol::Message& message);
   void on_dbno_mode(ConnectionId id, Connection& c, const protocol::DbnoMode& m);
   void on_dbno_revive(ConnectionId id, Connection& c, protocol::Message& message);
@@ -750,6 +768,14 @@ class Session {
   ConnectionId next_local_id_ = kLocalPlayerIds;
   // The host's connection; set while players are in.
   std::optional<ConnectionId> host_;
+  // The Lobby, by lobby_id (the player key; the name only without one), so a
+  // muted or banned player who comes back, renamed or not, is still so;
+  // cleared when the session empties. A ban keeps the address only for a
+  // player without a key (a last resort: it keeps out everyone behind that
+  // router), and never this PC's own (127.x: every relayed player).
+  std::map<std::string, std::uint8_t> lobby_mutes_;
+  std::set<std::string> banned_ids_;
+  std::set<std::uint32_t> banned_addresses_;
   // PvP now: config_.pvp until the host changes it; back to config_.pvp when
   // the session empties. `pvp_set_by_` is PVP_MODE's set_by (0: the server).
   bool pvp_ = false;

@@ -170,6 +170,18 @@ By default anyone who can reach the server's port may join. Three lines in the h
 
 For `server_allow` and `server_bind`: remove the `#` in front of the line, put in the addresses and start `Host.bat` again. The server window then says `listening on port 27510 (only 25.1.2.3, ...)` and `only the N address range(s) given with --allow may connect`. A player who is turned away is counted as `not allowed` when the server stops. More in [SECURITY.md](../SECURITY.md).
 
+## Lobby
+
+Hookshot: the **Lobby** tab of the pause menu (F1, Insert or the pad's Home), right after **Multiplayer**. Multiplayer is for starting and stopping a game; the Lobby is the game you are in, so it has its own tab, one press away, instead of a page inside Multiplayer.
+
+- **Everyone sees** the players (name, colour, the host, the ping, where they are, downed or fainted, talking, muted), the places left (the host's list), the invite code with **Copy** (the host's), and the host's game: where its Link is and its hearts.
+- **On a player, everyone can**: **Mute their voice (only you)** and **Mute their chat (only you)**: in your own game only, nobody is told, and it holds when they leave and come back. **Teleport to them** (as `/teleport`). Typing `/mute <player>` or `/unmute <player>` (add `voice` or `chat` for only that) does the same when you do not host.
+- **The host also has**: **Mute their voice for everyone**, **Mute their chat for everyone** (the server stops passing them on; the chat tells everyone), **Kick** (they are taken out with a plain message and can join again) and **Ban for this session** (kicked, and they cannot join again until the host stops hosting). Kick and Ban take a second press. The same in the chat: `/kick <player>`, `/ban <player>`, `/mute <player> [voice|chat]`, `/unmute <player> [voice|chat]` (a name, the start of one, or the number). The server checks each of them: only the host's count.
+- **When the host leaves**, the next host (the lowest player number) gets the controls; mutes and bans stay.
+- **Who is muted or banned**: the player, not the name. Each kit makes its own player key once (`player-key.txt` beside `coop.ini`) and the game sends it to the server, so a muted or banned player who changes their name is still muted or banned, also over the relay, while a different player who happens to take that name is not. Housemates behind the same router are not hit by a ban of one of them. Only a player whose game sends no key (an older build) is banned by name and by address, and that address ban keeps out everyone joining from behind the same router. Deleting `player-key.txt` makes a new key, so a ban is a strong hint, not a lock: ban again if they come back. If you copy your kit to a friend, delete `player-key.txt` in the copy.
+- **Split screen**: kicking or banning a player on someone's split screen takes out only that seat; the rest of that game stays.
+- **Not there**: "make host" (the server runs in the host's game, so the session ends when that game closes either way) and "bring them to me" (`/teleport` moves only your own Link; the other player's game must agree to move theirs, which no message does yet).
+
 ## PvP: players hurting each other
 
 Off unless the host turns it on. With PvP on, your sword, arrows, seeds and bombs hurt the other players' Links as they hurt enemies, and theirs hurt you; with it off, nothing changes.

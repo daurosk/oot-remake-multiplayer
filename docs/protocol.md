@@ -117,7 +117,7 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 2 | `WELCOME` | 0 | server | above |
 | 3 | `REFUSED` | 0 | server | above |
 | 4 | `PLAYER_JOINED` | 0 | server | `u8` player number, nickname |
-| 5 | `PLAYER_LEFT` | 0 | server | `u8` player number, `u8` reason: 0 left, 1 timed out, 2 kicked (an unknown reason is kept) |
+| 5 | `PLAYER_LEFT` | 0 | server | `u8` player number, `u8` reason: 0 left, 1 timed out, 2 kicked by the host (an unknown reason is kept) |
 | 6 | `PING` | 0 | both | above |
 | 7 | `PONG` | 0 | both | above |
 | 8 | `PLAYER_STATUS` | 0 | both | `u8` player field, `u8` flags: bit 0 paused, 1 loading, 2 in cutscene, 3 in menu, 4 dead (unknown bits are kept); sent on every change |
@@ -500,6 +500,21 @@ Types 490 to 499 (modloader-b; 490 and 491 used). Both on the session channel, f
 
 A build without protocol 11 does not know 490 and 491; all players need the same release.
 
+### Lobby (protocol 11, `LOBBY_ACTION`, `LOBBY_MUTES`, `LOBBY_RESULT`)
+
+Types 510 to 519 (lobby-b; 510 to 512 used). All three on the session channel. The host's moderation from the Lobby tab and the chat commands (play-online.md, "Lobby"); the server carries out every one of them and takes them from the host only, so no game can moderate by itself. A player's own mutes never reach the wire.
+
+- `LOBBY_ACTION` (510, client only): `u8` action (1 kick, 2 ban, 3 mute voice, 4 unmute voice, 5 mute chat, 6 unmute chat), `u8` target player (1 to 16). From anyone but the host it is refused (`lobby_refused`) and answered `not_host`; the host itself, or a number nobody has, is answered too and nothing happens.
+  - **Kick**: the server sends the target `REFUSED` 7 (kicked), closes it, and tells the others `PLAYER_LEFT` with reason 2 (kicked). The game stops and does not join again by itself (its client takes a `REFUSED` 7 or 8 after `WELCOME` too); the player may join again by hand.
+  - **Who a player is**: the **player key** in its `HELLO` (16 random bytes, below), so a mute or ban follows the player whatever name it takes, also over the relay. A split-screen seat is its game's key and its seat number. Only a `HELLO` without a key (an older build) falls back to the name (any ASCII case).
+  - **Ban**: as a kick with `REFUSED` 8 (banned); the server keeps the player's key, and refuses a `HELLO` with that key with `REFUSED` 8 (`lobby_banned`), under any name and from any address; a banned seat's game gets `LOCAL_JOINED` reason 8 for that seat. Only for a player without a key the server keeps the name and, as a last resort, the address too, which keeps out everyone joining directly from behind that router (a household, a carrier's shared address); this PC's own address (127.x, every relayed player's) is never kept. Forgotten when the session empties (on the game's own server: when the host stops hosting).
+  - **Kick or ban of a split-screen seat**: only that seat leaves (the others get `PLAYER_LEFT` kicked, and so does its own game); its game stays in. The host's own seats cannot be targeted (`is_host`).
+  - **Mute**: the server drops the player's `CHAT` (`chat_muted`) or `VOICE_FRAME` (`voice_muted`) and relays them to nobody. Kept by the player's key (the name without one), so a muted player who leaves and comes back, renamed or not, stays muted; kept when the host changes; forgotten when the session empties.
+- **The player key** (`HELLO`, protocol 11): 16 bytes after the previous number (or after what comes before it when that is not sent; the sizes after the nickname, 0, 1, 16, 17, 32, 33, 48 or 49 bytes, tell the fields apart). The game makes it once with a random source and keeps it in `player-key.txt` beside `coop.ini` (32 hex digits; not in `coop.ini`, which the launcher writes anew from its template). The server never relays it. A player who deletes that file (or copies another kit) gets a new key: a ban then holds only by what the host sees next (a new player to ban again). A kit copied to a friend shares its key: delete `player-key.txt` in the copy.
+- `LOBBY_MUTES` (511, server only): `u8` player, `u8` bits (bit 0 voice, bit 1 chat; unknown bits kept): what the host muted of that player now. Sent to everyone on each change, and after `WELCOME` to a joiner for each muted player (the others learn it of a muted player who comes back).
+- `LOBBY_RESULT` (512, server only): `u8` action, `u8` target (as `LOBBY_ACTION`'s), `u8` result (0 done, 1 not host, 2 no such player, 3 the host itself, 4 already so; an unknown result is kept), to the player who sent the `LOBBY_ACTION`.
+- `REFUSED` reasons 7 (kicked) and 8 (banned) are protocol 11's.
+- **Host changes**: when the host leaves, the new host (the lowest number, "Who hosts") has the controls from the server's next `LOBBY_ACTION` on; the bans and mutes stay. There is no "make host": the server runs inside the host's game (hos_coop_host.h), so handing the host role to another game would move the flags' and save's truth there while the server and its controls stay on the first PC, and the session would still end when that game closes.
 ### Local players (protocol 11)
 
 Split screen ([local-coop.md](local-coop.md)): the extra players of one game (seats 1 to 3; seat 0

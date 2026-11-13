@@ -231,6 +231,7 @@ Error encode_body(const Hello& m, Writer& w) {
     if (!valid_player(*m.previous_number)) return Error::bad_value;
     w.u8(*m.previous_number);
   }
+  if (m.player_key) w.bytes(m.player_key->data(), m.player_key->size());
   return Error::none;
 }
 
@@ -995,16 +996,23 @@ Error decode_body(Reader& r, Hello& m) {
   COOP_TRY(r.str(m.game_version, kMaxGameVersionChars));
   COOP_TRY(r.str(m.nickname, kMaxNicknameChars));
   if (m.nickname.empty()) return Error::bad_value;
-  // Nothing more, the key share, the previous number (protocol 10), or both
-  // in that order; anything else is trailing bytes.
-  if (r.left() == kKeyShareBytes || r.left() == kKeyShareBytes + 1) {
+  // Then, each when sent and in this order: the key share (32 bytes), the
+  // previous number (1, protocol 10), the player key (16, protocol 11). The
+  // sizes left tell them apart (0, 1, 16, 17, 32, 33, 48, 49); anything else
+  // is trailing bytes.
+  const auto left_is = [&](std::size_t a, std::size_t b) { return r.left() == a || r.left() == b; };
+  if (left_is(kKeyShareBytes, kKeyShareBytes + 1) ||
+      left_is(kKeyShareBytes + kPlayerKeyBytes, kKeyShareBytes + 1 + kPlayerKeyBytes)) {
     COOP_TRY(read_array(r, m.key_share.emplace()));
   }
-  if (r.left() == 1) {
+  if (left_is(1, 1 + kPlayerKeyBytes)) {
     std::uint8_t n = 0;
     COOP_READ(r.u8(n));
     if (!valid_player(n)) return Error::bad_value;
     m.previous_number = n;
+  }
+  if (r.left() == kPlayerKeyBytes) {
+    COOP_TRY(read_array(r, m.player_key.emplace()));
   }
   return Error::none;
 }
@@ -2388,6 +2396,64 @@ Error decode_body(Reader& r, PvpMode& m) {
   return Error::none;
 }
 
+// LOBBY_ACTION: u8 action (1 to kMaxLobbyAction), u8 target (1 to kMaxPlayers).
+Error encode_body(const LobbyAction& m, Writer& w) {
+  const auto action = static_cast<std::uint8_t>(m.action);
+  if (action == 0 || action > kMaxLobbyAction || !valid_player(m.target)) return Error::bad_value;
+  w.u8(action);
+  w.u8(m.target);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, LobbyAction& m) {
+  m = LobbyAction{};
+  std::uint8_t action = 0;
+  COOP_READ(r.u8(action));
+  COOP_READ(r.u8(m.target));
+  if (action == 0 || action > kMaxLobbyAction || !valid_player(m.target)) return Error::bad_value;
+  m.action = static_cast<LobbyActionKind>(action);
+  return Error::none;
+}
+
+// LOBBY_MUTES: u8 player (1 to kMaxPlayers), u8 flags (lobby_mute bits; unknown kept).
+Error encode_body(const LobbyMutes& m, Writer& w) {
+  if (!valid_player(m.player)) return Error::bad_value;
+  w.u8(m.player);
+  w.u8(m.flags);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, LobbyMutes& m) {
+  m = LobbyMutes{};
+  COOP_READ(r.u8(m.player));
+  COOP_READ(r.u8(m.flags));
+  if (!valid_player(m.player)) return Error::bad_value;
+  return Error::none;
+}
+
+// LOBBY_RESULT: u8 action, u8 target (as LOBBY_ACTION's), u8 result (raw kept).
+Error encode_body(const LobbyResult& m, Writer& w) {
+  const auto action = static_cast<std::uint8_t>(m.action);
+  if (action == 0 || action > kMaxLobbyAction || !valid_player(m.target)) return Error::bad_value;
+  w.u8(action);
+  w.u8(m.target);
+  w.u8(static_cast<std::uint8_t>(m.result));
+  return Error::none;
+}
+
+Error decode_body(Reader& r, LobbyResult& m) {
+  m = LobbyResult{};
+  std::uint8_t action = 0;
+  std::uint8_t result = 0;
+  COOP_READ(r.u8(action));
+  COOP_READ(r.u8(m.target));
+  COOP_READ(r.u8(result));
+  if (action == 0 || action > kMaxLobbyAction || !valid_player(m.target)) return Error::bad_value;
+  m.action = static_cast<LobbyActionKind>(action);
+  m.result = static_cast<LobbyResultCode>(result);
+  return Error::none;
+}
+
 // DIFFICULTY: u8 set by (0 nobody, else a player), u8 automatic (0 or 1),
 // u8 preset, u16 life, u16 damage, u16 count (percent, within the sliders).
 Error encode_body(const Difficulty& m, Writer& w) {
@@ -2728,6 +2794,7 @@ MessageType type_of(const Message& message) {
       MessageType::difficulty,
       MessageType::voice_frame,
       MessageType::mod_list,      MessageType::mod_settings,
+      MessageType::lobby_action,  MessageType::lobby_mutes, MessageType::lobby_result,
       MessageType::local_join,
       MessageType::local_joined,
       MessageType::local_leave,
@@ -2815,6 +2882,9 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::difficulty:
     case MessageType::mod_list:
     case MessageType::mod_settings:
+    case MessageType::lobby_action:
+    case MessageType::lobby_mutes:
+    case MessageType::lobby_result:
     case MessageType::ocarina_note:
     case MessageType::dbno_mode:
     case MessageType::dbno_state:
@@ -2871,6 +2941,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::rejoin_claim:
     case MessageType::object_group:
     case MessageType::fish_lure:
+    case MessageType::lobby_action:
     case MessageType::local_join:
     case MessageType::local_leave:
     case MessageType::local_sample:
@@ -2886,6 +2957,8 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::object_owner:
     case MessageType::handover_ask:
     case MessageType::flag_origin:
+    case MessageType::lobby_mutes:
+    case MessageType::lobby_result:
     case MessageType::local_joined:
       return from == Sender::server;
     case MessageType::ping:
@@ -3104,6 +3177,9 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::voice_frame: return decode_as<VoiceFrame>(body, out);
     case MessageType::mod_list: return decode_as<ModList>(body, out);
     case MessageType::mod_settings: return decode_as<ModSettings>(body, out);
+    case MessageType::lobby_action: return decode_as<LobbyAction>(body, out);
+    case MessageType::lobby_mutes: return decode_as<LobbyMutes>(body, out);
+    case MessageType::lobby_result: return decode_as<LobbyResult>(body, out);
     case MessageType::local_join: return decode_as<LocalJoin>(body, out);
     case MessageType::local_joined: return decode_as<LocalJoined>(body, out);
     case MessageType::local_leave: return decode_as<LocalLeave>(body, out);

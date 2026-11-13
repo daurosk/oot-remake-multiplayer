@@ -129,6 +129,9 @@ enum class MessageType : std::uint16_t {
   voice_frame = 420,  // 420 to 424: proximity voice chat (docs/protocol.md, "Voice")
   mod_list = 490,  // 490 to 499: mods (docs/protocol.md, "Mods")
   mod_settings = 491,
+  lobby_action = 510,  // 510 to 519: the Lobby's host moderation (docs/protocol.md, "Lobby")
+  lobby_mutes = 511,
+  lobby_result = 512,
   local_join = 460,  // 460 to 469: split screen's extra players (docs/protocol.md, "Local players")
   local_joined = 461,
   local_leave = 462,
@@ -184,6 +187,12 @@ inline constexpr std::uint8_t kPlayerSelf = 0;
 // HELLO, client to server. The protocol version is always the first two bytes
 // of the body, in every protocol version, so a server can refuse a client
 // whose HELLO it cannot otherwise read (see hello_protocol_version).
+// A player's own key (protocol 11, the Lobby): 16 random bytes a kit makes
+// once and keeps (player-key.txt beside coop.ini), so the host's mutes and
+// bans follow the player, not the name. Only the server sees it.
+inline constexpr std::size_t kPlayerKeyBytes = 16;
+using PlayerKey = std::array<std::uint8_t, kPlayerKeyBytes>;
+
 struct Hello {
   std::uint16_t protocol_version = kProtocolVersion;
   std::string build_id;       // emulator or recomp, and its version
@@ -200,6 +209,9 @@ struct Hello {
   // does not swap the players' numbers (and with them their colours and
   // every object's owner). Nothing on a game's first join.
   std::optional<std::uint8_t> previous_number{};
+  // Protocol 11: the player's own key (PlayerKey), 16 bytes after the
+  // previous number (or after what comes before it when that is not sent).
+  std::optional<PlayerKey> player_key{};
   bool operator==(const Hello&) const = default;
 };
 
@@ -226,6 +238,13 @@ enum class RefuseReason : std::uint8_t {
   name_taken = 4,
   bad_name = 5,  // empty or nothing but spaces
   bad_password = 6,  // the server has a join password and the JOIN_PROOF did not match
+  // Protocol 11, the Lobby (docs/protocol.md "Lobby"): the host took this
+  // player out. Sent after WELCOME too, right before the server closes the
+  // connection; the game then stops and does not join again by itself.
+  kicked = 7,
+  // The host banned this player for the rest of the session: as kicked, and
+  // a HELLO with that name or from that address is refused with this.
+  banned = 8,
   // Never sent: the game's own refusal of a server that did not encrypt
   // although the game has a join password (docs/protocol.md "Encrypted
   // traffic"), so nobody on the path can stand in for a no-password server.
@@ -1512,6 +1531,58 @@ struct ModSettings {
   bool operator==(const ModSettings&) const = default;
 };
 
+// The Lobby (protocol 11, docs/protocol.md "Lobby"): the host's moderation,
+// all of it carried out by the server, which takes a LOBBY_ACTION from the
+// host only. A player's own (local) mutes never reach the wire.
+enum class LobbyActionKind : std::uint8_t {
+  kick = 1,          // out now; may join again
+  ban = 2,           // out, and the name and address refused until the session ends
+  mute_voice = 3,    // the server stops relaying the player's VOICE_FRAME
+  unmute_voice = 4,
+  mute_chat = 5,     // the server drops the player's CHAT
+  unmute_chat = 6,
+};
+inline constexpr std::uint8_t kMaxLobbyAction = 6;
+
+// LOBBY_ACTION, the host to the server: do `action` to player `target`.
+struct LobbyAction {
+  LobbyActionKind action = LobbyActionKind::kick;
+  std::uint8_t target = 1;  // 1 to kMaxPlayers
+  bool operator==(const LobbyAction&) const = default;
+};
+
+// LOBBY_MUTES bits.
+namespace lobby_mute {
+inline constexpr std::uint8_t voice = 1u << 0;
+inline constexpr std::uint8_t chat = 1u << 1;
+}  // namespace lobby_mute
+
+// LOBBY_MUTES, the server to everyone: what the host has muted of a player
+// now (the Lobby shows it). Sent to all on each change and, for each muted
+// player, to a joiner after WELCOME. Unknown bits are kept.
+struct LobbyMutes {
+  std::uint8_t player = 1;  // 1 to kMaxPlayers
+  std::uint8_t flags = 0;   // lobby_mute bits
+  bool operator==(const LobbyMutes&) const = default;
+};
+
+// What came of a LOBBY_ACTION. Raw value kept on decode.
+enum class LobbyResultCode : std::uint8_t {
+  done = 0,
+  not_host = 1,    // only the host may do it
+  no_player = 2,   // nobody has that number
+  is_host = 3,     // the host cannot do it to itself
+  unchanged = 4,   // it was so already (muted twice)
+};
+
+// LOBBY_RESULT, the server to the player who sent a LOBBY_ACTION.
+struct LobbyResult {
+  LobbyActionKind action = LobbyActionKind::kick;
+  std::uint8_t target = 1;
+  LobbyResultCode result = LobbyResultCode::done;
+  bool operator==(const LobbyResult&) const = default;
+};
+
 // Split screen (docs/protocol.md, "Local players"): the extra players of one
 // game, seats 1 to kMaxLocalSeats (seat 0 is the connection's own player).
 inline constexpr std::uint8_t kMaxLocalSeats = 3;
@@ -1568,8 +1639,8 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim, DungeonEvent, PlayerRide,
                              OcarinaNote, PlatformClock, PlatformCounter,
                              DbnoMode, DbnoStatus, DbnoRevive, Difficulty, VoiceFrame,
-                             ModList, ModSettings, LocalJoin, LocalJoined,
-                             LocalLeave, LocalSample, LocalMessage>;
+                             ModList, ModSettings, LobbyAction, LobbyMutes, LobbyResult,
+                             LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage>;
 
 MessageType type_of(const Message& message);
 

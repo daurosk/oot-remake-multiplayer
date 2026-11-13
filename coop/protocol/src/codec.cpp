@@ -2119,6 +2119,103 @@ Error decode_body(Reader& r, PvpHurt& m) {
   return Error::none;
 }
 
+// DBNO_MODE: u8 set by (0 server, 1 to 16), u8 mode (0 off, 1 on), u8 bleed-out
+// seconds, u8 revive tenths of a second, u8 revive life (quarter hearts).
+Error check_dbno_mode(const DbnoMode& m) {
+  if (m.set_by > kMaxPlayers || m.bleed_s < kDbnoMinBleedS || m.bleed_s > kDbnoMaxBleedS ||
+      m.revive_tenths < kDbnoMinReviveTenths || m.revive_tenths > kDbnoMaxReviveTenths ||
+      m.revive_life < kDbnoMinReviveLife || m.revive_life > kDbnoMaxReviveLife) {
+    return Error::bad_value;
+  }
+  return Error::none;
+}
+
+Error encode_body(const DbnoMode& m, Writer& w) {
+  COOP_TRY(check_dbno_mode(m));
+  w.u8(m.set_by);
+  w.u8(m.on ? 1 : 0);
+  w.u8(m.bleed_s);
+  w.u8(m.revive_tenths);
+  w.u8(m.revive_life);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, DbnoMode& m) {
+  m = DbnoMode{};
+  std::uint8_t mode = 0;
+  COOP_READ(r.u8(m.set_by));
+  COOP_READ(r.u8(mode));
+  COOP_READ(r.u8(m.bleed_s));
+  COOP_READ(r.u8(m.revive_tenths));
+  COOP_READ(r.u8(m.revive_life));
+  if (mode > 1) return Error::bad_value;
+  m.on = mode == 1;
+  return check_dbno_mode(m);
+}
+
+// DBNO_STATE: u8 player, u8 state (0 up, 1 downed, 2 out), u16 bleed-out
+// tenths left, u8 reviver (0 nobody; not the player), u8 progress. Only a
+// downed player has time left, and only one with a reviver has progress.
+Error check_dbno_status(const DbnoStatus& m) {
+  if (!valid_player_or_self(m.player_number) || m.state > DbnoState::out ||
+      m.left_tenths > kDbnoMaxLeftTenths || m.reviver > kMaxPlayers) {
+    return Error::bad_value;
+  }
+  if (m.state != DbnoState::downed && (m.left_tenths != 0 || m.reviver != 0)) return Error::bad_value;
+  if (m.reviver == 0 && m.progress != 0) return Error::bad_value;
+  if (m.reviver != 0 && m.reviver == m.player_number) return Error::bad_value;
+  return Error::none;
+}
+
+Error encode_body(const DbnoStatus& m, Writer& w) {
+  COOP_TRY(check_dbno_status(m));
+  w.u8(m.player_number);
+  w.u8(static_cast<std::uint8_t>(m.state));
+  w.u16(m.left_tenths);
+  w.u8(m.reviver);
+  w.u8(m.progress);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, DbnoStatus& m) {
+  m = DbnoStatus{};
+  std::uint8_t state = 0;
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(state));
+  COOP_READ(r.u16(m.left_tenths));
+  COOP_READ(r.u8(m.reviver));
+  COOP_READ(r.u8(m.progress));
+  if (state > static_cast<std::uint8_t>(DbnoState::out)) return Error::bad_value;
+  m.state = static_cast<DbnoState>(state);
+  return check_dbno_status(m);
+}
+
+// DBNO_REVIVE: u8 player, u8 target (1 to 16, not the player), u8 holding (0, 1).
+Error encode_body(const DbnoRevive& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number) || !valid_player(m.target) ||
+      m.target == m.player_number) {
+    return Error::bad_value;
+  }
+  w.u8(m.player_number);
+  w.u8(m.target);
+  w.u8(m.holding ? 1 : 0);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, DbnoRevive& m) {
+  m = DbnoRevive{};
+  std::uint8_t holding = 0;
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(m.target));
+  COOP_READ(r.u8(holding));
+  if (!valid_player_or_self(m.player_number) || !valid_player(m.target) ||
+      m.target == m.player_number || holding > 1) {
+    return Error::bad_value;
+  }
+  m.holding = holding == 1;
+  return Error::none;
+}
+
 // BOSS_ROOM: u8 player, scene, u8 room (0 to 15), u8 state (1 to 5).
 Error encode_body(const BossRoom& m, Writer& w) {
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
@@ -2251,6 +2348,7 @@ MessageType type_of(const Message& message) {
       MessageType::ocarina_note,
       MessageType::platform_clock,
       MessageType::platform_counter,
+      MessageType::dbno_mode,   MessageType::dbno_state, MessageType::dbno_revive,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -2291,6 +2389,7 @@ std::uint8_t channel_of(MessageType type) {
     case MessageType::drop_ask:
     case MessageType::pvp_hit:
     case MessageType::pvp_hurt:
+    case MessageType::dbno_revive:
       return kChannelOwnership;
     default:
       return kChannelSession;
@@ -2327,6 +2426,8 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::save_part:
     case MessageType::pvp_mode:
     case MessageType::ocarina_note:
+    case MessageType::dbno_mode:
+    case MessageType::dbno_state:
       return channel == kChannelSession;
     case MessageType::flag_set:
     case MessageType::flag_state:
@@ -2358,6 +2459,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::drop_ask:
     case MessageType::pvp_hit:
     case MessageType::pvp_hurt:
+    case MessageType::dbno_revive:
       return channel == kChannelOwnership;
     case MessageType::test_payload:
       return channel == kChannelSession || channel == kChannelPlayerSamples;
@@ -2425,6 +2527,9 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::pvp_hit:
     case MessageType::pvp_hurt:
     case MessageType::ocarina_note:
+    case MessageType::dbno_mode:
+    case MessageType::dbno_state:
+    case MessageType::dbno_revive:
       return true;
   }
   return false;
@@ -2461,7 +2566,8 @@ auto* player_field(M& message) {
                       std::is_same_v<T, PlayerRide> ||
                       std::is_same_v<T, OcarinaNote> ||
                       std::is_same_v<T, PlatformClock> ||
-                      std::is_same_v<T, PlatformCounter>) {
+                      std::is_same_v<T, PlatformCounter> ||
+                      std::is_same_v<T, DbnoStatus> || std::is_same_v<T, DbnoRevive>) {
           field = &m.player_number;
         }
       },
@@ -2497,6 +2603,9 @@ bool set_sender(Message& message, std::uint8_t player) {
   // Nor hit itself or be hurt by itself (PvP).
   if (const auto* h = std::get_if<PvpHit>(&message); h && h->victim == player) return false;
   if (const auto* h = std::get_if<PvpHurt>(&message); h && h->attacker == player) return false;
+  // Nor revive itself (down but not out).
+  if (const auto* d = std::get_if<DbnoRevive>(&message); d && d->target == player) return false;
+  if (const auto* d = std::get_if<DbnoStatus>(&message); d && d->reviver == player) return false;
   *field = player;
   return true;
 }
@@ -2556,6 +2665,9 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::pvp_mode: return decode_as<PvpMode>(body, out);
     case MessageType::pvp_hit: return decode_as<PvpHit>(body, out);
     case MessageType::pvp_hurt: return decode_as<PvpHurt>(body, out);
+    case MessageType::dbno_mode: return decode_as<DbnoMode>(body, out);
+    case MessageType::dbno_state: return decode_as<DbnoStatus>(body, out);
+    case MessageType::dbno_revive: return decode_as<DbnoRevive>(body, out);
     case MessageType::flag_snapshot: return decode_as<FlagSnapshot>(body, out);
     case MessageType::host: return decode_as<Host>(body, out);
     case MessageType::object_present: return decode_as<ObjectPresent>(body, out);

@@ -113,6 +113,14 @@ inline std::vector<Message> object_messages() {
   all.push_back(PvpHurt{0, 1, 4, 8, 0});
   all.push_back(PvpHurt{2, 4, 0, 12, pvp_hurt::guarded});
   all.push_back(PvpHurt{1, 3, 6, 0, pvp_hurt::died});
+  all.push_back(DbnoMode{});
+  all.push_back(DbnoMode{2, false, kDbnoMaxBleedS, kDbnoMinReviveTenths, kDbnoMaxReviveLife});
+  all.push_back(DbnoStatus{});
+  all.push_back(DbnoStatus{0, DbnoState::downed, 450, 0, 0});
+  all.push_back(DbnoStatus{3, DbnoState::downed, kDbnoMaxLeftTenths, 1, 255});
+  all.push_back(DbnoStatus{2, DbnoState::out, 0, 0, 0});
+  all.push_back(DbnoRevive{0, 2, true});
+  all.push_back(DbnoRevive{4, 1, false});
   return all;
 }
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// Chat notices (docs/setup.md, "Chat notices"; dauro, 2026-11-11: "Notify
+// Chat notices (docs/setup.md, "Chat notices"; Alex, 2026-11-11: "Notify
 // players in the chat when a player does something that affects them"). The
 // shared values another player's change wrote into our game (FlagWatcher::
 // take_received) become short local chat lines: "Tobi got the Fairy

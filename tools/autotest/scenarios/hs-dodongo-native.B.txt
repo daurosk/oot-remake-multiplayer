@@ -1,0 +1,44 @@
+# hs-dodongo-native, B (see hs-dodongo-native.A.txt): B's copy of King Dodongo takes A's verbs; B throws its
+# own bombs between A's and swings at his stunned head.
+mark start
+warp DodongoStage DodongoStage
+wait 1500
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+give bombs
+wait 120
+assign Bomb
+wait 120
+mark b-ready
+wait 2600               # A's first bomb comes first
+press ZL 10
+wait 30
+press ZR
+wait 120
+hold ZL+LSTICK_UP 60
+press A
+mark b-bomb1
+wait 300
+hold ZL+LSTICK_UP 90    # locked on: up to his head while he is stunned
+hold ZL+Y 8             # the sword is Y
+wait 12
+hold ZL+Y 8
+mark b-hit1
+wait 1200
+press ZR
+wait 120
+hold ZL+LSTICK_UP 60
+press A
+mark b-bomb2
+wait 1800
+mark b-babies
+wait 2400
+mark end

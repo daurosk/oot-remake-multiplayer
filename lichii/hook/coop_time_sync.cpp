@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_time_sync.h"
 
+#include <utility>
+
 #include <cstdlib>
 #include <variant>
 
@@ -40,7 +42,14 @@ void Sync::Loading(std::uint64_t now_us) {
     load_at_ = now_us;
 }
 
+void Sync::GameSet(std::uint32_t seconds) {
+    set_events_ = true;
+    if (seconds < proto::kSecondsPerDay) game_set_ = seconds;
+}
+
 void Sync::Reset() {
+    game_set_.reset();
+    game_set_at_.reset();
     last_.reset();
     last_at_ = 0;
     sent_at_ = 0;
@@ -82,13 +91,28 @@ std::optional<std::uint32_t> Sync::Tick(std::optional<std::uint32_t> now, bool h
     if (host) rejoin_ = false;
 
     // Our own clock jumped (not by our set, not a guest's load): everyone takes it.
-    const bool jumped =
+    // With the game's sets as events (GameSet): the set itself, when it moved
+    // the clock we last read; a jump read soon after is the same one.
+    const bool read_jump =
         last_ && static_cast<std::uint32_t>(std::abs(Ahead(*last_, *now))) > kJumpSeconds;
+    const std::optional<std::uint32_t> game_set = std::exchange(game_set_, std::nullopt);
+    const bool covered = game_set_at_ && now_us >= *game_set_at_ && now_us - *game_set_at_ < kSetCoversUs;
+    bool jumped = read_jump;
+    std::uint32_t jumped_to = *now;
+    if (game_set) {
+        game_set_at_ = now_us;
+        jumped = last_ && static_cast<std::uint32_t>(std::abs(Ahead(*last_, *game_set))) > kDriftSeconds;
+        jumped_to = *game_set;
+    } else if (read_jump && covered) {
+        jumped = false;
+    } else if (read_jump && set_events_) {
+        ++unnamed_jumps_;
+    }
     if (jumped && !quiet && after_load) {
         rejoin_ = true;  // a guest's reload: not the group's time; take the host's again
     } else if (jumped && !quiet) {
         proto::TimeOfDay t;
-        t.seconds = *now;
+        t.seconds = jumped_to;
         t.flags = proto::time_of_day::jump;
         send.emplace_back(t);
         sent_at_ = now_us;

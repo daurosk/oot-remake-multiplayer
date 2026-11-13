@@ -27,6 +27,7 @@ add_executable(coop_tests
   host/flags_test.cpp
   host/flag_watcher_test.cpp
   host/game_flags_test.cpp
+  host/flag_events_test.cpp
   host/game_items_test.cpp
   host/notify_test.cpp
   host/save_transfer_test.cpp
@@ -54,6 +55,7 @@ add_executable(coop_tests
   lichii/dungeon_test.cpp
   lichii/platforms_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_platforms.cpp
   lichii/counters_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_counters.cpp
+  lichii/actor_events_test.cpp
   lichii/quest_test.cpp
   lichii/story_test.cpp
   lichii/quests_test.cpp
@@ -69,6 +71,7 @@ add_executable(coop_tests
   lichii/game_build_test.cpp
   lichii/game_scan_test.cpp
   lichii/boss_test.cpp
+  lichii/boss_native_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_boss_native.cpp
   lichii/teleport_test.cpp
   lichii/pvp_test.cpp
   lichii/live_events_test.cpp

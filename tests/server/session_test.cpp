@@ -4069,8 +4069,8 @@ std::size_t count_to(const Harness& h, ConnectionId id) {
 }  // namespace
 
 TEST_CASE("16 players: all take numbers 1 to 16, the 17th is told the server is full") {
-  // 4 by default until the games' side takes 16; the protocol takes 16.
-  CHECK(SessionConfig{}.max_players == 4);
+  // 16 by default, now that the games' side takes 16 too (sixteen-hook-b).
+  CHECK(SessionConfig{}.max_players == 16);
   SessionConfig sixteen;
   sixteen.max_players = 16;
   Harness h(sixteen);

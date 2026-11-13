@@ -47,7 +47,7 @@ std::optional<AddressRange> parse_address_range(std::string_view text);
 std::uint32_t ipv4_of(std::uint32_t enet_host);
 
 // Players a server takes unless told otherwise (coop_server --max-players).
-inline constexpr std::uint8_t kDefaultMaxPlayers = 4;
+inline constexpr std::uint8_t kDefaultMaxPlayers = 16;
 
 struct SessionConfig {
   // The game build every player must run. Empty: the first player to join

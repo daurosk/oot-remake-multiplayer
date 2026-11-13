@@ -30,7 +30,7 @@ constexpr std::uint64_t kMinGapUs = 100'000;    // at most ten PLAYER_LIFE a sec
 constexpr std::uint64_t kRepeatUs = 5'000'000;  // and once every 5 s anyway
 
 std::mutex g_mutex;
-std::array<std::optional<Life>, 5> g_lives;  // by player number, 1 to 4
+std::array<std::optional<Life>, coop::protocol::kMaxPlayers + 1> g_lives;  // by player number, 1 to kMaxPlayers
 std::atomic<bool> g_resend{false};
 
 // Present thread only.
@@ -105,7 +105,7 @@ void OnEvent(const coop::net::Event& event) {
     switch (event.kind) {
     case EventKind::message:
         if (const auto* m = std::get_if<coop::protocol::PlayerLife>(&event.message)) {
-            if (m->player_number >= 1 && m->player_number <= 4) {
+            if (m->player_number >= 1 && m->player_number <= coop::protocol::kMaxPlayers) {
                 std::lock_guard lock(g_mutex);
                 g_lives[m->player_number] = Life{m->life, m->max_life};
             }
@@ -115,7 +115,7 @@ void OnEvent(const coop::net::Event& event) {
         g_resend = true;  // the newcomer has not seen our hearts
         break;
     case EventKind::player_left:
-        if (event.player >= 1 && event.player <= 4) {
+        if (event.player >= 1 && event.player <= coop::protocol::kMaxPlayers) {
             std::lock_guard lock(g_mutex);
             g_lives[event.player].reset();
         }
@@ -168,7 +168,7 @@ void Frame(coop::host::Session* session) {
 }
 
 std::optional<Life> PlayerLife(std::uint8_t player) {
-    if (player < 1 || player > 4) {
+    if (player < 1 || player > coop::protocol::kMaxPlayers) {
         return std::nullopt;
     }
     std::lock_guard lock(g_mutex);

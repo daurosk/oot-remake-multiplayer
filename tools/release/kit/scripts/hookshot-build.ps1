@@ -227,6 +227,12 @@ if (-not $Game -and (-not $gameReady -or $Rebuild -or $CheckOnly)) {
         $ErrorActionPreference = 'Stop'
         if ($found) { $Game = $found.Substring(6); Write-Host "Found your game: $Game" }
     }
+    # The game files given the last time (hookshot\game-files.txt): asked only once.
+    $last = Join-Path $hs 'game-files.txt'
+    if (-not $Game -and (Test-Path -LiteralPath $last)) {
+        $remembered = "$(Get-Content -LiteralPath $last -TotalCount 1)".Trim()
+        if ($remembered -and (Test-Path -LiteralPath $remembered)) { $Game = $remembered; Write-Host "Your game (from the last time): $Game" }
+    }
     if (-not $Game) {
         Write-Host ''
         Write-Host 'Drag your game''s .nup file (or its romfs folder) into this window and press Enter:'
@@ -373,9 +379,29 @@ if ($packFrom -and (Test-Path -LiteralPath $packFrom) -and (Test-Path -LiteralPa
     Write-Host '  No game files to build the puppet pack from: run this again with -Game <your .nup>.' -ForegroundColor Yellow
 }
 
+# A desktop shortcut to Play-OoT-Coop.bat, once, for the kit's own game (not for a game hs.py builds elsewhere).
+$launcher = Join-Path $kit 'Play-OoT-Coop.bat'
+if (-not $PSBoundParameters.ContainsKey('Out') -and -not $Tools -and (Test-Path -LiteralPath $launcher) -and
+    -not $env:OOT_COOP_NO_SHORTCUT) {
+    try {
+        $desktop = [Environment]::GetFolderPath('Desktop')
+        $link = Join-Path $desktop 'Play OoT Co-op.lnk'
+        if ($desktop -and -not (Test-Path -LiteralPath $link)) {
+            $shell = New-Object -ComObject WScript.Shell
+            $s = $shell.CreateShortcut($link)
+            $s.TargetPath = $launcher
+            $s.WorkingDirectory = $kit
+            $s.IconLocation = "$exe,0"
+            $s.Description = 'OoT co-op on Hookshot: host or join, updates itself'
+            $s.Save()
+            Write-Host "  A shortcut 'Play OoT Co-op' is on your desktop."
+        }
+    } catch { Write-Host "  (no desktop shortcut: $($_.Exception.Message))" }
+}
+
 Write-Host ''
-Write-Host 'Done. To play co-op on Hookshot: Host-Hookshot.bat hosts, Join-Hookshot.bat joins (as Host.bat and' -ForegroundColor Green
+Write-Host 'Done. To play co-op on Hookshot: Play-OoT-Coop.bat (or the desktop shortcut) hosts or joins; Host-Hookshot.bat hosts, Join-Hookshot.bat joins (as Host.bat and' -ForegroundColor Green
 Write-Host "  Join.bat, with the Hookshot game in place of the emulator). The game: $exe"
 Write-Host "  Its hookshot_log.txt says 'coop: module loaded' and 'coop: connected'. HOS_COOP=0 starts it without co-op."
-Write-Host '  Run this again after Update.bat: it only reinstalls co-op unless the update needs a new build.'
+Write-Host '  Updates come by themselves: the launchers check for a new version and bring the game up to date.'
 exit 0

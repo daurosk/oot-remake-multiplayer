@@ -346,3 +346,11 @@ TEST_CASE("host menu: CopyText cuts to fit and always ends the string") {
     CoopHostMenu::CopyText(out, sizeof out, "ab");
     CHECK(std::string(out) == "ab");
 }
+
+TEST_CASE("host menu: Host takes up to 16 players by default, as coop_server") {
+    CHECK(CoopHostMenu::HostMaxPlayers(0) == 16);  // none asked: the server's default (kDefaultMaxPlayers)
+    CHECK(CoopHostMenu::HostMaxPlayers(4) == 4);
+    CHECK(CoopHostMenu::HostMaxPlayers(16) == 16);
+    CHECK(CoopHostMenu::HostMaxPlayers(40) == 16);  // more than the protocol has numbers for
+}
+

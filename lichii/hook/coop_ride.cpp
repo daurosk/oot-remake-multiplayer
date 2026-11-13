@@ -159,7 +159,7 @@ std::optional<proto::PlayerRide> Rider::Tick(bool riding, const std::optional<Ve
 // ---------------------------------------------------------------- Rides
 
 void Rides::Receive(const proto::PlayerRide& ride, std::uint64_t now_us) {
-    if (ride.player_number < 1 || ride.player_number > 4) {
+    if (ride.player_number < 1 || ride.player_number > proto::kMaxPlayers) {
         return;
     }
     std::lock_guard lock(mutex_);
@@ -190,7 +190,7 @@ std::vector<CoopSpawn::Copy> Rides::Plan(const std::optional<std::string>& scene
     }
     std::map<std::uint8_t, bool> shown;
     for (const auto& r : remotes) {
-        if (r.number < 1 || r.number > 4) {
+        if (r.number < 1 || r.number > proto::kMaxPlayers) {
             continue;
         }
         const auto it = rides.find(r.number);

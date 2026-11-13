@@ -4,7 +4,7 @@ Online co-op for the Ocarina of Time remake on PC.
 
 The goal of this project is working multiplayer in two stages:
 
-1. **Emulator first.** Add co-op to the Lichii emulator (Frizti's build), where the game already runs well. Two to four players see each other in the world, share progress, and fight the same enemies.
+1. **Emulator first.** Add co-op to the Lichii emulator (Frizti's build), where the game already runs well. Up to 16 players see each other in the world, share progress, and fight the same enemies.
 2. **Then a recomp.** Carry the same co-op design into a native PC recompilation of the game. This has started: co-op runs on [Hookshot](https://github.com/NotRexed/Hookshot) as an experiment, with the same code, protocol and server.
 
 Both stages share one design, one wire protocol and one server, so what is learned on the emulator carries straight over to the recomp.

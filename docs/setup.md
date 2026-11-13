@@ -25,6 +25,8 @@ Co-op now also runs on [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexe
    - adds co-op's patch and builds the game from your files: **10 to 45 minutes the first time**, with the window showing each stage;
    - puts co-op in it: `hookshot_coop.dll`, the co-op settings (`coop.ini` beside `hookshot.exe`) and the puppet pack (the other players' Link and the tunic colours), made from your own game files as `make-puppet-pack.cmd` makes them for the emulator.
    It ends with "Done." and the game's path, in the kit's `hookshot\game` folder (`-Out <folder>` puts it elsewhere).
+**The easy way:** double-click `Play-OoT-Coop.bat` (after the first build, also the **Play OoT Co-op** shortcut on your desktop). It asks **H** (host) or **J** (join), remembering your last answer. On its first run it builds the Hookshot game itself: it asks for your game's `.nup` once and remembers it. After that it keeps itself up to date: when a new co-op version is out it asks once (or updates by itself with `auto_update = yes` in `coop-options.ini`). Then it puts the new co-op into the game, in seconds. It builds the game again only when the update moves to a new Hookshot (it says so, about 15 minutes). `Host-Hookshot.bat` and `Join-Hookshot.bat` do the same, without the question.
+
 4. **First start, as the host.** Double-click `Host-Hookshot.bat`. It works like `Host.bat`: it asks for your player name, starts the co-op server, makes a new random join password, asks your router to open the port and copies an **invite code** for your friends (see [Playing over the internet](play-online.md#the-easy-way-hostbat-and-an-invite-code)). Then it starts the Hookshot game instead of the emulator.
 5. **Joining.** Your friends double-click `Join-Hookshot.bat` (Hookshot) or `Join.bat` (emulator) and paste the invite code. Invite codes have not been tested on Hookshot yet; joining by address on the same network or a VPN works the same as on the emulator ([play-lan.md](play-lan.md)).
 6. **Check it works.** `Join-Hookshot.bat` does not watch for the connection the way `Join.bat` does. Open `hookshot_log.txt` beside `hookshot.exe`: it says `coop: module loaded`, then `coop: connected`. In the game the other players show as Link with their name tags, and **T** opens the chat box (see [Co-op on Hookshot](#co-op-on-hookshot)).
@@ -55,7 +57,7 @@ While the chat box or the cheats panel is open, the game reads no keys. Hookshot
 
 ### Hookshot troubleshooting
 
-- **"No co-op Hookshot game in ... yet"** from `Host-Hookshot.bat` or `Join-Hookshot.bat`: run `Build-Hookshot-Coop.bat` first, and let it finish.
+- **"No co-op Hookshot game in ..."** from `Host-Hookshot.bat`, `Join-Hookshot.bat` or `Play-OoT-Coop.bat`: the build they start by themselves did not finish (the window says why). Run `Build-Hookshot-Coop.bat` and let it finish.
 - **The build stops on a download or a SHA-256 that does not match:** run it again (a download may have broken off). If it keeps failing, report it with the window's text.
 - **Not enough space:** it warns below about 60 GB free. Free some space, or move the kit to a bigger drive.
 - **The game closes at the start or the screen goes black:** check that your card has mesh shaders (above) and that its driver is up to date. Hookshot's own open problems (crashes outside Kokiri Forest on some PCs, crashes on some AMD cards, a device loss soon after the start) are listed on [Hookshot's page](https://github.com/NotRexed/Hookshot); play on the emulator meanwhile.
@@ -89,7 +91,7 @@ You get:
 | `collect-logs.cmd` | Zips your logs to send with a bug report (addresses, passwords and names masked) |
 | `Update.bat` | Updates the kit to the newest release ([Updating](#updating)) |
 | `check-hosting.cmd` | Says why friends cannot reach your server, and what to change ([play-online.md](play-online.md)) |
-| `Build-Hookshot-Coop.bat`, `Host-Hookshot.bat`, `Join-Hookshot.bat`, `hookshot\` | Hookshot, experimental ([above](#play-on-hookshot-experimental)) |
+| `Play-OoT-Coop.bat`, `Build-Hookshot-Coop.bat`, `Host-Hookshot.bat`, `Join-Hookshot.bat`, `hookshot\` | Hookshot, experimental ([above](#play-on-hookshot-experimental)) |
 | `start-server.cmd`, `play.cmd` | The server alone, and the emulator alone (for advanced setups) |
 | `emulator\` | The patched emulator; `emulator\user\` holds all its data |
 | `SOURCE.txt`, `licenses\`, `THIRD_PARTY_NOTICES.md` | Where the source is, and the licences |

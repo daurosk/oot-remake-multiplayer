@@ -520,5 +520,65 @@ try {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# --- Hookshot: what the kit's game needs before it starts, and the port check-hosting checks ---
+$hk = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-hs-need-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+try {
+    Write-File (Join-Path $hk 'hookshot\PIN') "repo=https://github.com/NotRexed/Hookshot`ncommit=4aee23659b9436dab2cd7be1ac07333c06246b7c`n"
+    Write-File (Join-Path $hk 'hookshot\TOOLS.txt') "release=v2.2.0-rc.1`nsetup_sha256=b3`n"
+    Write-File (Join-Path $hk 'hookshot\patches\0001-a.patch') "one`n"
+    Write-File (Join-Path $hk 'hookshot\hookshot_coop.dll') 'MODULE 1'
+    Check ((Get-KitHookshotNeed $hk) -eq 'game') 'hookshot need: no game built yet -> game'
+    $g = Join-Path $hk 'hookshot\game'
+    Write-File (Join-Path $g 'hookshot.exe') 'exe'
+    Write-File (Join-Path $g 'coop-built-from.txt') (Get-KitHookshotStamp $hk)
+    Write-File (Join-Path $g 'hookshot_coop.dll') 'MODULE 1'
+    Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: no puppet pack -> module (the pack is made)'
+    $pack = Join-Path $g 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json'
+    Write-File $pack '{"sound": true, "tunics": {"red": ["x"]}}'
+    Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: the game as the kit wants it -> nothing'
+    Write-File (Join-Path $hk 'hookshot\hookshot_coop.dll') 'MODULE 2'
+    Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: a new module -> module (seconds)'
+    Write-File (Join-Path $g 'hookshot_coop.dll') 'MODULE 2'
+    Write-File (Join-Path $hk 'hookshot\patches\0002-b.patch') "two`n"
+    Check ((Get-KitHookshotNeed $hk) -eq 'patches') 'hookshot need: a patch changed, the same pin -> patches'
+    Write-File (Join-Path $g 'coop-built-from.txt') (Get-KitHookshotStamp $hk)
+    Write-File (Join-Path $hk 'hookshot\PIN') "repo=x`ncommit=0000000000000000000000000000000000000000`n"
+    Check ((Get-KitHookshotNeed $hk) -eq 'pin') 'hookshot need: another pin -> pin (a full build)'
+    Write-File (Join-Path $hk 'hookshot\PIN') "repo=x`ncommit=4aee23659b9436dab2cd7be1ac07333c06246b7c`n"
+    Write-File $pack '{"sound": false}'
+    Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: a pack the kit would make again -> module'
+    Write-File $pack '{"sound": true, "tunics": {"red": ["x"]}}'
+    Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: up to date again'
+    Check ((Test-KitPuppetPackStale (Join-Path $hk 'none\coop_puppet.json') (Join-Path $hk 'no-tool')) -and
+        -not (Test-KitPuppetPackStale $pack (Join-Path $hk 'no-tool'))) 'pack stale: a missing pack yes, a current one no'
+    # the game somewhere else (hs.py, -Out): game-folder.txt, and a builder's bin\ layout
+    $other = Join-Path $hk 'elsewhere'
+    Write-File (Join-Path $hk 'hookshot\game-folder.txt') "$other`n"
+    Check ((Get-KitHookshotGame $hk) -eq $other -and (Get-KitHookshotNeed $hk) -eq 'game') 'hookshot need: game-folder.txt is followed'
+    Write-File (Join-Path $other 'bin\hookshot.exe') 'exe'
+    Check ((Get-KitHookshotExe $other) -eq (Join-Path $other 'bin\hookshot.exe')) 'hookshot exe: bin\ first'
+    foreach ($n in 'game', 'pin', 'patches', 'module') { Check ([bool](Get-KitHookshotNeedText $n)) "hookshot need text: $n" }
+    Check ((Get-KitHookshotNeedText 'pin') -match 'about 15 minutes') 'hookshot need text: a pin move says about 15 minutes'
+    Check (-not (Get-KitHookshotNeedText '')) 'hookshot need text: nothing to say when nothing is needed'
+
+    # check-hosting's port (Revirie's bug: Host-Hookshot.bat writes the Hookshot game's coop.ini, not the emulator's)
+    Remove-Item -LiteralPath (Join-Path $hk 'hookshot\game-folder.txt')
+    $emuIni = Join-Path $hk 'emulator\user\config\coop.ini'
+    $hsIni = Join-Path $g 'coop.ini'
+    Check ((Get-KitHostPort $hk @() 27510) -eq 27510) 'host port: no coop.ini -> the default'
+    Write-File $emuIni "server = 127.0.0.1`nport = 27510`n"
+    (Get-Item $emuIni).LastWriteTimeUtc = [datetime]::UtcNow.AddHours(-1)
+    Write-File $hsIni "server = 127.0.0.1`nport = 27600`n"
+    Check ((Get-KitHostPort $hk @() 27510) -eq 27600) 'host port: the coop.ini written last (Hookshot) wins'
+    Check ((Get-KitHostPort $hk @(27510) 27510) -eq 27510) 'host port: the port the running server listens on wins'
+    Check ((Get-KitHostPort $hk @(27999) 27510) -eq 27999) 'host port: a running server on a port no coop.ini names: that port'
+    Check ((Get-KitHostPort $hk @(27510, 27600) 27510) -in 27510, 27600) 'host port: two listening: one of the kit''s'
+} finally {
+    Remove-Item -LiteralPath $hk -Recurse -Force -ErrorAction SilentlyContinue
+}
+# The new launcher is one command line too (the update may replace it while it runs).
+$last = @(Get-Content (Join-Path $kitSrc 'Play-OoT-Coop.bat') | Where-Object { $_ -and $_ -notmatch '^(@echo off|rem )' })
+Check ($last.Count -eq 1 -and $last[0] -match 'play\.ps1" choose -Hookshot' -and $last[0] -match '& exit /b$') 'Play-OoT-Coop.bat: play.ps1 choose -Hookshot, one line'
+
 if ($failed) { Write-Host "$failed failed"; exit 1 }
 Write-Host 'all passed'

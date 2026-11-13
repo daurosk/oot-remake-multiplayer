@@ -197,7 +197,7 @@ const char* usage() {
          "                   comma-separated, ranges as 26.0.0.0/8 (default: any)\n"
          "  --game-build ID  game build every player must run (default: the\n"
          "                   first player to join decides)\n"
-         "  --max-players N  most players at once, 1 to 16 (default 4)\n"
+         "  --max-players N  most players at once, 1 to 16 (default 16)\n"
          "  --pose-upload-kbps N  most kilobits a second of other players' poses\n"
          "                   this server sends everyone together (your upload);\n"
          "                   far players' poses thin out first (default 0: no cap)\n"

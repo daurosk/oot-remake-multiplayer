@@ -70,6 +70,8 @@ public:
     struct Slot;  // one loaded mod (coop_mod_plugins.cpp)
 
 private:
+    void Begin(Slot& s, const CoopMods::Mod& m);  // opens and starts one mod; tells the loader what became of it
+
     CoopMods::Loader& loader_;
     const Library library_;
     const Game game_;

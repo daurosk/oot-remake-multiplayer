@@ -510,12 +510,21 @@ TEST_CASE("mods: in co-op the host's value of a shared setting is shown locked a
     CHECK_FALSE(loader.Set("rando", "seed", "AGAIN", &problem));
     CHECK(problem == "In this co-op game the host sets this.");
     CHECK(loader.RestartNeeded().needed);  // a "restart" setting changed by the host
-    // Our own value is still ours, to send when we host.
-    CHECK(loader.SharedValues() == std::vector<SharedValue>{{"rando", "seed", "MINE"}});
+    // The host's value is kept as ours too (saved): a restart before joining again plays the host's seed.
+    CHECK(loader.SharedValues() == std::vector<SharedValue>{{"rando", "seed", "HOST"}});
 
     heard.clear();
-    loader.SetHostValues(std::nullopt);  // left the session
-    CHECK(heard == std::vector<std::string>{"rando.seed=MINE"});
+    loader.SetHostValues(std::nullopt);  // left the session: nothing changes back
+    CHECK(heard.empty());
+    CHECK(loader.Value("rando", "seed") == "HOST");
     CHECK_FALSE(loader.Settings("rando")[0].locked);
     CHECK(loader.Set("rando", "seed", "AGAIN"));
+
+    Loader again(t.root, {nullptr, 2});  // the next start, before joining
+    again.Start();
+    CHECK(again.Value("rando", "seed") == "AGAIN");
+    loader.SetHostValues(std::vector<SharedValue>{{"rando", "seed", "HOST2"}});
+    Loader third(t.root, {nullptr, 3});
+    third.Start();
+    CHECK(third.Value("rando", "seed") == "HOST2");
 }

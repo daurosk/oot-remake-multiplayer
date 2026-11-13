@@ -808,6 +808,50 @@ Applied LoadApplied(const fs::path& mods_root) {
     return text ? ParseApplied(*text) : Applied{};
 }
 
+std::string StartingText(const Starting& s) {
+    return "coop-mods-starting 1 " + std::to_string(s.pid) + "\n" + s.name + "\n";
+}
+
+std::optional<Starting> ParseStarting(std::string_view text) {
+    constexpr std::string_view head = "coop-mods-starting 1 ";
+    const std::size_t end = text.find('\n');
+    if (text.substr(0, head.size()) != head || end == std::string_view::npos) {
+        return std::nullopt;
+    }
+    Starting s;
+    std::string_view pid = text.substr(head.size(), end - head.size());
+    if (!pid.empty() && pid.back() == '\r') {
+        pid.remove_suffix(1);
+    }
+    const auto [p, ec] = std::from_chars(pid.data(), pid.data() + pid.size(), s.pid);
+    if (pid.empty() || ec != std::errc() || p != pid.data() + pid.size()) {
+        return std::nullopt;
+    }
+    std::string_view name = text.substr(end + 1);
+    while (!name.empty() && (name.back() == '\n' || name.back() == '\r')) {
+        name.remove_suffix(1);
+    }
+    if (name.empty() || name.find('\n') != std::string_view::npos) {
+        return std::nullopt;
+    }
+    s.name = std::string(name);
+    return s;
+}
+
+bool WriteStarting(const fs::path& mods_root, const Starting& s) {
+    return WriteFileSafely(mods_root / kStartingFile, StartingText(s), nullptr);
+}
+
+std::optional<Starting> LoadStarting(const fs::path& mods_root) {
+    const auto text = ReadFile(mods_root / kStartingFile, HOS_COOP_MODS_TEXT_MAX);
+    return text ? ParseStarting(*text) : std::nullopt;
+}
+
+void ClearStarting(const fs::path& mods_root) {
+    std::error_code ec;
+    fs::remove(mods_root / kStartingFile, ec);
+}
+
 std::optional<Hashes> HashMod(const Mod& mod, const std::function<bool()>* stop) {
     Hashes h;
     std::error_code ec;

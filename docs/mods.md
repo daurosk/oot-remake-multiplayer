@@ -35,7 +35,9 @@ The tab writes two files into the mods folder: `coop-mods.list` (order and switc
 
 ### A mod that fails
 
-A mod whose `mod.json` is broken, whose library does not load, that says no at its start, or that crashes, is switched off for this run with one line in `hookshot_log.txt` (`coop: mod <id>: ...`) and a note in the tab. The game and the other mods go on. `LICHII_COOP_MODS_CODE=0` loads no code mod at all.
+A mod whose `mod.json` is broken, whose library does not load, that says no at its start, or that crashes, is switched off for this run with one line in `hookshot_log.txt` (`coop: mod <id>: ...`) and a note in the tab. The game and the other mods go on. `HOS_COOP_MODS_CODE=0` loads no code mod at all.
+
+A mod whose code crashes the whole game or hangs it while it starts (a crash the guard cannot catch: a stack overflow, a fast fail, its own thread) is skipped at the next start and switched off, with a line in the log and a note in the tab; switch it on to try again (the game writes `mods\coop-mods.starting` while each mod starts). After the guard catches a crash the game goes on without that mod, but the mod may have left the game odd until the next start.
 
 ### Mods in co-op
 
@@ -43,7 +45,7 @@ Every game tells the others which mods it runs (ids, versions and a hash of thei
 
 A mod marked `"coop": "own"` (a HUD, a camera) is your own business and is not compared.
 
-A setting marked `"shared"` is the host's in a co-op game: your tab shows the host's value, locked. The randomizer's seed is one.
+A setting marked `"shared"` is the host's in a co-op game: your tab shows the host's value, locked. The randomizer's seed is one. A guest keeps the host's values as its own afterwards, so a restart before joining again plays the same seed; change them in the tab to play your own.
 
 ### The randomizer
 
@@ -52,7 +54,7 @@ The OoT Remake randomizer is [OOTRR](https://github.com/REALAZK/ootrr) (MIT, by 
 1. Get OOTRR (its releases page) and put `ootrr.exe` in `tools\ootrr\` beside `hookshot.exe`, or name it in the tab's **OOTRR program** row.
 2. In the Mods tab, open **OoT Remake Randomizer**: set **Game folder** to your extracted game (version 1.1.1: it holds `Pack`, `Banc`, `Event` and `System`). Without it, `OOT_ROMFS` is used.
 3. Turn **Randomizer** on. With no **Seed** a new one is made. Pick **Settings** (OOTRR's presets: default, easy, open world, keysanity, full shuffle).
-4. The game builds the seed in the background (about a minute; OOTRR's output is in `mods\oot-remake-randomizer\last-build.txt`) into `mods\randomizer-<seed>` and switches it on, first row.
+4. The game builds the seed in the background (about a minute; OOTRR's output is in `mods\oot-remake-randomizer\last-build.txt`) into `mods\randomizer-<seed>` and switches it on, first row. An OOTRR that runs longer than 10 minutes, or while the game closes, is stopped; the seed is built again at the next start.
 5. Start the game again, and start a new save.
 
 In co-op the host's switch, seed and settings are everyone's: a guest's game builds the host's seed by itself and asks for a restart. Every pickup is shared as without the randomizer. Each seed is built once and kept; switching back to a seed built before needs no build.

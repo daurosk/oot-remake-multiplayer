@@ -67,6 +67,8 @@ public:
         std::function<void(const std::string&)> log;
         // This process: coop-mods.applied of another process is a file from an earlier run.
         unsigned long pid = 0;
+        // Whether that process runs now (a coop-mods.starting of a game that still starts is not a crash). Unset: no.
+        std::function<bool(unsigned long)> running;
     };
 
     Loader(std::filesystem::path mods_root, Hooks hooks);
@@ -112,6 +114,10 @@ public:
     // it (an empty problem: loaded).
     std::vector<Mod> CodeToLoad() const;
     void NoteCode(std::string_view name, std::string problem);
+    // Around each mod's library open and start: writes coop-mods.starting, then removes it. When the game dies or is
+    // killed in between, the next Start skips that mod's code, switches the mod off and says so (log and tab).
+    void CodeStarting(std::string_view name);
+    void CodeStarted();
 
     // The mods as found, for co-op's list and the tests.
     std::vector<Mod> Mods() const;
@@ -135,6 +141,7 @@ private:
     std::map<std::string, std::string> code_now_;        // name -> problem ("" loaded), of the code tried at the start
     std::map<std::string, std::string> restart_values_;  // "id\nkey" -> the value at the start, "restart" settings
     std::map<std::string, std::string> changed_;         // name -> reason (NoteChanged)
+    std::map<std::string, std::string> skipped_;         // name -> why: its code crashed or hung the last start
     std::vector<SettingFn> on_setting_;
     std::optional<std::map<std::string, std::string>> host_values_;  // id + newline + key -> the host's value
 };

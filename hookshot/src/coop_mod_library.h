@@ -160,6 +160,19 @@ struct Applied {
 Applied ParseApplied(std::string_view text);
 Applied LoadApplied(const std::filesystem::path& mods_root);
 
+// coop-mods.starting: the code mod whose library is being opened and started now. Written before, removed after; a
+// file still there at the next start means that mod crashed or hung the game in its start, so it is skipped.
+inline constexpr const char* kStartingFile = "coop-mods.starting";
+struct Starting {
+    unsigned long pid = 0;  // the game that wrote it
+    std::string name;       // the mod's folder name
+};
+std::string StartingText(const Starting& s);
+std::optional<Starting> ParseStarting(std::string_view text);
+bool WriteStarting(const std::filesystem::path& mods_root, const Starting& s);
+std::optional<Starting> LoadStarting(const std::filesystem::path& mods_root);
+void ClearStarting(const std::filesystem::path& mods_root);
+
 // ---- what a mod is, for comparing two players' ----
 
 using Hash = std::array<std::uint8_t, 16>;

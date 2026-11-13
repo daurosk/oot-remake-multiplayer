@@ -92,6 +92,23 @@ void Loader::Start() {
         }
         code_now_.clear();
         changed_.clear();
+        skipped_.clear();
+        const std::optional<Starting> crashed = LoadStarting(root_);
+        if (crashed && crashed->pid != hooks_.pid && !(hooks_.running && hooks_.running(crashed->pid))) {
+            ClearStarting(root_);
+            if (const Mod* m = Find(crashed->name); m != nullptr && !m->code.empty()) {
+                std::string why = "Its code crashed or hung the game at the last start, so it was not loaded";
+                const bool can_switch = m->listable && !m->folder_off && (exe_reads_list_ || !GameSees(*m));
+                if (can_switch && !state_.IsOff(m->name)) {
+                    state_.off.push_back(m->name);
+                    why += " and the mod is switched off: switch it on to try again.";
+                } else {
+                    why += " this time.";
+                }
+                lines.push_back(m->name + ": " + why + " (HOS_COOP_MODS_CODE=0 loads no code mod at all)");
+                skipped_[m->name] = std::move(why);
+            }
+        }
         started_ = true;
         std::string problem;
         if (!SaveLocked(&problem)) {
@@ -177,6 +194,8 @@ std::vector<Row> Loader::Rows() const {
             r.note = m->problem;
         } else if (code != code_now_.end() && !code->second.empty()) {
             r.note = code->second;
+        } else if (const auto skip = skipped_.find(m->name); skip != skipped_.end()) {
+            r.note = skip->second;
         } else if (m->folder_off) {
             r.note = "Off by its folder's name (a name starting with '-' or '_'): rename the folder to use it.";
         } else if (!m->listable) {
@@ -350,6 +369,7 @@ std::vector<SharedValue> Loader::SharedValues() const {
 void Loader::SetHostValues(std::optional<std::vector<SharedValue>> values) {
     std::vector<SettingFn> tell;
     std::vector<SharedValue> changed;
+    std::vector<std::string> lines;
     {
         const std::lock_guard lock(mutex_);
         std::map<std::string, std::string> before;
@@ -368,6 +388,23 @@ void Loader::SetHostValues(std::optional<std::vector<SharedValue>> values) {
         } else {
             host_values_.reset();
         }
+        // The host's values become this player's own too: a restart before joining again (or a game alone after it)
+        // plays the same seed instead of making one of its own.
+        bool keep = false;
+        for (const Mod& m : mods_) {
+            for (const Setting& s : m.manifest.settings) {
+                if (HostSets(m, s) && ValueOf(m, s, state_) != Effective(m, s)) {
+                    state_.settings[m.manifest.id][s.key] = Effective(m, s);
+                    keep = true;
+                }
+            }
+        }
+        if (keep) {
+            std::string problem;
+            if (!SaveLocked(&problem)) {
+                lines.push_back(std::move(problem));
+            }
+        }
         for (const Mod& m : mods_) {
             for (const Setting& s : m.manifest.settings) {
                 if (s.shared) {
@@ -379,6 +416,9 @@ void Loader::SetHostValues(std::optional<std::vector<SharedValue>> values) {
             }
         }
         tell = on_setting_;
+    }
+    for (const std::string& line : lines) {
+        Say(line);
     }
     for (const SharedValue& v : changed) {
         for (const SettingFn& fn : tell) {
@@ -474,7 +514,7 @@ std::vector<Mod> Loader::CodeToLoad() const {
     const std::lock_guard lock(mutex_);
     std::vector<Mod> out;
     for (const Mod* m : InOrder(mods_, state_)) {
-        if (!m->code.empty() && Wanted(*m, state_)) {
+        if (!m->code.empty() && Wanted(*m, state_) && skipped_.count(m->name) == 0) {
             out.push_back(*m);
         }
     }
@@ -484,6 +524,16 @@ std::vector<Mod> Loader::CodeToLoad() const {
 void Loader::NoteCode(std::string_view name, std::string problem) {
     const std::lock_guard lock(mutex_);
     code_now_[std::string(name)] = std::move(problem);
+}
+
+void Loader::CodeStarting(std::string_view name) {
+    if (!WriteStarting(root_, Starting{hooks_.pid, std::string(name)})) {
+        Say("could not write " + ToUtf8(root_ / kStartingFile) + ": a mod that crashes at its start is not skipped");
+    }
+}
+
+void Loader::CodeStarted() {
+    ClearStarting(root_);
 }
 
 std::vector<Mod> Loader::Mods() const {

@@ -18,6 +18,8 @@
 // plain functions for the tests; Rando runs them in the game.
 #pragma once
 
+#include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <mutex>
@@ -83,8 +85,10 @@ std::vector<std::string> BuildArgs(const std::filesystem::path& seed_file, const
 std::wstring CommandLine(const std::filesystem::path& program, const std::vector<std::string>& args);
 
 // Runs a program with no window to its end, its output appended to `log_file`; its exit code, -1 when it could not
-// start (Rando::Hooks::run in the game).
-int RunProgram(const std::wstring& command_line, const std::filesystem::path& log_file);
+// start, kStopped when it ran longer than `limit` or `stop` turned true (it is then ended) (Rando::Hooks::run).
+inline constexpr int kStopped = -2;
+int RunProgram(const std::wstring& command_line, const std::filesystem::path& log_file, std::chrono::milliseconds limit,
+               const std::atomic<bool>* stop);
 
 // Where OOTRR is: the "ootrr" setting when set, else ootrr.exe in <game>\tools\ootrr or <mods>\oot-remake-randomizer.
 // Where the game's extracted files are: the "game_folder" setting when set, else OOT_ROMFS.

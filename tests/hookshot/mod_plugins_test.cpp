@@ -7,6 +7,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -33,12 +34,15 @@ struct Seen {
     int take_key = 0;
     int skip_hook = 0;
     std::uint64_t memory[4] = {1, 2, 3, 4};
+    std::string marker;  // coop-mods.starting as alpha's start saw it
 };
 Seen g;
 
 int StartA(const CoopModApi* api) {
     g.api[0] = api;
     g.calls.push_back(std::string("start a ") + api->mod_id);
+    const auto marker = CoopMods::LoadStarting(fs::path(api->mod_folder).parent_path());
+    g.marker = marker ? marker->name : "none";
     api->log(api, "hello");
     api->on_frame(api, [](void*) { g.calls.push_back("frame a"); }, nullptr);
     api->on_key(api, [](void*, std::uint32_t vk, int down, int) {
@@ -106,6 +110,9 @@ std::map<std::string, Fake>& Fakes() {
 Library FakeLibrary() {
     Library lib;
     lib.open = [](const fs::path& file, std::string* problem) -> void* {
+        if (file.stem() == "boom") {
+            throw std::runtime_error("its DllMain crashed");
+        }
         auto it = Fakes().find(file.stem().string());
         if (it == Fakes().end()) {
             *problem = "not a library";
@@ -148,11 +155,17 @@ struct Folder {
 struct Run {
     Folder folder;
     std::vector<std::string> log;
-    CoopMods::Loader loader{folder.root, {[this](const std::string& l) { log.push_back("mods: " + l); }, 1}};
+    std::function<bool(unsigned long)> running;  // which other games run (the loader asks about a leftover marker)
+    CoopMods::Loader loader{folder.root,
+                            {[this](const std::string& l) { log.push_back("mods: " + l); }, 1,
+                             [this](unsigned long pid) { return running && running(pid); }}};
     Game game;
     std::unique_ptr<Host> host;
-    Run() {
+    explicit Run(const std::function<void(Run&)>& before = {}) {
         g = Seen{};
+        if (before) {
+            before(*this);
+        }
         game.log = [this](const std::string& l) { log.push_back(l); };
         game.main_base = [] { return std::uint64_t{0x1000}; };
         game.read = [](std::uint64_t a, void* out, std::size_t n) {
@@ -308,4 +321,59 @@ TEST_CASE("mod plugins: a mod can say a restart is needed") {
     bool found = false;
     for (const auto& w : restart.why) found = found || w.find("a new seed") != std::string::npos;
     CHECK(found);
+}
+
+TEST_CASE("mod plugins: coop-mods.starting names the mod while it starts and is gone after") {
+    Run r;
+    CHECK(g.marker == "9-a");
+    CHECK_FALSE(fs::exists(r.folder.root / CoopMods::kStartingFile));
+}
+
+TEST_CASE("mod plugins: a mod that crashed or hung the last start is skipped and switched off") {
+    Run r([](Run& run) {
+        CoopMods::WriteStarting(run.folder.root, {7, "9-a"});  // a game (id 7) that died while alpha started
+    });
+    CHECK(r.host->Running() == std::vector<std::string>{"bee", "crash"});
+    CHECK(r.Logged("9-a: Its code crashed or hung the game at the last start"));
+    CHECK(r.Logged("HOS_COOP_MODS_CODE=0"));
+    CHECK(r.Note("9-a").find("switched off: switch it on to try again") != std::string::npos);
+    CHECK_FALSE(fs::exists(r.folder.root / CoopMods::kStartingFile));
+    bool on = true;
+    for (const auto& row : r.loader.Rows()) {
+        if (row.name == "9-a") on = row.on;
+    }
+    CHECK_FALSE(on);
+    // Switched on again in the tab: its code loads at the next start.
+    CHECK(r.loader.SetOn("9-a", true));
+    bool said = false;
+    for (const auto& w : r.loader.RestartNeeded().why) said = said || w.find("code is loaded at the next start") != std::string::npos;
+    CHECK(said);
+}
+
+TEST_CASE("mod plugins: the marker of a game that still runs is not a crash") {
+    Run r([](Run& run) {
+        CoopMods::WriteStarting(run.folder.root, {7, "9-a"});
+        run.running = [](unsigned long pid) { return pid == 7; };
+    });
+    CHECK(r.host->Running() == std::vector<std::string>{"alpha", "bee", "crash"});
+    CHECK_FALSE(r.Logged("crashed or hung"));
+}
+
+TEST_CASE("mod plugins: a library that crashes while it is loaded is skipped, the others go on") {
+    Run r([](Run& run) { run.folder.Code("3-boom", "boom", "boom.dll"); });
+    CHECK(r.host->Running() == std::vector<std::string>{"alpha", "bee", "crash"});
+    CHECK(r.Logged("mod boom: crashed while its code was loaded"));
+    CHECK(r.Note("3-boom") == "crashed while its code was loaded");
+}
+
+TEST_CASE("mod plugins: coop-mods.starting text") {
+    CHECK(CoopMods::StartingText({12, "my mod"}) == "coop-mods-starting 1 12\nmy mod\n");
+    const auto s = CoopMods::ParseStarting("coop-mods-starting 1 12\r\nmy mod\r\n");
+    REQUIRE(s);
+    CHECK(s->pid == 12);
+    CHECK(s->name == "my mod");
+    CHECK_FALSE(CoopMods::ParseStarting("coop-mods-starting 2 12\nx\n"));
+    CHECK_FALSE(CoopMods::ParseStarting("coop-mods-starting 1 \nx\n"));
+    CHECK_FALSE(CoopMods::ParseStarting("coop-mods-starting 1 12\n\n"));
+    CHECK_FALSE(CoopMods::ParseStarting("coop-mods-starting 1 12\na\nb\n"));
 }

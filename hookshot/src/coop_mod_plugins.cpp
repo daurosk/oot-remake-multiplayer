@@ -142,6 +142,17 @@ void RunStart(void* p) {
     c->result = c->fn(c->api);
 }
 
+struct OpenCall {  // the library's own start (DllMain, static constructors) runs in it
+    const Library* library;
+    const std::filesystem::path* file;
+    std::string* problem;
+    void* handle;
+};
+void RunOpen(void* p) {
+    auto* c = static_cast<OpenCall*>(p);
+    c->handle = c->library->open(*c->file, c->problem);
+}
+
 struct StopCall {
     coop_mod_stop_fn fn;
 };
@@ -316,68 +327,81 @@ void Host::Start() {
         s->name = m.name;
         s->id = m.manifest.id;
         s->folder = CoopMods::ToUtf8(m.folder);
-        std::string problem;
-        s->handle = library_.open ? library_.open(m.code, &problem) : nullptr;
-        if (s->handle == nullptr) {
-            problem = problem.empty() ? "its code could not be loaded" : problem;
-            s->Say(problem);
-            loader_.NoteCode(m.name, problem);
-            continue;
-        }
-        const auto start = reinterpret_cast<coop_mod_start_fn>(library_.symbol(s->handle, COOP_MOD_START_EXPORT));
-        if (start == nullptr) {
-            problem = "its code has no " COOP_MOD_START_EXPORT;
-            s->Say(problem);
-            loader_.NoteCode(m.name, problem);
-            continue;
-        }
-        s->stop = reinterpret_cast<coop_mod_stop_fn>(library_.symbol(s->handle, COOP_MOD_STOP_EXPORT));
-        CoopModApi& api = s->table.api;
-        s->table.slot = s.get();
-        api.size = sizeof(CoopModApi);
-        api.version = COOP_MOD_API_VERSION;
-        api.mod_id = s->id.c_str();
-        api.mod_folder = s->folder.c_str();
-        api.runtime = game_.runtime.c_str();
-        api.log = ApiLog;
-        api.main_base = ApiMainBase;
-        api.read = ApiRead;
-        api.write = ApiWrite;
-        api.setting = ApiSetting;
-        api.on_frame = ApiOnFrame;
-        api.on_overlay = ApiOnOverlay;
-        api.on_key = ApiOnKey;
-        api.on_setting = ApiOnSetting;
-        api.hook = ApiHook;
-        api.has_hook = ApiHasHook;
-        api.restart_needed = ApiRestartNeeded;
-
-        s->starting = true;
-        s->on = true;
-        StartCall c{start, &api, 0};
-        const bool ran = Guarded(RunStart, &c);
-        s->starting = false;
-        if (!ran || c.result != 1) {
-            problem = ran ? "its " COOP_MOD_START_EXPORT " said no (its own line above says why)"
-                          : "crashed in its " COOP_MOD_START_EXPORT;
-            s->on = false;
-            s->frame.clear();
-            s->overlay.clear();
-            s->key.clear();
-            s->setting.clear();
-            s->hook.clear();
-            s->stop = nullptr;
-            s->Say(problem);
-            loader_.NoteCode(m.name, problem);
-            slots_.push_back(std::move(s));  // its library stays: its code may have started a thread
-            continue;
-        }
-        s->Say("started (" + std::to_string(s->frame.size() + s->overlay.size() + s->key.size() + s->setting.size() +
-                                            s->hook.size()) +
-               " callbacks)");
-        loader_.NoteCode(m.name, "");
-        slots_.push_back(std::move(s));
+        // From before its library opens to the end of its start: a crash the guard cannot catch (a stack overflow,
+        // a fast fail, its own thread) or a hang leaves coop-mods.starting behind, and the next start skips it.
+        loader_.CodeStarting(m.name);
+        Begin(*s, m);
+        loader_.CodeStarted();
+        slots_.push_back(std::move(s));  // a library that opened stays: its code may have started a thread
     }
+}
+
+void Host::Begin(Slot& s, const CoopMods::Mod& m) {
+    std::string problem;
+    if (library_.open) {
+        OpenCall open{&library_, &m.code, &problem, nullptr};
+        if (!Guarded(RunOpen, &open)) {
+            problem = "crashed while its code was loaded";
+        }
+        s.handle = open.handle;
+    }
+    const auto start = s.handle == nullptr
+                           ? nullptr
+                           : reinterpret_cast<coop_mod_start_fn>(library_.symbol(s.handle, COOP_MOD_START_EXPORT));
+    if (s.handle == nullptr || start == nullptr) {
+        if (s.handle == nullptr && problem.empty()) {
+            problem = "its code could not be loaded";
+        } else if (s.handle != nullptr) {
+            problem = "its code has no " COOP_MOD_START_EXPORT;
+        }
+        s.Say(problem);
+        loader_.NoteCode(m.name, problem);
+        return;
+    }
+    s.stop = reinterpret_cast<coop_mod_stop_fn>(library_.symbol(s.handle, COOP_MOD_STOP_EXPORT));
+    CoopModApi& api = s.table.api;
+    s.table.slot = &s;
+    api.size = sizeof(CoopModApi);
+    api.version = COOP_MOD_API_VERSION;
+    api.mod_id = s.id.c_str();
+    api.mod_folder = s.folder.c_str();
+    api.runtime = game_.runtime.c_str();
+    api.log = ApiLog;
+    api.main_base = ApiMainBase;
+    api.read = ApiRead;
+    api.write = ApiWrite;
+    api.setting = ApiSetting;
+    api.on_frame = ApiOnFrame;
+    api.on_overlay = ApiOnOverlay;
+    api.on_key = ApiOnKey;
+    api.on_setting = ApiOnSetting;
+    api.hook = ApiHook;
+    api.has_hook = ApiHasHook;
+    api.restart_needed = ApiRestartNeeded;
+
+    s.starting = true;
+    s.on = true;
+    StartCall c{start, &api, 0};
+    const bool ran = Guarded(RunStart, &c);
+    s.starting = false;
+    if (!ran || c.result != 1) {
+        problem = ran ? "its " COOP_MOD_START_EXPORT " said no (its own line above says why)"
+                      : "crashed in its " COOP_MOD_START_EXPORT;
+        s.on = false;
+        s.frame.clear();
+        s.overlay.clear();
+        s.key.clear();
+        s.setting.clear();
+        s.hook.clear();
+        s.stop = nullptr;
+        s.Say(problem);
+        loader_.NoteCode(m.name, problem);
+        return;
+    }
+    s.Say("started (" +
+          std::to_string(s.frame.size() + s.overlay.size() + s.key.size() + s.setting.size() + s.hook.size()) +
+          " callbacks)");
+    loader_.NoteCode(m.name, "");
 }
 
 void Host::Stop() {

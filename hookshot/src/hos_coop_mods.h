@@ -18,7 +18,7 @@
          off <name>
 
    The same file is in Hookshot's host/ through our patch and in our repository (hookshot/src): keep them equal
-   (tests/hookshot/mods_list_test.cpp checks it). Plain C, header only, no Hookshot or co-op include. */
+   (tests/hookshot/mods_test.cpp checks it). Plain C, header only, no Hookshot or co-op include. */
 #ifndef HOS_COOP_MODS_H
 #define HOS_COOP_MODS_H
 #include <stddef.h>

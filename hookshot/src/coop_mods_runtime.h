@@ -14,7 +14,7 @@ namespace CoopModsRuntime {
 
 // Once, when the module stays loaded (hos_coop_start answers 1): reads the mods folder (HOS_MODS, else "mods" beside
 // hookshot.exe) and logs one line per mod. The code mods start at the first Frame (by then the exe has told its hooks).
-// LICHII_COOP_MODS_CODE=0: no code mod is loaded (game files and the tab still work).
+// HOS_COOP_MODS_CODE=0: no code mod is loaded (game files and the tab still work).
 void Start();
 void Stop();
 

@@ -70,6 +70,26 @@ unsigned long ThisProcess() {
 #endif
 }
 
+// Whether another game with that id still runs (its coop-mods.starting is then not a crash).
+bool ProcessRuns(unsigned long pid) {
+#ifdef _WIN32
+    HANDLE p = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(pid));
+    if (p == nullptr) {
+        return false;
+    }
+    const bool runs = WaitForSingleObject(p, 0) == WAIT_TIMEOUT;
+    CloseHandle(p);
+    return runs;
+#else
+    (void)pid;
+    return false;
+#endif
+}
+
+// OOTRR is stopped when the game closes, or after this long (it takes about a minute).
+constexpr std::chrono::minutes kOotrrLimit{10};
+std::atomic<bool> g_stop_ootrr{false};
+
 // The draw table a mod gets: the parts of Hookshot's it may use.
 struct DrawUser {
     const HosCoopDraw* d;
@@ -180,12 +200,14 @@ void Start() {
     }
     g_loader = std::make_unique<CoopMods::Loader>(
         ModsRoot(), CoopMods::Loader::Hooks{[](const std::string& l) { CoopRuntime::Log("coop: mods: " + l); },
-                                            ThisProcess()});
+                                            ThisProcess(), ProcessRuns});
     g_loader->Start();
     CoopRando::Rando::Hooks rando;
     rando.log = [](const std::string& l) { CoopRuntime::Log("coop: mods: " + l); };
     rando.game_dir = CoopRuntime::GameDir();
-    rando.run = CoopRando::RunProgram;
+    rando.run = [](const std::wstring& line, const std::filesystem::path& log) {
+        return CoopRando::RunProgram(line, log, kOotrrLimit, &g_stop_ootrr);
+    };
     rando.entropy = [] {
         return static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()) * 31 +
                ThisProcess();
@@ -193,8 +215,8 @@ void Start() {
     g_rando = std::make_unique<CoopRando::Rando>(*g_loader, std::move(rando));
     g_rando->Start();  // before the list for co-op is made: it may switch seeds
     StartSharing();
-    if (Env("LICHII_COOP_MODS_CODE") == "0") {
-        CoopRuntime::Log("coop: mods: code mods not loaded (LICHII_COOP_MODS_CODE=0)");
+    if (Env("HOS_COOP_MODS_CODE") == "0") {
+        CoopRuntime::Log("coop: mods: code mods not loaded (HOS_COOP_MODS_CODE=0)");
         return;
     }
     if (g_loader->CodeToLoad().empty()) {
@@ -219,7 +241,8 @@ void Stop() {
     g_pending = false;
     g_running = false;
     if (g_rando) {
-        g_rando->Wait();  // a seed being built is finished (OOTRR takes about a minute at most)
+        g_stop_ootrr = true;  // an OOTRR that runs now is stopped (the seed is made again at the next start)
+        g_rando->Wait();
     }
     if (g_host) {
         g_host->Stop();  // the host and the loader stay: a game thread may still be in a call

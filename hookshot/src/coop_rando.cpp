@@ -244,7 +244,8 @@ std::optional<fs::path> FindGameFolder(const std::string& setting) {
     return p;
 }
 
-int RunProgram(const std::wstring& command_line, const fs::path& log_file) {
+int RunProgram(const std::wstring& command_line, const fs::path& log_file, std::chrono::milliseconds limit,
+               const std::atomic<bool>* stop) {
 #ifdef _WIN32
     SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};  // the child writes into it
     HANDLE log = CreateFileW(log_file.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
@@ -266,15 +267,29 @@ int RunProgram(const std::wstring& command_line, const fs::path& log_file) {
     if (!started) {
         return -1;
     }
-    WaitForSingleObject(pi.hProcess, INFINITE);
+    const auto until = std::chrono::steady_clock::now() + limit;
+    bool ended = false;
+    for (;;) {
+        ended = WaitForSingleObject(pi.hProcess, 200) != WAIT_TIMEOUT;
+        if (ended || (stop != nullptr && stop->load()) || std::chrono::steady_clock::now() >= until) {
+            break;
+        }
+    }
     DWORD code = 1;
-    GetExitCodeProcess(pi.hProcess, &code);
+    if (!ended) {
+        TerminateProcess(pi.hProcess, 1);
+        WaitForSingleObject(pi.hProcess, 5000);
+    } else {
+        GetExitCodeProcess(pi.hProcess, &code);
+    }
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
-    return static_cast<int>(code);
+    return ended ? static_cast<int>(code) : kStopped;
 #else
     (void)command_line;
     (void)log_file;
+    (void)limit;
+    (void)stop;
     return -1;  // the game runs on Windows only
 #endif
 }
@@ -440,6 +455,10 @@ void Rando::Build(const Plan& plan, const Want& want) {
         }
         Say(std::move(line));
     };
+    const auto exit_text = [](int code) {
+        return code == kStopped ? std::string("stopped: it ran too long or the game closed")
+                                : "exit " + std::to_string(code);
+    };
     std::string ootrr_setting, game_setting;
     for (const CoopMods::SettingRow& s : loader_.Settings(kFolder)) {
         if (s.setting.key == "ootrr") ootrr_setting = s.value;
@@ -466,12 +485,12 @@ void Rando::Build(const Plan& plan, const Want& want) {
     const fs::path seed_file = control / (plan.folder + ".ootrr");
     const int made = hooks_.run(CommandLine(*ootrr, GenerateArgs(want.preset, want.seed, seed_file)), log);
     if (made != 0) {
-        return fail("OOTRR could not make the seed (exit " + std::to_string(made) + "): see " + CoopMods::ToUtf8(log));
+        return fail("OOTRR could not make the seed (" + exit_text(made) + "): see " + CoopMods::ToUtf8(log));
     }
     const int built = hooks_.run(CommandLine(*ootrr, BuildArgs(seed_file, *game, root, plan.folder)), log);
     if (built != 0 || !fs::is_regular_file(target / kSeedFile, ec)) {
         fs::remove_all(target, ec);
-        return fail("OOTRR could not build the seed (exit " + std::to_string(built) + "): see " + CoopMods::ToUtf8(log));
+        return fail("OOTRR could not build the seed (" + exit_text(built) + "): see " + CoopMods::ToUtf8(log));
     }
     WriteText(target / kPresetFile, (want.preset.empty() ? std::string("default") : want.preset) + "\n");
     {

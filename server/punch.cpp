@@ -165,7 +165,7 @@ void HostRendezvous::service(std::uint64_t now_ms) {
     }
   }
   for (auto it = answers_.begin(); it != answers_.end();) {
-    if (now_ms >= it->expire) {
+    if (!config_.remember_friends && now_ms >= it->expire) {
       say("punch: stopped answering " + show(it->answer.guest) + " (10 minutes after the answer code)");
       it = answers_.erase(it);
       continue;
@@ -173,6 +173,9 @@ void HostRendezvous::service(std::uint64_t now_ms) {
     if (now_ms < it->punch_until && now_ms >= it->next_send) {
       send_punch(PunchType::kHostPunch, it->answer.nonce, it->answer.guest);
       it->next_send = now_ms + 200;
+    } else if (config_.remember_friends && now_ms >= it->punch_until && now_ms >= it->next_send) {
+      send_punch(PunchType::kHostPunch, it->answer.nonce, it->answer.guest);   // (keeps the way open for a rejoin)
+      it->next_send = now_ms + config_.keep_punch_ms;
     }
     ++it;
   }

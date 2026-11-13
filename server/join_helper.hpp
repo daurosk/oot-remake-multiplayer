@@ -34,6 +34,12 @@ struct JoinConfig {
   std::uint64_t direct_ms = 3000;  // the direct try, before the answer code
   std::uint64_t punch_ms = 180'000;  // then waiting for the host this long before the help text
   bool probe = true;               // tests: false to go the punching way
+  // The game's own join (the title menu): the same nonce and public UDP port
+  // for the same invite on this PC (coop_host_menu.h RejoinIds), so a host
+  // that remembers this friend (punch.hpp remember_friends) lets a rejoin in
+  // with no new answer code. Empty / 0: a random nonce, any port.
+  std::optional<Nonce> nonce;
+  std::uint16_t public_port = 0;
   std::function<void(const std::string&)> log;
   std::function<void(const std::string&)> on_answer;  // the answer code, once
   std::function<std::uint64_t()> unix_now;            // empty: the system clock

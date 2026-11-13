@@ -47,6 +47,7 @@ struct HostServiceConfig {
   std::size_t max_connections = 20;
   bool upnp = false;                  // only when the host said yes
   bool invite = false;                // STUN, then the invite code
+  bool remember_friends = false;      // nat::HostConfig::remember_friends (the game's own host)
   std::vector<nat::Addr> stun_servers;
   bool stun_allow_private = false;    // tests: a STUN server on 127.0.0.1
   std::string relay_via;              // "" for none

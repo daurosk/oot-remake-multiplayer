@@ -229,8 +229,9 @@ std::string IniUnset(std::string_view text, std::string_view key) {
 }
 
 const std::vector<std::string>& Colours() {
-    static const std::vector<std::string> list = {"",     "red",   "orange", "yellow", "green", "cyan", "blue",
-                                                  "purple", "pink", "white",  "black",  "brown", "gray"};
+    // The ten tunic colours (lichii/hook/coop_colors.cpp kTunics), after "" (the player number's).
+    static const std::vector<std::string> list = {"",     "red",   "orange", "yellow", "green", "cyan",
+                                                  "blue", "purple", "pink",  "white",  "black"};
     return list;
 }
 
@@ -265,14 +266,17 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     if (const auto v = IniGet(coop_ini, "name"); v && NameOk(*v)) {
         o.name = std::string(Trim(*v));
     }
-    if (const auto v = IniGet(options_ini, "color")) {
+    if (const auto v = IniGet(options_ini, "color"); v && !v->empty()) {
+        // A tunic name (any case) shows as that row value; any other colour the game reads (gray, brown, #F82,
+        // 0xFF8020, #FF8020FF, rgb(...): CoopColors::Parse) is kept as the player wrote it, never dropped.
+        o.colour_in_file = *v;
         std::string c = *v;
         std::transform(c.begin(), c.end(), c.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-        if (c == "grey") {
-            c = "gray";
-        }
         const auto& list = Colours();
-        o.colour = std::find(list.begin(), list.end(), c) != list.end() ? c : "";
+        o.colour = std::find(list.begin(), list.end(), c) != list.end() ? c : *v;
+        if (o.colour == c && c != *v) {
+            o.colour_in_file = c;   // ("Orange": the same colour; written only if the row changes it)
+        }
     }
     o.tunics = !Off(IniGet(options_ini, "LICHII_COOP_TUNICS"));
     o.hud = !Off(IniGet(options_ini, "LICHII_COOP_HUD"));
@@ -304,7 +308,9 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
 void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     coop_ini = IniSet(coop_ini, "name", Trim(name), true);
     std::string o = options_ini;
-    o = colour.empty() ? IniUnset(o, "color") : IniSet(o, "color", colour, true);
+    if (colour != colour_in_file) {   // (unchanged: the line stays exactly as the player wrote it)
+        o = colour.empty() ? IniUnset(o, "color") : IniSet(o, "color", colour, true);
+    }
     o = tunics ? IniUnset(o, "LICHII_COOP_TUNICS") : IniSet(o, "LICHII_COOP_TUNICS", "0", false);
     o = hud ? IniUnset(o, "LICHII_COOP_HUD") : IniSet(o, "LICHII_COOP_HUD", "0", false);
     o = chat_key == "T" ? IniUnset(o, "LICHII_COOP_CHAT_KEY") : IniSet(o, "LICHII_COOP_CHAT_KEY", chat_key, false);
@@ -493,6 +499,8 @@ void Menu::Open(const Options& options, Page page) {
     request_.reset();
     direct_ = page != Page::kMain && page != Page::kClosed;
     join_.clear();   // (a code from an earlier try: the player pastes the newest)
+    rejoin_host_.clear();
+    rejoin_code_.clear();
     Go(page == Page::kClosed ? Page::kMain : page);
 }
 
@@ -511,6 +519,14 @@ void Menu::ShowPage(Page page) {
     Go(page);
 }
 
+void Menu::SetRejoin(std::string host, std::string code) {
+    rejoin_host_ = Trim(host).empty() ? std::string("your friend") : std::string(Trim(host));
+    rejoin_code_ = std::string(Trim(code));
+    if (page_ == Page::kJoin) {
+        selected_ = 0;
+    }
+}
+
 void Menu::SetStatus(std::vector<std::string> lines) {
     status_ = std::move(lines);
 }
@@ -526,7 +542,7 @@ std::size_t Menu::RowCount() const {
     case Page::kMain:
         return kMainRows;
     case Page::kJoin:
-        return kJoinRows;
+        return kJoinRows + JoinOffset();
     case Page::kSettings:
         return kSettingsRows;
     case Page::kHosting:
@@ -623,7 +639,12 @@ Sound Menu::Decide() {
             return Sound::kBack;
         }
     case Page::kJoin:
-        switch (selected_) {
+        if (JoinOffset() != 0 && selected_ == 0) {   // Join <host> again: the last code, one press
+            status_ = {"Joining..."};
+            request_ = Request{Request::Kind::kJoin, rejoin_code_};
+            return Sound::kStart;
+        }
+        switch (selected_ - JoinOffset()) {
         case kField:   // A on the code: paste it
             request_ = Request{Request::Kind::kPaste, {}};
             return Sound::kDecide;
@@ -745,7 +766,7 @@ bool Menu::Paste(std::string_view text) {
     const std::string line = OneLine(text);
     if (t == &join_) {
         join_ = line.substr(0, 300);
-        selected_ = kJoinNow;
+        selected_ = kJoinNow + JoinOffset();
         status_.clear();
         return true;
     }
@@ -785,7 +806,11 @@ View Menu::view() const {
         break;
     case Page::kJoin:
         v.title = "Join";
-        add("Your friend's code", join_.empty() ? std::string("(press A to paste it)") : join_);
+        if (JoinOffset() != 0) {
+            add("Join " + rejoin_host_ + " again");
+        }
+        add(JoinOffset() != 0 ? "Or a new code" : "Your friend's code",
+            join_.empty() ? std::string("(press A to paste it)") : join_);
         v.rows.back().editing = true;
         add("OK");
         add("Cancel");

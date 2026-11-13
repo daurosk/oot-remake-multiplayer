@@ -62,7 +62,10 @@ bool PasswordOk(std::string_view password);
 
 struct Options {
     std::string name = "Player";   // coop.ini name
-    std::string colour;            // coop-options.ini color ("": the player number's)
+    std::string colour;            // coop-options.ini color ("": the player number's); a tunic name, or the
+                                   // file's own text when it is another colour (gray, #F82, rgb(...)): kept
+    std::string colour_in_file;    // the color line's value as read: Write leaves the line alone while
+                                   // colour still equals it (only a change of the colour row writes it)
     bool tunics = true;            // LICHII_COOP_TUNICS (0: everyone in green)
     bool hud = true;               // LICHII_COOP_HUD (0: the plain look)
     std::string chat_key = "T";    // LICHII_COOP_CHAT_KEY
@@ -195,6 +198,9 @@ public:
     void SetStatus(std::vector<std::string> lines);
     // The module moves to the Hosting or Joining page once it started that.
     void ShowPage(Page page);
+    // The last code this game joined with, offered first on the Join page as
+    // "Join <host> again" (one press). An empty code: no such row.
+    void SetRejoin(std::string host, std::string code);
     const Options& options() const { return options_; }
     const std::string& join_text() const { return join_; }
     std::size_t selected() const { return selected_; }
@@ -213,6 +219,8 @@ private:
     std::size_t selected_ = 0;
     bool editing_ = false;
     bool direct_ = false;   // opened on a page by the title's own row: Back and Cancel close it
+    std::string rejoin_host_, rejoin_code_;
+    std::size_t JoinOffset() const { return rejoin_code_.empty() ? 0 : 1; }
     Options options_;
     Options saved_;   // what the files hold: Back on Settings goes back to it
     std::string join_;

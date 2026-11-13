@@ -96,8 +96,9 @@ TEST_CASE("title menu: settings read from and written to the two files") {
     CHECK(back.cheats);
 
     // back to the defaults: the lines are commented out again
-    Options d;
+    Options d;   // (as read from these files, then every setting set back)
     d.name = "Malon";
+    d.colour_in_file = back.colour_in_file;
     d.Write(c2, o2);
     CHECK_FALSE(IniGet(o2, "color").has_value());
     CHECK_FALSE(IniGet(o2, "LICHII_COOP_TUNICS").has_value());
@@ -108,10 +109,13 @@ TEST_CASE("title menu: settings read from and written to the two files") {
 TEST_CASE("title menu: unknown values in the files read as the defaults") {
     const Options o = Options::Read("name = \r\n", "color = mauve\r\nLICHII_COOP_CHAT_KEY=k9\r\nserver_password = a b\r\n");
     CHECK(o.name == "Player");
-    CHECK(o.colour.empty());
+    CHECK(o.colour == "mauve");   // (kept as written: the menu never deletes a colour line it did not change)
     CHECK(o.chat_key == "T");
     CHECK(o.password.empty());
-    CHECK(Options::Read("", "color = Grey\r\n").colour == "gray");
+    CHECK(Options::Read("", "color = Grey\r\n").colour == "Grey");   // (not one of the ten tunics: shown as written)
+    CHECK(Options::Read("", "color = #ff8020\r\n").colour == "#ff8020");
+    CHECK(Options::Read("", "color = Orange\r\n").colour == "orange");   // a tunic name: the row's value
+    CHECK(Colours().size() == 11);   // none + the ten tunics
     CHECK(Options::Read("", "LICHII_COOP_CHAT_KEY=off\r\n").chat_key == "off");
 }
 
@@ -431,4 +435,66 @@ TEST_CASE("title menu: the host's player count, 2 to 16, round the ends, read an
     CHECK(Options::Read("", opt).max_players == 12);
     CHECK(Options::Read("", "max_players = 40\r\n").max_players == 16);
     CHECK(Options::Read("", "max_players = x\r\n").max_players == 4);
+}
+
+TEST_CASE("title menu: Join offers the last host again first, one press") {
+    Menu m;
+    m.Open(Options{}, Page::kJoin);
+    m.SetRejoin("Saria", "ABCDE-FGHJK");
+    auto v = m.view();
+    REQUIRE(v.rows.size() == 4);
+    CHECK(v.rows[0].label == "Join Saria again");
+    CHECK(v.rows[0].selected);
+    CHECK(v.rows[1].label == "Or a new code");
+    CHECK(m.Press(Input::kDecide) == Sound::kStart);
+    const auto r = m.TakeRequest();
+    REQUIRE(r.has_value());
+    CHECK(r->kind == Request::Kind::kJoin);
+    CHECK(r->text == "ABCDE-FGHJK");
+    // a new code still works under it
+    m.Open(Options{}, Page::kJoin);
+    m.SetRejoin("", "ABCDE-FGHJK");
+    CHECK(m.view().rows[0].label == "Join your friend again");
+    CHECK(m.Paste("QWERT-YUPAS"));
+    CHECK(m.view().rows[m.selected()].label == "OK");
+    CHECK(m.Press(Input::kDecide) == Sound::kStart);
+    CHECK(m.TakeRequest()->text == "QWERT-YUPAS");
+    m.Press(Input::kDown);
+    CHECK(m.Press(Input::kDecide) == Sound::kBack);   // Cancel
+    CHECK_FALSE(m.open());
+    // no last code: no such row
+    m.Open(Options{}, Page::kJoin);
+    m.SetRejoin("Saria", "");
+    CHECK(m.view().rows[0].label == "Your friend's code");
+}
+
+TEST_CASE("title menu: a colour the row does not list survives a Save that only changes the name") {
+    for (const std::string colour : {"gray", "#F82", "0xFF8020", "#FF8020FF", "rgb(255, 128, 32)", "Orange"}) {
+        const std::string file = "# Your colour\r\ncolor = " + colour + "  # mine\r\n";
+        Options o = Options::Read("name = Saria\r\n", file);
+        Menu m;
+        m.Open(o, Page::kSettings);
+        m.Press(Input::kDecide);   // edit the name
+        m.Char('!');
+        m.Press(Input::kDecide);
+        for (int i = 0; i < 4; ++i) {
+            m.Press(Input::kDown);
+        }
+        REQUIRE(m.view().rows[m.selected()].label == "Save");
+        m.Press(Input::kDecide);
+        REQUIRE(m.TakeRequest()->kind == Request::Kind::kSave);
+        std::string coop = "name = Saria\r\n", opt = file;
+        m.options().Write(coop, opt);
+        CHECK(IniGet(coop, "name") == "Saria!");
+        CHECK(opt.find("color = " + colour + "  # mine") != std::string::npos);   // the line exactly as it was
+    }
+    // the colour row changed: then it is written
+    Options o = Options::Read("", "color = gray\r\n");
+    Menu m;
+    m.Open(o, Page::kSettings);
+    m.Press(Input::kDown);
+    m.Press(Input::kRight);
+    std::string coop, opt = "color = gray\r\n";
+    m.options().Write(coop, opt);
+    CHECK(IniGet(opt, "color") == "red");
 }

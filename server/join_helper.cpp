@@ -29,6 +29,7 @@ JoinHelper::JoinHelper(JoinConfig config) : config_(std::move(config)) {
   key_ = punch_key(config_.password);
   std::random_device device;
   for (auto& b : nonce_) b = static_cast<std::uint8_t>(device());
+  if (config_.nonce) nonce_ = *config_.nonce;
   for (const Addr& server : config_.stun_servers) {
     StunAsk ask;
     ask.server = server;
@@ -88,8 +89,16 @@ bool JoinHelper::start(std::string& error) {
   }
   ENetAddress any{};
   any.host = ENET_HOST_ANY;
-  any.port = 0;
-  if (enet_socket_bind(public_socket_, &any) != 0) {
+  any.port = config_.public_port;
+  bool bound = enet_socket_bind(public_socket_, &any) == 0;
+  if (!bound && config_.public_port != 0) {
+    // That port is taken: any port (a rejoin then needs a new answer code).
+    enet_socket_destroy(public_socket_);
+    public_socket_ = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
+    any.port = 0;
+    bound = public_socket_ != ENET_SOCKET_NULL && enet_socket_bind(public_socket_, &any) == 0;
+  }
+  if (!bound) {
     error = "cannot open a UDP port for the way to the host";
     stop();
     return false;

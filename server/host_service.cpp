@@ -165,6 +165,7 @@ bool HostService::start(std::string& error) {
     c.password = config_.session.join_password;
     c.stun_servers = config_.stun_servers;
     c.allow_private = config_.stun_allow_private;
+    c.remember_friends = config_.remember_friends;
     EnetServer* server = server_.get();
     c.send = [server](nat::Addr to, std::span<const std::uint8_t> data) { server->send_raw(nat::to_enet(to), data); };
     c.log = config_.log;

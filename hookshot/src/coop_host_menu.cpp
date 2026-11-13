@@ -2,10 +2,12 @@
 // Host and Join.
 #include "coop_host_menu.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstring>
 #include <exception>
+#include <span>
 #include <utility>
 
 #include <enet/enet.h>
@@ -221,6 +223,7 @@ void Menu::RunHost(HostJob job) {
         config.max_connections = static_cast<std::size_t>(job.max_players) + 4;
         config.upnp = job.upnp;
         config.invite = job.invite;
+        config.remember_friends = true;   // a friend who rejoins needs no new answer code
         if (job.invite) {
             config.stun_servers = StunServers();
         }
@@ -379,6 +382,13 @@ void Menu::RunJoin(JoinJob job) {
         config.stun_servers = StunServers();
         config.game_port = hooks_.helper_port;
         config.direct_ms = hooks_.direct_ms;
+        if (hooks_.client_id) {
+            if (const std::string id = hooks_.client_id(); !id.empty()) {
+                const RejoinId r = RejoinIds(id, job.password, job.host);
+                config.nonce = r.nonce;
+                config.public_port = r.public_port;
+            }
+        }
         // The answer code goes to the menu (status.answer), not the log.
         config.log = [this](const std::string& text) {
             if (text.rfind("answer code: ", 0) != 0) {
@@ -484,6 +494,16 @@ void Menu::StopThread() {
         status_.size = sizeof status_;
         status_.state = HOS_COOP_IDLE;
     }
+}
+
+RejoinId RejoinIds(const std::string& client_id, const std::string& password, coop::server::nat::Addr host) {
+    const std::string s = "oot-coop rejoin|" + client_id + "|" + password + "|" + coop::server::nat::show(host);
+    const auto h = coop::protocol::sha256(std::span<const std::uint8_t>(
+        reinterpret_cast<const std::uint8_t*>(s.data()), s.size()));
+    RejoinId r;
+    std::copy_n(h.begin(), r.nonce.size(), r.nonce.begin());
+    r.public_port = static_cast<std::uint16_t>(40000 + ((h[8] << 8) | h[9]) % 20000);
+    return r;
 }
 
 } // namespace CoopHostMenu

@@ -368,7 +368,12 @@ foreach ($key in $options.Keys) {
         $value = [System.IO.Path]::GetFullPath((Join-Path $kit $value))
     }
     Set-Item -Path "env:$key" -Value $value
-    Write-Host "Option: $key=$value"
+    $tunicNote = ''
+    if ($key -eq 'LICHII_COOP_COLOR' -and (Get-Command Get-KitTunic -ErrorAction SilentlyContinue)) {
+        $t = Get-KitTunic $value
+        if ($t) { $tunicNote = "   (your tunic: $t, the nearest of the ten tunic colours)" }
+    }
+    Write-Host "Option: $key=$value$tunicNote"
 }
 # No colour chosen: the colour of the player number you will most likely get, for your own Link too
 # (kit-paths.ps1). Before the pack step, which puts that tunic over the game's.

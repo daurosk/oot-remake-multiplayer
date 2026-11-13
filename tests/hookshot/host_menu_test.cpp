@@ -354,3 +354,14 @@ TEST_CASE("host menu: Host takes up to 16 players by default, as coop_server") {
     CHECK(CoopHostMenu::HostMaxPlayers(40) == 16);  // more than the protocol has numbers for
 }
 
+TEST_CASE("host menu: the same helper nonce and port for the same invite on this PC, others differ") {
+    const coop::server::nat::Addr host{0xCB007105u, 27510};
+    const auto a = CoopHostMenu::RejoinIds("pc-one", "PW", host);
+    const auto b = CoopHostMenu::RejoinIds("pc-one", "PW", host);
+    CHECK(a.nonce == b.nonce);
+    CHECK(a.public_port == b.public_port);
+    CHECK(a.public_port >= 40000);
+    CHECK(a.public_port < 60000);
+    CHECK(CoopHostMenu::RejoinIds("pc-two", "PW", host).nonce != a.nonce);   // two friends, one invite
+    CHECK(CoopHostMenu::RejoinIds("pc-one", "PW2", host).nonce != a.nonce);  // another session
+}

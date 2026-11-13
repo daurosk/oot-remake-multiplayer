@@ -5,7 +5,7 @@
 # Enemy_DungeonBoss_Gohma there (with Enemy_DungeonBoss_Gohma_Prefab), so no defeat flag matters.
 # Inconclusive if "+ Enemy_DungeonBoss_Gohma" is in neither log (the warp gave no boss). Then the
 # fallback: gohma-door (corridor `place` + walk through the door) with a kit save from before
-# Gohma, or dauro's own pre-Gohma save as a DAURO TEST with the same checks; the boss rush warp is
+# Gohma, or Alex's own pre-Gohma save as an ALEX TEST with the same checks; the boss rush warp is
 # unproven, and gohma-door found the trigger never fired with the kit saves.
 # Timing is loose (B boots 5 s after A, its walks vary): a swing whose b-hitN shot shows Gohma not
 # stunned on A's screen is INCONCLUSIVE for check 3, not a FAIL; the run needs one swing in a stun.

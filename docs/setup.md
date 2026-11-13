@@ -61,6 +61,9 @@ The start window says what is wrong and what to do. What it checks:
 - **"OoT Co-op is already starting in another window."** You double-clicked twice. Wait for the first window (the first build takes a while).
 - **"This folder is in OneDrive"**, **"...letters the game build cannot handle"**, **"...too long"**, **"...cannot be written to"**: the first build cannot work in this folder. It offers to copy the kit to `C:\OoT-Coop` and start it there; say yes (or move the folder yourself). Once the game is built, the kit no longer asks.
 - **"Your antivirus has most likely removed..."**: Windows Security (or another antivirus) took a file of the kit or of the built game. Open **Windows Security > Virus & threat protection > Protection history**, restore the file, and add the kit folder under **Exclusions**. Then start again: the game is not built again.
+- **"The game isn't set up yet... Set it up now?"**: the first start. Answer **Y** (or wait a minute) and it builds the game once; **n** builds nothing until the next start.
+- **"The co-op game this kit built is not in <folder> any more"**: the built game folder was moved or deleted. Moved it? Answer **n**, move it back to that folder and start again. Otherwise answer **Y** and it is built again.
+- **"The co-op module hookshot_coop.dll is missing"**: antivirus took it, as in the line above: restore it, add the exclusion, start again. Building again does not help.
 - **"Files of this kit are missing"**: the unzip did not finish. Unzip the kit again.
 - **"The Microsoft Visual C++ runtime is missing"**: install it from Microsoft ([vc_redist.x64.exe](https://aka.ms/vs/17/release/vc_redist.x64.exe)) and start again.
 - **"This is not the game version co-op needs"**: your `.nup` is another version of the game. Co-op needs program `0400486024DEC000`, update v131072, build `e0f3ccfa`. To give another file, delete `hookshot\game-files.txt` in the kit and start again.

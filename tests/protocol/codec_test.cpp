@@ -1933,3 +1933,75 @@ TEST_CASE("platform counter: type 401, object samples channel, checked ticks (pl
   cut[kHeaderSize + 1 + 15 + 8] = 3;
   CHECK(decode(cut, back) == Error::truncated);
 }
+
+TEST_CASE("local players: types 460 to 464, their channels and senders (split screen)") {
+  CHECK(static_cast<int>(MessageType::local_join) == 460);
+  CHECK(static_cast<int>(MessageType::local_message) == 464);
+  CHECK(channel_of(MessageType::local_sample) == kChannelPlayerSamples);
+  CHECK(allowed_on_channel(MessageType::local_sample, kChannelPlayerSamples));
+  CHECK_FALSE(allowed_on_channel(MessageType::local_sample, kChannelSession));
+  for (MessageType t : {MessageType::local_join, MessageType::local_joined, MessageType::local_leave,
+                        MessageType::local_message}) {
+    CHECK(channel_of(t) == kChannelSession);
+    CHECK(allowed_on_channel(t, kChannelSession));
+    CHECK_FALSE(allowed_on_channel(t, kChannelPlayerSamples));
+  }
+  CHECK(may_send(Sender::client, MessageType::local_join));
+  CHECK_FALSE(may_send(Sender::server, MessageType::local_join));
+  CHECK(may_send(Sender::server, MessageType::local_joined));
+  CHECK_FALSE(may_send(Sender::client, MessageType::local_joined));
+  CHECK_FALSE(may_send(Sender::server, MessageType::local_sample));
+}
+
+TEST_CASE("local players: seats are 1 to 3, a refusal names why, a join names no reason") {
+  Bytes out;
+  CHECK(encode(Message{LocalJoin{0, "Mido"}}, out) == Error::bad_value);
+  CHECK(encode(Message{LocalJoin{4, "Mido"}}, out) == Error::bad_value);
+  CHECK(encode(Message{LocalJoin{1, ""}}, out) == Error::bad_value);
+  CHECK(encode(Message{LocalJoin{1, std::string(17, 'a')}}, out) != Error::none);
+  CHECK(encode(Message{LocalLeave{0}}, out) == Error::bad_value);
+  CHECK(encode(Message{LocalJoined{1, 17, RefuseReason::server_full}}, out) == Error::bad_value);
+  // A join with a reason byte, or a refusal without one, does not decode.
+  Bytes joined = must_encode(LocalJoined{1, 5, RefuseReason::server_full});
+  joined.back() = 3;
+  CHECK(decode_bytes(joined) == Error::bad_value);
+  Bytes refused = must_encode(LocalJoined{1, 0, RefuseReason::server_full});
+  refused.back() = 0;
+  CHECK(decode_bytes(refused) == Error::bad_value);
+}
+
+TEST_CASE("local players: an envelope carries only its own kinds, whole, and never another envelope") {
+  PlayerSample sample;
+  sample.time = {5, 1};
+  sample.position = Vec3{1.0f, 2.0f, 3.0f};
+  const auto s = local_envelope(2, sample);
+  REQUIRE(s.has_value());
+  REQUIRE(std::holds_alternative<LocalSample>(*s));
+  CHECK(std::get<LocalSample>(*s).seat == 2);
+  CHECK(local_inner(*s) == Message{sample});
+  const auto m = local_envelope(1, PlayerEquip{0, {}});
+  REQUIRE(m.has_value());
+  CHECK(std::holds_alternative<LocalMessage>(*m));
+  CHECK(local_inner(*m) == Message{PlayerEquip{0, {}}});
+  CHECK_FALSE(local_envelope(1, Chat{0, "hi"}).has_value());          // chat stays the connection's player's
+  CHECK_FALSE(local_envelope(1, FlagSet{0, {}}).has_value());        // the world is the game's, not a seat's
+  CHECK_FALSE(local_envelope(0, sample).has_value());                // no seat 0
+  CHECK_FALSE(local_envelope(1, *s).has_value());                    // no envelope in an envelope
+  CHECK_FALSE(local_inner(Message{Ping{1}}).has_value());
+  // A wrong kind inside, written by hand, is refused on decode.
+  Bytes body{1};
+  const Bytes chat = must_encode(Chat{0, "hi"});
+  body.insert(body.end(), chat.begin(), chat.end());
+  Bytes wire{static_cast<std::uint8_t>(464 & 0xff), static_cast<std::uint8_t>(464 >> 8),
+             static_cast<std::uint8_t>(body.size()), 0};
+  wire.insert(wire.end(), body.begin(), body.end());
+  CHECK(decode_bytes(wire) == Error::bad_value);
+  // The right kind in the wrong envelope too: a sample in LOCAL_MESSAGE.
+  Bytes body2{1};
+  const Bytes sb = must_encode(sample);
+  body2.insert(body2.end(), sb.begin(), sb.end());
+  Bytes wire2{static_cast<std::uint8_t>(464 & 0xff), static_cast<std::uint8_t>(464 >> 8),
+              static_cast<std::uint8_t>(body2.size()), 0};
+  wire2.insert(wire2.end(), body2.begin(), body2.end());
+  CHECK(decode_bytes(wire2) == Error::bad_value);
+}

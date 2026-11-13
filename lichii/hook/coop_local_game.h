@@ -32,14 +32,26 @@ namespace CoopLocalGame {
 inline constexpr int kKeyboardSlot = 100;
 // Npad No.(k+1) for local player k.
 inline constexpr int NpadFor(int player) { return player; }
-// The puppet number of local player k while there is no session to give it
-// one (step 4): from the top, away from the server's numbers.
+// Local player k's number in the puppet Director: past every session number
+// (1 to kMaxPlayers), so it never meets a remote player's, and the same
+// offline and online (the session's number for it is only on the wire,
+// coop_local_net.h). The Director's live mask has a bit for each (< 32).
 constexpr std::uint8_t LocalNumber(int player) {
-    return static_cast<std::uint8_t>(coop::protocol::kMaxPlayers + 1 - player);
+    return static_cast<std::uint8_t>(coop::protocol::kMaxPlayers + player);
 }
+static_assert(coop::protocol::kMaxPlayers + CoopLocalInput::kMostExtra < 32);
 // How far beside the first Link an extra player is made, world units, by seat.
 inline constexpr std::array<CoopPuppet::Vec3, CoopLocalInput::kMostExtra> kBeside{{
     {1.0f, 0.0f, 0.0f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}}};
+
+// An extra local player in play, for the session (coop_local_net.h).
+struct SeatNow {
+    int player = 0;              // 1 to 3
+    std::uint64_t actor = 0;     // its Player, 0 while it is being made
+    std::string name;            // "Player <n>" unless the menu named it
+    std::optional<std::uint32_t> color;
+    bool operator==(const SeatNow&) const = default;
+};
 
 struct Pad {
     int slot = 0;
@@ -90,11 +102,14 @@ public:
     void Wrap(std::uint32_t id, int phase, std::uint64_t* x) const;
 
     const CoopLocalInput::Players& Players() const { return players_; }
+    // The extra players asked for (calc thread).
+    std::vector<SeatNow> Seats() const;
     void Note(const std::string& line) const { Say(line); }
 
 private:
     struct Extra {
         bool wanted = false;
+        std::string name;
         int device = -1;
         std::uint32_t serial = 0;   // the pad's opening when it was taken
         std::optional<CoopPuppet::Vec3> spot;   // where it is made: beside the first Link when asked
@@ -124,6 +139,8 @@ Game* Installed();
 void Frame(const Facts& facts);
 // CoopPuppet::Publish: the local players' targets.
 void AddTargets(CoopPuppet::Input& input);
+// The extra players asked for (calc thread); none before Install.
+std::vector<SeatNow> Seats();
 // hos_coop_wrap.
 void Wrap(std::uint32_t id, int phase, std::uint64_t* x);
 // Tests (LICHII_COOP_LOCAL=<slot>): at the first frame in play, local co-op

@@ -1,8 +1,8 @@
 # Local co-op (split screen)
 
 Status: in work, not in any release. What is in the code today: the layout maths, the switchboard
-the menu talks to, and the second player's own Player and controller on Hookshot (below), with unit
-tests. Nothing here has run in the game yet. The views (one picture per player) come next.
+the menu talks to, the second player's own Player and controller on Hookshot, and each local player
+as its own player online (below), with unit tests. Nothing here has run in the game yet. The views (one picture per player) come next.
 
 ## The goal
 
@@ -33,7 +33,7 @@ first run with a log.
 input routing, with no game code (`tests/lichii/local_game_test.cpp`).
 
 - **The Player.** Local player k (2 to 4 on screen, 1 to 3 in the code) is a target of the puppet
-  Director with the number 17 - k (16, 15, 14) while there is no session to give it one, made
+  Director with the number 16 + k (17 to 19: past every session number, offline and online), made
   beside the first Link as `Player_<Age>` and then left to the game's player code
   ([native-player.md](native-player.md)). After a scene change the Director makes it again, and the
   input follows the new actor.
@@ -55,6 +55,17 @@ input routing, with no game code (`tests/lichii/local_game_test.cpp`).
   `local co-op: player 2: the game has no controller 1` and the second Link follows the first pad.
 - **Test switch:** `LICHII_COOP_LOCAL=<pad slot>` starts player 2 on that pad at the first frame in
   play, without the menu.
+
+## Online
+
+`lichii/hook/coop_local_net.{h,cpp}` (tests in `tests/lichii/local_game_test.cpp`; the server's in
+`tests/server/session_test.cpp`): while the game is connected, each extra player in play asks the
+server for a number of its own (`LOCAL_JOIN`, [protocol.md](protocol.md#local-players-protocol-11)),
+again after a reconnect. A joined seat's samples, status and equipment are read from its own Player
+(the same reader and sampler as the first Link's, pointed at that actor; scene, age and cutscene are
+the first Link's) and go out in envelopes. The others see it as any player. Its colour is the seat's.
+A refused seat (name taken, session full) plays on this PC only, and the log says why. Hosting or
+joining is the same connection, so a split-screen game can do either.
 
 ## The research run
 

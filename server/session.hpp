@@ -29,6 +29,10 @@ namespace coop::server {
 
 // The transport's own number for a connection, never reused while it lives.
 using ConnectionId = std::uint32_t;
+// Split screen's extra local players (docs/protocol.md, "Local players") are
+// players of the session without a transport connection of their own; the
+// session numbers them from here (a transport id this high is refused).
+inline constexpr ConnectionId kLocalPlayerIds = 0xF000'0000u;
 
 // An IPv4 address or a range of them ("25.1.2.3", "25.0.0.0/8"), as numbers
 // with the first dotted part highest. For --allow.
@@ -272,6 +276,11 @@ struct Stats {
   std::uint64_t after_refused = 0;   // packets from a connection being closed
   std::uint64_t rate_limited = 0;    // over a player's message rate
   std::uint64_t relayed = 0;         // messages passed on (once per message)
+  // Split screen: extra local players let in and refused, and envelopes
+  // (LOCAL_SAMPLE, LOCAL_MESSAGE) for a seat that has no player.
+  std::uint64_t local_joined = 0;
+  std::uint64_t local_refused = 0;
+  std::uint64_t local_no_seat = 0;
   // PvP (docs/protocol.md, "PvP"). Relayed ones count in relayed too.
   std::uint64_t pvp_hits_relayed = 0;   // PVP_HIT passed on to its victim
   std::uint64_t pvp_hits_dropped = 0;   // PVP_HIT while PvP is off, or to nobody
@@ -485,6 +494,12 @@ class Session {
     // its own lure is; lures_at 0: none yet.
     std::map<protocol::ObjectId, protocol::FishLureEntry> lures;
     std::uint64_t lures_at = 0;
+    // An extra local player (split screen): the connection whose game it
+    // plays in, and its seat there. Nothing is ever sent to it (its game
+    // gets everything through that connection), and nothing from that game
+    // comes back to it or to its siblings.
+    std::optional<ConnectionId> parent;
+    std::uint8_t seat = 0;
   };
 
   // One shared object (docs/objects.md "Server").
@@ -541,6 +556,13 @@ class Session {
   // The checks after the password, then WELCOME.
   void admit(ConnectionId id, Connection& c, const protocol::Hello& hello,
              std::uint64_t now_us);
+  // Split screen (docs/protocol.md, "Local players").
+  void on_local(ConnectionId id, Connection& c, const protocol::Message& message, std::uint64_t now_us);
+  void local_join(ConnectionId id, Connection& c, const protocol::LocalJoin& j, std::uint64_t now_us);
+  std::optional<ConnectionId> local_player(ConnectionId parent, std::uint8_t seat) const;
+  std::vector<ConnectionId> local_players(ConnectionId parent) const;
+  // Whether a and b are one game's (the same connection, or its local players).
+  bool same_game(ConnectionId a, ConnectionId b) const;
   void on_player_message(ConnectionId id, Connection& c, std::uint8_t channel,
                          protocol::Message& message, std::size_t bytes, std::uint64_t now_us);
   void on_join_partner(ConnectionId id, Connection& c, protocol::JoinPartner& j);
@@ -672,6 +694,7 @@ class Session {
   SessionConfig config_;
   std::string session_game_build_;  // set while players are in
   std::map<ConnectionId, Connection> connections_;
+  ConnectionId next_local_id_ = kLocalPlayerIds;
   // The host's connection; set while players are in.
   std::optional<ConnectionId> host_;
   // PvP now: config_.pvp until the host changes it; back to config_.pvp when

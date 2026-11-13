@@ -77,6 +77,7 @@
 #include "coop_quests.h"
 #include "coop_live_events.h"
 #include "coop_local_game.h"
+#include "coop_local_net.h"
 #include "coop_shared_scenes.h"
 #include "coop_objects.h"
 #include "coop_ocarina_sound.h"
@@ -311,6 +312,7 @@ public:
                 }
             }
             CoopRide::OnEvent(event);  // their horses (PLAYER_RIDE, issue 199)
+            CoopLocalNet::OnEvent(event);  // split screen's seats in the session (coop_local_net.h)
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -533,6 +535,14 @@ public:
         LogFlagEvents();
 #endif
         const auto report = session_->frame(reading, hold ? &*hold : nullptr);
+        if (memory) {  // split screen: each extra local player is a player of the session (coop_local_net.h)
+            CoopLocalNet::Online(
+                *memory, reading, report.connected, report.server_now_us,
+                [this](const coop::protocol::Message& m) {
+                    return session_->with_client([&m](coop::net::Client& client) { return client.send(m); });
+                },
+                [](const std::string& line) { LOG_INFO(Core, "coop: {}", line); });
+        }
         if (quests) {
             for (const auto& r : quests->take_raised()) {
                 LOG_INFO(Core, "coop: quests: {} {} -> {} (shared Threads of Time; issue 193)", r.quest,

@@ -118,6 +118,11 @@ enum class MessageType : std::uint16_t {
   player_ride = 385,  // 385 to 389: riding Epona (docs/protocol.md, "Riding")
   platform_clock = 400,  // 400 to 404: moving platforms' clocks (docs/protocol.md, "Moving platforms")
   platform_counter = 401,  // looping platforms' pause counters (docs/protocol.md, "Moving platforms")
+  local_join = 460,  // 460 to 469: split screen's extra players (docs/protocol.md, "Local players")
+  local_joined = 461,
+  local_leave = 462,
+  local_sample = 463,
+  local_message = 464,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -1311,6 +1316,49 @@ struct DungeonEvent {
   bool operator==(const DungeonEvent&) const = default;
 };
 
+// Split screen (docs/protocol.md, "Local players"): the extra players of one
+// game, seats 1 to kMaxLocalSeats (seat 0 is the connection's own player).
+inline constexpr std::uint8_t kMaxLocalSeats = 3;
+
+// LOCAL_JOIN: the game asks for a player number for an extra local player.
+struct LocalJoin {
+  std::uint8_t seat = 1;
+  std::string nickname;  // 1 to kMaxNicknameChars, as HELLO's
+  bool operator==(const LocalJoin&) const = default;
+};
+
+// LOCAL_JOINED: the answer, to that game only: the seat's number, or 0 and
+// why not (server_full, name_taken, bad_name).
+struct LocalJoined {
+  std::uint8_t seat = 1;
+  std::uint8_t player_number = 0;
+  RefuseReason reason = RefuseReason::server_full;  // when player_number is 0
+  bool operator==(const LocalJoined&) const = default;
+};
+
+// LOCAL_LEAVE: the extra local player leaves (the others get PLAYER_LEFT).
+struct LocalLeave {
+  std::uint8_t seat = 1;
+  bool operator==(const LocalLeave&) const = default;
+};
+
+// LOCAL_SAMPLE and LOCAL_MESSAGE: one of an extra local player's own
+// messages, encoded whole, in an envelope naming its seat. The server takes
+// it as that player's (writing its number in the player field). A sample
+// carries PLAYER_SAMPLE, PLAYER_POSE or PLAYER_RIDE (on the samples channel);
+// a message PLAYER_STATUS, PLAYER_EQUIP, PLAYER_LIFE or OCARINA_NOTE (on the
+// session channel). Decoding checks the inner message.
+struct LocalSample {
+  std::uint8_t seat = 1;
+  std::vector<std::uint8_t> inner;
+  bool operator==(const LocalSample&) const = default;
+};
+struct LocalMessage {
+  std::uint8_t seat = 1;
+  std::vector<std::uint8_t> inner;
+  bool operator==(const LocalMessage&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
@@ -1322,9 +1370,20 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin,
                              JoinChallenge, JoinProof, SaveAsk, SavePart, PlayerLife,
                              PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim, DungeonEvent, PlayerRide,
-                             OcarinaNote, PlatformClock, PlatformCounter>;
+                             OcarinaNote, PlatformClock, PlatformCounter, LocalJoin, LocalJoined,
+                             LocalLeave, LocalSample, LocalMessage>;
 
 MessageType type_of(const Message& message);
+
+// What an envelope may carry (LOCAL_SAMPLE, LOCAL_MESSAGE).
+bool local_sample_carries(MessageType type);
+bool local_message_carries(MessageType type);
+// An extra local player's message in its envelope (LOCAL_SAMPLE or
+// LOCAL_MESSAGE by the inner type); nullopt when no envelope carries it.
+std::optional<Message> local_envelope(std::uint8_t seat, const Message& inner);
+// The message inside an envelope; nullopt when it is not a LOCAL_SAMPLE or
+// LOCAL_MESSAGE, or what it holds does not decode.
+std::optional<Message> local_inner(const Message& envelope);
 
 // The channel a message is sent on. TEST_PAYLOAD may go on 0 or 3; this
 // returns 3 and the test tool picks for itself.

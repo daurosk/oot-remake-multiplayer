@@ -449,7 +449,33 @@ Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hoo
 
 ### Local players (protocol 11)
 
-Types 460 to 469 are kept for split screen ([local-coop.md](local-coop.md)): several players of one game on one connection, each with a player number of their own. None is sent or accepted yet; the layouts are written here when the code is. The outline: the game asks for a number for each extra local player (seat, nickname, colour), the server answers with the number or a refusal (full, name taken) and tells the others with the usual `PLAYER_JOINED` and `PLAYER_LEFT`, and a message of an extra local player travels in an envelope naming its seat, so the server writes that player's number in the player field. The other games need nothing new.
+Split screen ([local-coop.md](local-coop.md)): the extra players of one game (seats 1 to 3; seat 0
+is the connection's own player) are players of the session on that game's one connection, each
+with a number and name of its own. The other games need nothing new: they meet each through the
+usual `PLAYER_JOINED`, samples and `PLAYER_LEFT`. Types 460 to 469 are kept; 465 to 469 are free.
+
+| Type | Name | From | Channel | Body |
+|---|---|---|---|---|
+| 460 | `LOCAL_JOIN` | game | session | u8 seat (1 to 3), str nickname (1 to 16, as HELLO's) |
+| 461 | `LOCAL_JOINED` | server | session | u8 seat, u8 player number (0: refused), u8 reason (`REFUSED`'s: 3 full, 4 name taken, 5 bad name; 0 when joined) |
+| 462 | `LOCAL_LEAVE` | game | session | u8 seat |
+| 463 | `LOCAL_SAMPLE` | game | player samples | u8 seat, then one whole message (header and body) to the end: `PLAYER_SAMPLE`, `PLAYER_POSE` or `PLAYER_RIDE` |
+| 464 | `LOCAL_MESSAGE` | game | session | u8 seat, then one whole message: `PLAYER_STATUS`, `PLAYER_EQUIP`, `PLAYER_LIFE` or `OCARINA_NOTE` |
+
+- An envelope whose inner message does not decode, is of another type (chat, flags and the world
+  stay the connection's own) or is itself an envelope does not decode.
+- The server answers every `LOCAL_JOIN` (the same answer again for a seat already in); a joined
+  seat gets a free number, and the others get `PLAYER_JOINED`. Its own game gets nothing but
+  `LOCAL_JOINED`.
+- An envelope's inner message is taken as the seat's own message, with the seat's own rate limits
+  and the seat's number written in its player field. Nothing of one game is sent back to it (not its
+  own player's, not its seats'), and the server never sends anything addressed to a seat: its game
+  gets everything through its connection.
+- A seat lives while its connection does (the connection's traffic keeps it from timing out); it
+  leaves by `LOCAL_LEAVE` or with its connection (the others get `PLAYER_LEFT` for each seat first).
+  A seat never hosts, and its name is never taken over by a rejoin.
+- After a reconnect the game asks again for every seat in play; until a seat has a number its
+  player plays on this PC only.
 
 ## Later stages (outline only)
 

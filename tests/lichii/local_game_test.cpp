@@ -11,6 +11,7 @@
 
 #include "coop_local_game.h"
 #include "coop_local_input.h"
+#include "coop_local_net.h"
 #include "coop_local_probe.h"
 #include "coop_player_input.h"
 
@@ -169,12 +170,12 @@ TEST_CASE("local game: a second player takes its pad, is planned beside the firs
     REQUIRE(input.targets.size() == 1);
     const auto& t = input.targets[0];
     CHECK(t.number == LocalNumber(1));
-    CHECK(t.number == 16);
+    CHECK(t.number == 17);
     CHECK(t.actor == "Player_Child");
     CHECK(t.position == CoopPuppet::Vec3{11.0f, 0.0f, 20.0f});
     CHECK(t.color.has_value());
     CHECK(game.Added(1) == CoopLocal::Game::Made::Pending);
-    w.Live(16, 0xabc0);
+    w.Live(17, 0xabc0);
     CHECK(game.Added(1) == CoopLocal::Game::Made::Yes);
     CHECK(game.Players().Of(0xabc0) == 1);
 }
@@ -195,19 +196,12 @@ TEST_CASE("local game: the keyboard, a missing pad or no wraps cannot make a sec
     CHECK(input.targets.empty());
 }
 
-TEST_CASE("local game: a session player with the same number keeps it") {
-    World w;
-    CoopLocalGame::Game game(w.Deps());
-    game.See(InPlay());
-    REQUIRE(game.Add(1, SeatOn(0)));
-    CoopPuppet::Input input;
-    CoopPuppet::Target remote;
-    remote.number = 16;
-    remote.actor = "CoopPuppet_Child";
-    input.targets.push_back(remote);
-    game.AddTargets(input);
-    REQUIRE(input.targets.size() == 1);
-    CHECK(input.targets[0].actor == "CoopPuppet_Child");
+TEST_CASE("local game: local players' numbers are past every session number") {
+    for (int k = 1; k <= CoopLocalInput::kMostExtra; k++) {
+        CHECK(LocalNumber(k) > coop::protocol::kMaxPlayers);
+        CHECK(LocalNumber(k) < 32);
+    }
+    CHECK(LocalNumber(1) != LocalNumber(2));
 }
 
 TEST_CASE("local game: removing gives the pad back and waits for the Director to delete the Player") {
@@ -215,7 +209,7 @@ TEST_CASE("local game: removing gives the pad back and waits for the Director to
     CoopLocalGame::Game game(w.Deps());
     game.See(InPlay());
     REQUIRE(game.Add(1, SeatOn(2)));
-    w.Live(16, 0x7000);
+    w.Live(17, 0x7000);
     REQUIRE(game.Added(1) == CoopLocal::Game::Made::Yes);
     CHECK_FALSE(game.Remove(1));   // still live
     CHECK(w.takes == std::vector<std::string>{"2->1", "2->0"});
@@ -233,7 +227,7 @@ TEST_CASE("local game: a new scene's Player is followed, and a changed device is
     CoopLocalGame::Game game(w.Deps());
     game.See(InPlay());
     REQUIRE(game.Add(1, SeatOn(0)));
-    w.Live(16, 0x1111);
+    w.Live(17, 0x1111);
     game.See(InPlay());
     CHECK(game.Players().Of(0x1111) == 1);
     w.slots[0].actor = 0x2222;   // made again in the next scene
@@ -259,7 +253,7 @@ TEST_CASE("local game: the wraps turn only the extra player's controller reads, 
     CoopLocalGame::Game game(w.Deps());
     game.See(InPlay());
     REQUIRE(game.Add(1, SeatOn(1)));
-    w.Live(16, 0x9000);
+    w.Live(17, 0x9000);
     game.See(InPlay());
     w.memory.Node(0x100000, 0x9000);   // the extra player's AI node
     w.memory.Node(0x200000, 0x8000);   // the first Link's
@@ -386,4 +380,92 @@ TEST_CASE("local probe: what looks like a viewport") {
     CHECK_FALSE(CoopLocalProbe::LooksLikeViewport(small));
     CHECK_FALSE(CoopLocalProbe::LooksLikeViewport(fraction));
     CHECK_FALSE(CoopLocalProbe::LooksLikeViewport(negative));
+}
+
+namespace {
+
+struct Wire {
+    std::vector<coop::protocol::Message> sent;
+    CoopLocalNet::Seats::Send Send() {
+        return [this](const coop::protocol::Message& m) {
+            sent.push_back(m);
+            return true;
+        };
+    }
+};
+
+std::vector<CoopLocalGame::SeatNow> OneSeat(const std::string& name = "Saria") {
+    return {{1, 0x1000, name, std::nullopt}};
+}
+
+}  // namespace
+
+TEST_CASE("local net: a seat in play asks for a number once connected, again every 3 s until answered") {
+    using coop::protocol::LocalJoin;
+    CoopLocalNet::Seats seats;
+    Wire w;
+    seats.Frame(false, OneSeat(), 1000, w.Send());
+    CHECK(w.sent.empty());   // not connected: nothing
+    seats.Frame(true, OneSeat(), 1000, w.Send());
+    REQUIRE(w.sent.size() == 1);
+    CHECK(w.sent[0] == coop::protocol::Message{LocalJoin{1, "Saria"}});
+    seats.Frame(true, OneSeat(), 2000, w.Send());
+    CHECK(w.sent.size() == 1);
+    seats.Frame(true, OneSeat(), 4000, w.Send());
+    CHECK(w.sent.size() == 2);   // asked again
+    seats.Answer({1, 7, coop::protocol::RefuseReason::server_full});
+    CHECK(seats.Number(1) == 7);
+    seats.Frame(true, OneSeat(), 9000, w.Send());
+    CHECK(w.sent.size() == 2);   // in: no more asking
+    CHECK_FALSE(seats.Number(2).has_value());
+}
+
+TEST_CASE("local net: a seat out of play leaves, a refusal stops asking until the next connection") {
+    using coop::protocol::LocalLeave;
+    std::vector<std::string> log;
+    CoopLocalNet::Seats seats([&log](const std::string& line) { log.push_back(line); });
+    Wire w;
+    seats.Frame(true, OneSeat(), 0, w.Send());
+    seats.Answer({1, 7, coop::protocol::RefuseReason::server_full});
+    seats.Frame(true, {}, 100, w.Send());
+    REQUIRE(w.sent.size() == 2);
+    CHECK(w.sent[1] == coop::protocol::Message{LocalLeave{1}});
+    CHECK_FALSE(seats.Number(1).has_value());
+    // In again, refused: no more asking on this connection.
+    w.sent.clear();
+    seats.Frame(true, OneSeat("Navi"), 200, w.Send());
+    seats.Answer({1, 0, coop::protocol::RefuseReason::name_taken});
+    seats.Frame(true, OneSeat("Navi"), 9000, w.Send());
+    CHECK(w.sent.size() == 1);
+    CHECK(log.back().find("plays here only: its name is taken") != std::string::npos);
+    // A new connection: asks again.
+    seats.Welcomed();
+    seats.Frame(true, OneSeat("Navi"), 9100, w.Send());
+    CHECK(w.sent.size() == 2);
+}
+
+TEST_CASE("local net: a number for a seat that left meanwhile is given back, and a reconnect forgets numbers") {
+    CoopLocalNet::Seats seats;
+    Wire w;
+    seats.Frame(true, OneSeat(), 0, w.Send());   // asks
+    seats.Frame(true, {}, 10, w.Send());         // left play before the answer
+    CHECK(w.sent.size() == 1);
+    seats.Answer({1, 9, coop::protocol::RefuseReason::server_full});
+    CHECK_FALSE(seats.Number(1).has_value());
+    seats.Frame(true, {}, 20, w.Send());
+    REQUIRE(w.sent.size() == 2);
+    CHECK(w.sent[1] == coop::protocol::Message{coop::protocol::LocalLeave{1}});
+    // Reconnect: the number is gone, asked for again.
+    seats.Frame(true, OneSeat(), 30, w.Send());
+    seats.Answer({1, 4, coop::protocol::RefuseReason::server_full});
+    CHECK(seats.Number(1) == 4);
+    seats.Welcomed();
+    CHECK_FALSE(seats.Number(1).has_value());
+    // Wrap: only a joined seat's own kinds.
+    seats.Answer({1, 4, coop::protocol::RefuseReason::server_full});
+    const auto wrapped = seats.Wrap(1, coop::protocol::PlayerStatus{0, 0});
+    REQUIRE(wrapped.has_value());
+    CHECK(std::holds_alternative<coop::protocol::LocalMessage>(*wrapped));
+    CHECK_FALSE(seats.Wrap(1, coop::protocol::Chat{0, "hi"}).has_value());
+    CHECK_FALSE(seats.Wrap(2, coop::protocol::PlayerStatus{0, 0}).has_value());
 }

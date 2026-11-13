@@ -154,6 +154,13 @@ inline std::vector<Message> every_message() {
   all.push_back(PlayerRide{0, kRideRiding, "Animal_Epona_Adult", {0.1f, -1.2f, 0.3f}, {0, 0.7f, 0, 0.7f}, Animation{"Run", 4.5f, 1.0f}});
   all.push_back(PlayerRide{2, 0, "", {}, {0, 0, 0, 1}, std::nullopt});
   for (Message& m : object_messages()) all.push_back(std::move(m));
+  // Split screen (protocol 11, "Local players").
+  all.push_back(LocalJoin{2, "Mido"});
+  all.push_back(LocalJoined{1, 5, RefuseReason::server_full});
+  all.push_back(LocalJoined{3, 0, RefuseReason::name_taken});
+  all.push_back(LocalLeave{2});
+  all.push_back(*local_envelope(1, full_sample()));
+  all.push_back(*local_envelope(3, PlayerStatus{0, status::paused}));
   return all;
 }
 

@@ -39,6 +39,11 @@ std::optional<std::uint64_t> PlayerReader::game_ui() {
 }
 
 std::optional<std::uint64_t> PlayerReader::find_player_actor() {
+  if (actor_ != 0) {  // (set_actor: another local player's Link, while it is there)
+    const auto state = read_u32(memory_, actor_ + addr::kActorState);
+    if (!state || *state != addr::kActorStatePresent) return std::nullopt;
+    return actor_;
+  }
   const auto scene = read_ptr(memory_, memory_.main_base() + addr::kSceneModulePtr);
   if (!scene) return std::nullopt;
   const auto table = read_ptr(memory_, *scene + addr::kSceneTable);
@@ -71,8 +76,8 @@ std::optional<std::uint64_t> PlayerReader::find_player_actor() {
 }
 
 std::optional<Vec3> PlayerReader::read_position() {
-  // The GameUI copy, while its valid bit is set.
-  if (const auto ui = game_ui()) {
+  // The GameUI copy, while its valid bit is set (the first Link's: not for set_actor's).
+  if (const auto ui = actor_ == 0 ? game_ui() : std::nullopt) {
     const auto flags = read_u16(memory_, *ui + addr::kGameUiPoseFlags);
     if (flags && (*flags & addr::kGameUiPoseValidBit) != 0) {
       if (auto p = read_vec3(memory_, *ui + addr::kGameUiPosition)) return p;

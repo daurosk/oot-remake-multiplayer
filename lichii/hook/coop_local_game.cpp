@@ -63,6 +63,7 @@ bool Game::Add(int player, const CoopLocal::Seat& seat) {
     if (!TakePad(player, seat.device)) return false;
     Extra& e = extra_[Index(player)];
     e.wanted = true;
+    e.name = seat.name.empty() ? "Player " + std::to_string(player + 1) : seat.name;
     e.color = seat.color;
     return true;
 }
@@ -114,6 +115,15 @@ void Game::Apply(const CoopLocal::Status& status) {
     // (step 3: the views follow status.split and status.scale)
 }
 
+std::vector<SeatNow> Game::Seats() const {
+    std::vector<SeatNow> out;
+    for (int k = 1; k <= CoopLocalInput::kMostExtra; k++) {
+        const Extra& e = extra_[Index(k)];
+        if (e.wanted) out.push_back({k, ActorOf(k), e.name, e.color});
+    }
+    return out;
+}
+
 void Game::See(const Facts& facts) {
     facts_ = facts;
     // A scene change deletes and makes the Players again: the wraps follow the new actor.
@@ -128,9 +138,6 @@ void Game::AddTargets(CoopPuppet::Input& input) const {
         if (!e.wanted) continue;
         CoopPuppet::Target t;
         t.number = LocalNumber(k);
-        bool taken = false;
-        for (const auto& other : input.targets) taken |= other.number == t.number;
-        if (taken) continue;   // (a session player with that number: step 4 gives local players their own)
         t.actor = CoopNativePlayer::ActorFor(facts_.adult);
         const CoopPuppet::Vec3& beside = kBeside[Index(k)];
         // Only where it is made: after that the game's player code moves it.
@@ -218,5 +225,10 @@ void Wrap(std::uint32_t id, int phase, std::uint64_t* x) {
 }
 
 void AutoStart(int slot) { g_auto_slot = slot; }
+
+std::vector<SeatNow> Seats() {
+    Game* game = Installed();
+    return game ? game->Seats() : std::vector<SeatNow>{};
+}
 
 }  // namespace CoopLocalGame

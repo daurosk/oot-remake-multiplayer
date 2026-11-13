@@ -5114,3 +5114,29 @@ TEST_CASE("lobby: a sealed key that does not open counts, and that player is let
   CHECK(h.session.stats().lobby_bad_key == 1);
   CHECK(h.session.player_count() == 2);
 }
+
+TEST_CASE("lobby: a muted player who restarts the game and comes back renamed while the old one is still in stays muted") {
+  Harness h;
+  constexpr std::uint32_t kHome = 0x0A00A8C0;
+  constexpr std::uint32_t kFriend = 0x0B00A8C0;
+  REQUIRE_FALSE(join_keyed(h, 1, "Link", 1));
+  REQUIRE_FALSE(join_keyed(h, 2, "Zelda", 2, kHome));
+  h.receive(1, LobbyAction{LobbyActionKind::mute_voice, 2}, kChannelSession);
+  h.receive(1, LobbyAction{LobbyActionKind::mute_chat, 2}, kChannelSession);
+  h.clear();
+  // The old connection has not timed out yet; the new game, same key, same address, a new name.
+  const auto refused = join_keyed(h, 3, "Sheik", 2, kHome);
+  REQUIRE_FALSE(refused);
+  CHECK(h.session.stats().lobby_mutes_kept == 1);
+  const auto told = all_to<LobbyMutes>(h, 1);
+  REQUIRE(told.size() == 1);
+  CHECK(told[0].flags == (lobby_mute::voice | lobby_mute::chat));
+  h.clear();
+  h.receive(3, Chat{0, "free?"}, kChannelSession);
+  CHECK(all_to<Chat>(h, 1).empty());
+  // A copied kit at another address: not muted for it.
+  REQUIRE_FALSE(join_keyed(h, 4, "Impa", 2, kFriend));
+  h.clear();
+  h.receive(4, Chat{0, "hello"}, kChannelSession);
+  CHECK(all_to<Chat>(h, 1).size() == 1);
+}

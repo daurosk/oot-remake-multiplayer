@@ -320,6 +320,7 @@ struct Stats {
   std::uint64_t lobby_banned = 0;    // HELLOs and LOCAL_JOINs refused: a banned player
   std::uint64_t lobby_bad_key = 0;   // a sealed player key that did not open: the player is known by name
   std::uint64_t lobby_shared_key = 0;  // a player key another player in has too (a copied kit): by name
+  std::uint64_t lobby_mutes_kept = 0;  // ... from the same address: it kept that player's mutes (a restart)
   std::uint64_t chat_muted = 0;      // CHAT from a player the host muted: dropped
   std::uint64_t voice_muted = 0;     // VOICE_FRAME from a player the host muted: dropped
   // Connections refused at connect: their address already had

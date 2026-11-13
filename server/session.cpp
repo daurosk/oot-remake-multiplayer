@@ -384,10 +384,19 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   if (c.player_key) {
     for (const auto& [other, oc] : connections_) {
       if (other != id && oc.state == State::joined && !oc.parent && oc.player_key == c.player_key) {
+        // From the same address (or both relayed): most likely that player's
+        // own game again (killed and restarted while the old connection is
+        // still in, under a new name): it keeps what the host muted of it.
+        const std::uint8_t kept = c.address == oc.address ? lobby_mutes_of(oc) : 0;
         c.player_key.reset();
         ++stats_.lobby_shared_key;
+        if (kept != 0) {
+          lobby_mutes_[lobby_id(c)] |= kept;
+          ++stats_.lobby_mutes_kept;
+        }
         log("player " + std::to_string(c.number) + " (" + c.nickname + ") has the same player key as player " +
-            std::to_string(oc.number) + " (a copied kit?): the Lobby knows it by name");
+            std::to_string(oc.number) + " (a copied kit?): the Lobby knows it by name" +
+            (kept != 0 ? ", and it keeps that player's mutes (same address)" : ""));
         break;
       }
     }

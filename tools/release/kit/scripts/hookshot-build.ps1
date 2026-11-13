@@ -274,6 +274,9 @@ function Invoke-MakeGame([string[]]$MoreArgs, [string]$Log = '') {
     # (a shared work folder keeps all its build files, the translated C too: the next build of this pin
     # skips the translation unless a lift file changed. A kit's own folder keeps Hookshot's default.)
     if ($sharedWork) { $env:HOOKSHOT_KEEP_BUILD_FILES = '1' }
+    # (the release the menu names, top left: the source archive has no git history and no VERSION file, so
+    # without this the builder's nx2\version.py says "unknown". HOOKSHOT_ for Hookshot, LONGSHOT_ for Longshot)
+    if ($pin.tag) { $env:HOOKSHOT_VERSION = $pin.tag; $env:LONGSHOT_VERSION = $pin.tag }
     # (Hookshot's lift key hashes every A64_/OOT_/RX_ variable it is started with: co-op's own OOT_COOP_* ones
     # (the test cache, the test password) would make a new key, and a whole new translation, for nothing)
     Get-ChildItem Env: | Where-Object { $_.Name -like 'OOT_COOP_*' } | ForEach-Object { Remove-Item "Env:\$($_.Name)" }
@@ -371,7 +374,8 @@ if ($Game) { [System.IO.File]::WriteAllText((Join-Path $hs 'game-files.txt'), "$
 if ($packFrom -and (Test-Path -LiteralPath $packFrom) -and (Test-Path -LiteralPath $packTool)) {
     Write-Host '  building the puppet pack ...'
     $ErrorActionPreference = 'Continue'
-    & $python -I -B $packTool --romfs $packFrom --mod-dir $mod --title-rows 2>&1 | ForEach-Object { "    $_" }
+    # (no --title-rows: the title stays the game's own; co-op is the pause menu's Multiplayer tab)
+    & $python -I -B $packTool --romfs $packFrom --mod-dir $mod 2>&1 | ForEach-Object { "    $_" }
     $code = $LASTEXITCODE
     $ErrorActionPreference = 'Stop'
     if ($code -ne 0) { Write-Host '  The puppet pack was not built (said why above): other players show as stand-ins.' -ForegroundColor Yellow }

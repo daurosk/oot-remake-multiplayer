@@ -450,6 +450,20 @@ CoopDraw::Keys g_keys;
 std::mutex g_box_mutex;
 CoopChatBox::Box g_box;
 unsigned g_box_lead = 0;  // a double-byte code page's lead byte, waiting for its second
+bool g_box_key_set = false;  // the open key was taken from LICHII_COOP_CHAT_KEY or set by the tab (SetChatKey)
+
+// (under g_box_mutex) "" = T, the box's own default.
+void UseChatKey(const std::string& v) {
+    if (v.empty()) {
+        return;
+    }
+    if (const auto k = CoopChatBox::ParseOpenKey(v)) {
+        g_box.SetOpenKey(*k);
+        LOG_INFO(Core, "coop: chat box key: {}", *k == 0 ? std::string("off") : v);
+    } else {
+        LOG_WARNING(Core, "coop: LICHII_COOP_CHAT_KEY={} is not a letter, a digit, F1 to F12 or off; T opens the chat box", v);
+    }
+}
 // The item cheats panel (coop_cheats_panel.h), under the same mutex.
 CoopCheatsPanel::Panel g_cheats;
 
@@ -658,20 +672,10 @@ bool TypeKey(std::uint32_t vk, bool repeat) {
             return true;
         }
     }
-    static const bool keyed = [] {  // LICHII_COOP_CHAT_KEY: the key that opens the box (T unless set)
-        const std::string v = Env("LICHII_COOP_CHAT_KEY");
-        if (v.empty()) {
-            return true;
-        }
-        if (const auto k = CoopChatBox::ParseOpenKey(v)) {
-            g_box.SetOpenKey(*k);
-            LOG_INFO(Core, "coop: chat box key: {}", *k == 0 ? std::string("off") : v);
-        } else {
-            LOG_WARNING(Core, "coop: LICHII_COOP_CHAT_KEY={} is not a letter, a digit, F1 to F12 or off; T opens the chat box", v);
-        }
-        return true;
-    }();
-    (void)keyed;
+    if (!g_box_key_set) {  // LICHII_COOP_CHAT_KEY: the key that opens the box (T unless set), until the tab sets one
+        g_box_key_set = true;
+        UseChatKey(Env("LICHII_COOP_CHAT_KEY"));
+    }
     const bool taken = g_box.Key(vk, repeat);
     if (auto text = g_box.TakeSend()) {
         const bool ok = CoopHook::SendChat(*text);
@@ -727,6 +731,12 @@ bool Mouse(float fx, float fy, int event) {
     const bool taken = g_cheats.Pointer(kWhat[event], row, rows.size());
     GiveChosen(rows);
     return taken;
+}
+
+void SetChatKey(const std::string& key) {
+    std::lock_guard lock(g_box_mutex);
+    g_box_key_set = true;
+    UseChatKey(key.empty() ? std::string("T") : key);
 }
 
 bool KeysTaken() {

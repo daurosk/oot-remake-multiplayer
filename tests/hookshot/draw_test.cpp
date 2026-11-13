@@ -447,18 +447,25 @@ TEST_CASE("hookshot draw: the mouse finds the cheats panel's rows where they are
     CHECK_FALSE(CoopDraw::CheatsRowAt(1280, 720, v, texts[3].x, texts[5].y + box.line + 5));  // below the last row
 }
 
-TEST_CASE("hookshot draw: the title's Multiplayer prompt (the menu is Hookshot's Multiplayer tab)") {
+TEST_CASE("hookshot draw: a title screen line, with or without the Minus button") {
     {
         Canvas c(1280, 720);
         CoopDraw::Scene s;
-        s.title = CoopDraw::TitleView{"Multiplayer"};
+        s.title = CoopDraw::TitleView{"Loading Saria's save..."};   // (the only line the title has now)
         CHECK(CoopDraw::Wanted(s));
         CoopDraw::Draw(c.d, s, GameLook());
         bool said = false;
         for (const auto& t : c.Of("text")) {
-            said |= t.text == "Multiplayer";
+            said |= t.text == "Loading Saria's save...";
         }
         CHECK(said);
+        CHECK(c.Of("circle").empty());   // no button: nothing to press
+    }
+    {
+        Canvas c(1280, 720);
+        CoopDraw::Scene s;
+        s.title = CoopDraw::TitleView{"Multiplayer", true};
+        CoopDraw::Draw(c.d, s, GameLook());
         CHECK(c.Of("circle").size() == 2);   // the Minus button
     }
     CoopDraw::Scene none;

@@ -271,6 +271,7 @@ TEST_CASE("pause tab: Local co-op says split screen comes in the next test relea
     CHECK(v.rows[0].kind == RowKind::kNote);
     CHECK(v.rows[1].name.find("next test release") != std::string::npos);
     CHECK(v.selected == -1);   // nothing to choose
+    CHECK(v.help.find("two PCs") != std::string::npos);   // the help box says what to do meanwhile
     CHECK(v.back == "Back");
     CHECK(m.Press(Input::kBack));
     CHECK(Selected(m) == "Local co-op");
@@ -290,6 +291,8 @@ TEST_CASE("pause tab: Commands lists the chat key and every chat command, each w
     CHECK(v.rows[0].name == "Open the chat");
     CHECK(v.rows[0].value == "Y");
     CHECK(v.help.find("Press Y") != std::string::npos);
+    CHECK(v.help.find("Settings, Chat key") != std::string::npos);
+    CHECK(v.help.find("LICHII_") == std::string::npos);   // plain words, no file names
     CHECK(v.confirm.empty());   // read only: nothing happens on a press
     for (std::size_t i = 0; i < Commands().size(); ++i) {
         CHECK(v.rows[i + 1].name == Commands()[i].typed);
@@ -314,7 +317,8 @@ TEST_CASE("pause tab: Commands lists the chat key and every chat command, each w
     m.Open(Page::kCommands);
     v = m.view();
     CHECK(v.rows[0].value == "Off");
-    CHECK(v.help.find("LICHII_COOP_CHAT_KEY") != std::string::npos);
+    CHECK(v.help.find("Settings, Chat key") != std::string::npos);
+    CHECK(v.help.find("LICHII_") == std::string::npos);
 }
 
 TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off unless turned on)") {
@@ -324,7 +328,7 @@ TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off u
     m.Show(o);
     m.Open(Page::kSettings);
     CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
-                                               "Proximity voice chat"});
+                                               "Proximity voice chat", "Chat key"});   // (no patch 0015: no input rows)
     View v = m.view();
     CHECK(v.rows[0].value == "Saria");
     CHECK(v.rows[1].value == "By player number");
@@ -450,4 +454,66 @@ TEST_CASE("pause tab: a session that changes keeps the same row selected") {
     CHECK(Selected(m) == "Settings");
     m.SetSession(Session{});
     CHECK(Selected(m) == "Settings");
+}
+
+TEST_CASE("pause tab: Settings: the chat key goes round the keys, Off among them, and is saved") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kSettings);
+    SelectRow(m, "Chat key");
+    CHECK(m.view().rows[static_cast<std::size_t>(m.view().selected)].value == "T");
+    const auto& keys = CoopTitleMenu::ChatKeys();
+    m.Press(Input::kRight);
+    CHECK(m.options().chat_key == keys[1]);
+    REQUIRE(m.TakeRequest().has_value());
+    m.Press(Input::kLeft);
+    m.Press(Input::kLeft);
+    CHECK(m.options().chat_key == "off");   // (round the end: the last one)
+    const auto r = m.TakeRequest();
+    REQUIRE(r.has_value());
+    CHECK(r->kind == Request::Kind::kSave);
+    CHECK(m.view().rows[static_cast<std::size_t>(m.view().selected)].value == "Off");
+    m.Press(Input::kDecide);   // A goes on, as on the other choices
+    CHECK(m.options().chat_key == "T");
+    // the Commands page follows
+    m.Open(Page::kCommands);
+    CHECK(m.view().rows[0].value == "T");
+}
+
+TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot can choose (patch 0015)") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kSettings);
+    SelectRow(m, "Chat key");
+    m.SetInputRows("Controller: all", "Keyboard + mouse: window in front");
+    CHECK(Selected(m) == "Chat key");   // (the rows came under it: the same row stays chosen)
+    CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
+                                               "Proximity voice chat", "Chat key", "Controller",
+                                               "Keyboard and mouse"});
+    SelectRow(m, "Controller");
+    View v = m.view();
+    CHECK(v.rows[static_cast<std::size_t>(v.selected)].value == "all");
+    CHECK(v.rows[static_cast<std::size_t>(v.selected)].kind == RowKind::kChoice);
+    CHECK(v.help.find("Which controller") != std::string::npos);
+    for (const Input in : {Input::kRight, Input::kLeft, Input::kDecide}) {   // each asks the module for the next one
+        m.Press(in);
+        const auto r = m.TakeRequest();
+        REQUIRE(r.has_value());
+        CHECK(r->kind == Request::Kind::kController);
+    }
+    m.SetInputRows("Controller: 2 - Xbox Wireless Controller", "Keyboard + mouse: window in front");
+    v = m.view();
+    CHECK(Selected(m) == "Controller");
+    CHECK(v.rows[static_cast<std::size_t>(v.selected)].value == "2 - Xbox Wireless Controller");
+    m.Press(Input::kDown);
+    CHECK(Selected(m) == "Keyboard and mouse");
+    CHECK(m.view().rows[static_cast<std::size_t>(m.view().selected)].value == "window in front");
+    m.Press(Input::kRight);
+    const auto r = m.TakeRequest();
+    REQUIRE(r.has_value());
+    CHECK(r->kind == Request::Kind::kKeyboard);
+    // gone again (the module found no patch 0015): the selection stays on a row there is
+    m.SetInputRows({}, {});
+    CHECK(Names(m).size() == 5);
+    CHECK_FALSE(Selected(m).empty());
 }

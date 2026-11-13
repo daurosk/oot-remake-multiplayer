@@ -13,6 +13,7 @@
 #include "coop_colors.h"
 #include "coop_hook.h"
 #include "coop_hookshot.h"
+#include "coop_input.h"
 #include "coop_look.h"
 #include "coop_mods_tab.h"
 #include "coop_pause_files.h"
@@ -296,6 +297,7 @@ void Save() {
         CoopFiles::SetCoopEnvironment(g_menu.options());   // co-op has not started: they count for this run
     }
     CoopVoice::SetEnabled(g_menu.options().voice);   // voice chat on/off counts at once (ptt when on)
+    CoopHookshot::SetChatKey(g_menu.options().chat_key);   // the chat key too
     LOG_INFO(Core, "coop: multiplayer tab: settings saved{}{}", ok ? "" : " (a file could not be written)",
              kit ? "" : " (no kit found: coop.ini only)");
     std::vector<std::string> note;
@@ -310,6 +312,37 @@ void Save() {
     }
     if (!note.empty()) {
         g_menu.SetNote(note);
+    }
+}
+
+// The Settings page's Controller and Keyboard rows (coop_input.h): none without patch 0015.
+void InputRows() {
+    if (CoopInput::Available()) {
+        g_menu.SetInputRows(CoopInput::ControllerRow(), CoopInput::KeyboardRow());
+    } else {
+        g_menu.SetInputRows({}, {});
+    }
+}
+
+// The next controller (or keyboard) choice: at once, and in coop-options.ini for the next start.
+void CycleInput(bool controller) {
+    const CoopInput::Setting s = controller ? CoopInput::CycleController() : CoopInput::CycleKeyboard();
+    const char* key = controller ? "LICHII_COOP_PAD" : "LICHII_COOP_KEYBOARD";
+    const std::string value = controller ? CoopInput::PadValue(s.pad) : CoopInput::KeyboardValue(s.keyboard);
+    const bool usual = controller ? s.pad == CoopInput::kAuto : s.keyboard == CoopInput::Keyboard::Focus;
+    InputRows();
+    LOG_INFO(Core, "coop: multiplayer tab: {} = {}", key, value);
+    const auto kit = FindKit();
+    if (!kit) {
+        g_menu.SetNote({"No co-op kit found with this game: the choice counts until the game closes."});
+        return;
+    }
+    const auto file = *kit / "coop-options.ini";
+    const std::string before = ReadText(file);
+    const std::string after =
+        usual ? CoopTitleMenu::IniUnset(before, key) : CoopTitleMenu::IniSet(before, key, value, false);
+    if (!WriteText(file, after)) {
+        g_menu.SetNote({"A settings file could not be written: the choice counts until the game closes."});
     }
 }
 
@@ -377,6 +410,8 @@ void Act(const Request& r) {
     case Request::Kind::kCopyAnswer: Copy(Status().answer, "answer code"); break;
     case Request::Kind::kPasteAnswer: PasteAnswer(); break;
     case Request::Kind::kCopyLan: CopyLan(); break;
+    case Request::Kind::kController: CycleInput(true); break;
+    case Request::Kind::kKeyboard: CycleInput(false); break;
     }
 }
 
@@ -397,6 +432,7 @@ void ShowTab() {
     const std::string coop = ReadText(CoopIni());
     const auto last = CoopTitleMenu::IniGet(coop, "last_invite");
     g_menu.SetRejoin(CoopTitleMenu::IniGet(coop, "last_host").value_or(""), last.value_or(""));
+    InputRows();   // (a controller plugged in while the menu was closed: its name)
     RefreshSession(true);
 }
 
@@ -594,21 +630,6 @@ void Open(CoopPauseMenu::Page page) {
     Settle();
     g_wanted = kMultiplayerTab;
     LOG_INFO(Core, "coop: multiplayer tab: opened from the title");
-}
-
-std::string Doing() {
-    std::lock_guard lock(g_mutex);
-    if (g_doing.empty()) {
-        return {};
-    }
-    switch (Status().state) {   // (what it is now: a join still waiting is not "joined", a failed one is nothing)
-    case HOS_COOP_STARTING:
-    case HOS_COOP_HOSTING: return g_doing == "hosting" ? "hosting" : "";
-    case HOS_COOP_JOINING:
-    case HOS_COOP_WAIT_HOST: return g_doing == "joined" ? "joining" : "";
-    case HOS_COOP_CONNECTED: return g_doing;
-    default: return {};
-    }
 }
 
 }  // namespace CoopPause

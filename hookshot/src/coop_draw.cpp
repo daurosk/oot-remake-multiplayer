@@ -496,10 +496,9 @@ std::vector<ChatShown> ShownChat(const std::vector<CoopHook::ChatLine>& lines, b
     return out;
 }
 
-// The title's Multiplayer prompt (the menu itself is the Multiplayer tab of
-// Hookshot's menu, coop_pause.h): the Minus button and the words, bottom left,
-// in the game's font with its soft shadow; the plain look (no pack): the same
-// with Hookshot's font.
+// A title screen line (TitleView): the words, bottom left, after the Minus
+// button when it has one, in the game's font with its soft shadow; the plain
+// look (no pack): the same with Hookshot's font.
 static void DrawTitle(const HosCoopDraw& d, const TitleView& t, const Look* look) {
     const Pic p = Picture(d);
     const float u = p.u;
@@ -519,6 +518,10 @@ static void DrawTitle(const HosCoopDraw& d, const TitleView& t, const Look* look
     const float px = std::max(14.0f, 24.0f * u);
     const float r = px * 0.62f;
     const float cx = p.left + 48.0f * u + r, cy = p.height + (d.height - p.height) / 2 - 44.0f * u;
+    if (!t.button) {
+        text(p.left + 48.0f * u, cy - px * 0.62f, px, white, t.prompt);
+        return;
+    }
     d.circle(d.user, cx, cy, r, Rgba(0, 0, 0, 130), 0.0f);
     d.circle(d.user, cx, cy, r, Rgba(255, 255, 255, 230), std::max(1.5f, 2.0f * u));
     d.rect(d.user, cx - r * 0.5f, cy - std::max(1.0f, 1.5f * u), cx + r * 0.5f, cy + std::max(1.0f, 1.5f * u), white, 0.0f);

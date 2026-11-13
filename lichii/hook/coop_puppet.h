@@ -25,6 +25,7 @@
 #include <utility>
 #include <vector>
 
+#include "coop_native_player.h"
 #include "coop_ocarina.h"
 #include "coop_snap.h"
 #include "coop_puppet_sound.h"
@@ -424,6 +425,8 @@ private:
         bool meter_skip = false;            // the next read is still the parked spot
         Show shown = Show::show;            // the last `show` acted on (log on change)
         bool model_checked = false;         // a tunic puppet's model (kTunicModelCheckMs)
+        bool native = false;                // a real Player_<Age> (coop_native_player.h): left alone
+        CoopNativePlayer::Probe probe;      // what the game does with it, for the log
         std::uint64_t frame_set_in = 0;     // the cave frame of the last frame set
         std::string play_name;              // the play being made
         float play_frame = 0.0f;
@@ -552,6 +555,9 @@ struct PlannerSettings {
     // kit when it put that colour's tile over the game's): the plain puppet
     // would wear it too, so a green player gets CoopPuppet_<Age>_Green.
     bool green_puppet = false;
+    // LICHII_COOP_NATIVE_PLAYER (a test, coop_native_player.h): the other
+    // player is the game's own Player_<Age>, made and then left alone.
+    bool native_player = false;
     bool debug = false;           // LICHII_COOP_TEST_PUPPET: one more, beside you,
                                   // wearing your own gear
     std::uint64_t debug_delay_ms = 3000;  // after the scene is known

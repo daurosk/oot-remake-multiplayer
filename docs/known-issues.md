@@ -1,10 +1,32 @@
 # Known issues in the newest test release
 
-This is an early test release. Everything under "Works" was seen in our two-game tests: two copies of the game on one PC talking through the server, driven by the [autotest](../tools/autotest) scripts, with the logs and screenshots of both games read afterwards. Testers play the releases on separate PCs, over a LAN and the internet. Please report what you see ([setup.md, Reporting a problem](setup.md#reporting-a-problem)); every open problem is on the [issues page](https://github.com/daurosk/oot-remake-multiplayer/issues).
+This is an early test release: some things work, some do not yet, and some are built in but nobody has checked them in a real game. This page says which is which.
 
-**Every player needs the same release.** The release is protocol 11: a game and a server (or another game) of different protocol versions refuse each other, so every player updates (`Update.bat` in the kit folder, or answer **Y** when `Host.bat` / `Join.bat` offer it). Then run `make-puppet-pack.cmd` once more: `Update.bat` does not rebuild the pack, and the pack has new parts (the tunic colours, Epona for riders, the game-style HUD, Navi's room list). With an old pack the other players stay green; the kit warns at start when the pack has no colours.
+- **[If you are stuck](#if-you-are-stuck)**: the common problems and the way round each.
+- **[Works](#works-seen-in-two-game-tests)**: seen in our tests.
+- **[Known issues](#known-issues)**: does not work yet, or works wrongly.
+- **[Not yet checked](#not-yet-checked-in-a-game-or-only-partly)**: built in; tell us whether it works for you.
+- **[Hookshot](#hookshot-experimental)**, [AMD graphics cards](#amd-graphics-cards), [low frame rate](#low-frame-rate).
+
+A number such as #152 is an issue on the [issues page](https://github.com/daurosk/oot-remake-multiplayer/issues), where every open problem is listed. Please report what you see: [setup.md, Reporting a problem](setup.md#reporting-a-problem).
+
+"Seen in our tests" means: two copies of the game on one PC talking through the server, driven by the [autotest](../tools/autotest) scripts, with the logs and screenshots of both games read afterwards. Testers also play the releases on separate PCs, over a LAN and the internet.
+
+**Every player needs the same release.** The release is protocol 11: a game and a server (or another game) of different protocol versions refuse each other, so every player updates (`Update.bat` in the kit folder, or answer **Y** when a launcher offers it). The launchers then make the puppet pack again by themselves when it is old (about a minute); the pack has new parts (the tunic colours, Epona for riders, the game-style HUD, Navi's room list). With an old pack the other players stay green; the kit warns at start when the pack has no colours.
 
 **The emulator is Fritchii v5.8.4.** The first start after an update prepares the shaders again ("Preparing shaders"); let it finish.
+
+## If you are stuck
+
+| What happens | What to do |
+|---|---|
+| A locked dungeon door another player opened stays shut for you | Type `/teleport <their name>` in the chat. Or step a few metres back from the door and come again. |
+| The screen stays black and Link cannot move (after a teleport, or while another player is in a cutscene) | Wait a few seconds. If it stays black, close the game and start it again. Tell us what both players were doing. |
+| The other players are a dot or a fairy, not Link | The puppet pack is missing or old: [setup.md, step 4](setup.md#4-the-puppet-pack) (emulator), or run `Build-Hookshot-Coop.bat` again (Hookshot). |
+| Everyone is green | Run `make-puppet-pack.cmd` again: the pack is from before the tunic colours. |
+| A friend cannot join | [play-online.md, "When the invite code does not connect"](play-online.md#when-the-invite-code-does-not-connect) |
+| "wrong protocol version" | You do not all have the same release: everyone updates. |
+| The game is slow or stutters | [setup.md, "Low frame rate"](setup.md#low-frame-rate) |
 
 ## Works (seen in two-game tests)
 
@@ -24,7 +46,7 @@ This is an early test release. Everything under "Works" was seen in our two-game
 - **Enemies**: their position, animation and life follow the player who owns them. All the Deku Babas of the Deku Tree's first room show in both games ([#132](https://github.com/daurosk/oot-remake-multiplayer/issues/132)). Townspeople and animals move the same in every game. The Stalchildren in Hyrule Field are shared too ([#124](https://github.com/daurosk/oot-remake-multiplayer/issues/124)).
 - **Crates and thrown rocks** break in every game.
 - **Things a player makes**: Deku seeds and arrows in flight and Deku Nuts appear in the other games, and seeds and arrows stay where they hit. A bomb another player holds stays in their hands with its fuse blinking, and it explodes on every screen at once, held or thrown.
-- **`/teleport <name>`** moves you next to another player, in the same area or another one, except into a dungeon (see Known issues).
+- **`/teleport <name>`** moves you next to another player, in the same area or another one, and to any room of the dungeon you are both in. Into a dungeon from outside, see Known issues.
 - **Kit**: `collect-logs` masks addresses and your PC and user name; the updater adds every new `coop-options.ini` setting below your own lines.
 - **Mods**: texture and model mods work; a code or cheat mod stops co-op (see Other notes).
 

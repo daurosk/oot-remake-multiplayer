@@ -1,6 +1,12 @@
 # Contributing
 
-Anyone can contribute: code, testing, desync reports, docs. Fork the repository, make your change on a branch, and open a pull request. Questions and ideas are welcome in [Discussions](https://github.com/daurosk/oot-remake-multiplayer/discussions) or on [Discord](https://discord.gg/GwtRKAqng5).
+Anyone can contribute: code, testing, desync reports, docs. Questions and ideas are welcome in [Discussions](https://github.com/daurosk/oot-remake-multiplayer/discussions) or on [Discord](https://discord.gg/GwtRKAqng5).
+
+## Where to start
+
+- **Play and report.** The most useful help right now: play a test release with a friend and tell us what went wrong ([Reporting bugs and desyncs](#reporting-bugs-and-desyncs)).
+- **Change something.** Fork the repository, make your change on a branch, and open a pull request ([Pull requests](#pull-requests)). How to build is under "Building" in the [README](README.md#building).
+- **Find your way around.** [docs/README.md](docs/README.md) lists every design document and what it covers. [docs/plan.md](docs/plan.md) is the plan, and [docs/sync-coverage.md](docs/sync-coverage.md) shows what is not shared between games yet.
 
 ## The one hard rule
 
@@ -27,7 +33,15 @@ Projects without a licence file (all rights reserved, for example Ship of Harkin
 
 ## Reporting bugs and desyncs
 
-Use the issue forms. Include the co-op build version (`VERSION.txt` in the kit), whether you played on the kit's emulator, on Hookshot (experimental) or with the Linux kit (experimental), the game version, how you connected (invite code, VPN, port forwarding, relay or LAN), how many players, who hosted, and the steps to reproduce. For a desync, say what each player saw; clips from both sides help the most. Logs are welcome; recordings of long play sessions are not needed.
+Use the [issue forms](https://github.com/daurosk/oot-remake-multiplayer/issues/new/choose). A desync is when players see different things: a door open for one and shut for another, for example. Include:
+
+- the co-op build version (the first line of `VERSION.txt` in the kit folder) and the game version;
+- where you played: the kit's emulator, Hookshot (experimental) or the Linux kit (experimental);
+- how you connected (invite code, VPN, port forwarding, relay or LAN), how many players, and who hosted;
+- the steps to make it happen again;
+- for a desync, what each player saw. Clips from both sides help the most.
+
+Logs are welcome: run `collect-logs.cmd` in the kit folder and send its zip **privately** (a Discord DM), not on the public issue ([how](docs/setup.md#reporting-a-problem)). Recordings of long play sessions are not needed.
 
 ## Pull requests
 

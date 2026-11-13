@@ -9,7 +9,7 @@ body:
     id: version
     attributes:
       label: Co-op build and game version
-      description: The first line of the kit's VERSION.txt, and the game version.
+      description: The first line of VERSION.txt in your kit folder, and the game version (1.1.1 is the supported one).
     validations:
       required: true
   - type: dropdown
@@ -28,7 +28,7 @@ body:
     attributes:
       label: How you connected
       options:
-        - Invite code (Host.bat / Join.bat)
+        - Invite code (Host.bat / Join.bat, Play-OoT-Coop.bat or the title screen)
         - VPN (Radmin VPN, Hamachi, ZeroTier, Tailscale)
         - Port forwarding
         - Relay with a join code
@@ -45,5 +45,5 @@ body:
     id: log
     attributes:
       label: Log
-      description: Paste the end of the emulator log, or attach the log file.
+      description: Paste the last lines of the log that have no addresses or names in them (eden_log.txt on the emulator, hookshot_log.txt on Hookshot). For the full logs, run collect-logs.cmd and send its zip privately (a Discord DM), not here.
       render: text

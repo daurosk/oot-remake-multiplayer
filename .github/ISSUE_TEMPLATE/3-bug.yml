@@ -6,6 +6,7 @@ body:
     id: version
     attributes:
       label: Co-op build and game version
+      description: The first line of VERSION.txt in your kit folder, and the game version.
     validations:
       required: true
   - type: dropdown
@@ -24,7 +25,7 @@ body:
     attributes:
       label: How you connected
       options:
-        - Invite code (Host.bat / Join.bat)
+        - Invite code (Host.bat / Join.bat, Play-OoT-Coop.bat or the title screen)
         - VPN (Radmin VPN, Hamachi, ZeroTier, Tailscale)
         - Port forwarding
         - Relay with a join code

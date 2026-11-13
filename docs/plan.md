@@ -6,7 +6,7 @@ Two stages: co-op on the Lichii emulator first, then the same co-op in a native 
 
 - **Stage 1 (emulator)**: steps 0 to 6 below are built and ship in the test releases (see the [README](../README.md) and [known-issues.md](known-issues.md) for what works). Sharing is being widened area by area: [sync-coverage.md](sync-coverage.md).
 - **Stage 2 (PC port)**: co-op in Hookshot, the PC port of the same game build, is in progress as an experimental second runtime, with the same protocol and server.
-- Wire protocol: version 10 ([protocol.md](protocol.md)).
+- Wire protocol: version 11, up to 16 players ([protocol.md](protocol.md)).
 
 ## Why the emulator first
 

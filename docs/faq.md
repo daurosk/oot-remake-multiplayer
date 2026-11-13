@@ -1,6 +1,29 @@
-# Questions testers ask
+# Questions players ask
 
-Short answers. Setting up is in [setup.md](setup.md), playing over the internet in [play-online.md](play-online.md), what works in [known-issues.md](known-issues.md).
+Short answers. Setting up is in [setup.md](setup.md), playing with friends in [play-online.md](play-online.md), what works in [known-issues.md](known-issues.md). Not answered here? Ask on [Discord](https://discord.gg/GwtRKAqng5).
+
+## What do I need to play?
+
+A Windows PC, your own copy of the game (version 1.1.1), and the kit zip from the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases). Every player needs their own copy of the game and the same release of the kit. [setup.md](setup.md) has the steps.
+
+## How many players can play together?
+
+Up to 16 in one session. It is tested with 2; more is experimental.
+
+## Emulator or Hookshot?
+
+- **The emulator kit** runs on most PCs and is the safe choice.
+- **[Hookshot](setup.md#play-on-hookshot-experimental)** is experimental. It needs no emulator, but it needs a graphics card with mesh shaders (NVIDIA RTX 20 or newer, AMD RX 6000 or newer), 16 GB of RAM and a long first build. Some keys differ (T for chat, F6 for the player list).
+
+Both can join one session and see each other as Link in their colours (checked by hand). The test releases after this one are for Hookshot only.
+
+## Do my friends and I need the same version?
+
+Yes. A game of one release cannot join a game of another. When a new release is out, the launchers ask "Update now?"; say yes, on every PC ([Updating](setup.md#updating)).
+
+## I am stuck at a locked door another player opened
+
+Type `/teleport <their name>` in the chat (Enter on the emulator, T on Hookshot). It takes you to them, in any room of the dungeon. Or step a few metres back from the door and come again. A proper fix is planned for the next release.
 
 ## Who is the host?
 
@@ -23,11 +46,16 @@ The server keeps the shared progress only while someone is in. When the last pla
 
 ## The game stutters. What can I do?
 
-That is the emulator building shaders: the first time it sees an effect or an area, it has to prepare it for your graphics card. It is worst in the first minutes and in new areas, and gets better as you play, because the emulator keeps what it built in its shader cache (`emulator\user\cache\shader\` in the kit) and reuses it next time.
+That is the emulator building shaders: the first time it sees an effect or an area, it has to prepare it for your graphics card. It is worst in the first minutes and in new areas, and gets better as you play, because the emulator keeps what it built and reuses it next time.
 
-- In the emulator's graphics settings (Emulation > Configure > Graphics, and its Advanced tab), leave the disk pipeline cache on and try asynchronous shader building: shaders are built in the background, so the game stutters less but an effect can be missing for a moment. Names may differ a little between emulator versions.
-- An update that brings a new emulator starts a new cache (the old one is moved to the backup folder, because an old cache can crash a new emulator), so the stutter comes back once after such an update.
-- Do not copy shader caches from other people or other emulators: we never share them, and one from another build can crash the game.
+- **Let "Preparing shaders" finish** the first time the game starts. If you clicked "Play now", close the emulator and start the game again.
+- **Play 10 to 15 minutes.** It gets smooth, and stays smooth next time.
+- **Still slow?** Click the **60 FPS** button at the bottom of the emulator window to switch to 30 FPS.
+- The kit's emulator already uses the fastest settings: you do not need to change any.
+- An update that brings a new emulator starts a new shader cache, so the stutter comes back once after such an update.
+- Do not copy shader caches from other people or other emulators: one from another build can crash the game.
+
+The full list is in [setup.md, "Low frame rate"](setup.md#low-frame-rate).
 
 ## Where are my saves?
 
@@ -37,7 +65,13 @@ We never ship save files, keys, firmware or the game in a release or in this rep
 
 ## The update did not happen
 
-`Host.bat`, `Join.bat` and `Update.bat` say why and how to update by hand. Most often: the emulator is still open (close it), there is no network, or GitHub turned the check away for a while (it allows 60 checks an hour from one internet address). If it says the release signature does not check, the release was published moments ago and is not signed yet: try again later (only set `verify_signature = no` in `coop-options.ini` if it keeps failing and you downloaded nothing from elsewhere). By hand: download the newest `oot-coop-....zip` from the [releases](https://github.com/daurosk/oot-remake-multiplayer/releases), unzip it to a new short folder, copy `emulator\user` and `coop-options.ini` from your old kit into it, and play from there.
+`Host.bat`, `Join.bat` and `Update.bat` say why. Most often:
+
+- **The emulator is still open.** Close it and try again.
+- **There is no network**, or GitHub turned the check away for a while (it allows 60 checks an hour from one internet address). Try again later.
+- **"The release signature does not check":** the release was published moments ago and is not signed yet. Try again later. (Only set `verify_signature = no` in `coop-options.ini` if it keeps failing and you downloaded nothing from elsewhere.)
+
+To update by hand: download the newest `oot-coop-....zip` from the [releases](https://github.com/daurosk/oot-remake-multiplayer/releases), unzip it to a new short folder, copy `emulator\user` and `coop-options.ini` from your old kit into it, and play from there.
 
 ## My coop-options.ini is missing a line I see in the release
 
@@ -47,14 +81,14 @@ We never ship save files, keys, firmware or the game in a release or in this rep
 
 Share it only with the people you play with. It holds your internet address, the port and the join password, so anyone who has it can join while your server window is open. It stops working when you close that window, and `Host.bat` makes a new password each time it starts (unless you set `server_password`). More in [SECURITY.md](../SECURITY.md).
 
-## Emulator or Hookshot?
-
-The emulator kit is the usual way and has every co-op feature. [Hookshot](setup.md#play-on-hookshot-experimental) is experimental: no emulator, but it needs a graphics card with mesh shaders (NVIDIA RTX 20 or newer, AMD RX 6000 or newer), 16 GB of RAM and a long first build. It has the same co-op features, with some keys of its own (T for chat, F6 for the player list). Both can join one session and see each other as Link in their colours (checked by hand).
-
 ## Is my game traffic encrypted?
 
 Yes, always. Every session has a join password, which `Host.bat` makes by itself each time (or the host sets with `server_password`), and the traffic is encrypted with it. The co-op panel's first line ends in `, encrypted`. There is no plain mode: the server does not start without a password, and the game does not join a server that does not encrypt.
 
 ## The other players are all green
 
-Your puppet pack was made before the tunic colours. Run `make-puppet-pack.cmd` once more (`Update.bat` does not rebuild it); `Host.bat` and `Join.bat` say so at start when the pack has no colours.
+Your puppet pack was made before the tunic colours. Run `make-puppet-pack.cmd` once more. `Host.bat` and `Join.bat` say so at start when the pack has no colours.
+
+## Where do I report a bug?
+
+Close the game, double-click `collect-logs.cmd` in the kit folder, and describe what happened on the [issue page](https://github.com/daurosk/oot-remake-multiplayer/issues). Send the zip it makes privately (a Discord DM), not on the public issue. On Hookshot, also attach `hookshot_log.txt`. [Reporting a problem](setup.md#reporting-a-problem) has the details.

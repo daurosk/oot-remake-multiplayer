@@ -106,7 +106,7 @@ So a remote player's arrow can be made on this screen the same way the puppet is
 | Field | Where | Status |
 |---|---|---|
 | Name | actor +0x260, `char*` | Checked: compared with `"Item_Bomb"` at 0x26394f8 |
-| Position, rotation | +0x31c, +0x328 | [player-state-map.md](../../integration/docs/player-state-map.md) |
+| Position, rotation | +0x31c, +0x328 | `player-state-map.md` (in the recomp project, not in this repository) |
 | State (4 alive, 7 to 11 gone) | +0x2c | Same |
 | Component table | +0x270 | Checked |
 | Life component | table +0x2b8 | Checked: 0x833e00, used by `QueryActorLife` |

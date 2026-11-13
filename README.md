@@ -1,50 +1,143 @@
 # oot-remake-multiplayer
 
-Online co-op for the Ocarina of Time remake on PC.
+Online co-op for the Ocarina of Time remake on PC. Up to 16 players see each other as Link in the same world, share items and progress, fight the same enemies and chat.
 
-The goal of this project is working multiplayer in two stages:
+It is an early test build: expect bugs. You bring your own copy of the game; nothing of the game is in this project.
 
-1. **Emulator first.** Add co-op to the Lichii emulator (Frizti's build), where the game already runs well. Up to 16 players see each other in the world, share progress, and fight the same enemies.
-2. **Then a recomp.** Carry the same co-op design into a native PC recompilation of the game. This has started: co-op runs on [Hookshot](https://github.com/NotRexed/Hookshot) as an experiment, with the same code, protocol and server.
-
-Both stages share one design, one wire protocol and one server, so what is learned on the emulator carries straight over to the recomp.
-
-**Discord:** https://discord.gg/GwtRKAqng5, for players, testers and contributors.
+**Need help?** Ask on [Discord](https://discord.gg/GwtRKAqng5). Questions and ideas also go to [Discussions](https://github.com/daurosk/oot-remake-multiplayer/discussions).
 
 ## Play the test release
 
-The newest test build is on the **[releases page](https://github.com/daurosk/oot-remake-multiplayer/releases)** (the top one; the test builds are pre-releases, which GitHub's "latest" link skips): the patched emulator (Fritchii v5.8.4, with a Saves window to export, import and copy saves), the server and start scripts in one zip, and the scripts that build co-op into Hookshot on your own PC. You bring your own game dump (and, for the emulator, your keys and firmware). It is an early build for testers, checked in two-game tests on one PC and by players online.
+The newest build is at the top of the **[releases page](https://github.com/daurosk/oot-remake-multiplayer/releases)**. (The test builds are pre-releases, so GitHub's "latest" link skips them.)
 
-**New: play on Hookshot (experimental).** Co-op now also runs on [Hookshot](https://github.com/NotRexed/Hookshot), a native PC version of the game, with no emulator. The kit builds it on your PC from your own game (`Build-Hookshot-Coop.bat`, 10 to 45 minutes the first time), then `Host-Hookshot.bat` and `Join-Hookshot.bat` start it. It needs a graphics card with mesh shaders: NVIDIA RTX 20 or newer, or AMD RX 6000 or newer, plus 16 GB of RAM and about 60 GB free while it builds. It has the emulator kit's co-op features: the other players as Link, chat (**T**), the player list (**F6**), the HUD, the item cheats (**F8**, off unless the host's kit turns them on, `LICHII_COOP_CHEATS=1`), your own tunic colour and your own ocarina notes. Hookshot and emulator players can join the same game and see each other as Link in their colours (checked by hand: one emulator and one Hookshot game). Checked by hand on two Hookshot games: the other players as Link in their colours, with name tags and edge arrows, and shots in flight. Full steps: **[setup.md, "Play on Hookshot"](docs/setup.md#play-on-hookshot-experimental)**. **Test releases after this one are Hookshot only:** this release still ships and documents the emulator kit, but the next test builds and their tests are on Hookshot.
+### 1. What you need
 
-**New in this update, on Hookshot.** Host and Join are on the game's own title screen (the Multiplayer rows; **Minus** opens them): Host starts the server inside the game and copies the invite code; Join takes a friend's code from the clipboard. One code works for the whole hosting session, and **Join again** rejoins with it. Joiners play from the host's save, as on the emulator. Start Hookshot with `Play-OoT-Coop.bat` (or the **Play OoT Co-op** desktop shortcut): it updates itself and rebuilds or reinstalls what changed, and makes the puppet pack when it is missing or old. Up to 16 players per session (tested with 2; more is experimental; the host picks the limit in Co-op Settings). A colour can be a code such as `#FF8020` (the nearest of the ten tunic colours). `check-hosting.cmd` tests the port your server really uses.
+- A Windows 10 or 11 PC (64-bit). There is also an experimental [Linux and Steam Deck kit](docs/setup.md#linux-and-steam-deck).
+- **Your own copy of the game** (version 1.1.1), dumped from your own console. Every player needs their own.
+- The **same release** as your friends. A game of one release cannot join a game of another.
+- No code or cheat mods. Texture and model mods are fine.
 
-**New here? The emulator kit.** Download the `oot-coop-...zip` of the newest release, unzip it to a short folder such as `C:\oot-coop`, add your own keys, firmware and game, run `make-puppet-pack.cmd` once, then the host double-clicks `Host.bat` and sends the invite code it copies, and the others paste it into `Join.bat` ([setup guide](docs/setup.md#emulator-setup-for-new-players)). Each player needs their own copy of the game.
+### 2. Pick how you run the game
 
-**Already have a kit? Update.** This release is protocol 11, so everyone updates (once: after this, `Play-OoT-Coop.bat` and the launchers update by themselves): a game of it refuses an older server and the other way round. Close the games and the server window and run `Update.bat` (or answer **Y** when `Host.bat` / `Join.bat` asks), then run `make-puppet-pack.cmd` once more, since `Update.bat` does not rebuild the pack (the new one has the tunic colours, your own Link's colour and the child cap's edges in colour; with an old pack the other players stay green). With no colour chosen, the host's Link is blue and the joiners' red. The emulator changed, so the first start prepares the shaders again (let the "Preparing shaders" screen finish, see [Low frame rate](docs/setup.md#low-frame-rate)). On Hookshot, run `Build-Hookshot-Coop.bat` again: it also rebuilds the pack there. Adult Link's hat edge, back and skirt can still look green up close (#202). [Updating](docs/setup.md#updating).
+One zip, `oot-coop-<version>.zip`, has both ways. Players of both can be in the same session.
 
-1. [Setting up](docs/setup.md): Hookshot, or the emulator kit (unzip, your keys and firmware, the puppet pack, first start), updating, settings and troubleshooting.
-2. Play on the [same network (LAN)](docs/play-lan.md), or [over the internet](docs/play-online.md): the quickest way is the **invite code**. `Host.bat` opens the game port on the host's router by itself (UPnP), makes a random join password and copies an invite code; friends paste it into `Join.bat`, and when the routers need help the two windows trade an answer code and punch through. No VPN and no router settings. Every session has a join password, and all game traffic is encrypted with it. A free VPN (Radmin VPN, Hamachi) still works when the invite code cannot connect, and `check-hosting.cmd` says what to fix.
-3. [Known issues](docs/known-issues.md): what works in this build and what does not yet.
-4. [Questions testers ask](docs/faq.md): who is the host, a permanent server, shader stutter, where saves are.
+| | The emulator kit | Hookshot (experimental) |
+|---|---|---|
+| What it is | The game in the kit's own emulator (Fritchii v5.8.4) | The game as a normal Windows program, built on your PC from your own game |
+| Good for | Most PCs. The safe choice. | A strong PC, and players who want no emulator |
+| Needs | Your game, plus your console's keys and firmware | Your game as a `.nup` file; an NVIDIA RTX 20 or AMD RX 6000 card or newer; 16 GB of RAM; about 60 GB free while it builds |
+| First start | A few minutes | 10 to 45 minutes (it builds the game once) |
+| Start it with | `Host.bat` or `Join.bat` | `Play-OoT-Coop.bat` |
 
-What works in it: the other players as Link (child and adult) with Navi and a name tag, following them live, with their sword, shield, held items and gear (#91, #92); shared items, songs, keys, heart pieces and heart containers; a shared Slingshot or ammo bag comes with its seeds and room (#128); projectiles others make are shown both ways: slingshot seeds and arrows in flight, nuts, bombs and the hookshot (#85, #158); a bomb another player holds stays in their hands with its fuse blinking and explodes on every screen at once (#169); dungeon progress and room switches (#129); boss rooms entered together, and a player who walks out during the fight is pulled back in (#109); shared enemies, townspeople and Stalchildren (#124), all Deku Babas (#132); the host's save decides (a host's load resets the group, a guest's load takes the group's progress); guests who join from the title get the host's save (#167); chat, a player list, reconnects (also over VPNs such as Hamachi, #143) and rejoining after a crash; a join password with a lockout for repeated wrong guesses (#160); `collect-logs` masks addresses and names (#172); the updater adds new settings (#179); `/teleport <name>` moves you to another player (#156). Texture and model mods work; a game with a code or cheat mod stops co-op (#136).
+Not sure? Use the emulator kit. The test releases after this one are for Hookshot only, so Hookshot is where new features go.
 
-New in this build and seen working in our two-game tests: no world reset when both players are in one area (#159); a rider on Epona (#199); Navi staying in her player's room (#145); PvP, off unless the host turns it on (`pvp = on`), with sword hits both ways; the Deku Scrubs' 2-3-1 order across players (#149); the Threads of Time shared (#193).
+### 3. Set up (once)
 
-New in this build, built in and not yet checked in a real game, or only partly: co-op on Hookshot (experimental); a join password in every session and all game traffic encrypted with it (#201; seen on the emulator kit, and Hookshot games joined with the password by hand); not checked yet because our test setup was wrong: Gohma's larvae (#178) and the early move-in fix (#148); partly checked: the other player's Slingshot seed (#198; made again, not yet seen on screen); every player's Link in their own tunic colour, your own Link included (#202, partly: child Link in full colour; adult Link keeps some green (a touch at the back of the hat as others see it, your own hat back and skirt up close); needs a new puppet pack), fewer snaps back after cutscenes (#194), a given ocarina (#190; it arrives, playing it unchecked), the Kakariko gate (#171); a Linux and Steam Deck kit (experimental, #127); hosting with an invite code, UPnP and hole punching (#165); signed updates (#161); a game-style HUD with the other players' names, hearts and place under your own hearts (the old panel is debug only, F7); story cutscenes watched together by players near each other (#173); the time of day shared (#192); in the Deku Tree talking to a scrub both players beat (#144), its switches, plates, torches, moving platform, ladder, bridge and webs (#176, #177, #129, #196), the map chest (#146) and the pushed block (#147); lifts and moving floors kept in step in every game, such as Dodongo's Cavern's lifts and the Deku Tree's basement floors (#196, from Hot Onion's tip); Gohma fighting both players (#150); the Peahat waking (#157); enemy projectiles (#189), drops (#102), chasers (#101), late kills (#133), multi-part enemies (#105) and guards (#191) in step; pots, boulders and cut signs (#84, #90); Gold Skulltula tokens (#89); the Kokiri Shop's Deku Shield for each player (#130); two players fishing (#151); the ocarina in the other Link's hand (#152); fewer disconnects over the internet and Hamachi (#175, #143); a safer rejoin (#163); a server restart while you play no longer stops the game (#175, the flag queue fix).
+1. Download `oot-coop-<version>.zip` from the newest release on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases).
+2. Unzip it to a short folder, for example `C:\oot-coop`.
+3. Follow the setup guide for your way to play:
+   - **[Emulator setup](docs/setup.md#emulator-setup-for-new-players)**: copy your keys and firmware in, start the game once.
+   - **[Hookshot setup](docs/setup.md#play-on-hookshot-experimental)**: double-click `Play-OoT-Coop.bat` and give it your game file. It builds the game once.
 
-**Saves: the host's save decides.** Progress is shared while you play; when the host loads a save, every game goes back to that save's progress, and a guest who loads a save gets the host's. To undo something, the host loads an older save; if the host restarts and loads, the guests' progress since the host's last save is undone. See [Saves](docs/setup.md#saves).
+### 4. Play together
 
-Known issues of this build: other players' ocarina songs are not heard (#152); others' masks and boots not yet seen on the other screen (#91); the Gohma fix needs a save from before Gohma to be checked (#150); the Deku Tree's falling-ladder eye shot is unchecked (#129); `/teleport` to a player inside a dungeon now stops at the entrance unless they are in the room you arrive in (it froze Link before, #197; if it still freezes, walk there); the spark and bounce where another player's shot hits do not show (#166; the shots themselves do); on the emulator, a Hookshot player's Link can show the Hylian Shield while they hold the Deku Shield; taking the Ocarina out holds the other players for about 4 seconds; only game version 1.1.1 is checked, other builds are unproven (#97); shader stutter in new places the first time; Hookshot is experimental (`collect-logs` does not pick up its log, invite codes untested there, it can crash outside Kokiri Forest or on some AMD cards); the Linux kit is experimental, not yet played on a real Linux PC or Deck, and your own Link there keeps the green tunic. See [Known issues](docs/known-issues.md) and the release notes.
+One player is the **host**. The others **join**. Nobody types an address or a password.
 
-**Safety.** Only the host opens a port: UDP 27510 for the co-op server; players who join open nothing. With the invite code, `Host.bat` asks the host's router (UPnP) to forward that one port only while the server runs; it removes the mapping when the server stops. Every session has a join password: random for each start (unless the host sets one), never written to the logs, and the hole-punch messages are signed with it; the game traffic is always encrypted with it (X25519 and XChaCha20-Poly1305), so nobody on the path can read or change it. The server and the games check every message against fixed limits and never write where a message says, and the updater downloads only this project's releases over HTTPS and checks their signature and SHA-256. Share an invite code only with friends: it holds your address and the password, and it stops working when `Host.bat` closes. `upnp = no` and `invite = no` in `coop-options.ini` turn these off; `server_allow` lists the players who may join ([Who can join](docs/play-online.md#who-can-join)). Details and how to report a problem: [SECURITY.md](SECURITY.md).
+**On the emulator kit**
 
-Every player needs the same release: a game of one release refuses a server of another. A kit updates itself with `Update.bat` (see [Updating](docs/setup.md#updating)).
+1. The host double-clicks `Host.bat`. A server window opens and shows an **invite code**. It is already copied.
+2. The host pastes the code to their friends in a private message.
+3. Each friend double-clicks `Join.bat`, pastes the code and presses Enter.
+4. Everyone starts the game in the emulator window. Friends choose **Continue** to play from the host's save.
 
-## Status
+**On Hookshot**
 
-Stage 0 is done and stage 1 (co-op in the emulator) is well under way: each part is checked on one PC with the real game in two emulator instances, and the test releases ([above](#play-the-test-release)) are played by testers on separate PCs. The plan is in [docs/plan.md](docs/plan.md), the wire protocol in [docs/protocol.md](docs/protocol.md), and what a test kit can show in [docs/testing.md](docs/testing.md).
+1. Everyone double-clicks `Play-OoT-Coop.bat` (or the **Play OoT Co-op** desktop shortcut). The game starts.
+2. The host chooses **Host** on the title screen. The screen shows an **invite code**. It is already copied.
+3. The host pastes the code to their friends in a private message.
+4. Each friend copies the code, chooses **Join** on the title screen, then **OK**.
+5. Friends choose **Continue** to play from the host's save.
+
+You should now see each other as Link, with a name tag overhead. The full steps, and what to do when a code does not connect, are in **[Playing over the internet](docs/play-online.md)**. In the same house? See **[Playing on the same network](docs/play-lan.md)**.
+
+### 5. In the game
+
+| | Emulator kit | Hookshot |
+|---|---|---|
+| Chat | **Enter** | **T** |
+| Player list | hold **Tab** | hold **F6** |
+| Go to another player | type `/teleport <name>` in the chat | the same |
+
+- **Saves: the host's save decides.** Friends who join play from the host's save, and their own saves are never touched. The host should save often. [More about saves](docs/setup.md#saves).
+- **Stuck at a locked dungeon door** that another player already opened? Type `/teleport <their name>` in the chat.
+- **Your name and tunic colour**: `color =` in `coop-options.ini` in the kit folder, or **Co-op Settings** on Hookshot's title screen. [Your colour](docs/play-online.md#your-colour).
+
+### Already have a kit? Update
+
+This release is protocol 11, so **everyone updates**, the host too. Close the games and the server window, then double-click `Update.bat`. After this one the kit keeps itself up to date: the launchers ask when a newer release is out. [Updating](docs/setup.md#updating).
+
+### Where to find things
+
+| I want to... | Page |
+|---|---|
+| Set up the kit, update it, or fix a setup problem | [docs/setup.md](docs/setup.md) |
+| Play with friends over the internet | [docs/play-online.md](docs/play-online.md) |
+| Play with someone in the same house | [docs/play-lan.md](docs/play-lan.md) |
+| See what works and what does not yet | [docs/known-issues.md](docs/known-issues.md) |
+| Read short answers to common questions | [docs/faq.md](docs/faq.md) |
+| Report a bug | [Reporting a problem](docs/setup.md#reporting-a-problem) |
+| Find any other document | [docs/README.md](docs/README.md) |
+
+## What works
+
+Seen working in our tests:
+
+- The other players as Link (child and adult) with Navi, a name tag, their sword, shield and held items, in each player's own tunic colour.
+- Shared items, songs, small keys, heart pieces and heart containers. Rupees, ammo and health stay your own.
+- Shared dungeon progress: switches, doors, cleared rooms and opened chests.
+- Shared enemies, townspeople and bosses. Boss rooms are entered together.
+- Shots and bombs other players make show on your screen.
+- Chat, a player list, `/teleport`, rejoining after a crash, and PvP when the host turns it on.
+- Hookshot and emulator players in one session.
+
+Not everything is checked in a real game yet, and some things do not work yet (other players' ocarina songs are not heard, for example). The full, honest list is in **[known issues](docs/known-issues.md)**.
+
+## Safety
+
+- Only the host opens a port (UDP 27510), and only while the server runs. Players who join open nothing.
+- Every session has a join password. It is inside the invite code, so nobody types it, and all game traffic is encrypted with it.
+- Share an invite code only with friends: it holds your internet address and the password. It stops working when the host's server closes.
+- The updater downloads only this project's releases and checks them before it changes anything.
+
+Details, and how to report a security problem: [SECURITY.md](SECURITY.md).
+
+## For contributors
+
+Anyone can contribute: fork, branch, pull request. Every pull request is reviewed before it is merged. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. All the design documents are listed in [docs/README.md](docs/README.md).
+
+### Building
+
+Needs CMake 3.24 or newer and a C++20 compiler (Visual Studio 2022 on Windows). ENet and doctest are fetched by CMake at pinned versions.
+
+```
+cmake -S . -B build
+cmake --build build --config Release
+ctest --test-dir build -C Release
+```
+
+The emulator side is a small patch on Frizti's Fritchii, pinned in [lichii/PIN](lichii/PIN); see [lichii/README.md](lichii/README.md). The Hookshot side is in [hookshot/](hookshot/README.md). To test co-op on two PCs with a kit, see [docs/testing.md](docs/testing.md).
+
+### Rules for this repository
+
+- **No game content.** No game files, keys, firmware, saves, shader caches or builds that contain them. `tools/check_content.py` runs on every push and pull request and fails if any are found.
+- **Our own code only.** Other projects may be read to understand how they behave. Their code is copied in only when its licence allows it, and then it is credited.
+- **Plain English** in commits, pull requests and docs.
+
+### Status
+
+The project has two stages. Stage 1 is co-op in the emulator, which ships in the test releases. Stage 2 carries the same co-op, protocol and server into a native PC build of the game; it runs on [Hookshot](https://github.com/NotRexed/Hookshot) as an experiment. The plan is in [docs/plan.md](docs/plan.md) and the wire protocol in [docs/protocol.md](docs/protocol.md).
+
+The numbers such as #91 below are issues on the [issues page](https://github.com/daurosk/oot-remake-multiplayer/issues).
 
 | Stage | State |
 |---|---|
@@ -56,29 +149,6 @@ Stage 0 is done and stage 1 (co-op in the emulator) is well under way: each part
 | 5. Shared enemies and objects | In progress: enemies, townspeople and animals move, animate and die the same in every game, owned by one player ([docs/objects.md](docs/objects.md)); seeds and nuts a player makes appear in the other games ([docs/spawns.md](docs/spawns.md)); crates and thrown rocks break in every game ([docs/world.md](docs/world.md)). Built, not yet fully checked in a game: pots, the time of day following the host ([docs/time.md](docs/time.md)), bombs, arrows and other projectiles, multi-part enemies and bosses. Signs cut in one game are cut in the others (seen in the logs; the pieces on the other screen not yet). Stalchildren in Hyrule Field are shared (#124); boss rooms pull a player who walks out back in (#109). A held bomb stays in the holder's hands and explodes on every screen at once (#169). Built, not yet checked in a game: the Deku Tree's switches, plates, ladder, bridge and webs (#176, #177), Gohma's larvae (#178) and the early move-in fix (#148; our boss-door test was set up wrong, not checked yet). Also built in, not yet checked: Gohma fighting both players (#150), enemy projectiles (#189), drops (#102), guards (#191), the moving platform (#196), the map chest (#146), the pushed block (#147), two players fishing (#151). |
 | 6. Chat, player list, reconnects | Done on one PC: reconnects and rejoining after a crash; the host moves to another player when one leaves; an in-game chat box (Enter) and player list (Tab); a join password (#160). Fewer disconnects over the internet built in (#175, #143). Built in, not yet checked in a game: hosting with an invite code, UPnP and hole punching, no VPN needed (#165; [docs/play-online.md](docs/play-online.md)); signed updates (#161); a game-style HUD with the other players' hearts. Seen in our tests: PvP (off by default), with sword hits both ways; game traffic encrypted with the join password on the emulator kit (#201). |
 | Recomp port of stages 0 to 6 | Experimental on [Hookshot](https://github.com/NotRexed/Hookshot), a static recompilation of the same game build: the same co-op code, server and protocol, so Hookshot and emulator players can join the same game and see each other as Link in their colours (checked by hand). Needs a mesh-shader GPU (RTX 20 or newer, RX 6000 or newer). Test releases after the current one are Hookshot only; the current release still has the emulator kit. Plan and state: [docs/hookshot.md](docs/hookshot.md). |
-
-The emulator side is a small patch on Frizti's Fritchii, pinned in [lichii/PIN](lichii/PIN); `lichii/fetch.ps1` fetches that source and applies the patches. See [lichii/README.md](lichii/README.md).
-
-## Building
-
-Needs CMake 3.24 or newer and a C++20 compiler (Visual Studio 2022 on Windows). ENet and doctest are fetched by CMake at pinned versions. `cmake -S . -B build`, then `cmake --build build --config Release` and `ctest --test-dir build -C Release`.
-
-To test co-op on two PCs with the test kit, see [docs/testing.md](docs/testing.md).
-
-## What you need
-
-- Your own legally obtained copy of the game, dumped from your own console. This repository has no game files, keys or firmware and never will.
-- Every player needs the same game version and the same co-op build.
-
-## Contributing
-
-Anyone can contribute: fork, branch, pull request. Every pull request is reviewed before it is merged. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Questions go to [Discussions](https://github.com/daurosk/oot-remake-multiplayer/discussions) or [Discord](https://discord.gg/GwtRKAqng5).
-
-## Rules for this repository
-
-- **No game content.** No game files, keys, firmware, saves, shader caches or builds that contain them. `tools/check_content.py` runs on every push and pull request and fails if any are found.
-- **Our own code only.** Other projects (Lichii, Eden, the TOTK Online mod, recomp projects) may be read to understand how they behave. Their code is not copied in unless its licence allows it, and then it is credited.
-- **Plain English** in commits, pull requests and docs.
 
 ## Credits
 

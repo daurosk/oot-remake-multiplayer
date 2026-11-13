@@ -4,11 +4,12 @@ labels: [bug, desync]
 body:
   - type: markdown
     attributes:
-      value: Desyncs need logs from every player in the session, taken right after it happened.
+      value: Desyncs need logs from every player in the session, taken right after it happened. Each player runs collect-logs.cmd in their kit folder and sends the zip privately (a Discord DM), not as an attachment here.
   - type: input
     id: version
     attributes:
       label: Co-op build and game version for each player
+      description: The first line of VERSION.txt in each kit folder.
     validations:
       required: true
   - type: dropdown
@@ -27,7 +28,7 @@ body:
     attributes:
       label: How you connected
       options:
-        - Invite code (Host.bat / Join.bat)
+        - Invite code (Host.bat / Join.bat, Play-OoT-Coop.bat or the title screen)
         - VPN (Radmin VPN, Hamachi, ZeroTier, Tailscale)
         - Port forwarding
         - Relay with a join code
@@ -51,6 +52,6 @@ body:
     id: logs
     attributes:
       label: Logs from every player
-      description: Attach one log file per player and say whose is whose.
+      description: Say who sent their collect-logs zip privately, and whose is whose. Do not attach logs with addresses here.
     validations:
       required: true

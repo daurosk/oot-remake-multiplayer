@@ -19,6 +19,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -71,19 +72,36 @@ private:
 // coop.ini. An unset tunic comments the line out. True when a text changed.
 bool WriteSettings(const Look& look, std::string& coop_ini, std::string* options_ini);
 
+// The tunic's colour as the puppet pack names it (coop_look/<name>.bin): the
+// pack colour nearest it (CoopColors::TunicOf), lower case; "green", the
+// game's own, when unset.
+std::string TunicName(const std::optional<std::uint32_t>& colour);
+
 // ---------------------------------------------------------------------------
 // The module's one look. Any thread, but Frame.
 
-// At the module's start, before co-op starts: the look of the settings
-// (LICHII_COOP_COLOR, else coop.ini's `color`).
-void Init(const Look& worn);
+// What applying a look does (the module's: coop_look_live.cpp). Called on
+// the game's thread, from Frame.
+using Apply = std::function<void(const Look&)>;
+
+// At the module's start: the look of the settings (LICHII_COOP_COLOR, else
+// coop-options.ini's or coop.ini's `color`) and what applying one does.
+// The worn look is not applied again: the game started in it.
+void Init(const Look& worn, Apply apply);
 Look Worn();
 Look Shown();
 void SetPending(const Look& look);
 // The pause screen closed. The look is applied on the game's next frame.
 void ApplyOnUnpause();
 // hos_coop_frame's every-frame site: applies a look ApplyOnUnpause asked
-// for, and keeps your Link's tunic in the worn colour (coop_look_tunic.h).
+// for (Init's `apply`).
 void Frame();
+
+
+// The Hookshot module's look (coop_look_live.cpp): Start, after the kit's
+// switches are set, takes the settings' look (Init), and starts the worker
+// that keeps your own Link's tunic in the worn colour; Stop ends it.
+void StartModule();
+void StopModule();
 
 }  // namespace CoopLook

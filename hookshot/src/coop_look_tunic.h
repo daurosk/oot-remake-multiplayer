@@ -62,6 +62,11 @@ public:
     virtual bool Write(std::uint64_t address, const void* in, std::size_t size) = 0;
 };
 
+// The end of the memory mapped from `begin` on, to the nearest `step`, at
+// most `limit` (the game's heap is one block: Hookshot's host/hos_mem.c).
+// `begin` itself when nothing is.
+std::uint64_t MappedEnd(const Memory& memory, std::uint64_t begin, std::uint64_t limit, std::uint64_t step);
+
 // A texture's texels in memory, and the colour they are in.
 struct Place {
     std::size_t texture = 0;

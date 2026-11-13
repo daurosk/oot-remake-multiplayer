@@ -15,6 +15,7 @@
 #include <optional>
 
 #include "coop_draw.h"
+#include "coop_look.h"
 #include "hos_coop_api.h"
 
 namespace CoopTitle {
@@ -25,6 +26,10 @@ void Init(const HosCoopApi* api, bool coop_on);
 // The kit's coop-options.ini as the launcher's variables, for the ones not
 // set (the game started without Host.bat or play.cmd). Before co-op starts.
 void ApplyKitOptions();
+// The look the player chose in the pause menu (coop_look.h), written to the
+// kit's coop-options.ini (else coop.ini) so the next start keeps it (the
+// title's Settings page reads the files when it opens). The calc thread.
+void SaveLook(const CoopLook::Look& look);
 
 // hos_coop_title: the game's calc thread (ctx may call()).
 void OnTitle(void* ctx, std::uint64_t screen, int event);

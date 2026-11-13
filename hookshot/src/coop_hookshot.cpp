@@ -39,6 +39,7 @@
 #include "coop_hook.h"
 #include "coop_hud.h"
 #include "coop_hud_hearts.h"
+#include "coop_look.h"
 #include "coop_png.h"
 #include "coop_puppet.h"
 #include "coop_puppet_config.h"
@@ -635,12 +636,14 @@ bool Start(const HosCoopApi* api) {
     CoopHook::Start();
     g_on = true;
     CoopTitle::Init(api, server);
+    CoopLook::StartModule();  // the look chosen in the pause menu (coop_look.h)
     return true;
 }
 
 void Frame(void* ctx, int site) {
     if (site == HOS_COOP_SITE_FRAME && ctx != nullptr && g_on) {
         CoopTitle::OnFrame(ctx);
+        CoopLook::Frame();  // a look chosen in the pause menu, once it closed
     }
     if (!g_on) {
         return;
@@ -685,6 +688,7 @@ void Stop() {
     HostMenu().Leave();  // our own server goes after our own client
     if (g_on) {
         g_on = false;
+        CoopLook::StopModule();
         CoopHook::Shutdown();
     }
 }

@@ -125,6 +125,25 @@ bool SameLayout(const Texels& a, const Texels& b) {
     });
 }
 
+std::uint64_t MappedEnd(const Memory& memory, std::uint64_t begin, std::uint64_t limit, std::uint64_t step) {
+    std::uint8_t b = 0;
+    // The last mapped step lies in [lo, hi): steps below lo are there, hi's is not.
+    std::uint64_t lo = 0, hi = step == 0 || limit <= begin ? 0 : (limit - begin + step - 1) / step;
+    if (hi == 0 || !memory.Read(begin, &b, 1)) {
+        return begin;
+    }
+    lo = 1;
+    while (lo < hi) {
+        const std::uint64_t mid = lo + (hi - lo) / 2;
+        if (memory.Read(begin + mid * step, &b, 1)) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return std::min(limit, begin + lo * step);
+}
+
 Search Find(const Memory& memory, std::uint64_t begin, std::uint64_t end,
             const std::vector<std::shared_ptr<const Texels>>& colours) {
     Search out;

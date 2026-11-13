@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Local co-op's game side (docs/local-coop.md, step 2): CoopLocal::Game for
-// a game whose Players read their pads through the wraps of patch 0010 (pads: patch 0016).
+// a game whose Players read their pads through the wraps of patch 0017 (pads: patch 0016).
 //
 // Local player k (1 to 3) is the game's own Player_<Age>, made by the puppet
 // Director as it makes another player's (coop_native_player.h: made, then

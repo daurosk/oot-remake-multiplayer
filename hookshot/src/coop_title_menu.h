@@ -152,7 +152,9 @@ struct Request {
     // field (ReadJoin says what it is). kSave: write options() to the files.
     // kPaste: hand the clipboard's text to Paste. kCopyInvite: put the
     // session's invite code on the clipboard.
-    enum class Kind { kHost, kJoin, kSave, kPaste, kCopyInvite };
+    // kPasteAnswer: the host hands the module's host the friend's ANSWER CODE from
+    // the clipboard (when the friend's game could not reach this one directly).
+    enum class Kind { kHost, kJoin, kSave, kPaste, kCopyInvite, kPasteAnswer };
     Kind kind = Kind::kHost;
     std::string text;
 };

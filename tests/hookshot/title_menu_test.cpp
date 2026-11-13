@@ -209,10 +209,15 @@ TEST_CASE("title menu: Host asks the module to host, OK closes the dialog") {
     m.SetStatus({"Send this code to your friends:", "ABCDE-FGHJK"});
     CHECK(m.view().title == "Host");
     CHECK(m.view().rows[0].label == "OK");
+    CHECK(m.view().rows[2].label == "Paste friend's answer");
     m.Press(Input::kDown);
     CHECK(m.Press(Input::kDecide) == Sound::kDecide);
     CHECK(m.TakeRequest()->kind == Request::Kind::kCopyInvite);
-    m.Press(Input::kUp);
+    m.Press(Input::kDown);
+    CHECK(m.Press(Input::kDecide) == Sound::kDecide);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kPasteAnswer);
+    CHECK(m.page() == Page::kHosting);   // (the dialog stays: the result shows in it)
+    m.Press(Input::kDown);
     CHECK(m.Press(Input::kDecide) == Sound::kBack);
     CHECK_FALSE(m.open());
 }
@@ -243,7 +248,7 @@ TEST_CASE("title menu: Join: A on the code pastes, OK joins, Cancel closes") {
     CHECK_FALSE(m.open());
 }
 
-TEST_CASE("title menu: Co-op Settings shows name, colour, players and voice; Save writes, Back forgets") {
+TEST_CASE("title menu: Co-op Settings shows name, colour, players and voice, Save writes, Back forgets") {
     Options start;
     start.name = "Saria";
     Menu m;
@@ -355,6 +360,11 @@ TEST_CASE("title menu: Host and Join in plain words, nothing about ports or pass
     CHECK(PlainStatus(h)[0] == "Making your code...");
     h.problem = HOS_COOP_PROBLEM_PORT_TAKEN;
     CHECK(PlainStatus(h)[0] == "Another co-op window is already open on this PC.");
+    h.problem = HOS_COOP_PROBLEM_BAD_CODE;   // the host pasted an answer code that is not right
+    h.invite = "ABCDE-FGHJK";
+    s = PlainStatus(h);
+    CHECK(s[0] == "That answer code didn't work: ask your friend to copy it again.");
+    CHECK(s[2] == "ABCDE-FGHJK");   // (the invite code stays in sight)
 
     HostView j;
     j.state = HOS_COOP_CONNECTED;

@@ -338,6 +338,7 @@ void SetCoopEnvironment(const CoopTitleMenu::Options& o) {
 }
 
 bool g_copied = false;   // this session's invite code was put on the clipboard
+std::string g_answer_note;  // what became of the friend's answer code the host pasted ("" when none)
 
 // What the module's host is doing, in plain words (CoopTitleMenu::PlainStatus). The invite code goes on the
 // clipboard by itself, once, as soon as there is one: the host has nothing to copy or type.
@@ -365,7 +366,31 @@ std::vector<std::string> HostStatusLines() {
             LOG_INFO(Core, "coop: title menu: {}", said);   // (the English detail, for the log)
         }
     }
-    return CoopTitleMenu::PlainStatus(v);
+    std::vector<std::string> lines = CoopTitleMenu::PlainStatus(v);
+    if (!g_answer_note.empty() && v.problem != HOS_COOP_PROBLEM_BAD_CODE) {
+        lines.push_back(v.players > 1 ? "Connected!" : g_answer_note);
+    }
+    return lines;
+}
+
+// The host pastes the friend's ANSWER CODE (the friend's game could not reach this one: their dialog shows it).
+void PasteAnswer() {
+    const std::string clip = ClipboardText();
+    if (!coop::server::nat::looks_like_code(clip)) {
+        g_answer_note.clear();
+        g_menu.SetStatus({"Copy your friend's answer code first (they send it to you), then press this again."});
+        g_sounds.push_back(Sound::kRefuse);
+        return;
+    }
+    if (!CoopHookshot::HostMenu().Answer(clip.c_str())) {
+        g_answer_note.clear();
+        g_menu.SetStatus({"That code didn't work: ask your friend to copy it again."});
+        g_sounds.push_back(Sound::kRefuse);
+        return;
+    }
+    LOG_INFO(Core, "coop: title menu: host: the friend's answer code was pasted");
+    g_answer_note = "Answer code taken: connecting your friend...";
+    g_menu.SetStatus(HostStatusLines());
 }
 
 // The Hosting / Joining page follows the host's status.
@@ -422,6 +447,7 @@ void Host() {
     LOG_INFO(Core, "coop: title menu: host: started (up to {} players)", o.max_players);
     g_doing = "hosting";
     g_copied = false;
+    g_answer_note.clear();
     g_menu.ShowPage(Page::kHosting);
     g_menu.SetStatus(HostStatusLines());
 }
@@ -508,6 +534,9 @@ void Act(const Request& r) {
         break;
     case Request::Kind::kPaste:
         g_menu.Paste(ClipboardText());
+        break;
+    case Request::Kind::kPasteAnswer:
+        PasteAnswer();
         break;
     case Request::Kind::kCopyInvite: {
         const std::string invite = HostInvite();

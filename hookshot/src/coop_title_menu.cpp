@@ -419,6 +419,10 @@ JoinTarget ReadJoin(std::string_view typed, const CodeResult& code) {
 
 std::vector<std::string> PlainStatus(const HostView& v) {
     std::vector<std::string> out;
+    if (v.host && v.problem == HOS_COOP_PROBLEM_BAD_CODE && !v.invite.empty()) {   // the friend's answer code
+        return {"That answer code didn't work: ask your friend to copy it again.", "Your code for friends is still:",
+                v.invite};
+    }
     switch (v.problem) {
     case HOS_COOP_PROBLEM_BAD_CODE:
     case HOS_COOP_PROBLEM_NO_TARGET:
@@ -526,7 +530,7 @@ std::size_t Menu::RowCount() const {
     case Page::kSettings:
         return kSettingsRows;
     case Page::kHosting:
-        return 2;   // OK, Copy the code again
+        return 3;   // OK, Copy the code again, Paste friend's answer
     case Page::kJoining:
         return 1;   // OK
     case Page::kClosed:
@@ -658,6 +662,10 @@ Sound Menu::Decide() {
     case Page::kHosting:
         if (selected_ == 1) {
             request_ = Request{Request::Kind::kCopyInvite, {}};
+            return Sound::kDecide;
+        }
+        if (selected_ == 2) {
+            request_ = Request{Request::Kind::kPasteAnswer, {}};
             return Sound::kDecide;
         }
         Close();
@@ -801,6 +809,7 @@ View Menu::view() const {
         v.title = "Host";
         add("OK");
         add("Copy the code again");
+        add("Paste friend's answer");
         v.hint = "A: choose    B: close";
         break;
     case Page::kJoining:

@@ -208,7 +208,7 @@ TEST_CASE("save transfer: a host with no save tells the asker at once (hostsave-
   CHECK(save::is_no_save(a.take()));
 }
 
-TEST_CASE("save transfer: a half-received save is never written; a slot is written whole (hostsave-fix)") {
+TEST_CASE("save transfer: a half-received save is never written, a slot is written whole (hostsave-fix)") {
   TempDir dir("coop_tests_save_partial");
   const fs::path own = dir.path / "0400486024DEC000";
   const fs::path coop = save::coop_dir_of(own);

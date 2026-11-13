@@ -56,6 +56,22 @@ input routing, with no game code (`tests/lichii/local_game_test.cpp`).
 - **Test switch:** `LICHII_COOP_LOCAL=<pad slot>` starts player 2 on that pad at the first frame in
   play, without the menu.
 
+## The research run
+
+`LICHII_COOP_LOCAL_PROBE=1` (`lichii/hook/coop_local_probe.h`, module only, reads only) logs
+`coop: local probe n: ...` every 10 s, five times:
+
+- **Layers:** the object behind main+0x4e81cf0 (count at +0x20, array at +0x28 by layer id; the
+  game's layer creator checks a new id is free there). Hookshot's FOV code reads the same object
+  as the cameras' manager, with the gameplay `sead::LookAtCamera` at element 0's +0x78; so each
+  layer likely holds its own camera there. Per layer: vtable, flags (+0x88), name (+0x8b0), the
+  camera at +0x78 and whether it is a `LookAtCamera`, and where four floats look like a viewport.
+- **Controllers:** the manager behind main+0x4e92f10 and its controllers 0 to 4 as getController
+  picks them; a controller 1 that is there means a second player can read its own.
+
+Pass: the report gets the layer fields (camera, viewport, flags) and whether controllers 1 to 3
+exist; then the views (step 3) are code.
+
 ## The views
 
 `lichii/hook/coop_local_layout.h` (no game code; `tests/lichii/local_test.cpp`):

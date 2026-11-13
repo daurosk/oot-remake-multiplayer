@@ -11,6 +11,7 @@
 
 #include "coop_local_game.h"
 #include "coop_local_input.h"
+#include "coop_local_probe.h"
 #include "coop_player_input.h"
 
 using CoopLocalGame::Facts;
@@ -294,4 +295,95 @@ TEST_CASE("local game: the wraps turn only the extra player's controller reads, 
     int said = 0;
     for (const auto& line : w.log) said += line.find("has no controller 1") != std::string::npos;
     CHECK(said == 1);
+}
+
+namespace {
+
+// Guest memory as bytes at addresses, for the probe.
+struct Bytes {
+    std::map<std::uint64_t, std::uint8_t> at;
+    void Put(std::uint64_t address, const void* data, std::size_t n) {
+        const auto* p = static_cast<const std::uint8_t*>(data);
+        for (std::size_t i = 0; i < n; i++) at[address + i] = p[i];
+    }
+    void Word(std::uint64_t address, std::uint64_t v) { Put(address, &v, 8); }
+    bool Read(std::uint64_t address, void* out, std::size_t n) const {
+        auto* p = static_cast<std::uint8_t*>(out);
+        for (std::size_t i = 0; i < n; i++) {
+            const auto it = at.find(address + i);
+            p[i] = it == at.end() ? 0 : it->second;   // (unwritten bytes read as 0, as a zeroed heap)
+        }
+        return true;
+    }
+};
+
+}  // namespace
+
+TEST_CASE("local probe: each layer's name, camera and viewport-looking floats are logged") {
+    namespace a = CoopLocalProbe::addr;
+    const std::uint64_t main = 0x80020000;
+    Bytes m;
+    const std::uint64_t owner = 0x10000000, array = 0x10001000, layer = 0x10002000, camera = 0x10003000;
+    m.Word(main + a::kLayers, owner);
+    m.Word(owner, main + 0x123450);
+    const std::uint32_t count = 2;
+    m.Put(owner + a::kLayerCount, &count, 4);
+    m.Word(owner + a::kLayerArray, array);
+    m.Word(array, layer);   // id 0; id 1 empty
+    m.Word(layer, main + 0x200000);
+    m.Word(layer + a::kLayerCamera, camera);
+    m.Word(camera, main + a::kLookAtCamera);
+    m.Put(layer + a::kLayerName, "Main_3D_0", 10);
+    const float viewport[4] = {0.0f, 0.0f, 1920.0f, 1080.0f};
+    m.Put(layer + 0x300, viewport, sizeof viewport);
+    const auto read = [&m](std::uint64_t ad, void* out, std::size_t n) { return m.Read(ad, out, n); };
+    const auto lines = CoopLocalProbe::Layers(read, main);
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[0].find("count 2") != std::string::npos);
+    CHECK(lines[0].find("vtable main+0x123450") != std::string::npos);
+    CHECK(lines[1].find("layer 0 ") == 0);
+    CHECK(lines[1].find("\"Main_3D_0\"") != std::string::npos);
+    CHECK(lines[1].find("(LookAtCamera)") != std::string::npos);
+    CHECK(lines[1].find("+0x300 (0 0 1920 1080)") != std::string::npos);
+}
+
+TEST_CASE("local probe: a name behind a string object, the controllers, and no owner") {
+    namespace a = CoopLocalProbe::addr;
+    const std::uint64_t main = 0x80020000;
+    Bytes m;
+    const auto read = [&m](std::uint64_t ad, void* out, std::size_t n) { return m.Read(ad, out, n); };
+    CHECK(CoopLocalProbe::Layers(read, main) == std::vector<std::string>{"layers: no owner at main+0x4e81cf0"});
+    CHECK(CoopLocalProbe::Controllers(read, main) ==
+          std::vector<std::string>{"controllers: no manager at main+0x4e92f10"});
+    const std::uint64_t layer = 0x20000000;
+    m.Word(layer + a::kLayerName, main + 0x777000);   // (a vtable: no text)
+    m.Word(layer + a::kLayerName + 8, 0x20100000);
+    m.Put(0x20100000, "UI_2D", 6);
+    CHECK(CoopLocalProbe::LayerName(read, layer) == "UI_2D");
+    CHECK(CoopLocalProbe::LayerName(read, 0x30000000) == "?");
+    const std::uint64_t manager = 0x40000000;
+    m.Word(main + a::kControllers, manager);
+    m.Word(manager + 0xb0, 0x40100000);
+    m.Word(manager + 0x110, 0x40200000);
+    m.Word(0x40200000, main + 0x500);
+    const auto lines = CoopLocalProbe::Controllers(read, main);
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].find("0: 0x40100000") != std::string::npos);
+    CHECK(lines[0].find("1: 0x40200000 vtable main+0x500") != std::string::npos);
+    CHECK(lines[0].find("2: 0 ") != std::string::npos);
+}
+
+TEST_CASE("local probe: what looks like a viewport") {
+    const float whole[4] = {0, 0, 1280, 720};
+    const float unit[4] = {0, 0, 1, 1};
+    const float half[4] = {640, 0, 640, 720};
+    const float small[4] = {0, 0, 8, 8};
+    const float fraction[4] = {0, 0, 1280.5f, 720};
+    const float negative[4] = {-1, 0, 1280, 720};
+    CHECK(CoopLocalProbe::LooksLikeViewport(whole));
+    CHECK(CoopLocalProbe::LooksLikeViewport(unit));
+    CHECK(CoopLocalProbe::LooksLikeViewport(half));
+    CHECK_FALSE(CoopLocalProbe::LooksLikeViewport(small));
+    CHECK_FALSE(CoopLocalProbe::LooksLikeViewport(fraction));
+    CHECK_FALSE(CoopLocalProbe::LooksLikeViewport(negative));
 }

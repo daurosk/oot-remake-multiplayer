@@ -44,6 +44,7 @@
 #include "coop_hud_hearts.h"
 #include "coop_live_events.h"
 #include "coop_local_game.h"
+#include "coop_local_probe.h"
 #include "coop_player_input.h"
 #include "coop_png.h"
 #include "coop_puppet.h"
@@ -736,12 +737,17 @@ bool Start(const HosCoopApi* api) {
     return true;
 }
 
+void LocalProbe();   // (below)
+
 void Frame(void* ctx, int site) {
     if (site == HOS_COOP_SITE_FRAME && ctx != nullptr && g_on) {
         CoopTitle::OnFrame(ctx);
     }
     if (!g_on) {
         return;
+    }
+    if (site == HOS_COOP_SITE_FRAME) {
+        LocalProbe();
     }
     if (site == HOS_COOP_SITE_PRESENT && !g_present_seen.exchange(true)) {
         LOG_INFO(Core, "coop: Hookshot calls co-op at each present (loads and pause included)");
@@ -906,6 +912,27 @@ void DrawWithLook(const HosCoopDraw& d) {
         }
     }
     CoopDraw::Draw(d, DrawScene(), g_look_state.load() == kLookOn ? g_look : CoopDraw::Look{});
+}
+
+// Local co-op's research probe (coop_local_probe.h, LICHII_COOP_LOCAL_PROBE=1): the renderer's layers and the
+// controller manager, logged every 10 s, five times. Reads only.
+void LocalProbe() {
+    static const bool wanted = [] {
+        const char* v = std::getenv("LICHII_COOP_LOCAL_PROBE");
+        return v != nullptr && *v != 0 && std::strcmp(v, "0") != 0;
+    }();
+    static int said = 0;
+    static std::chrono::steady_clock::time_point next{};
+    const auto now = std::chrono::steady_clock::now();
+    if (!wanted || said >= 5 || now < next) return;
+    next = now + std::chrono::seconds(10);
+    said++;
+    const CoopLocalProbe::ReadFn read = [](std::uint64_t a, void* out, std::size_t n) {
+        return CoopRuntime::Read(a, out, n);
+    };
+    for (const auto* lines : {&CoopLocalProbe::Layers, &CoopLocalProbe::Controllers})
+        for (const std::string& line : (*lines)(read, CoopRuntime::MainBase()))
+            LOG_INFO(Core, "coop: local probe {}: {}", said, line);
 }
 
 // Local co-op (coop_local_game.h): the exe's pads (patch 0010, hos_coop_pads.h) and the Player's wraps 16, 17 and 19.

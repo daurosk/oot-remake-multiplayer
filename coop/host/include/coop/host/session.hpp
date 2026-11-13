@@ -116,6 +116,8 @@ class Session {
   // started again). The next connected frame() sends the status again and
   // starts velocity afresh, as after a WELCOME; the connection is kept.
   void reset() { reset_sampler_ = true; }
+  // Emulator thread: the player's colour changed (Sampler::set_color).
+  void set_color(std::optional<std::uint32_t> color) { sampler_.set_color(color); }
 
   // Network thread: sends what frame() queued, runs the client once without
   // waiting, and handles every event that came.

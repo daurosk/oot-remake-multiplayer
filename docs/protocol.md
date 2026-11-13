@@ -543,6 +543,7 @@ A build without protocol 11 does not know 490 and 491; all players need the same
 - Version 11 (branch `native-host-b`, 2026-11-12): up to 16 players. Player numbers are 1 to 16 (`kMaxPlayers`), `WELCOME` lists up to 15 others, 12 more slot colours; a version 10 game refuses a `WELCOME` with 5 or more players, so the version goes up. The server takes `--max-players` (1 to 16, default 4 until the games' side takes 16) and sends `PLAYER_SAMPLE` and `PLAYER_POSE` by where the players are ("Who gets which stream"). No new type.
 - Protocol 11 also (branch `dbno`): `DBNO_MODE` (470), `DBNO_STATE` (471), `DBNO_REVIVE` (472); 470 to 479 kept. No bump of its own: a build without them never downs anyone (it gets no `DBNO_MODE`, so it plays with the game's own death), and a server without them does not relay them.
 - Version 11 also (branch `difficulty`): `DIFFICULTY` (480; 480 to 489 kept), sent by the server to every player at join. No earlier layout changed and no bump of its own: it ships with the first version 11 release. A version 11 build without it ignores the type and plays the game as it is.
+- Version 11 also (branch `look-live`): types 430 to 434 are kept for a look of several parts (shield, sword, boots, gauntlets). A colour changed in the pause menu needs none: it goes out in `PLAYER_EQUIP` `color` as at the start (docs/puppet.md, "Changing your colour in the game").
 
 ## Who gets which stream
 

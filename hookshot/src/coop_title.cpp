@@ -247,6 +247,17 @@ void Init(const HosCoopApi* api) {
              g_native ? "; the 4th title button opens it too (LICHII_COOP_TITLE_NATIVE)" : "");
 }
 
+void SaveLook(const CoopLook::Look& look) {
+    const auto kit = FindKit();
+    std::string coop = ReadText(CoopIni());
+    std::string options = kit ? ReadText(*kit / "coop-options.ini") : std::string();
+    const bool ok = !CoopLook::WriteSettings(look, coop, kit ? &options : nullptr) ||
+                    (kit ? WriteText(*kit / "coop-options.ini", options) : WriteText(CoopIni(), coop));
+    const std::string colour = CoopLook::ColourText(look[CoopLook::Part::tunic]);
+    LOG_INFO(Core, "coop: look: colour {} saved to {}{}", colour.empty() ? std::string("by player number") : colour,
+             kit ? "coop-options.ini" : "coop.ini", ok ? "" : " (the file could not be written)");
+}
+
 void ApplyKitOptions() {
     const auto kit = FindKit();
     if (!kit) {

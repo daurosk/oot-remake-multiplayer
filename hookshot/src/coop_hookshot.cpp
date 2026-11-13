@@ -52,6 +52,7 @@
 #include "coop_live_events.h"
 #include "coop_objects_sync.h"
 #include "coop_input.h"
+#include "coop_look.h"
 #include "coop_png.h"
 #include "coop_puppet.h"
 #include "coop_puppet_config.h"
@@ -826,6 +827,7 @@ bool Start(const HosCoopApi* api) {
     CoopModsRuntime::Start();  // the mods folder and the code mods (docs/mods.md)
     CoopTitle::Init(api);
     CoopPause::Init(server);
+    CoopLook::StartModule();  // the look chosen in the pause menu (coop_look.h)
     return true;
 }
 
@@ -836,6 +838,7 @@ void Frame(void* ctx, int site) {
     if (site == HOS_COOP_SITE_FRAME) {
         CoopModsRuntime::Frame();
         CoopPause::Tick();   // the Multiplayer tab's follow-ups, also while the menu is closed
+        CoopLook::Frame();   // a look chosen in the pause menu, once it closed
     }
     if (site == HOS_COOP_SITE_PRESENT && !g_present_seen.exchange(true)) {
         LOG_INFO(Core, "coop: Hookshot calls co-op at each present (loads and pause included)");
@@ -1095,6 +1098,7 @@ void Stop() {
     CoopHold::TheHostTable().Clear();  // (no copy stays held once co-op is off)
     if (g_on) {
         g_on = false;
+        CoopLook::StopModule();
         CoopHook::Shutdown();
     }
 }

@@ -32,7 +32,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import ainb, byml, dumpcheck, dungeon_rooms, hud, nup, rstb, sarc, title_menu, tunic, tunic_extra, zs  # noqa: E402
+from . import ainb, byml, dumpcheck, dungeon_rooms, hud, look_live, nup, rstb, sarc, title_menu, tunic, tunic_extra, zs  # noqa: E402
 
 TITLE_ID = "0400486024DEC000"
 DEFAULT_MOD_NAME = "coop-puppet"
@@ -596,12 +596,16 @@ SELF_MODEL_VARIANTS = ("Adult",)
 
 
 def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=None, self_tiles=None,
-                 self_dark_tiles=None, self_files=None):
+                 self_dark_tiles=None, self_files=None, look_dir=None, look_files=None):
     """The recoloured tiles and the model copies that name them (puppet_pack.tunic), with their
     size-table entries (the game's own file's). Returns {colour: [paths]}. With `self_dir`, also
     the game's tile recoloured under its own name per colour (not green) into it, listed in
     `self_tiles` ({colour: file name}): your own Link in your colour; and the dark tile (the child's
-    tunic body, tunic.DARK) the same way in `self_dark_tiles`."""
+    tunic body, tunic.DARK) the same way in `self_dark_tiles`. With `look_dir`, also each colour's
+    texels of your own Link's tunic textures (puppet_pack.look_live), green among them, listed in
+    `look_files` ({colour: file name}): your colour changed while the game runs."""
+    if look_files is None:
+        look_files = {}
     if self_dark_tiles is None:
         self_dark_tiles = {}
     if self_files is None:
@@ -647,10 +651,11 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
         name = tunic.tile_name(c)
         try:
             data = tunic.tile_for(tile, c)
-            own = tunic.self_tile(tile, c) if self_dir and c != "green" else None
+            own = tunic.self_tile(tile, c) if (self_dir or look_dir) and c != "green" else None
         except tunic.TunicError as e:
             raise BuildError(f"{tile_rel}: {e}")
-        if own is not None:
+        look = [(tunic.TILE, tile if own is None else own)]
+        if own is not None and self_dir:
             # Same size as the game's tile once unpacked: its size-table entry stands.
             fname = f"{c}.bntx.zs"
             write(os.path.join(self_dir, fname), recompress(dicts, tile_raw, own))
@@ -673,6 +678,12 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
                 write(os.path.join(self_dir, fname), recompress(dicts, tile_raw, own_dark))
                 self_dark_tiles[c] = f"{tunic.SELF_DIR}/{fname}"
                 self_files.setdefault(c, {})[dark_rel] = self_dark_tiles[c]
+            if look_dir:
+                # In memory the dark tile is the game's ASTC one: recoloured in place, not the BC3 copy.
+                try:
+                    look.append((tunic.DARK, dark if c == "green" else tunic_extra.recolor(dark, c, base)))
+                except tunic.TunicError as e:
+                    raise BuildError(f"{dark_rel}: {e}")
             ddst = f"Tex/{tunic.dark_name(c)}.bntx.zs"
             write(os.path.join(out_romfs, ddst),
                   recompress(dicts, dark_raw if c == "green" else tile_raw, ddata))
@@ -684,6 +695,7 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
                 e_pup = tunic_extra.for_puppet(e_data, e_own, name, c)
             except tunic.TunicError as e:
                 raise BuildError(f"{e_rel}: {e}")
+            look.append((name, e_data if e_own is None else e_own))
             if e_own is not None and self_dir:
                 # Same size and layout as the game's file: its size-table entry stands.
                 fname = f"{c}.{name}.bntx.zs"
@@ -709,8 +721,17 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
                 # replaced in Tex/ did not reach the adult's lower tunic and hood, while the
                 # puppet's renamed ones did. The kit copies it from the pack's romfs, no 2nd copy.
                 self_files.setdefault(c, {})[m_rel] = f"romfs/{dst}"
+        if look_dir:
+            write(os.path.join(look_dir, f"{c}.bin"), look_live.pack(look))
+            look_files[c] = f"{look_live.DIR}/{c}.bin"
         out[c] = paths
-        log(f"tunic {c}: {name} and {len(models)} models")
+        log(f"tunic {c}: {tunic.tile_name(c)} and {len(models)} models")
+    if look_dir and out and "green" not in out:
+        # The game's own texels: what the module finds the textures by, and green to go back to.
+        look = [(tunic.TILE, tile)] + ([(tunic.DARK, dark)] if dark is not None else [])
+        look += [(n, e_data) for n, (_, _, e_data) in extras.items()]
+        write(os.path.join(look_dir, "green.bin"), look_live.pack(look))
+        look_files["green"] = f"{look_live.DIR}/green.bin"
     if self_dark_tiles and dark is not None:
         # The kit puts a BC3 copy (the main tile's size) over the game's ASTC dark tile: its
         # entry must hold the bigger of the two. A bigger entry is fine for the game's own file.
@@ -759,10 +780,12 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     self_tiles = {}
     self_dark_tiles = {}
     self_files = {}
+    look_files = {}
     tunics_off = not tunics  # --tunics none: on purpose, the kit says nothing (kit-paths.ps1)
     tunic_files = write_tunics(romfs, out_romfs, dicts, table, tunics, log,
                                self_dir=os.path.join(mod_dir, tunic.SELF_DIR), self_tiles=self_tiles,
-                               self_dark_tiles=self_dark_tiles, self_files=self_files) if tunics else {}
+                               self_dark_tiles=self_dark_tiles, self_files=self_files,
+                               look_dir=os.path.join(mod_dir, look_live.DIR), look_files=look_files) if tunics else {}
     tunics = [c for c in tunics if c in tunic_files]
     test_tunic = test_tunic if test_tunic in tunic_files else None
     jobs = [(v, None) for v in VARIANTS] + [(v, c) for v in VARIANTS for c in tunics]
@@ -912,6 +935,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "self_tiles": self_tiles,
         "self_dark_tiles": self_dark_tiles,
         "self_files": self_files,
+        "look_files": look_files,
         "tunics_off": tunics_off,
         "test_tunic": test_tunic,
         "sound": sound,

@@ -19,7 +19,7 @@
 namespace CoopTitleMenu {
 
 // ---------------------------------------------------------------------------
-// Settings files: `key = value` lines (coop.ini beside hookshot.exe, the kit's
+// Settings files: `key = value` lines (coop.ini beside longshot.exe, the kit's
 // coop-options.ini). Comments and everything else are kept as they are.
 
 // The value of the last line `key = value` without a '#' or ';' in front (the
@@ -177,7 +177,16 @@ public:
 
     void Start(std::uint64_t now_ms, std::string host);
     void Stop() { phase_ = Phase::kOff; }
+    // The host has no save yet (a new game): stop waiting, say so (the title's own New Game / Continue stay).
+    void NoSave() {
+        if (phase_ == Phase::kWait) phase_ = Phase::kHostNone;
+    }
     bool active() const { return phase_ == Phase::kWait || phase_ == Phase::kLoad; }
+    bool waiting() const { return phase_ == Phase::kWait; }   // (for the host's save; nothing pressed yet)
+    // The player picked a file on the title while it waited: AutoLoad stops, with no line (their choice).
+    void PlayerChose() {
+        if (phase_ == Phase::kWait) phase_ = Phase::kDone;
+    }
     // One look: whether A is held now, and whether the cursor should go to Continue (once).
     struct Tick {
         bool press_a = false;           // (the module sends it only while the cursor is on Continue)
@@ -193,9 +202,15 @@ public:
     // Whether AutoLoad's A may go in: on the title only with the cursor on Continue (never New Game, never a row
     // the title hides); once the title has gone (the file list, its question) every press.
     static bool PressAllowed(bool title_up, int focused_button) { return !title_up || focused_button == kContinue; }
+    // Whether an A that went in is the player picking a file (or a new game, or the title's options) on the title
+    // itself: not AutoLoad's own press, a title button focused, and not one of the co-op rows (Host, Join, Settings:
+    // they open our menu). A guest's pending switch to the host's save is dropped then (CoopSave).
+    static bool PlayerPicksFile(bool title_up, bool autoload_pressed, int focused_button, bool on_coop_row) {
+        return title_up && !autoload_pressed && focused_button >= 0 && !on_coop_row;
+    }
 
 private:
-    enum class Phase { kOff, kWait, kLoad, kDone, kNoSave, kStuck };
+    enum class Phase { kOff, kWait, kLoad, kDone, kNoSave, kHostNone, kStuck };
     Phase phase_ = Phase::kOff;
     std::string host_;
     std::uint64_t since_ = 0;

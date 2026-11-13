@@ -5,7 +5,7 @@
 
 Each game folder is a Hookshot game built with our patch (hookshot/README.md). This script puts the module, a coop.ini and
 the save (account.sav, option.sav, slot_NN; a copy) into each folder, starts the server and both games with Hookshot's
-control bridge (scripts/hookshot_ctl.py), presses A until each game plays, teleports both to Kokiri Forest, walks A
+control bridge (scripts/longshot_ctl.py), presses A until each game plays, teleports both to Kokiri Forest, walks A
 around while it takes shots of both pictures, prints the co-op lines of both logs, and closes everything. Nothing from the
 game leaves the game folders and the shots folder."""
 import argparse
@@ -16,21 +16,21 @@ import subprocess
 import sys
 import time
 
-SAVE_USER = "5a3c9e1f0b7d24680000000000000001"   # (hookshot_ctl.py's: the user folder a Hookshot game reads first)
+SAVE_USER = "5a3c9e1f0b7d24680000000000000001"   # (longshot_ctl.py's: the user folder a Hookshot game reads first)
 
 
 def ctl(a, sock, *args, timeout=None, check=True):
-    cmd = [sys.executable, "-I", os.path.join(a.hookshot, "scripts", "hookshot_ctl.py"), "--json", "--sock", sock] + \
+    cmd = [sys.executable, "-I", os.path.join(a.hookshot, "scripts", "longshot_ctl.py"), "--json", "--sock", sock] + \
         [str(x) for x in args]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if check and r.returncode != 0:
-        raise SystemExit("hookshot_ctl %s: %s %s" % (" ".join(map(str, args)), r.stdout.strip(), r.stderr.strip()))
+        raise SystemExit("longshot_ctl %s: %s %s" % (" ".join(map(str, args)), r.stdout.strip(), r.stderr.strip()))
     lines = [json.loads(x) for x in r.stdout.splitlines() if x.startswith("{")]
     return lines[-1] if lines else {}
 
 
 def prepare(a, game, name):
-    exe_dir = os.path.join(game, "bin") if os.path.isfile(os.path.join(game, "bin", "hookshot.exe")) else game
+    exe_dir = os.path.join(game, "bin") if os.path.isfile(os.path.join(game, "bin", "longshot.exe")) else game
     shutil.copy2(a.module, os.path.join(exe_dir, "hookshot_coop.dll"))
     with open(os.path.join(exe_dir, "coop.ini"), "w", encoding="utf-8") as f:
         f.write("server = 127.0.0.1:%d\nname = %s\n" % (a.port, name))
@@ -43,7 +43,7 @@ def prepare(a, game, name):
 def launch(a, game, tag):
     run = os.path.join(a.shots, "run-" + tag)
     os.makedirs(run, exist_ok=True)
-    cmd = [sys.executable, "-I", os.path.join(a.hookshot, "scripts", "hookshot_ctl.py"), "--json", "--sock", "coop-proof-" + tag,
+    cmd = [sys.executable, "-I", os.path.join(a.hookshot, "scripts", "longshot_ctl.py"), "--json", "--sock", "coop-proof-" + tag,
            "launch", game, "--run", run]
     for kv in a.env:
         cmd += ["--env", kv]
@@ -69,7 +69,7 @@ def to_play(a, sock, tag):
 
 
 def coop_lines(game):
-    for p in (os.path.join(game, "hookshot_log.txt"), os.path.join(game, "bin", "hookshot_log.txt")):
+    for p in (os.path.join(game, "longshot_log.txt"), os.path.join(game, "bin", "longshot_log.txt")):
         if os.path.isfile(p):
             with open(p, encoding="utf-8", errors="replace") as f:
                 return [ln.rstrip() for ln in f if "coop" in ln or "co-op" in ln]

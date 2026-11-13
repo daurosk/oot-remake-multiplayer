@@ -46,20 +46,20 @@ LOCK_NAMES = {"emu": "build-emu.lock", "hs": "build-hs.lock"}
 OLD_LOCK = "build.lock"
 # What is per player or per run in a game folder: never cached, never overwritten in a pair.
 PER_PLAYER = {"hookshot_coop.dll", "coop.ini", "coop-options.ini", "user", "save", "autotest-save", "mods",
-              "hookshot_log.txt", "hookshot_log.old.txt", "control.json"}
+              "longshot_log.txt", "longshot_log.old.txt", "control.json"}
 CACHE_GAME = "game"
 CACHE_NAME = re.compile(r"^[0-9a-f]{20}(\.part|\.build)?$")
 # Caches the game writes while it runs (shaders, pipelines): copied into a pair that has none, never overwritten,
 # except when the pair's game was built from another stamp (cache_restore): then they are another build's.
-RUNTIME_CACHE = re.compile(r"^(hookshot_(pipelines|pipeline_states|programs|shaders|computes|prepared)\.(bin|idx)"
-                           r"|hookshot_pipelines\.bin\.(built|predicted)|hookshot_damaged_files\.txt"
+RUNTIME_CACHE = re.compile(r"^(longshot_(pipelines|pipeline_states|programs|shaders|computes|prepared)\.(bin|idx)"
+                           r"|longshot_pipelines\.bin\.(built|predicted)|longshot_damaged_files\.txt"
                            r"|mkw_vk_pipelines(_play_\d+)?\.bin)$", re.I)
 # What one start's shader preparation leaves (warmup): the noted pipelines built into the pipeline cache. The game build
-# prepares in a separate process that does not write hookshot_pipelines.bin.built (on NVIDIA that process's pipeline
+# prepares in a separate process that does not write longshot_pipelines.bin.built (on NVIDIA that process's pipeline
 # cache does not answer the game's), so each new game folder's first start builds every noted pipeline (35269, about
 # 18 min; six at once took 9+ min per load in wave 1). One pair warmed, these files go to the others and the cache.
-WARM_FILES = re.compile(r"^(hookshot_pipelines\.bin(\.built|\.predicted)?|hookshot_(pipeline_states|computes|prepared)\.bin"
-                        r"|hookshot_programs\.(bin|idx)|mkw_vk_pipelines(_play_\d+)?\.bin)$", re.I)
+WARM_FILES = re.compile(r"^(longshot_pipelines\.bin(\.built|\.predicted)?|longshot_(pipeline_states|computes|prepared)\.bin"
+                        r"|longshot_programs\.(bin|idx)|mkw_vk_pipelines(_play_\d+)?\.bin)$", re.I)
 WARM_DONE = "vk: start-up: the shaders took"
 
 
@@ -119,7 +119,7 @@ def pin_dir(stamp_text):
     """The shared folder of a pin: tools/ (Hookshot's tools and patched source), work/ (its build files and object
     cache) and game/ (THE game folder of the pin, built again in place). Every build of that pin, whatever the patches,
     goes through it: Hookshot's own lift key and object cache decide what is done again. The game folder must stay the
-    same path: the lift key hashes it (make_game.py: OOT_DUMP, OOT_ROMFS), and it keeps .hookshot_exefs and the prepared
+    same path: the lift key hashes it (make_game.py: OOT_DUMP, OOT_ROMFS), and it keeps .longshot_exefs and the prepared
     shaders. Not a cache entry (cache_prune leaves it); the cache gets a copy of the game folder."""
     return os.path.join(cache_root(), "pins", pin_of(stamp_text))
 
@@ -170,7 +170,7 @@ def touch_used(folder):
 
 
 def find_exe(folder):
-    for p in (os.path.join(folder, "bin", "hookshot.exe"), os.path.join(folder, "hookshot.exe")):
+    for p in (os.path.join(folder, "bin", "longshot.exe"), os.path.join(folder, "longshot.exe")):
         if os.path.isfile(p):
             return p
     return None
@@ -231,7 +231,7 @@ def cache_store(src, repo=REPO, force=False, dry=False, say=print):
     want = stamp(repo)
     k = key_of(want)
     if not find_exe(src):
-        raise Fail("no hookshot.exe in %s" % src)
+        raise Fail("no longshot.exe in %s" % src)
     sf = os.path.join(src, "coop-built-from.txt")
     have = ""
     if os.path.isfile(sf):
@@ -287,7 +287,7 @@ def cache_restore(dst, repo=REPO, dry=False, say=print):
 
 
 def warm_dir(folder):
-    """Where a game folder's caches are: beside its hookshot.exe."""
+    """Where a game folder's caches are: beside its longshot.exe."""
     exe = find_exe(folder)
     return os.path.dirname(exe) if exe else folder
 
@@ -303,13 +303,13 @@ def warm_files(folder):
 def warm_spread(src, dsts, dry=False, say=print):
     """Copies src's warm-up files over each destination game folder's. Returns the files copied."""
     names = warm_files(src)
-    if "hookshot_pipelines.bin.built" not in [n.lower() for n in names]:
-        raise Fail("%s has no hookshot_pipelines.bin.built: its start did not finish the shader preparation" % src)
+    if "longshot_pipelines.bin.built" not in [n.lower() for n in names]:
+        raise Fail("%s has no longshot_pipelines.bin.built: its start did not finish the shader preparation" % src)
     sdir = warm_dir(src)
     total = 0
     for dst in dsts:
         if not find_exe(dst):
-            raise Fail("no hookshot.exe in %s" % dst)
+            raise Fail("no longshot.exe in %s" % dst)
         ddir = warm_dir(dst)
         if os.path.normcase(os.path.abspath(ddir)) == os.path.normcase(os.path.abspath(sdir)):
             continue
@@ -332,7 +332,7 @@ def warm_start(game, out, timeout, say=print, popen=subprocess.Popen, connect=No
     its bridge so it writes its caches. True when the line came and the game closed after the quit."""
     exe = find_exe(game)
     if not exe:
-        raise Fail("no hookshot.exe in %s" % game)
+        raise Fail("no longshot.exe in %s" % game)
     os.makedirs(out, exist_ok=True)
     log = os.path.join(out, "warmup-out.txt")
     sock = "coop-warmup-%d" % os.getpid() if WINDOWS else os.path.join(out, "control.sock")
@@ -733,7 +733,7 @@ def build(pairs, build_dir, kit=None, game=None, jobs=0, keep=3, repo=REPO, dry=
                 cache_restore(p, repo, dry=dry, say=say)
             else:
                 say("cache: would copy the new game into %s" % p)
-            exe = find_exe(p) if not dry else os.path.join(p, "bin", "hookshot.exe")
+            exe = find_exe(p) if not dry else os.path.join(p, "bin", "longshot.exe")
             dest = os.path.dirname(exe) if exe else p
             say("copy %s -> %s" % (dll, dest))
             if not dry:

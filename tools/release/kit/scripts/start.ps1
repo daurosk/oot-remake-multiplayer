@@ -75,7 +75,7 @@ if ($problem) {
 $others = @()
 try { $others = @(Register-KitFolder (Join-Path $env:LOCALAPPDATA 'OoT-Coop\kits.txt') $kit) } catch { }
 foreach ($o in $others) {
-    $running = @(Get-Process hookshot -ErrorAction SilentlyContinue | Where-Object {
+    $running = @(Get-Process longshot, hookshot -ErrorAction SilentlyContinue | Where-Object {
         $_.Path -and $_.Path.StartsWith(([System.IO.Path]::GetFullPath($o).TrimEnd('\') + '\'), [StringComparison]::OrdinalIgnoreCase) })
     $what = Get-KitName $o
     if ($running) { Write-Host "Note: the co-op game of another kit is running ($o)." }

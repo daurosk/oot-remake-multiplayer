@@ -90,7 +90,7 @@ param(
     # (docs/hookshot.md). Hookshot games are played through Hookshot's control bridge by
     # tools\autotest\hookshot.py: the same A/B scripts, shots and logs in the run folder.
     [ValidateSet('emulator', 'hookshot')][string]$Runtime = 'emulator',
-    # Hookshot game folders (hookshot.exe, or bin\hookshot.exe, with hookshot_coop.dll and the
+    # Hookshot game folders (longshot.exe, or bin\longshot.exe, with hookshot_coop.dll and the
     # puppet pack in mods\). Default: hookshot-A and hookshot-B in the coop-kit folder. A folder's
     # autotest-save\ (a copy of its user\save\) is put back over user\save\ before each run.
     [string]$HookshotA = "",

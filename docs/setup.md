@@ -1,6 +1,6 @@
 # Setting up co-op
 
-Online co-op for the Ocarina of Time remake, on [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexed and contributors, GPL-3.0): a native PC version of the game that the kit builds on your PC from your own copy. There is no emulator: the game runs as a normal Windows program. This is an early test build (the newest is on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases)); [known-issues.md](known-issues.md) lists what works and what does not yet.
+Online co-op for the Ocarina of Time remake, on [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot) (Team MagicBean and contributors, GPL-3.0; the continuation of Hookshot by NotRexed and contributors): a native PC version of the game that the kit builds on your PC from your own copy. There is no emulator: the game runs as a normal Windows program. This is an early test build (the newest is on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases)); [known-issues.md](known-issues.md) lists what works and what does not yet.
 
 The kit has one file to start: **`Start OoT Co-op.bat`**. Everything else is done by it or in the game. (The older emulator kits, with `Host.bat` and `Join.bat`, have their own guide: [setup-emulator.md](setup-emulator.md). A player on an emulator kit cannot join a game hosted with this kit, nor the other way round: every player needs this kit, the same version.)
 
@@ -11,7 +11,7 @@ The kit has one file to start: **`Start OoT Co-op.bat`**. Everything else is don
 - **16 GB of RAM** (the game uses about 10 GB; 8 GB of video memory is recommended).
 - **About 60 GB free** on the drive the kit is on, for the first build.
 - **Your own game as a `.nup` file** (or its `romfs` and `exefs` folders): program `0400486024DEC000`, update v131072, build `e0f3ccfa`. No keys or firmware are needed. Every player needs their own copy of the game.
-- An internet connection for the first build (it downloads Hookshot's build tools, about 400 MB) and to play.
+- An internet connection for the first build (it downloads Longshot's build tools, about 400 MB) and to play.
 
 <a id="play-on-hookshot-experimental"></a>
 
@@ -27,13 +27,13 @@ The kit has one file to start: **`Start OoT Co-op.bat`**. Everything else is don
    - **Co-op Settings:** your name, your colour, the number of players when you host, voice chat.
 6. **Next time**, double-click `Start OoT Co-op.bat` or the desktop shortcut: the game starts in seconds.
 
-To check it works: in the game the other players show as Link with their name tags, and **T** opens the chat box. The log `hookshot_log.txt` beside `hookshot.exe` (in the kit's `hookshot\game\bin\`) says `coop: module loaded`, then `coop: connected`.
+To check it works: in the game the other players show as Link with their name tags, and **T** opens the chat box. The log `longshot_log.txt` beside `longshot.exe` (in the kit's `hookshot\game\bin\`) says `coop: module loaded`, then `coop: connected`.
 
 ## Updating
 
-Nothing to do: on every start the kit asks GitHub whether a new co-op version is out, and if so asks you once (`auto_update = yes` in `coop-options.ini` updates without asking, `no` never does). It downloads the new kit, checks it, keeps your settings, your game file and the built game, and puts the new co-op into the game in seconds. It builds the game again only when the update moves to a new Hookshot (it says so: about 15 minutes). Every player needs the same version.
+Nothing to do: on every start the kit asks GitHub whether a new co-op version is out, and if so asks you once (`auto_update = yes` in `coop-options.ini` updates without asking, `no` never does). It downloads the new kit, checks it, keeps your settings, your game file and the built game, and puts the new co-op into the game in seconds. It builds the game again only when the update moves to a new Longshot (it says so: about 15 minutes). Every player needs the same version.
 
-`Update.bat` in the kit folder updates by hand (for example when the start said it could not reach GitHub). It is also attached to each release: dropped into an older emulator kit, it turns that kit into a Hookshot kit. The emulator, `Host.bat`, `Join.bat` and the other old files go into the kit's `backup-<version>\` folder; your emulator files (`emulator\user`: its saves, keys and settings) stay where they are, and the window says you can delete that folder when you no longer need it.
+`Update.bat` in the kit folder updates by hand (for example when the start said it could not reach GitHub). It is also attached to each release: dropped into an older emulator kit, it turns that kit into a Longshot kit. The emulator, `Host.bat`, `Join.bat` and the other old files go into the kit's `backup-<version>\` folder; your emulator files (`emulator\user`: its saves, keys and settings) stay where they are, and the window says you can delete that folder when you no longer need it.
 
 ## The kit folder
 
@@ -44,7 +44,7 @@ Nothing to do: on every start the kit asks GitHub whether a new co-op version is
 | `Update.bat` | Updates by hand (the start does it by itself) |
 | `coop-options.ini` | Co-op switches; the game's Co-op Settings write it too |
 | `start-server.cmd`, `server\` | A dedicated co-op server, only if you want one (Host in the game needs neither) |
-| `hookshot\` | The co-op module and Hookshot's pin and patches; after the first start also `tools\`, `downloads\`, `work\` (kept so updates are quick; about 50 GB, deleting it makes the next build take the full time) and `game\` (your built game) |
+| `hookshot\` | The co-op module and Longshot's pin and patches; after the first start also `tools\`, `downloads\`, `work\` (kept so updates are quick; about 50 GB, deleting it makes the next build take the full time) and `game\` (your built game) |
 | `scripts\`, `tools\` | What the start runs; `scripts\collect-logs.cmd` makes a log zip for a bug report |
 | `docs\`, `licenses\` | This guide, the known issues, the licences and where the source is |
 | `logs\`, `VERSION.txt`, `MANIFEST.txt` | Logs, the kit's version, its file list (for the updater) |
@@ -70,7 +70,7 @@ The start window says what is wrong and what to do. What it checks:
 - **The build stops on a download or a SHA-256 that does not match:** start again (a download may have broken off). If it keeps failing, report it with the window's text.
 - **Not enough space:** the build warns below about 60 GB free. Free some space, or move the kit to a bigger drive.
 - **Note: another co-op kit is on this PC.** An older kit folder: you can delete it once this one works. The new kit takes your game file from it, so it does not ask again.
-- **The game closes at the start or the screen goes black:** check that your card has mesh shaders (above) and that its driver is up to date. Hookshot's own open problems are on [Hookshot's page](https://github.com/NotRexed/Hookshot). To try the game without co-op, set `HOS_COOP=0` before starting `hookshot.exe`; if it crashes without co-op too, it is Hookshot's problem, not co-op's.
+- **The game closes at the start or the screen goes black:** check that your card has mesh shaders (above) and that its driver is up to date. Longshot's own open problems are on [Longshot's page](https://git.magicbean.dev/MagicBeanDev/Longshot/issues). To try the game without co-op, set `HOS_COOP=0` before starting `longshot.exe`; if it crashes without co-op too, it is Longshot's problem, not co-op's.
 - **Host or Join says a router blocks the way in**, or friends cannot reach you: the Host screen says what to do (the answer code, UPnP, **Same network or VPN**); [play-online.md](play-online.md) has more.
 
 ## In the game, saves, the emulator kit
@@ -81,7 +81,7 @@ The co-op keys in the game (chat **T**, player list **F6**, panel **F7**, item c
 
 ## Low frame rate
 
-Hookshot builds its shaders the first time it sees each place, so the first minutes in a new place may stutter; it is smooth the next time. Close other programs that use the graphics card, and keep the driver up to date.
+Longshot builds its shaders the first time it sees each place, so the first minutes in a new place may stutter; it is smooth the next time. Close other programs that use the graphics card, and keep the driver up to date.
 
 ## Check the download
 

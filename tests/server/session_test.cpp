@@ -648,7 +648,7 @@ TEST_CASE("an empty session forgets the game build the first player set") {
   other.game_build_id = "0000000000000000";
   h.receive(2, other, kChannelSession);
   auto msgs = h.to(2);
-  REQUIRE(msgs.size() == 3);  // WELCOME, then HOST and FLAG_SNAPSHOT
+  REQUIRE(msgs.size() == 4);  // WELCOME, then HOST, DBNO_MODE and FLAG_SNAPSHOT
   CHECK(std::holds_alternative<Welcome>(msgs[0].message));
 }
 
@@ -777,12 +777,14 @@ TEST_CASE("the first player hosts, each joiner is told who hosts, then sent the 
   h.join(1, "Link");
   CHECK(h.session.host() == std::optional<std::uint8_t>{1});
   auto msgs = h.to(1);
-  REQUIRE(msgs.size() == 3);
+  REQUIRE(msgs.size() == 4);  // WELCOME, HOST, DBNO_MODE, FLAG_SNAPSHOT
   CHECK(std::holds_alternative<Welcome>(msgs[0].message));
   CHECK(msgs[1].channel == kChannelProgress);
   CHECK(std::get<Host>(msgs[1].message) == Host{1});
-  CHECK(msgs[2].channel == kChannelProgress);
-  CHECK(std::get<FlagSnapshot>(msgs[2].message) == FlagSnapshot{0, 1, {}});
+  CHECK(msgs[2].channel == kChannelSession);
+  CHECK(std::holds_alternative<DbnoMode>(msgs[2].message));
+  CHECK(msgs[3].channel == kChannelProgress);
+  CHECK(std::get<FlagSnapshot>(msgs[3].message) == FlagSnapshot{0, 1, {}});
 
   h.clear();
   h.join(2, "Zelda");
@@ -1002,12 +1004,14 @@ TEST_CASE("a joiner gets the table before any flag state sent after it joined") 
   h.join(2, "Zelda");
   h.receive(1, FlagState{0, {flag(2, 1)}}, kChannelProgress);
   auto msgs = h.to(2);
-  REQUIRE(msgs.size() == 4);
+  REQUIRE(msgs.size() == 5);  // WELCOME, HOST, DBNO_MODE, FLAG_SNAPSHOT, FLAG_STATE
   CHECK(std::holds_alternative<Welcome>(msgs[0].message));
   CHECK(std::get<Host>(msgs[1].message) == Host{1});
-  CHECK(std::get<FlagSnapshot>(msgs[2].message) == FlagSnapshot{0, 1, {flag(1, 1)}});
-  CHECK(std::get<FlagState>(msgs[3].message) == FlagState{1, {flag(2, 1)}});
-  for (std::size_t i = 1; i < 4; ++i) CHECK(msgs[i].channel == kChannelProgress);
+  CHECK(std::holds_alternative<DbnoMode>(msgs[2].message));
+  CHECK(std::get<FlagSnapshot>(msgs[3].message) == FlagSnapshot{0, 1, {flag(1, 1)}});
+  CHECK(std::get<FlagState>(msgs[4].message) == FlagState{1, {flag(2, 1)}});
+  CHECK(msgs[1].channel == kChannelProgress);
+  for (std::size_t i = 3; i < 5; ++i) CHECK(msgs[i].channel == kChannelProgress);
 }
 
 TEST_CASE("a large table goes to a joiner in parts") {
@@ -3771,18 +3775,18 @@ TEST_CASE("dbno: a revive goes to its downed player only, while the mode is on")
   h.join(2, "Zelda");
   h.join(3, "Saria");
   h.clear();
-  h.receive(2, DbnoRevive{0, 1, true}, kChannelSession);
+  h.receive(2, DbnoRevive{0, 1, true}, kChannelOwnership);
   CHECK(only_message_to<DbnoRevive>(h, 1) == DbnoRevive{2, 1, true});
   CHECK(h.to(3).empty());
   CHECK(h.session.stats().dbno_revives_relayed == 1);
   h.clear();
-  h.receive(2, DbnoRevive{0, 2, true}, kChannelSession);  // itself
-  h.receive(2, DbnoRevive{0, 4, true}, kChannelSession);  // nobody
+  h.receive(2, DbnoRevive{0, 2, true}, kChannelOwnership);  // itself
+  h.receive(2, DbnoRevive{0, 4, true}, kChannelOwnership);  // nobody
   CHECK(h.sent.empty());
   CHECK(h.session.stats().dbno_revives_dropped == 2);
   h.receive(1, DbnoMode{0, false}, kChannelSession);
   h.clear();
-  h.receive(2, DbnoRevive{0, 1, true}, kChannelSession);
+  h.receive(2, DbnoRevive{0, 1, true}, kChannelOwnership);
   CHECK(h.sent.empty());
   CHECK(h.session.stats().dbno_revives_dropped == 3);
 }

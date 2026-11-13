@@ -594,7 +594,7 @@ void Session::on_dbno_revive(ConnectionId id, Connection& c, Message& message) {
     ++stats_.dbno_revives_dropped;
     return;
   }
-  send(*to, kChannelSession, message);
+  send(*to, kChannelOwnership, message);
   ++stats_.dbno_revives_relayed;
   ++stats_.relayed;
 }

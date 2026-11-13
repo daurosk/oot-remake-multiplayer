@@ -181,7 +181,7 @@ bool InReach(const Vec3& self, const Vec3& at, float slack = 1.0f);
 struct Input {
     std::uint64_t now_us = 0;
     Rules rules;
-    bool connected = false;
+    bool connected = false;               // and this connection has heard its DBNO_MODE
     bool guard_live = false;              // LifeGuard::Live
     bool lethal = false;                  // LifeGuard::TakeLethal
     std::optional<std::int32_t> life;     // our Link's life, quarter hearts; nothing: no Link to read

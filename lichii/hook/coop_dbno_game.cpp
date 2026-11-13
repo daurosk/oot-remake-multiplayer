@@ -39,6 +39,7 @@ enum class PadMode : std::uint8_t { game, downed, reviver };
 struct Glue {
     std::mutex mutex;  // everything below that is not atomic
     Rules rules;       // the server's DBNO_MODE; off until it says
+    bool heard = false;  // this connection has had its DBNO_MODE
     Roster roster;     // the others' DBNO_STATE
     struct HoldIn {
         std::uint8_t from;
@@ -171,6 +172,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
         // Each connection starts with the mode off; the server says it at join.
         std::lock_guard lock(g.mutex);
         g.rules = Rules{};
+        g.heard = false;
         g.roster.Clear();
         g.holds.clear();
         if (event.kind != EventKind::disconnected) {
@@ -199,6 +201,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
         // server's values is the usual start, said by nobody.
         const bool news = rules != g.rules && (rules.set_by != 0 || !rules.on);
         g.rules = rules;
+        g.heard = true;
         if (news) {
             g.Line(RulesLine(rules, client.player_number(), NameOf(client, rules.set_by)));
         }
@@ -235,6 +238,7 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     Glue& g = TheGlue();
     const std::uint64_t now_us = SteadyUs();
     Rules rules;
+    bool heard = false;
     std::vector<Glue::HoldIn> holds;
     std::vector<Fallen> fallen;
     {
@@ -243,6 +247,7 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
             g.session = session;
         }
         rules = g.rules;
+        heard = g.heard;
         holds.swap(g.holds);
     }
 
@@ -289,7 +294,9 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     Input in;
     in.now_us = now_us;
     in.rules = rules;
-    in.connected = connected;
+    // Not until this connection has its DBNO_MODE: before it, a downed
+    // Link neither gets up (mode looks off) nor counts as alone.
+    in.connected = connected && heard;
     in.guard_live = GuardLive();
     in.lethal = g.guard.TakeLethal();
     in.life = reading ? CoopObjects::OurLinkLife() : std::nullopt;

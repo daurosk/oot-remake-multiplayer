@@ -259,7 +259,9 @@ Output Machine::Frame(const Input& in) {
             Enter(State::up, in.now_us);  // left the game: the next save's life stands
             break;
         }
-        alone_us_ = someone_up ? 0 : alone_us_ + step;
+        // Offline (a blip, or the rules not yet heard) nobody is counted:
+        // the wipe waits, the bleed-out runs on.
+        alone_us_ = someone_up || !in.connected ? 0 : alone_us_ + step;
         reviver_ = PickReviver(in);
         if (reviver_ != 0) {
             held_us_ += step;  // the bleed-out stands still meanwhile

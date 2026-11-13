@@ -423,7 +423,7 @@ TEST_CASE("dbno: nobody left standing for three seconds is out, a moment of it i
     CHECK(g.life == 0);
 }
 
-TEST_CASE("dbno: the connection drops while down: nobody can come, so out, nothing is sent meanwhile") {
+TEST_CASE("dbno: the connection drops while down: still down, nothing sent, no wipe, the bleed-out runs on") {
     Game g;
     g.Down();
     g.sent.clear();
@@ -435,9 +435,14 @@ TEST_CASE("dbno: the connection drops while down: nobody can come, so out, nothi
     CHECK(g.Step().state == State::downed);
     REQUIRE(g.sent.size() == 1);
     CHECK(g.sent[0].state == State::downed);
+    // A long blip is no wipe; the bleed-out still ends it.
     g.connected = false;
-    CHECK(g.Run(3 * kS + kFrame).state == State::out);
-    CHECK(g.Saw(Event::wiped));
+    CHECK(g.Run(10 * kS).state == State::downed);
+    CHECK_FALSE(g.Saw(Event::wiped));
+    CHECK(g.Run(g.rules.BleedUs()).state == State::out);
+    CHECK(g.Saw(Event::bled_out));
+    CHECK_FALSE(g.Saw(Event::wiped));
+    CHECK(g.life == 0);
 }
 
 TEST_CASE("dbno: the host turns it off: the downed get up with the rules' hearts") {

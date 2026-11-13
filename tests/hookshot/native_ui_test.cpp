@@ -355,3 +355,31 @@ TEST_CASE("native ui: a line put back is first again, and goes stale from when i
     feed.PutBack(*line);
     CHECK_FALSE(feed.Next(1000 + ui::ChatFeed::kStaleMs + 1).has_value());  // both stale now
 }
+
+TEST_CASE("native ui: the typed line refreshes without opening the window again, and ends when the box closes") {
+    FakeGame g;
+    InGameWindow(g);
+    ui::TextRing ring;
+    ring.SetBlock(kBlock);
+    auto typing = ui::TypingLine("you", "hel", false);
+    CHECK(typing.text == "hel_");
+    CHECK(typing.seconds == ui::kTypingSeconds);
+    CHECK(ui::TypingLine("you", "x\x0e", true).text == "x_  (not sent)");
+    REQUIRE(ui::ShowLine(g, ring, typing, true));
+    // Up already (A = 1, B = 0): text and flag, no open call.
+    CHECK(g.calls.back().function == ui::addr::kSetPaneText);
+    CHECK(g.Text(g.Get<ui::Ref>(kScreen + ui::addr::kInGameText).text) == "hel_");
+    CHECK(g.Get<std::uint8_t>(kScreen + ui::addr::kInGameShow) == 1);
+    // Closed: it is opened.
+    g.Put<std::int8_t>(kScreen + ui::addr::kScreenOpenA, 0);
+    REQUIRE(ui::ShowLine(g, ring, ui::TypingLine("you", "hello", false), true));
+    CHECK(g.calls.back().function == kOpenFn);
+    // The box closes: our line's time goes to 0.
+    CHECK(ui::EndLine(g, ring));
+    CHECK(g.Get<float>(kScreen + ui::addr::kInGameTime) == 0.0f);
+    // The game's own message is left alone.
+    g.Put<std::uint64_t>(kScreen + ui::addr::kInGameText, 0x83000000);
+    g.Put<float>(kScreen + ui::addr::kInGameTime, 50.0f);
+    CHECK_FALSE(ui::EndLine(g, ring));
+    CHECK(g.Get<float>(kScreen + ui::addr::kInGameTime) == 50.0f);
+}

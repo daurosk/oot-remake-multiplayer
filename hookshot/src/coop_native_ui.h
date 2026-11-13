@@ -220,7 +220,16 @@ std::uint64_t ScreenByVtable(Game& game, std::uint64_t vtable);
 // Shows one chat line in the game's message window, as f_833d25c0 does with
 // our text: the speaker in T_Name_00, the line as the window's message, its
 // time, then open. False when the window is not there or a step failed.
-bool ShowLine(Game& game, TextRing& ring, const Shown& line);
+bool ShowLine(Game& game, TextRing& ring, const Shown& line, bool refresh = false);
+// `refresh`: a line that changes while it shows (the typed line): when the window is up, only the
+// text and time change (no opening animation again).
+
+// The line being typed as the window shows it: the text, then a caret.
+Shown TypingLine(std::string_view speaker, std::string_view typed, bool failed);
+inline constexpr float kTypingSeconds = 60.0f;  // kept up while typing (refreshed on each change)
+// Ends a line of ours early (the box closed): its time to 0, the window closes on its next step.
+// Nothing when the window shows something of the game's own.
+bool EndLine(Game& game, const TextRing& ring);
 // Shows a notice in the game's banner (T_Text_00), then open.
 bool ShowNotice(Game& game, TextRing& ring, const Shown& notice);
 // The game's projection of a world point: 1920x1080 screen point, or nothing

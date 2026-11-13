@@ -312,7 +312,7 @@ bool InGameFree(Game& game, std::uint64_t screen, const TextRing& ring) {
     return !(time > 0.0f) || text == 0 || ring.Owns(text);
 }
 
-bool ShowLine(Game& game, TextRing& ring, const Shown& line) {
+bool ShowLine(Game& game, TextRing& ring, const Shown& line, bool refresh) {
     const std::uint64_t screen = InGameScreen(game);
     if (screen == 0 || !InGameFree(game, screen, ring)) {
         return false;
@@ -336,6 +336,9 @@ bool ShowLine(Game& game, TextRing& ring, const Shown& line) {
         b == 0 && a >= 1) {
         const std::uint8_t one = 1;
         WriteValue(game, screen + addr::kInGameShow, one);
+        if (refresh) {
+            return true;  // up already: the window's next step shows the new text, no opening again
+        }
     }
     return Open(game, screen, 1);
 }
@@ -364,6 +367,36 @@ std::optional<std::array<float, 2>> Project(Game& game, std::uint64_t scratch, c
         return std::nullopt;
     }
     return xy;
+}
+
+}  // namespace CoopNativeUi
+
+namespace CoopNativeUi {
+
+Shown TypingLine(std::string_view speaker, std::string_view typed, bool failed) {
+    Shown s;
+    s.speaker = Clean(speaker, kSpeakerBytes);
+    // Clean keeps the text as the game shows it; the caret is the game font's own underscore.
+    s.text = Clean(typed, kTextBytes) + "_";
+    if (failed) {
+        s.text += "  (not sent)";
+    }
+    s.seconds = kTypingSeconds;
+    return s;
+}
+
+}  // namespace CoopNativeUi
+
+namespace CoopNativeUi {
+
+bool EndLine(Game& game, const TextRing& ring) {
+    const std::uint64_t screen = InGameScreen(game);
+    std::uint64_t text = 0;
+    if (screen == 0 || !game.Read(screen + addr::kInGameText, &text, sizeof text) || !ring.Owns(text)) {
+        return false;
+    }
+    const float zero = 0.0f;
+    return game.Write(screen + addr::kInGameTime, &zero, sizeof zero);
 }
 
 }  // namespace CoopNativeUi

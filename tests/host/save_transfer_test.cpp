@@ -148,7 +148,7 @@ TEST_CASE("save transfer: parts not from the host, mixed headers and a bad CRC a
   CHECK(b.take().empty());
 }
 
-TEST_CASE("save transfer: the host answers asks with its newest save and waits after its own load") {
+TEST_CASE("save transfer: the host answers asks at once with its newest save, also right after its own load") {
   using Send = save::Planner::Send;
   const auto t0 = fs::file_time_type::clock::now();
   const auto later = t0 + std::chrono::seconds(30);
@@ -156,24 +156,85 @@ TEST_CASE("save transfer: the host answers asks with its newest save and waits a
   CHECK(p.due(t0).empty());  // nobody asked
 
   p.on_ask(2);
-  CHECK(p.due(std::nullopt).empty());  // the host has no save yet: the ask waits
   CHECK(p.due(t0) == std::vector<Send>{{2, proto::SaveReason::join}});
   CHECK(p.due(t0).empty());  // once
 
-  // The host loads a save: nothing until the game writes a save after that.
+  // hostsave-fix: the host loaded a save, then a guest asks. The ask is answered at once with the save on disk
+  // (it used to wait for the game's next save, and the guest got nothing); every guest gets the next save after it.
   p.on_host_load(later);
   p.on_ask(3);
   CHECK(p.waiting());
-  CHECK(p.due(t0).empty());     // the newest on disk is from before the load
-  CHECK(p.due(later).empty());  // not after it
+  CHECK(p.due(t0) == std::vector<Send>{{3, proto::SaveReason::join}});  // at once, from before the load
+  CHECK(p.waiting());
+  CHECK(p.due(later).empty());  // nothing new on disk
   CHECK(p.due(later + std::chrono::seconds(1)) == std::vector<Send>{{0, proto::SaveReason::host_load}});
   CHECK_FALSE(p.waiting());
-  CHECK(p.due(later + std::chrono::seconds(2)).empty());  // the ask got the reload
+  CHECK(p.idle());
+  CHECK(p.due(later + std::chrono::seconds(2)).empty());
+
+  // An ask on the same look as the reload: the reload goes to everyone, once.
+  p.on_host_load(later + std::chrono::seconds(5));
+  p.on_ask(4);
+  CHECK(p.due(later + std::chrono::seconds(6)) == std::vector<Send>{{0, proto::SaveReason::host_load}});
+  CHECK(p.idle());
+  p.forget(4);
 
   // A player who left is not answered.
   CHECK(p.on_ask(4));
   p.forget(4);
   CHECK(p.due(later + std::chrono::seconds(3)).empty());
+}
+
+TEST_CASE("save transfer: a host with no save tells the asker at once (hostsave-fix)") {
+  using Send = save::Planner::Send;
+  save::Planner p;
+  CHECK(p.on_ask(2));
+  CHECK(p.due(std::nullopt) == std::vector<Send>{{2, proto::SaveReason::join, true}});
+  CHECK(p.idle());
+  CHECK(p.due(std::nullopt).empty());  // once
+
+  // "No save" goes as an ordinary transfer and comes back as no slot, but as "no save".
+  const auto none = save::pack_no_save();
+  CHECK(save::is_no_save(none));
+  CHECK_FALSE(save::unpack(none));
+  CHECK_FALSE(save::is_no_save(save::pack(Slot(3))));
+  CHECK_FALSE(save::is_no_save(Bytes{}));
+  const auto parts = save::split(none, 77, proto::SaveReason::join, 2);
+  REQUIRE(parts.size() == 1);
+  Bytes wire;
+  CHECK(proto::encode(proto::Message{parts[0]}, wire) == proto::Error::none);
+  save::Assembler a;
+  CHECK(a.add(Relayed(parts[0], 1), 1) == save::Assembler::Result::complete);
+  CHECK(save::is_no_save(a.take()));
+}
+
+TEST_CASE("save transfer: a half-received save is never written; a slot is written whole (hostsave-fix)") {
+  TempDir dir("coop_tests_save_partial");
+  const fs::path own = dir.path / "0400486024DEC000";
+  const fs::path coop = save::coop_dir_of(own);
+  WriteFile(own / "slot_02" / "progress.sav", {7});
+  const auto packed = save::pack(Slot(9));
+  const auto parts = save::split(packed, 5, proto::SaveReason::join, 2);
+  REQUIRE(parts.size() > 2);
+  save::Assembler a;
+  for (std::size_t i = 0; i + 1 < parts.size(); ++i) {
+    CHECK(a.add(Relayed(parts[i], 1), 1) == save::Assembler::Result::partial);
+  }
+  CHECK(a.take().empty());          // nothing to write until the last part
+  CHECK_FALSE(fs::exists(coop));    // and nothing was
+  CHECK(a.add(Relayed(parts.back(), 1), 1) == save::Assembler::Result::complete);
+  const auto slot = save::unpack(a.take());
+  REQUIRE(slot);
+
+  // A stale .part folder (a write cut off earlier) is not loadable, and is replaced.
+  WriteFile(coop / "slot_00.part" / "progress.sav", {1});
+  CHECK_FALSE(save::newest_slot(coop).has_value());
+  CHECK(save::write_coop_save(coop, *slot, own) == save::WriteResult::written);
+  CHECK(ReadFile(coop / "slot_00" / "progress.sav") == slot->files[0].bytes);
+  CHECK(ReadFile(coop / "slot_02" / "progress.sav") == slot->files[0].bytes);  // the own folder's slot name too
+  CHECK_FALSE(fs::exists(coop / "slot_00.part"));
+  CHECK_FALSE(fs::exists(coop / "slot_02.part"));
+  CHECK(ReadFile(own / "slot_02" / "progress.sav") == Bytes{7});  // own save untouched
 }
 
 TEST_CASE("save transfer: a guest that asks again and again gets the save once") {
@@ -246,6 +307,7 @@ TEST_CASE("save transfer: the host's slot goes only into the co-op folder, never
   CHECK(ReadFile(coop / "slot_00" / "progress.sav") == Bytes{9, 9});
   CHECK(ReadFile(coop / "slot_00" / "caption.sav") == Bytes{8});
   CHECK(ReadFile(coop / "slot_04" / "progress.sav") == Bytes{9, 9});  // every co-op slot is the host's
+  CHECK(ReadFile(coop / "slot_01" / "progress.sav") == Bytes{9, 9});  // and every slot name of the own folder
   CHECK(ReadFile(coop / "option.sav") == Bytes{5});
   CHECK(ReadFile(coop / "account.sav") == Bytes{3});
   CHECK_FALSE(fs::exists(coop / "slot_00" / "progress.sav.tmp"));

@@ -977,6 +977,10 @@ bool InGame() {
 
 std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
     std::lock_guard lock(g_mutex);
+    if (g_autoload.active() && CoopSave::HostHasNoSave()) {
+        g_autoload.NoSave();
+        LOG_INFO(Core, "coop: title menu: host's save: {}", g_autoload.Line());
+    }
     if (g_autoload.active()) {
         const auto tick = g_autoload.Step(NowMs(), CoopSave::HostSaveReady(), TitleUp(), InGame());
         if (tick.reveal_continue) {

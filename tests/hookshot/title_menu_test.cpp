@@ -553,7 +553,7 @@ TEST_CASE("title menu: no host's save, or no way in: a plain line and no endless
     a.Start(0, "");
     a.Step(AutoLoad::kWaitSaveMs + 1, false, true, false);
     CHECK_FALSE(a.active());
-    CHECK(a.Line() == "your friend's save did not arrive: choose a file to play.");
+    CHECK(a.Line() == "your friend's save did not arrive: Continue plays your own save, New Game starts a new one.");
     AutoLoad b;
     b.Start(0, "Saria");
     b.Step(100, true, true, false);
@@ -561,6 +561,34 @@ TEST_CASE("title menu: no host's save, or no way in: a plain line and no endless
     CHECK_FALSE(b.active());
     CHECK(b.Line() == "Press Continue to play Saria's save.");
     CHECK_FALSE(b.Step(100 + AutoLoad::kLoadMs + 500, true, true, false).press_a);
+}
+
+TEST_CASE("title menu: a host with no save: AutoLoad stops waiting at once and presses nothing (hostsave-fix)") {
+    AutoLoad a;
+    a.Start(0, "Saria");
+    CHECK(a.Line() == "Getting Saria's save...");
+    a.Step(500, false, true, false);
+    a.NoSave();
+    CHECK_FALSE(a.active());
+    CHECK(a.Line() == "Saria has no save yet: New Game starts one, Continue plays your own.");
+    for (std::uint64_t t = 600; t < AutoLoad::kWaitSaveMs * 2; t += 100) {
+        CHECK_FALSE(a.Step(t, false, true, false).press_a);
+    }
+    // While waiting, nothing is pressed: the game stays on the player's own folder until the save is whole.
+    AutoLoad b;
+    b.Start(0, "Saria");
+    for (std::uint64_t t = 100; t < AutoLoad::kWaitSaveMs; t += 100) {
+        const auto tick = b.Step(t, false, true, false);
+        CHECK_FALSE(tick.press_a);
+        CHECK_FALSE(tick.reveal_continue);
+        CHECK_FALSE(tick.focus_continue);
+    }
+    b.NoSave();   // (only while waiting)
+    AutoLoad c;
+    c.Start(0, "Saria");
+    c.Step(100, true, true, false);
+    c.NoSave();
+    CHECK(c.active());
 }
 
 TEST_CASE("title menu: with no Continue under the cursor AutoLoad presses nothing on the title") {

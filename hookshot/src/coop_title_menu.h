@@ -175,6 +175,10 @@ public:
 
     void Start(std::uint64_t now_ms, std::string host);
     void Stop() { phase_ = Phase::kOff; }
+    // The host has no save yet (a new game): stop waiting, say so (the title's own New Game / Continue stay).
+    void NoSave() {
+        if (phase_ == Phase::kWait) phase_ = Phase::kHostNone;
+    }
     bool active() const { return phase_ == Phase::kWait || phase_ == Phase::kLoad; }
     // One look: whether A is held now, and whether the cursor should go to Continue (once).
     struct Tick {
@@ -193,7 +197,7 @@ public:
     static bool PressAllowed(bool title_up, int focused_button) { return !title_up || focused_button == kContinue; }
 
 private:
-    enum class Phase { kOff, kWait, kLoad, kDone, kNoSave, kStuck };
+    enum class Phase { kOff, kWait, kLoad, kDone, kNoSave, kHostNone, kStuck };
     Phase phase_ = Phase::kOff;
     std::string host_;
     std::uint64_t since_ = 0;

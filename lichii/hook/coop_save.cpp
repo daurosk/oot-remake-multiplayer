@@ -51,6 +51,9 @@ std::function<std::string()> g_root;                    // SetSwitch (Hookshot)
 std::function<bool(const std::string&)> g_remount;
 bool g_in_game = false;
 bool g_decided = false;   // the run-time choice is made (for this session: save::decide_again)
+// Hookshot, a guest: the co-op folder it moves to once the host's save is written there. Until then the game stays
+// on its own folder, so the title never offers an empty or half-written co-op folder (that crashed the game).
+fs::path g_pending;
 const void* g_decided_client = nullptr;   // the session's client it was made for
 
 // Unset, or "1"/"0": the environment's LICHII_COOP_HOST_SAVE.
@@ -87,6 +90,8 @@ void Decide() {
 }
 
 void NoteSaveDirLocked(const fs::path& dir);
+save::WriteResult WriteSlotTo(const fs::path& dir, const save::SaveSlot& slot);
+void PendingFrame();
 
 // Under g_mutex, each frame where the folder can be switched (Hookshot): the folder as mounted, and the choice.
 void SwitchFrame(coop::net::Client& client) {
@@ -101,42 +106,97 @@ void SwitchFrame(coop::net::Client& client) {
         if (save::decide_again(g_decided, over, g_in_game)) {
             g_decided = false;   // the next session (the title menu's Host after a Join, a rejoin) decides again
             g_guest = save::GuestSession{};   // and asks for the host's save again: everything of the last one goes
+            g_pending.clear();
             LOG_INFO(Core, "coop: save: the session is over: the next one chooses the save folder again");
         }
     }
-    if (g_decided || g_dir.empty()) return;
-    const bool connected = client.state() == coop::net::State::connected && client.host_number() != 0;
-    const auto choice = save::folder_choice(std::nullopt, true, connected, connected && client.is_host(), g_in_game);
-    if (choice == save::FolderChoice::wait) return;
-    g_decided = true;
-    g_decided_client = &client;
-    const bool coop_now = save::is_coop_dir(g_dir);
-    const fs::path want = choice == save::FolderChoice::coop
-                              ? (coop_now ? g_dir : fs::path(g_dir.string() + std::string(save::kCoopSuffix)))
-                              : (coop_now ? save::own_dir_of(g_dir) : g_dir);
-    if (choice == save::FolderChoice::coop) {
-        // Empty until the host's save comes: an older host's save there must not be the one loaded.
-        if (const int n = save::clear_coop_slots(want); n > 0) {
-            LOG_INFO(Core, "coop: save: {} older slot(s) taken out of {}", n, want.string());
+    if (!g_decided && !g_dir.empty()) {
+        const bool connected = client.state() == coop::net::State::connected && client.host_number() != 0;
+        const auto choice =
+            save::folder_choice(std::nullopt, true, connected, connected && client.is_host(), g_in_game);
+        if (choice == save::FolderChoice::wait) return;
+        g_decided = true;
+        g_decided_client = &client;
+        // Both sides start on the game's own folder: a guest moves to the co-op one only once the host's save is
+        // whole in it (PendingFrame), never onto an empty one.
+        const fs::path own = save::is_coop_dir(g_dir) ? save::own_dir_of(g_dir) : g_dir;
+        if (own != g_dir) {
+            if (!g_remount(own.string())) {
+                LOG_WARNING(Core, "coop: save: could not switch the save folder back to {}: this game keeps {}",
+                            own.string(), g_dir.string());
+                g_use = false;
+                return;
+            }
+            NoteSaveDirLocked(own);
+        }
+        g_use = choice == save::FolderChoice::coop;
+        if (g_use) {
+            g_pending = save::coop_dir_of(own);
+            // Empty until the host's save comes: an older host's save there must not be the one loaded.
+            if (const int n = save::clear_coop_slots(g_pending); n > 0) {
+                LOG_INFO(Core, "coop: save: {} older slot(s) taken out of {}", n, g_pending.string());
+            }
+            LOG_INFO(Core, "coop: save: a guest: this game plays from the co-op save folder (the host's save) in {} "
+                           "once the host's save is written there; until then it stays on {}",
+                     g_pending.string(), g_dir.string());
+        } else {
+            LOG_INFO(Core, "coop: save: {}", connected && client.is_host()
+                                                 ? "the host: this game uses its own saves"
+                                                 : "a save is loaded already: this game keeps its own saves");
         }
     }
-    if (want != g_dir) {
-        if (!g_remount(want.string())) {
-            LOG_WARNING(Core, "coop: save: could not switch the save folder to {}: this game keeps {}",
-                        want.string(), g_dir.string());
-            return;
-        }
-        NoteSaveDirLocked(want);
-    }
-    g_use = choice == save::FolderChoice::coop;
-    LOG_INFO(Core, "coop: save: {}", g_use ? "a guest: this game plays from the co-op save folder (the host's save) "
-                                             "in " + g_dir.string()
-                                           : (connected && client.is_host()
-                                                  ? std::string("the host: this game uses its own saves")
-                                                  : std::string("a save is loaded already: this game keeps its own saves")));
+    PendingFrame();
 }
 
-// Under g_mutex.
+// Under g_mutex, each frame (Hookshot): the host's save that came is written whole into the pending co-op folder,
+// and only then does the game move to it. Link already in the game (the player chose their own file or a new game
+// meanwhile): no switch, the save stays unused.
+void PendingFrame() {
+    if (g_pending.empty() || !g_guest.unwritten) return;
+    auto slot = std::move(*g_guest.unwritten);
+    g_guest.unwritten.reset();
+    if (g_in_game) {
+        LOG_INFO(Core, "coop: save: the host's save came, but a file is loaded already: this game keeps it");
+        g_pending.clear();
+        return;
+    }
+    const fs::path to = std::exchange(g_pending, {});
+    if (WriteSlotTo(to, slot) != save::WriteResult::written) return;
+    if (!g_remount(to.string())) {
+        LOG_WARNING(Core, "coop: save: could not switch the save folder to {}: this game keeps {}", to.string(),
+                    g_dir.string());
+        g_guest.ready = false;
+        g_notice = "The host's save came, but this game could not switch to it (see the log).";
+        return;
+    }
+    NoteSaveDirLocked(to);
+    LOG_INFO(Core, "coop: save: now playing from the co-op save folder {}", to.string());
+}
+
+// Under g_mutex: the host's slot written whole into the co-op folder `dir`.
+save::WriteResult WriteSlotTo(const fs::path& dir, const save::SaveSlot& slot) {
+    const auto result = save::write_coop_save(dir, slot, save::own_dir_of(dir));
+    switch (result) {
+    case save::WriteResult::written:
+        g_guest.ready = true;
+        LOG_INFO(Core, "coop: save: the host's save written to {}", dir.string());
+        g_notice = g_guest.assembler.reason() == proto::SaveReason::host_load
+                       ? "The host loaded a save. Load it from your co-op save to stand where it starts "
+                         "(your progress already follows the host)."
+                       : "The host's save is ready: load it (Continue, or Load Game, newest save).";
+        break;
+    case save::WriteResult::not_coop:
+        LOG_WARNING(Core, "coop: save: refused to write the host's save into {}", dir.string());
+        break;
+    case save::WriteResult::failed:
+        LOG_ERROR(Core, "coop: save: could not write the host's save into {}", dir.string());
+        g_notice = "The host's save could not be written (see the log).";
+        break;
+    }
+    return result;
+}
+
+// Under g_mutex: the host's slot for the folder the game has open (the emulator's fixed co-op folder).
 void WriteSlot(const save::SaveSlot& slot) {
     if (!save::is_coop_dir(g_dir)) {
         if (!g_said_own) {
@@ -146,24 +206,7 @@ void WriteSlot(const save::SaveSlot& slot) {
         }
         return;
     }
-    const auto own = save::own_dir_of(g_dir);
-    switch (save::write_coop_save(g_dir, slot, own)) {
-    case save::WriteResult::written:
-        g_guest.ready = true;
-        LOG_INFO(Core, "coop: save: the host's save written to {}", g_dir.string());
-        g_notice = g_guest.assembler.reason() == proto::SaveReason::host_load
-                       ? "The host loaded a save. Load it from your co-op save to stand where it starts "
-                         "(your progress already follows the host)."
-                       : "The host's save is ready: load it (Continue, or Load Game, newest save).";
-        break;
-    case save::WriteResult::not_coop:
-        LOG_WARNING(Core, "coop: save: refused to write the host's save into {}", g_dir.string());
-        break;
-    case save::WriteResult::failed:
-        LOG_ERROR(Core, "coop: save: could not write the host's save into {}", g_dir.string());
-        g_notice = "The host's save could not be written (see the log).";
-        break;
-    }
+    WriteSlotTo(g_dir, slot);
 }
 
 }  // namespace
@@ -189,6 +232,11 @@ void NoteInGame(bool in_game) {
 bool HostSaveReady() {
     std::lock_guard lock(g_mutex);
     return g_guest.ready;
+}
+
+bool HostHasNoSave() {
+    std::lock_guard lock(g_mutex);
+    return g_guest.no_save;
 }
 
 std::string SaveDirectory(const std::string& path, bool account_save) {
@@ -271,6 +319,13 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
         break;
     }
     const auto packed = g_guest.assembler.take();
+    if (save::is_no_save(packed)) {
+        LOG_INFO(Core, "coop: save: the host has no save yet (a new game): this game keeps its own saves");
+        g_guest.no_save = true;
+        g_pending.clear();   // (nothing to switch to)
+        g_notice = "The host has no save yet: New Game starts one, Continue plays your own.";
+        return;
+    }
     const auto slot = save::unpack(packed);
     if (!slot) {
         LOG_WARNING(Core, "coop: save: the host's save (transfer {}) is not a save slot", part->transfer_id);
@@ -279,8 +334,10 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     LOG_INFO(Core, "coop: save: the host's save is in ({} bytes, {}, transfer {})", packed.size(),
              part->reason == proto::SaveReason::host_load ? "the host loaded a save" : "asked on joining",
              part->transfer_id);
-    if (g_dir.empty()) {
-        g_guest.unwritten = *slot;  // written when the game opens its save folder
+    if (g_dir.empty() || !g_pending.empty()) {
+        // Written when the game opens its save folder, or (Hookshot) into the co-op folder at the next frame and
+        // only then switched to (PendingFrame).
+        g_guest.unwritten = *slot;
         return;
     }
     WriteSlot(*slot);
@@ -315,15 +372,16 @@ void OnFrame(coop::net::Client& client, bool host_reset) {
     }
     if (host_reset) {
         g_planner.on_host_load(fs::file_time_type::clock::now());
-        LOG_INFO(Core, "coop: save: we loaded a save: the guests get it after the game's next save "
-                       "(a door or a save point)");
+        LOG_INFO(Core, "coop: save: we loaded a save: a guest that asks gets our newest save at once, and every "
+                       "guest gets this one after the game's next save (a door or a save point)");
     }
     // Twice a second: what the host owes (it reads the folder's file times).
     if (!g_dir.empty() && !g_planner.idle() && g_folder_every.Due(CoopEvery::NowUs())) {
         for (const auto& send : g_planner.due(save::newest_write(g_dir))) {
-            const auto slot_dir = save::newest_slot(g_dir);
+            const auto slot_dir = send.no_save ? std::nullopt : save::newest_slot(g_dir);
             const auto slot = slot_dir ? save::read_slot(*slot_dir) : std::nullopt;
-            const auto packed = slot ? save::pack(*slot) : std::vector<std::uint8_t>{};
+            const auto packed =
+                send.no_save ? save::pack_no_save() : (slot ? save::pack(*slot) : std::vector<std::uint8_t>{});
             if (packed.empty()) {
                 LOG_WARNING(Core, "coop: save: could not read our newest save in {}", g_dir.string());
                 continue;
@@ -339,7 +397,8 @@ void OnFrame(coop::net::Client& client, bool host_reset) {
                 continue;
             }
             LOG_INFO(Core, "coop: save: sending {} ({} bytes, {} parts) to {}",
-                     slot_dir->filename().string(), packed.size(), parts.size(),
+                     send.no_save ? std::string("'no save yet'") : slot_dir->filename().string(), packed.size(),
+                     parts.size(),
                      send.to_player == 0 ? std::string("every guest")
                                          : fmt::format("player {}", send.to_player));
             for (auto& p : parts) {

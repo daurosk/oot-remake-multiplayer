@@ -34,8 +34,12 @@ void SetSwitch(std::function<std::string()> root, std::function<bool(const std::
 // Each frame: whether Link is in the game (a loaded save): no switch then.
 void NoteInGame(bool in_game);
 
-// The host's save has been written into this game's co-op folder (a title menu may load it now).
+// The host's save has been written whole into this game's co-op folder and (Hookshot) the game plays from it now:
+// a title menu may load it. Before that a guest's game stays on its own folder.
 bool HostSaveReady();
+
+// The host said it has no save yet (a new game): nothing to wait for.
+bool HostHasNoSave();
 
 // The emulator's save folder path for a user's account save (relative to the
 // NAND, "/user/save/0000000000000000/<user>/<title>"): with the co-op folder

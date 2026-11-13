@@ -14,6 +14,10 @@
 #   Neither log has "one key lent", "given back" or a count above 1; both end at 0.
 # The steps turn Link to the door (toward) before every press: after a wait Link no longer faces
 # it, and a goto into the shut door steps aside and leaves Link off the lock.
+# With the hook's default (a lock another player opened is deleted, no key lent: LICHII_COOP_LOCK_DELETE
+# unset) B's lock is left alone while B stands at it and B may have no key (a spend can reach the
+# other games); B's last step is then the way past the door: /teleport A again, b-with-a with x
+# under -22. The own-key pass above is for the keeping mode of the next release.
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_FLAGS=1
@@ -37,7 +41,7 @@ wait 150
 goto -20.4 -4.5 0.3 90     # up to the door (it stops Link at about -20.1)
 wait 30
 mark a-at-lock
-wait 900                   # B comes with /teleport A
+wait 1500                  # B comes with /teleport A
 mark a-open
 toward -21.5 -4.5 8
 wait 20

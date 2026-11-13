@@ -11,8 +11,12 @@ namespace {
 
 // Near one of the event's places in this scene; nullopt when it has none here.
 std::optional<bool> NearPlace(std::string_view event, std::string_view scene,
-                              const std::optional<std::array<float, 3>>& link) {
+                              const std::optional<std::array<float, 3>>& link, const RoomOf* room_of) {
     bool any = false;
+    std::optional<int> link_room;
+    if (link && room_of != nullptr && *room_of) {
+        link_room = (*room_of)(*link);
+    }
     for (const Place& p : Places()) {
         if (p.event != event || p.scene != scene) {
             continue;
@@ -24,9 +28,17 @@ std::optional<bool> NearPlace(std::string_view event, std::string_view scene,
         const float dx = (*link)[0] - p.x;
         const float dy = (*link)[1] - p.y;
         const float dz = (*link)[2] - p.z;
-        if (dx * dx + dy * dy + dz * dz <= kNearM * kNearM) {
-            return true;
+        if (dx * dx + dy * dy + dz * dz > kNearM * kNearM) {
+            continue;
         }
+        if (link_room) {
+            // Near, but through a wall: that room is not loaded here.
+            const auto place_room = (*room_of)(std::array<float, 3>{p.x, p.y, p.z});
+            if (place_room && *place_room != *link_room) {
+                continue;
+            }
+        }
+        return true;
     }
     return any ? std::optional<bool>(false) : std::nullopt;
 }
@@ -34,7 +46,8 @@ std::optional<bool> NearPlace(std::string_view event, std::string_view scene,
 } // namespace
 
 std::optional<std::string> Decider::Next(const std::vector<std::string>& held, const std::string& scene,
-                                         bool event_running, std::optional<std::array<float, 3>> link) {
+                                         bool event_running, std::optional<std::array<float, 3>> link,
+                                         const RoomOf* room_of) {
     if (scene.empty()) {
         return std::nullopt;  // no scene read (a load): the same visit, nothing asked
     }
@@ -56,7 +69,7 @@ std::optional<std::string> Decider::Next(const std::vector<std::string>& held, c
         if (asked_.contains(name)) {
             continue;
         }
-        const auto near = NearPlace(name, scene, link);
+        const auto near = NearPlace(name, scene, link, room_of);
         if (near ? !*near : !named) {
             continue;  // not near it yet (it waits), or no place known and not asked by name
         }

@@ -4,9 +4,10 @@
 # door) and walks through. B waits at the entrance, is then put at the same door, presses A and
 # walks through.
 # Pass, A: "world: ... Obj_DoorChainLock_A_01 broken here (gone next to Link): sent" (both locks),
-# Link behind the door at a-opened (x under -22). Pass, B (default, the lock stays): "one key lent
-# to open it", then "lock opened here with the lent key", B's last goto does not time out, and
-# both games' DungeonInfo.WaterTemple.SmallKeyNum end at 0. With LICHII_COOP_LOCK_DELETE=1: B's
+# Link behind the door at a-opened (x under -22). B (default: the lock stays and
+# no key is lent) needs a key of its own for its lock; read both games' SmallKeyNum after each
+# open (with LICHII_COOP_LOCK_LEND=1 and B at 0 keys: "one key lent to open it").
+# With LICHII_COOP_LOCK_DELETE=1: B's
 # two locks are deleted ("broken by another player", "still stands after the break: deleted") and
 # B's goto shows whether the door opens with its lock deleted (not known yet).
 # Runs of 2026-11-12 (build before door-unlock, locks deleted): A's part passed twice; B's `place`

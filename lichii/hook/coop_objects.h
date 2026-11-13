@@ -93,6 +93,9 @@ std::vector<std::uint32_t> TakeKeyRefunds();
 // Our own game lowered these counts (Session::take_own_count_drops): a key
 // spent here. A lock's second key goes back only against one of these.
 void OwnCountDrops(const std::vector<std::uint32_t>& key_flags);
+// Our game's small key counts (flag, count), for a key lent at a lock
+// (WorldSync::KeyCount; only read with LICHII_COOP_LOCK_LEND=1).
+void KeyCounts(const std::vector<std::pair<std::uint32_t, std::int32_t>>& counts);
 // The host loaded a save (host-save's FLAG_RESET): forget the kept lock
 // breaks (WorldSync::ForgetKept). For the integrator to call on that event.
 void ForgetKeptBreaks();

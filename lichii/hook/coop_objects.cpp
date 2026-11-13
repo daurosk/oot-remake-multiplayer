@@ -317,6 +317,10 @@ std::vector<std::uint32_t>& OwnDropQueue() {  // our own key spends, for WorldSy
     static std::vector<std::uint32_t> q;
     return q;
 }
+std::vector<std::pair<std::uint32_t, std::int32_t>>& KeyCountQueue() {  // KeyCounts, for WorldSync
+    static std::vector<std::pair<std::uint32_t, std::int32_t>> q;
+    return q;
+}
 bool& ForgetKeptFlag() {  // a host save load: WorldSync::ForgetKept before the next walk
     static bool f = false;
     return f;
@@ -1278,18 +1282,20 @@ public:
                     world_.OwnCountDrop(key, server_now_us);
                 }
                 OwnDropQueue().clear();
+                for (const auto& [key, count] : KeyCountQueue()) {
+                    world_.KeyCount(key, count);
+                }
+                KeyCountQueue().clear();
                 if (std::exchange(ForgetKeptFlag(), false)) {
                     world_.ForgetKept();
                 }
             }
-            // A lock another player opened is deleted here, as before door-unlock. Keeping it with a lent
-            // key (LICHII_COOP_LOCK_DELETE=0) is off: in a two-game run the lent key was shared to the
-            // other players as a found key, so the group ended with more keys than it had.
-            static const bool delete_locks = [] {
-                const char* v = std::getenv("LICHII_COOP_LOCK_DELETE");
-                return v == nullptr || std::string_view(v) != "0";
-            }();
+            // door-unlock: opened locks stay (each player opens their own with their own
+            // key), unless asked otherwise; a key is lent at one only when asked.
+            static const bool delete_locks = EnvFlag("LICHII_COOP_LOCK_DELETE");
+            static const bool lend_keys = EnvFlag("LICHII_COOP_LOCK_LEND");
             world_.SetDeleteLocks(delete_locks);
+            world_.SetLendKeys(lend_keys);
             world_.Tick(*scene, self, server_now_us, seen, player_, world);
             for (auto& m : world.send) {
                 send.emplace_back(std::move(m));
@@ -2969,6 +2975,11 @@ std::vector<std::uint64_t> OwnedActors() {
         }
     }
     return out;
+}
+
+void KeyCounts(const std::vector<std::pair<std::uint32_t, std::int32_t>>& counts) {
+    std::lock_guard lock(KeyRefundMutex());
+    KeyCountQueue() = counts;
 }
 
 void OwnCountDrops(const std::vector<std::uint32_t>& key_flags) {

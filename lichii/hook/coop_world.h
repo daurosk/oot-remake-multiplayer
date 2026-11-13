@@ -58,6 +58,8 @@ bool IsLock(std::string_view name);
 // The flag of `scene`'s small key count, DungeonInfo.<scene>.SmallKeyNum, or 0
 // for a scene with no keys.
 std::uint32_t SmallKeyFlag(std::string_view scene);
+// Every dungeon's small key count flag (SmallKeyFlag of each scene with one).
+std::vector<std::uint32_t> SmallKeyFlags();
 
 // Signs a sword cuts (their life never drops: WORLD_HIT shares the swing).
 bool IsSign(std::string_view name);
@@ -509,6 +511,14 @@ public:
     // that stays shut cannot be opened at all. With it off the lock stays,
     // and our player opens it with a lent key (Lend). LICHII_COOP_LOCK_DELETE=1.
     void SetDeleteLocks(bool on) { delete_locks_ = on; }
+    // door-unlock-2: whether a key is lent at a lock another player opened
+    // (Lend). Off by default: the lent +1 goes to every player as a found
+    // key (run lock-lent, 2026-11-12: one door left the group with more keys
+    // than it began with). When on, a key is lent only while our own count
+    // of that dungeon is known to be 0 (KeyCount). LICHII_COOP_LOCK_LEND=1.
+    void SetLendKeys(bool on) { lend_keys_ = on; }
+    // Present thread: our game's small key count of a dungeon (its flag).
+    void KeyCount(std::uint32_t key_flag, std::int32_t count) { key_counts_[key_flag] = count; }
     // Present thread: the host loaded a save (host-save's FLAG_RESET): kept
     // breaks (locks) are forgotten, so our locks come back with their rooms.
     void ForgetKept();
@@ -672,6 +682,8 @@ private:
     std::vector<std::pair<std::uint32_t, std::uint64_t>> own_drops_;  // (key flag, when)
     bool no_key_logged_ = false;
     bool delete_locks_ = false;           // SetDeleteLocks
+    bool lend_keys_ = false;              // SetLendKeys
+    std::map<std::uint32_t, std::int32_t> key_counts_;  // KeyCount, by key flag
     std::uint64_t lent_hash_ = 0;         // the lock a lent key is out for (0: none)
     std::string lent_count_;              // its count's name, to take it back
     std::vector<std::string> lend_back_;  // lent keys to take back, for this Tick's Out::give_back

@@ -762,6 +762,24 @@ public:
             }
             CoopObjects::OwnCountDrops(drops);
         }
+        if (game_store) {  // our key counts, for a key lent at a lock (LICHII_COOP_LOCK_LEND=1 only)
+            static const bool lend = [] {
+                const char* v = std::getenv("LICHII_COOP_LOCK_LEND");
+                return v != nullptr && v[0] != '\0' && std::string_view(v) != "0";
+            }();
+            static std::uint32_t tick = 0;
+            if (lend && ++tick % 15 == 0) {
+                static const std::vector<std::uint32_t> flags = CoopWorld::SmallKeyFlags();
+                std::vector<std::pair<std::uint32_t, std::int32_t>> counts;
+                for (const std::uint32_t flag : flags) {
+                    const auto now = game_store->read(coop::protocol::FlagKey{flag, 0});
+                    if (now && now->kind == coop::protocol::FlagKind::int32) {
+                        counts.emplace_back(flag, static_cast<std::int32_t>(now->value));
+                    }
+                }
+                CoopObjects::KeyCounts(counts);
+            }
+        }
         if (game_store) {  // a lock opened twice: our second key back (docs/dungeon.md)
             for (const std::uint32_t key : CoopObjects::TakeKeyRefunds()) {
                 const auto now = game_store->read(coop::protocol::FlagKey{key, 0});

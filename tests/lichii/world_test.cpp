@@ -628,6 +628,12 @@ const proto::Vec3 kFar{1.0f, 2.0f, 10.0f};  // seven metres from Thing's default
 
 std::vector<Seen> LockAt(std::uint64_t address = 0x100) { return {Thing(address, 0x11, std::nullopt, kLock)}; }
 
+// LICHII_COOP_LOCK_LEND=1 with no key of our own in the Water Temple.
+void Lending(WorldSync& w) {
+    w.SetLendKeys(true);
+    w.KeyCount(0x877bdceeu, 0);
+}
+
 WorldSync::Out TempleWalk(WorldSync& w, std::uint64_t ms, std::vector<Seen> seen, proto::Vec3 link = kLink,
                           std::uint8_t self = 2) {
     return Walk(w, ms * kMs, seen, link, self, kTemple);
@@ -683,6 +689,7 @@ TEST_CASE("doors: another player's lock goes here when our Link is away, and sta
 
 TEST_CASE("doors: a lock at our Link's feet is not taken, a key is lent once, and opening it uses that key") {
     WorldSync w;
+    Lending(w);
     TempleWalk(w, 1000, LockAt());
     TempleWalk(w, 5000, LockAt());
     w.Receive(BreakOf(0x11, proto::world_break::kept, kTemple));
@@ -736,6 +743,7 @@ TEST_CASE("doors: a lent key not used is taken back when our Link leaves the loc
     const std::string count = "DungeonInfo.WaterTemple.SmallKeyNum";
     auto run = [&](auto&& leave) {
         WorldSync w;
+        Lending(w);
         TempleWalk(w, 1000, LockAt());
         TempleWalk(w, 5000, LockAt());
         w.Receive(BreakOf(0x11, proto::world_break::kept, kTemple));
@@ -756,6 +764,7 @@ TEST_CASE("doors: a lent key not used is taken back when our Link leaves the loc
     // A step back (4 m) keeps the key and the lock; 7 m away it goes back.
     {
         WorldSync w;
+        Lending(w);
         TempleWalk(w, 1000, LockAt());
         TempleWalk(w, 5000, LockAt());
         w.Receive(BreakOf(0x11, proto::world_break::kept, kTemple));
@@ -775,6 +784,7 @@ TEST_CASE("doors: a lent key not used is taken back when our Link leaves the loc
     // Our own take-back lowers our count: that is no key our player spent.
     {
         WorldSync w;
+        Lending(w);
         TempleWalk(w, 1000, LockAt());
         TempleWalk(w, 5000, LockAt());
         w.Receive(BreakOf(0x11, proto::world_break::kept, kTemple));
@@ -798,6 +808,7 @@ TEST_CASE("doors: a lent key not used is taken back when our Link leaves the loc
 
 TEST_CASE("doors: the two locks of one door get one lent key, and going together give nothing more") {
     WorldSync w;
+    Lending(w);
     const std::vector<Seen> pair{Thing(0x100, 0x11, std::nullopt, kLock), Thing(0x200, 0x12, std::nullopt, kLock)};
     TempleWalk(w, 1000, pair);
     TempleWalk(w, 5000, pair);
@@ -844,12 +855,40 @@ TEST_CASE("doors: by default a lock another player opened is never deleted, near
         CHECK(w.Removes().empty());
         CHECK(Sent<proto::WorldBreak>(out).empty());  // never "restored"
     }
-    // Our Link comes to it: a key is lent.
-    for (std::uint64_t t = 16000; t < 18000; t += 100) {
+    // Our Link comes to it: no key is lent (each player opens it with their own).
+    for (std::uint64_t t = 16000; t < 20000; t += 100) {
         lent += TempleWalk(w, t, LockAt(0x300)).key_refunds.size();
+        CHECK(w.Removes().empty());
     }
-    CHECK(lent == 1);
-    CHECK(w.Removes().empty());
+    CHECK(lent == 0);
+    // Our player opens it with a key of their own: that second spend of the shared
+    // count goes back once.
+    w.OwnCountDrop(0x877bdceeu, 20000 * kMs);
+    std::vector<std::uint32_t> back;
+    for (std::uint64_t t = 20100; t < 23000; t += 100) {
+        auto out = TempleWalk(w, t, {});
+        back.insert(back.end(), out.key_refunds.begin(), out.key_refunds.end());
+        CHECK(out.give_back.empty());
+    }
+    CHECK(back == std::vector<std::uint32_t>{0x877bdceeu});
+}
+
+TEST_CASE("doors: with lending on, a key is lent only while our own count of the dungeon is 0") {
+    for (const int count : {-1, 0, 1, 2}) {  // -1: not known
+        WorldSync w;
+        w.SetLendKeys(true);
+        if (count >= 0) {
+            w.KeyCount(0x877bdceeu, count);
+        }
+        TempleWalk(w, 1000, LockAt());
+        TempleWalk(w, 5000, LockAt());
+        w.Receive(BreakOf(0x11, proto::world_break::kept, kTemple));
+        std::size_t lent = 0;
+        for (std::uint64_t t = 5100; t < 9000; t += 100) {
+            lent += TempleWalk(w, t, LockAt()).key_refunds.size();
+        }
+        CHECK(lent == (count == 0 ? 1u : 0u));
+    }
 }
 
 TEST_CASE("doors: a lock is never moved by another game, nor sent as a move") {
@@ -880,12 +919,14 @@ TEST_CASE("doors: a lock is never moved by another game, nor sent as a move") {
 
 TEST_CASE("doors: at most kMaxLends keys are lent for one lock") {
     WorldSync w;
+    Lending(w);
     TempleWalk(w, 1000, LockAt());
     TempleWalk(w, 5000, LockAt());
     w.Receive(BreakOf(0x11, proto::world_break::kept, kTemple));
     std::size_t lent = 0, taken = 0;
     std::uint64_t t = 5100;
     for (int visit = 0; visit < WorldSync::kMaxLends + 3; ++visit) {
+        w.KeyCount(0x877bdceeu, 0);  // as the hook reads it after each take-back
         for (int i = 0; i < 20; ++i, t += 100) {
             lent += TempleWalk(w, t, LockAt()).key_refunds.size();
         }
@@ -948,17 +989,13 @@ TEST_CASE("doors: our own lock's key cannot also pay for a held lock beside it")
         back.insert(back.end(), out.key_refunds.begin(), out.key_refunds.end());
     }
     CHECK(sent == 1);  // X went out, kept
-    CHECK(back.size() == 1);  // the key lent for Y, at which B stands
-    // Y now leaves next to our Link (B leaves by a door): no key of ours is left for it,
-    // so the lent key was not used on it and goes back.
-    std::size_t taken = 0;
+    // Y now leaves next to our Link (B leaves by a door): no key of ours is left for it.
     for (std::uint64_t t = 8000; t < 11000; t += 100) {
         auto out = TempleWalk(w, t, {});
         back.insert(back.end(), out.key_refunds.begin(), out.key_refunds.end());
-        taken += out.give_back.size();
+        CHECK(out.give_back.empty());
     }
-    CHECK(back.size() == 1);
-    CHECK(taken == 1);
+    CHECK(back.empty());
 }
 
 TEST_CASE("doors: a host save load forgets the kept locks, which come back with their rooms") {

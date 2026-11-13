@@ -55,13 +55,24 @@ bool IsLock(std::string_view name) {
            name.find("HrlCity") == std::string_view::npos;
 }
 
+namespace {
+// The dungeons with a DungeonInfo.<name>.SmallKeyNum (coop/host game_items).
+constexpr std::array<std::string_view, 14> kKeyScenes{
+    "InsideTheDekuTree", "DodongoCavern", "InsideJabuJabuBelly", "ForestTemple",
+    "FireTemple", "WaterTemple", "ShadowTemple", "SpiritTemple", "BottomOfTheWell",
+    "IceCavern", "GerudoTrainingGround", "InsideGanonCastle", "GerudoFortress",
+    "FinalBattleField"};
+} // namespace
+
+std::vector<std::uint32_t> SmallKeyFlags() {
+    std::vector<std::uint32_t> out;
+    for (const auto s : kKeyScenes) {
+        out.push_back(coop::protocol::flag_hash("DungeonInfo." + std::string(s) + ".SmallKeyNum"));
+    }
+    return out;
+}
+
 std::uint32_t SmallKeyFlag(std::string_view scene) {
-    // The dungeons with a DungeonInfo.<name>.SmallKeyNum (coop/host game_items).
-    static constexpr std::array<std::string_view, 14> kKeyScenes{
-        "InsideTheDekuTree", "DodongoCavern", "InsideJabuJabuBelly", "ForestTemple",
-        "FireTemple", "WaterTemple", "ShadowTemple", "SpiritTemple", "BottomOfTheWell",
-        "IceCavern", "GerudoTrainingGround", "InsideGanonCastle", "GerudoFortress",
-        "FinalBattleField"};
     for (const auto s : kKeyScenes) {
         if (s == scene) {
             return coop::protocol::flag_hash("DungeonInfo." + std::string(scene) + ".SmallKeyNum");
@@ -690,10 +701,16 @@ void WorldSync::Lend(Object& o, Break& b, std::uint64_t now_us, Out& out) {
         now_us < lend_quiet_until_ || now_us - o.held_us < kLendWaitUs) {
         return;
     }
+    // Only a player with no key of their own is stuck at it.
+    const auto ours = key_counts_.find(key);
+    if (ours == key_counts_.end() || ours->second != 0) {
+        return;
+    }
     auto count = KeyCountOf(scene_);
     if (!count) {
         return;
     }
+    ours->second = 1;  // until the hook reads the count again
     b.lent = true;
     ++b.lends;
     lent_hash_ = o.hash;
@@ -752,7 +769,9 @@ void WorldSync::MakeBreak(Object& o, Break& b, std::uint64_t now_us, Out& out) {
             if (o.held_us == 0) {
                 o.held_us = now_us;
             }
-            Lend(o, b, now_us, out);
+            if (lend_keys_) {
+                Lend(o, b, now_us, out);
+            }
             return;
         }
         o.held_us = 0;

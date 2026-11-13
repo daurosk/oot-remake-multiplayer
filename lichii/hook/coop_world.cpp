@@ -752,7 +752,9 @@ void WorldSync::MakeBreak(Object& o, Break& b, std::uint64_t now_us, Out& out) {
             if (o.held_us == 0) {
                 o.held_us = now_us;
             }
-            Lend(o, b, now_us, out);
+            if (!delete_locks_) {
+                Lend(o, b, now_us, out);  // only while locks are kept: with delete on, as before door-unlock
+            }
             return;
         }
         o.held_us = 0;

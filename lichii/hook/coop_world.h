@@ -508,6 +508,7 @@ public:
     // opens when its lock is deleted by us, and a deleted lock on a door
     // that stays shut cannot be opened at all. With it off the lock stays,
     // and our player opens it with a lent key (Lend). LICHII_COOP_LOCK_DELETE=1.
+    // With it on no key is ever lent either (the hook's default).
     void SetDeleteLocks(bool on) { delete_locks_ = on; }
     // Present thread: the host loaded a save (host-save's FLAG_RESET): kept
     // breaks (locks) are forgotten, so our locks come back with their rooms.

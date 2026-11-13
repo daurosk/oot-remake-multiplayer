@@ -710,6 +710,23 @@ TEST_CASE("doors: a lock at our Link's feet is not taken, a key is lent once, an
     CHECK(taken.empty());
 }
 
+TEST_CASE("doors: with locks deleted (the hook's default) no key is lent at a lock at our Link's feet") {
+    WorldSync w;
+    w.SetDeleteLocks(true);
+    TempleWalk(w, 1000, LockAt());
+    TempleWalk(w, 5000, LockAt());
+    w.Receive(BreakOf(0x11, proto::world_break::kept, kTemple));
+    for (std::uint64_t t = 5100; t < 12000; t += 100) {
+        auto out = TempleWalk(w, t, LockAt());
+        CHECK(w.Removes().empty());       // never from under our Link
+        CHECK(out.key_refunds.empty());   // and no key on top of our own
+        CHECK(out.give_back.empty());
+        for (const auto& n : out.notes) {
+            CHECK(n.find("lent") == std::string::npos);
+        }
+    }
+}
+
 TEST_CASE("doors: opening a lock another player opened within the first second gives our own key back") {
     WorldSync w;
     TempleWalk(w, 1000, LockAt());

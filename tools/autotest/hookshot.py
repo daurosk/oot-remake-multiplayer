@@ -30,6 +30,7 @@ import json
 import math
 import os
 import queue
+import re
 import shutil
 import socket
 import struct
@@ -672,6 +673,33 @@ def to_play(bridge, log, timeout, clock=time.monotonic, sleep=time.sleep):
     raise TimeoutError("not in play after %d s" % timeout)
 
 
+# The renderer's start is done: its pipelines are made (from the caches or compiled now). Until then the game shows
+# nothing and reads no controller; with a cold driver cache that is minutes (~170 s seen), so a run waits for it.
+RENDERER_READY = re.compile(r"vk: precompile: \d+ programs, .* in \d+ ms")
+
+
+def read_text(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def wait_renderer(read_log, alive, timeout, clock=time.monotonic, sleep=time.sleep):
+    """Until read_log() has the renderer's 'precompile ... in N ms' line; the seconds waited. 0 = no wait."""
+    if timeout <= 0:
+        return 0.0
+    t0 = clock()
+    while not RENDERER_READY.search(read_log()):
+        if not alive():
+            raise RuntimeError("the game closed before its renderer started")
+        if clock() - t0 > timeout:
+            raise TimeoutError("renderer not started in %d s (shaders still compiling?)" % timeout)
+        sleep(0.5)
+    return clock() - t0
+
+
 SAVE_USER = "5a3c9e1f0b7d24680000000000000001"   # the user folder a Hookshot game reads its saves from
 
 
@@ -760,6 +788,11 @@ def run(a):
             bridges[x] = (sock, Bridge.connect(sock, timeout=120))
             if i == 0:
                 time.sleep(3)
+        for x in tags:   # both games drawing before anything is pressed (a cold shader cache: minutes)
+            go = os.path.join(out, "game-out-%s.txt" % x)
+            waited = wait_renderer(lambda: read_text(go), lambda: procs[x].poll() is None, a.renderer_wait)
+            if a.renderer_wait > 0:
+                say("%s: renderer ready (%.0f s waited)" % (x, waited))
 
         def shooter(x, name):
             def shot(mark):
@@ -896,6 +929,8 @@ def main(argv=None):
     r.add_argument("--every", type=float, default=3.0)
     r.add_argument("--timeout", type=int, default=900, help="seconds for the boot and the load")
     r.add_argument("--scenario-timeout", type=int, default=600)
+    r.add_argument("--renderer-wait", type=int, default=600,
+                   help="seconds each game may take to start its renderer before the load (0: no wait)")
     r.add_argument("--pipe", default="coop-auto")
     a = p.parse_args(argv)
     if a.what == "check":

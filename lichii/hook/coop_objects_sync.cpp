@@ -5,6 +5,7 @@
 #include "coop_world.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <tuple>
@@ -127,11 +128,23 @@ std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std
     return false;
 }
 
+namespace {
+std::atomic<bool> g_share_friendly{true};
+}
+
+void ShareFriendly(bool on) {
+    g_share_friendly.store(on, std::memory_order_relaxed);
+}
+
 bool IsShared(std::string_view name) {
     if (IsOwnPuzzle(name)) return false;  // before the Npc_ rule: the pond owner is one
     // Enemy shots (Enemy_MoblinClub_ShockWave is named like an enemy)
     // stay with the spawn sync: the game whose enemy fired one sends it.
     if (CoopEnemyShots::IsEnemyShot(name)) return false;
+    if (!g_share_friendly.load(std::memory_order_relaxed) &&
+        (name.starts_with("Npc_") || name.starts_with("Animal_"))) {
+        return false;  // each game its own townspeople and animals (ShareFriendly)
+    }
     if (name.starts_with("Npc_")) {
         // Each player's own: Navi (the fairy sync has her), the equipment
         // a player or NPC holds, and invisible helpers.

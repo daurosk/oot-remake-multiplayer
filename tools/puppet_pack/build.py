@@ -2,6 +2,11 @@
 
     python -m puppet_pack.build --romfs <extracted romfs> --mod-dir <mod folder>
     python -m puppet_pack.build --romfs <extracted romfs> --user-dir <emulator user folder>
+    python -m puppet_pack.build --romfs <NX2navi game folder> --mod-dir "<game folder>/mods/OoT Co-op"
+
+--romfs takes an extracted romfs folder, the game's .nup file, or the NX2navi port's game folder
+(or its romfs folder: romfs.bin with index.json, read through nx2image.py). The mod folder's
+romfs/ is the layout both the emulator (LayeredFS) and the NX2navi port (<mod>/romfs) read.
 
 Writes, under <mod folder>/romfs:
   Pack/Actor/CoopPuppet_Child.pack.zs, Pack/Actor/CoopPuppet_Adult.pack.zs
@@ -31,7 +36,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import ainb, byml, dumpcheck, dungeon_rooms, hud, nup, rstb, sarc, tunic, tunic_extra, zs  # noqa: E402
+from . import ainb, byml, dumpcheck, dungeon_rooms, hud, nup, nx2image, rstb, sarc, tunic, tunic_extra, zs  # noqa: E402
 
 TITLE_ID = "0400486024DEC000"
 DEFAULT_MOD_NAME = "coop-puppet"
@@ -86,6 +91,19 @@ SLINK_DIR = "Component/SLink/"
 # builds the older pack with ActorBasic.
 SLINK_SUFFIX = ".engine__component__SLinkParam.bgyml"
 FOOTSTEP_SUFFIX = ".game__component__SoundFootStepParam.bgyml"
+
+# The player's EquipmentUserParam has `IsPouchUser` true: its user wears what the local game's
+# `PlayerStatus.Equip*` flags name, a moment after it is made. For a puppet that is the wrong
+# gear (the watcher's own), and with an empty head flag the game's take-off call (main+0x10aceb0,
+# index 0) runs main+0x4b8240 on the wearer, which reads the wearer's physics component: the
+# puppet has none, so it reads through a null pointer. An emulator reads zeros there and goes on;
+# the NX2navi port stops the game (seen 2026-11-12: "access violation ... reading address 0x20
+# in lifted function f_70004b8240"). Dark Link, the game's own copy of Link, takes the player's
+# param as its $parent and sets IsPouchUser false; `--no-pouch` (always on for an NX2navi image)
+# gives the puppet its own file with the same change, and the director's equip calls dress it.
+EQUIP_USER_DIR = "Component/EquipmentUserParam/"
+EQUIP_USER_SUFFIX = ".game__component__EquipmentUserParam.bgyml"
+EQUIP_USER_OVERRIDES = {"IsPouchUser": False}
 
 # The puppet is no use without these: no AS, no model, nowhere to put a sword.
 REQUIRED_COMPONENTS = ("ASRef", "ModelInfoRef", "EquipmentUserRef")
@@ -352,6 +370,21 @@ def puppet_footstep(doc, actor):
     return footstep_path(actor), byml.dumps(own), src
 
 
+def equip_user_path(actor):
+    return f"{EQUIP_USER_DIR}{actor}{EQUIP_USER_SUFFIX}"
+
+
+def puppet_equip_user(doc, actor):
+    """The puppet's own EquipmentUserParam, EQUIP_USER_OVERRIDES over the player's file:
+    (member path, bytes, the player's member path it stands in for)."""
+    src = ref_to_member(doc["Components"].get("EquipmentUserRef"))
+    if not src or not src.startswith(EQUIP_USER_DIR) or not src.endswith(EQUIP_USER_SUFFIX):
+        raise BuildError(f"unexpected EquipmentUserParam {src}")
+    own = {"$parent": "Work/" + src[:-len(".bgyml")] + ".gyml"}
+    own.update(EQUIP_USER_OVERRIDES)
+    return equip_user_path(actor), byml.dumps(own), src
+
+
 def slink_path(actor):
     return f"{SLINK_DIR}{actor}{SLINK_SUFFIX}"
 
@@ -372,10 +405,11 @@ def tunic_model_info(actor, variant, project):
 
 
 def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=None, actor=None,
-               project=None, basic_xlink=False):
+               project=None, basic_xlink=False, pouch=True):
     """Returns (pack bytes, actor param bytes, member list, equipment keys) for one variant.
     `actor`: the pack's actor (default CoopPuppet_<variant>); `project`: a model project of its own
-    (a tunic colour), else the player's."""
+    (a tunic colour), else the player's. `pouch`: False gives the puppet its own
+    EquipmentUserParam (EQUIP_USER_OVERRIDES)."""
     player = f"Player_{variant}"
     actor = actor or puppet_name(variant)
     doc = make_actor_param(flatten_actor_param(members, player), sound, basic_xlink)
@@ -385,6 +419,10 @@ def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=
         files[path] = data
         doc["Components"]["ModelInfoRef"] = "?" + path
     keys = equipment_keys(files, doc)
+    if not pouch:
+        path, data, _ = puppet_equip_user(doc, actor)
+        files[path] = data  # its $parent chain, the player's files, stays in the pack
+        doc["Components"]["EquipmentUserRef"] = "?" + path
     fs = puppet_footstep(doc, actor) if sound and not player_footsteps else None
     if fs:
         path, data, _ = fs
@@ -701,7 +739,7 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
 
 
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
-          tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False):
+          tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, pouch=True):
     """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
     a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
     that colour too (a test of the colours with a hook that knows none).
@@ -709,7 +747,9 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     `sound`: False builds the puppets without Link's sounds (issue 131). `player_footsteps`: keep
     the player's footstep param instead of the puppet's own (FOOTSTEP_OVERRIDES). `sound_user`: another
     SLink user for the puppets' sounds (SLINK_DIR). `basic_xlink`: the shared ActorBasic XLink param
-    instead of the player's (test switch, the pack before puppet-looks)."""
+    instead of the player's (test switch, the pack before puppet-looks). `pouch`: False gives the
+    puppets their own EquipmentUserParam that does not wear the local game's equipment
+    (EQUIP_USER_OVERRIDES)."""
     heaps = heaps or {}
     if not os.path.isfile(os.path.join(romfs, "Pack", "ZsDic.pack.zs")):
         raise BuildError(f"{romfs} does not look like the game's romfs (no Pack/ZsDic.pack.zs)")
@@ -756,7 +796,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
             raise BuildError(f"missing {rel(romfs, src)}")
         members = sarc.read(dicts.decompress(read(src)))
         pack, ap, names, keys = build_pack(members, v, sound, player_footsteps, sound_user, actor, project,
-                                           basic_xlink=basic_xlink)
+                                           basic_xlink=basic_xlink, pouch=pouch)
         dst_rel = f"Pack/Actor/{actor}.pack.zs"
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
         if player not in ai_rows:
@@ -787,6 +827,12 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
             fs_size = max((src_size or 0) + max(0, len(data) - len(members[src])), len(data) + PACK_SIZE_MARGIN)
             table.add_new(path, fs_size)
             footstep = {"param": path, "size": fs_size}
+        if equip_user_path(actor) in names:
+            path, data, src = puppet_equip_user(make_actor_param(flatten_actor_param(members, player)), actor)
+            if src not in members:
+                raise BuildError(f"the player's EquipmentUserParam {src} is not in the pack")
+            table.add_new(path, max((table.get(src) or 0) + max(0, len(data) - len(members[src])),
+                                    len(data) + PACK_SIZE_MARGIN))
         if slink_path(actor) in names:
             path, data, src = puppet_slink(make_actor_param(flatten_actor_param(members, player)), actor, sound_user)
             if src not in members:
@@ -886,6 +932,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "footsteps": "player" if player_footsteps or not sound else "puppet",
         "sound_user": sound_user if sound and sound_user else None,
         "xlink": "player" if sound and not basic_xlink else "basic",
+        "pouch": pouch,
         "tables": [rel(romfs, p) for p in (ai_path, gai_path, rs_path)],
         "source_sha256": {rel(romfs, p): hashlib.sha256(read(p)).hexdigest()
                           for p in (ai_path, gai_path, rs_path)},
@@ -955,8 +1002,38 @@ def main(argv=None):
                     help="the language of the HUD's place names, e.g. USen, EUen, EUfr")
     ap.add_argument("--basic-xlink", action="store_true",
                     help="test switch: the puppets get the shared ActorBasic XLink param (the older pack)")
+    ap.add_argument("--no-pouch", action="store_true",
+                    help="the puppets do not wear the local game's own equipment when made "
+                         "(always for the NX2navi port, which stops on the null read that follows)")
     a = ap.parse_args(argv)
     from_nup = os.path.isfile(a.romfs) and nup.is_nup(a.romfs)
+    image = None if from_nup else nx2image.find(a.romfs)
+    if image:
+        # The NX2navi port's RomFS image: only the files the build reads, into a temporary
+        # RomFS folder, as for a .nup.
+        tmp = tempfile.mkdtemp(prefix="coop-puppet-")
+        try:
+            img = nx2image.Image(image)
+            found = dumpcheck.nup_files(img)
+            missing = [p for p in dumpcheck.REQUIRED if p not in found]
+            if missing:
+                print(f"error: {image} has no {', '.join(missing)}", file=sys.stderr)
+                return 1
+            v = dumpcheck._version_of(found[dumpcheck.VERSIONED])
+            if v != dumpcheck.EXPECTED_VERSION and not a.any_version:
+                print(f"error: {image} holds game data version {v}; co-op needs "
+                      f"{dumpcheck.EXPECTED_VERSION} (the updated game)", file=sys.stderr)
+                return 1
+            for rel in found.values():
+                nup.write_under(tmp, rel, img.read(rel))
+            print(f"read the game files from {image}")
+            a.no_pouch = True  # see EQUIP_USER_OVERRIDES
+            return _main_build(a, tmp)
+        except (nx2image.ImageError, nup.NupError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
     if from_nup:
         problems = dumpcheck.check_nup(a.romfs, a.any_version)
     else:
@@ -1005,7 +1082,8 @@ def _main_build(a, romfs, hud_reader=None):
         tunics = [] if a.tunics.strip().lower() == "none" else [c.strip() for c in a.tunics.split(",") if c.strip()]
         build(romfs, mod_dir, heaps=heaps, sound=not a.no_sound, player_footsteps=a.player_footsteps,
               sound_user=a.sound_user, tunics=tunics, test_tunic=a.test_tunic,
-              stand_in_effects=a.seed_trail and not a.no_seed_trail, basic_xlink=a.basic_xlink)
+              stand_in_effects=a.seed_trail and not a.no_seed_trail, basic_xlink=a.basic_xlink,
+              pouch=not a.no_pouch)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

@@ -1,0 +1,9 @@
+{
+  "name": "OoT Co-op",
+  "version": "0.4.0",
+  "author": "oot-remake-multiplayer contributors",
+  "description": "Multiplayer (Multijoueur): host or join a co-op game. Session, presence, and with a plugin-enabled NX2navi an in-game panel and chat, the other players as Link, /teleport and following the host through exits; see README.txt.",
+  "launcher": "launcher_plugin.py",
+  "dlls": ["bin/coop_nx2navi.dll"],
+  "env": {}
+}

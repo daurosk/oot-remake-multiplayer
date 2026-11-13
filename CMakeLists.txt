@@ -4,6 +4,7 @@ project(oot_coop VERSION 0.0.1 LANGUAGES C CXX)
 
 option(COOP_BUILD_TESTS "Build the unit tests" ON)
 option(COOP_BUILD_PROGRAMS "Build the server and tools/coop_test" ON)
+option(COOP_BUILD_NX2NAVI "Build the NX2navi mod: coop_nx2navi.dll and its mod folder (Windows, nx2navi/README.md)" OFF)
 option(COOP_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer (GCC or Clang)" OFF)
 option(COOP_TSAN "Build with ThreadSanitizer (GCC or Clang; not with COOP_SANITIZE)" OFF)
 # The Hookshot module builds lichii/hook as the emulator does: on Windows, with MSVC (the
@@ -86,4 +87,9 @@ if(COOP_BUILD_TESTS)
   enable_testing()
   include(cmake/doctest.cmake)
   add_subdirectory(tests)
+endif()
+
+# After the tests, so its own test file can join coop_tests.
+if(COOP_BUILD_NX2NAVI)
+  add_subdirectory(nx2navi)
 endif()

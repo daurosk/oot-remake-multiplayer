@@ -117,6 +117,14 @@ struct LifeWrite {
 // objects (coop_world.h). Not the order-puzzle actors (IsOwnPuzzle).
 bool IsShared(std::string_view name);
 
+// Whether townspeople and animals (Npc_, Animal_) are shared at all. On by
+// default (the emulator build). The NX2navi port turns it off: there a copy is
+// kept from its own AI only when it is an enemy, and a townsperson, a horse or
+// a cow that another game places every frame cannot be talked to, ridden or
+// milked by the player whose game does not own it. Off, each game runs its
+// own. Any thread; meant to be set once, before sharing starts.
+void ShareFriendly(bool on);
+
 // A puzzle or minigame each game runs on its own (issues 149, 151): the Scrub Brothers
 // (hit 2, 3, 1), the Lost Woods stage scrubs, and the fishing pond's owner.
 // Their state is kept in the game's own code from its own player; only the

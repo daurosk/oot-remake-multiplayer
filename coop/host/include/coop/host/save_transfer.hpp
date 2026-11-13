@@ -186,6 +186,11 @@ WriteResult write_coop_save(const std::filesystem::path& coop_dir, const SaveSlo
 //   join, by address or invite; 0 for a host; or coop-options.ini), else its own.
 enum class FolderChoice { wait, own, coop };
 FolderChoice folder_choice(std::optional<bool> env, bool can_switch, bool connected, bool is_host, bool in_game);
+// Where the folder can be switched, the choice is per SESSION (the title menu: Join, back to the title, then Host in
+// the same run plays from its own saves again): a choice made goes when the session that made it is over (`over`: a
+// new client, or the client idle, stopped or refused; a reconnect is not), but never with a save loaded (Link in
+// the game: no switch then).
+bool decide_again(bool decided, bool over, bool in_game);
 
 // The slot_NN folders of a co-op save folder taken away, so it holds nothing until the host's save comes (a guest
 // switching to it must not find an older host's save and load that). Refuses a folder that is not a co-op one.

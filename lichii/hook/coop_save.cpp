@@ -53,7 +53,8 @@ std::string g_notice;
 std::function<std::string()> g_root;                    // SetSwitch (Hookshot)
 std::function<bool(const std::string&)> g_remount;
 bool g_in_game = false;
-bool g_decided = false;   // the run-time choice is made (once a run)
+bool g_decided = false;   // the run-time choice is made (for this session: save::decide_again)
+const void* g_decided_client = nullptr;   // the session's client it was made for
 bool g_ready = false;     // the host's save written into our co-op folder
 
 // Unset, or "1"/"0": the environment's LICHII_COOP_HOST_SAVE.
@@ -97,11 +98,22 @@ void SwitchFrame(coop::net::Client& client) {
     if (g_dir.empty()) {
         if (const auto root = g_root(); !root.empty()) NoteSaveDirLocked(fs::path(root));
     }
+    {
+        const auto st = client.state();
+        const bool over = &client != g_decided_client || st == coop::net::State::idle ||
+                          st == coop::net::State::stopped || st == coop::net::State::refused;
+        if (save::decide_again(g_decided, over, g_in_game)) {
+            g_decided = false;   // the next session (the title menu's Host after a Join) decides again
+            g_ready = false;
+            LOG_INFO(Core, "coop: save: the session is over: the next one chooses the save folder again");
+        }
+    }
     if (g_decided || g_dir.empty()) return;
     const bool connected = client.state() == coop::net::State::connected && client.host_number() != 0;
     const auto choice = save::folder_choice(std::nullopt, true, connected, connected && client.is_host(), g_in_game);
     if (choice == save::FolderChoice::wait) return;
     g_decided = true;
+    g_decided_client = &client;
     const bool coop_now = save::is_coop_dir(g_dir);
     const fs::path want = choice == save::FolderChoice::coop
                               ? (coop_now ? g_dir : fs::path(g_dir.string() + std::string(save::kCoopSuffix)))

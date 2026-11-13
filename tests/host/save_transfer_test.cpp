@@ -299,3 +299,11 @@ TEST_CASE("save transfer: a co-op folder is emptied of slots before the host's s
   CHECK(coop::host::save::clear_coop_slots(base / "none-coop") == 0);
   fs::remove_all(base, ec);
 }
+
+TEST_CASE("save transfer: the folder is chosen again for each session, never with a save loaded") {
+  using coop::host::save::decide_again;
+  CHECK(decide_again(true, true, false));     // Join, back to the title, then Host: chosen again
+  CHECK_FALSE(decide_again(true, false, false));  // the same session (or a reconnect): kept
+  CHECK_FALSE(decide_again(true, true, true));    // Link in the game: no switch
+  CHECK_FALSE(decide_again(false, true, false));  // nothing chosen yet
+}

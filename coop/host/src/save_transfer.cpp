@@ -326,6 +326,10 @@ int clear_coop_slots(const fs::path& coop_dir) {
   return n;
 }
 
+bool decide_again(bool decided, bool over, bool in_game) {
+  return decided && over && !in_game;
+}
+
 FolderChoice folder_choice(std::optional<bool> env, bool can_switch, bool connected, bool is_host, bool in_game) {
   if (!can_switch) return env && *env ? FolderChoice::coop : FolderChoice::own;
   if (!connected) return FolderChoice::wait;

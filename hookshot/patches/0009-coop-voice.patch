@@ -47,8 +47,8 @@ index 00000000..4996f2e8
 +#include <opus.h>
 +#define WIN32_LEAN_AND_MEAN
 +#include <windows.h>
-+#ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
-+#include "../gpu/vk/compat/hookshot_env.h"
++#ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
++#include "../gpu/vk/compat/longshot_env.h"
 +#endif
 +
 +int hos_voice_mic_start(void);   /* nn_audio_in.c */

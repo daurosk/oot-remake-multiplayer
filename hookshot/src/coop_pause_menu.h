@@ -30,9 +30,11 @@ struct Request {
     // `text` is the colour chosen for Link ("" the player number's); worn when
     // the menu closes. kPaste: hand the clipboard's text to Paste.
     // kCopyInvite: the session's invite code onto the clipboard. kPasteAnswer:
-    // the friend's ANSWER CODE from the clipboard to the host. kCopyLan: the
-    // line for friends on the same network or VPN onto the clipboard.
-    enum class Kind { kHost, kJoin, kLeave, kSave, kLook, kPaste, kCopyInvite, kPasteAnswer, kCopyLan };
+    // the friend's ANSWER CODE from the clipboard to the host. kCopyAnswer: a
+    // guest's answer code (its host could not be reached) onto the clipboard.
+    // kCopyLan: the line for friends on the same network or VPN onto the
+    // clipboard.
+    enum class Kind { kHost, kJoin, kLeave, kSave, kLook, kPaste, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan };
     Kind kind = Kind::kHost;
     std::string text;
 };
@@ -88,6 +90,10 @@ public:
     void Show(const CoopTitleMenu::Options& options);
     // It shows no more: a field's typing ends (a name half typed is dropped).
     void Hide();
+    // Straight to a page, as its row on the first page would go (the title's
+    // Host, Join and Co-op Settings rows): Host hosts at once when no session
+    // runs. kMain: the first page.
+    void Open(Page page);
 
     // One press; false when nothing took it (a Back on the first page: the
     // caller closes the whole menu). A request may be waiting after it.
@@ -126,7 +132,7 @@ private:
     enum class Act {
         kNone,
         kOpenHost, kOpenJoin, kOpenLocal, kOpenSettings,
-        kStartHost, kCopyInvite, kPasteAnswer, kCopyLan, kLeave,
+        kStartHost, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan, kLeave,
         kRejoin, kCode, kJoinNow,
         kName, kLook, kPlayers, kVoice
     };

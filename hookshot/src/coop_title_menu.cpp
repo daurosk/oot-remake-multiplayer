@@ -302,7 +302,12 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     o = password.empty() ? IniUnset(o, "server_password") : IniSet(o, "server_password", password, true);
     o = debug_panel ? IniSet(o, "LICHII_COOP_DEBUG_PANEL", "1", false) : IniUnset(o, "LICHII_COOP_DEBUG_PANEL");
     o = cheats ? IniSet(o, "LICHII_COOP_CHEATS", "1", false) : IniUnset(o, "LICHII_COOP_CHEATS");
-    o = IniSet(o, "LICHII_COOP_VOICE", voice ? "open" : "off", false);
+    // (voip-101: ptt = on, the line gone = off, the default; "open" written by hand stays as it is)
+    if (!voice) {
+        o = IniUnset(o, "LICHII_COOP_VOICE");
+    } else if (!On(IniGet(o, "LICHII_COOP_VOICE"))) {
+        o = IniSet(o, "LICHII_COOP_VOICE", "ptt", false);
+    }
     o = IniSet(o, "max_players", std::to_string(std::clamp(max_players, kMinPlayers, kMaxPlayers)), true);
     options_ini = std::move(o);
 }
@@ -316,7 +321,7 @@ std::vector<std::pair<std::string, std::string>> Options::Environment() const {
         {"LICHII_COOP_SHOW_PLAYERS", show_players ? "1" : ""},
         {"LICHII_COOP_DEBUG_PANEL", debug_panel ? "1" : ""},
         {"LICHII_COOP_CHEATS", cheats ? "1" : ""},
-        {"LICHII_COOP_VOICE", voice ? "open" : "off"},
+        {"LICHII_COOP_VOICE", voice ? "ptt" : ""},
     };
 }
 
@@ -508,7 +513,7 @@ std::vector<std::string> PlainStatus(const HostView& v) {
     case HOS_COOP_PROBLEM_INTERNAL:
         return {"Co-op could not start.", "Check that this PC is online, then try again. If it keeps failing, restart the game."};
     case HOS_COOP_PROBLEM_BAD_NAME:
-        return {"Your name is too long.", "Pick a shorter one in Co-op Settings."};
+        return {"Your name is too long.", "Pick a shorter one in Multiplayer, Settings."};
     default:
         break;
     }
@@ -551,7 +556,7 @@ std::vector<std::string> PlainStatus(const HostView& v) {
     case HOS_COOP_FAILED:
         return {"Your friend could not be reached.",
                 "Check that they are hosting right now and that the code is their newest one.",
-                "Same home network or VPN as them? Ask for the line from \"Same network or VPN\" on their Host screen."};
+                "Same home network or VPN as them? Ask for the line from \"Same network or VPN\" on their Host page."};
     default:
         return {};
     }

@@ -135,6 +135,11 @@ std::vector<Menu::Line> Menu::Lines() const {
         break;
     case Page::kJoin:
         if (guest) {
+            if (session_.state == State::kWaitHost) {
+                out.push_back({Action("Copy your answer code", "Copy", session_.code.empty()), Act::kCopyAnswer,
+                               "Your friend's router blocks the way in: send them this answer code (it is copied "
+                               "already); they paste it on their Host page."});
+            }
             out.push_back({Action("Leave the game", confirm_leave_ ? "Press again to confirm" : "Leave"), Act::kLeave,
                            "Leaves your friend's game. Their game goes on without you."});
         } else {
@@ -164,8 +169,8 @@ std::vector<Menu::Line> Menu::Lines() const {
                        "The name the other players see: 1 to 16 characters, typed with the keyboard."});
         out.push_back({Choice("Link's look", options_.colour.empty() ? std::string("By player number") : options_.colour),
                        Act::kLook,
-                       "The colour of your Link's tunic and cap, for you and for the other players. It changes when you "
-                       "close this menu."});
+                       "The colour of your Link's tunic and cap, as you and the other players see it. By player "
+                       "number: each player's own colour."});
         out.push_back({Choice("Players when you host", std::to_string(options_.max_players)), Act::kPlayers,
                        "The most players in a game you host, you included."});
         out.push_back({Toggle("Proximity voice chat", options_.voice), Act::kVoice,
@@ -241,6 +246,22 @@ void Menu::Hide() {
     note_.clear();
 }
 
+void Menu::Open(Page page) {
+    Act act = Act::kNone;
+    switch (page) {
+    case Page::kMain: break;
+    case Page::kHost: act = Act::kOpenHost; break;
+    case Page::kJoin: act = Act::kOpenJoin; break;
+    case Page::kLocal: act = Act::kOpenLocal; break;
+    case Page::kSettings: act = Act::kOpenSettings; break;
+    }
+    Go(Page::kMain, act);
+    note_.clear();
+    if (act != Act::kNone) {
+        Decide(act);
+    }
+}
+
 void Menu::SetSession(Session session) {
     if (session == session_) {
         return;
@@ -270,7 +291,9 @@ void Menu::SetNote(std::vector<std::string> lines) {
 
 void Menu::SetRejoin(std::string host, std::string code) {
     const auto before = Lines();
-    const Act act = selected_ < before.size() ? before[selected_].act : Act::kNone;
+    // A row that comes now is chosen (one press joins again); else the row chosen stays.
+    const bool came = rejoin_code_.empty() && !Trim(code).empty() && !typing_;
+    const Act act = came ? Act::kRejoin : selected_ < before.size() ? before[selected_].act : Act::kNone;
     rejoin_host_ = Trim(host).empty() ? std::string("your friend") : std::string(Trim(host));
     rejoin_code_ = std::string(Trim(code));
     const auto after = Lines();
@@ -438,6 +461,9 @@ void Menu::Decide(Act act) {
     case Act::kPasteAnswer:
         request_ = Request{Request::Kind::kPasteAnswer, {}};
         break;
+    case Act::kCopyAnswer:
+        request_ = Request{Request::Kind::kCopyAnswer, {}};
+        break;
     case Act::kCopyLan:
         request_ = Request{Request::Kind::kCopyLan, {}};
         break;
@@ -467,8 +493,10 @@ void Menu::Decide(Act act) {
         break;
     case Act::kLook:
     case Act::kPlayers:
-    case Act::kVoice:
         Change(act, 1);
+        break;
+    case Act::kVoice:
+        Change(act, 0);   // (a toggle: A flips it)
         break;
     case Act::kNone:
         break;

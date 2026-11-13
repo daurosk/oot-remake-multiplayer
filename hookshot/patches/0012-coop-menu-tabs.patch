@@ -1,0 +1,578 @@
+From e79ddf5589cd82578322d4115c468c9d16ebd53a Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Fri, 13 Nov 2026 01:34:58 -0900
+Subject: [PATCH] Co-op menu tabs: the module's tabs lead the menu's strip
+
+The Multiplayer tab of oot-remake-multiplayer's module (its docs/hookshot.md
+"The Multiplayer tab"), and any tab after it (Mods), in the Insert menu.
+gpu/vk/hos_coop_menu.h is the table: the module names its tabs
+(hos_coop_menu_tabs, hos_coop_menu_tab_name), gives a tab's rows, selection,
+help box and prompts (hos_coop_menu_page) and takes the presses on it
+(hos_coop_menu_input); hos_coop_menu_wanted, optional, opens the menu on a
+tab or closes it. vk_coop.cpp finds the five exports once the bridge has
+loaded the module, as it finds the draw exports. vk_menu.cpp shows the
+module's tabs first in the strip (the menu opens on the first one until the
+player picks another), draws a module tab's rows with the menu's own cells
+and help box (draw_coop_page), and hands the arrows, confirm, back, the
+cursor and the clicks to the module (coop_tick); back with nothing left on
+the module's side closes the menu, as Esc does. A module without the
+exports: no tabs, the menu as before.
+---
+ gpu/vk/hos_coop_menu.h |  86 +++++++++++++++++
+ gpu/vk/vk_coop.cpp     |  71 ++++++++++++++
+ gpu/vk/vk_coop.h       |  14 +++
+ gpu/vk/vk_menu.cpp     | 211 +++++++++++++++++++++++++++++++++++++----
+ 4 files changed, 365 insertions(+), 17 deletions(-)
+ create mode 100644 gpu/vk/hos_coop_menu.h
+
+diff --git a/gpu/vk/hos_coop_menu.h b/gpu/vk/hos_coop_menu.h
+new file mode 100644
+index 00000000..6d6bd07e
+--- /dev/null
++++ b/gpu/vk/hos_coop_menu.h
+@@ -0,0 +1,86 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later
++   The co-op module's tabs in Hookshot's own menu (oot-remake-multiplayer, docs/hookshot.md "The Multiplayer tab").
++
++   Hookshot's menu (gpu/vk/vk_menu.cpp, from our patch 0012) asks hookshot_coop.dll for the tabs below once the bridge
++   has loaded it, shows them FIRST in its tab strip (before Graphics), draws the shown one's page with its own cells
++   and help box, and hands the player's presses on that tab to the module. The module says what the rows are and what
++   a press does; Hookshot only draws and forwards. The exports: hos_coop_menu_tabs, hos_coop_menu_tab_name,
++   hos_coop_menu_page, hos_coop_menu_input (all four, or no tabs) and the optional hos_coop_menu_wanted. A module
++   without them: no tabs, Hookshot as it was.
++   Generic: any number of tabs (Multiplayer, then Mods), with no further Hookshot build for a new tab or row.
++   The same file is in Hookshot's gpu/vk/ through our patch and in our repository (hookshot/src): keep them equal
++   (tests/hookshot/module_test.cpp checks it). Plain C, so both sides' compilers agree on the layout.
++
++   Threads: Hookshot calls these from its menu tick and from the thread that records the present; the module guards
++   itself. hos_coop_menu_page's strings belong to the module and hold until the next hos_coop_menu_page call on the
++   same thread: Hookshot copies them at once. Text is UTF-8.
++
++   Keyboard: while a page says `typing`, the module takes the keys itself through hos_coop_key / hos_coop_char
++   (host/display.c offers them to it first, patch 0001), so Q, E and Tab type letters there instead of changing tabs.
++   The pad's buttons still come here as events. */
++#ifndef HOS_COOP_MENU_H
++#define HOS_COOP_MENU_H
++#include <stdint.h>
++
++#define HOS_COOP_MENU_VERSION 1
++
++/* A row's kind (HosCoopMenuRow.kind) */
++enum {
++    HOS_COOP_MENU_ACTION = 0,    /* a name and a value cell with no arrows: Confirm does it */
++    HOS_COOP_MENU_CHOICE = 1,    /* a value with arrows (left / right: it can go that way): Left and Right change it */
++    HOS_COOP_MENU_TOGGLE = 2,    /* Off / On halves (on) */
++    HOS_COOP_MENU_HEADING = 3,   /* a section's title: not selectable */
++    HOS_COOP_MENU_NOTE = 4       /* a line of text over the row's width: not selectable */
++};
++
++typedef struct HosCoopMenuRow {
++    const char *name;
++    const char *value;   /* ACTION, CHOICE: the value cell's text ("" none) */
++    uint8_t kind;        /* HOS_COOP_MENU_* above */
++    uint8_t on;          /* TOGGLE */
++    uint8_t left, right; /* CHOICE: the arrows */
++    uint8_t fixed;       /* it cannot be used now (drawn dim; a press says why in the help) */
++    uint8_t pad_[3];
++} HosCoopMenuRow;
++
++typedef struct HosCoopMenuPage {
++    uint32_t size;                 /* sizeof(HosCoopMenuPage), set by Hookshot */
++    int32_t rows_n;
++    const HosCoopMenuRow *rows;
++    int32_t selected;              /* -1: none */
++    int32_t typing;                /* the keyboard types into the selected row */
++    const char *help_title;        /* the help box: its title, its paragraph, a line set off under it, one gold line */
++    const char *help;
++    const char *hint;
++    const char *gold;
++    const char *change;            /* the prompt strip's words for Left/Right, Confirm and Back ("" or NULL: none) */
++    const char *confirm;
++    const char *back;
++} HosCoopMenuPage;
++
++/* An event for hos_coop_menu_input */
++enum {
++    HOS_COOP_MENU_UP = 0,
++    HOS_COOP_MENU_DOWN = 1,
++    HOS_COOP_MENU_LEFT = 2,
++    HOS_COOP_MENU_RIGHT = 3,
++    HOS_COOP_MENU_CONFIRM = 4,
++    HOS_COOP_MENU_BACK = 5,      /* returns 0 when the tab has nothing to go back to: Hookshot closes the menu */
++    HOS_COOP_MENU_SHOW = 6,      /* the tab came to show (the menu opened on it, or the player went to it) */
++    HOS_COOP_MENU_HIDE = 7,      /* it shows no more (another tab, or the menu closed) */
++    HOS_COOP_MENU_SELECT = 8,    /* the mouse over row `arg` */
++    HOS_COOP_MENU_CLICK = 9      /* a left click on row `arg`: arg2 -1 the value's left half, 1 its right half, 0 the name */
++};
++
++typedef int (*hos_coop_menu_tabs_fn)(void);                               /* how many tabs (0: none) */
++typedef const char *(*hos_coop_menu_tab_name_fn)(int tab);                /* the strip's name, tab 0 first */
++typedef int (*hos_coop_menu_page_fn)(int tab, HosCoopMenuPage *out);      /* 1: filled */
++typedef int (*hos_coop_menu_input_fn)(int tab, int event, int arg, int arg2);   /* 1: taken */
++/* Optional, asked at each menu tick: what the module wants of the menu now (once: the next call says the next thing).
++   HOS_COOP_MENU_WANT_NOTHING, HOS_COOP_MENU_WANT_CLOSE (a join connected at the title: the game takes the pad again),
++   or a tab (0 and up): the menu opens on it (the title screen's Host, Join and Co-op Settings rows). */
++#define HOS_COOP_MENU_WANT_NOTHING (-1)
++#define HOS_COOP_MENU_WANT_CLOSE (-2)
++typedef int (*hos_coop_menu_wanted_fn)(void);
++
++#endif
+diff --git a/gpu/vk/vk_coop.cpp b/gpu/vk/vk_coop.cpp
+index 693d1247..d0bc0ea1 100644
+--- a/gpu/vk/vk_coop.cpp
++++ b/gpu/vk/vk_coop.cpp
+@@ -4,6 +4,7 @@
+ // fonts and pictures of its own (the HUD pack's game font and heart pictures): loaded once, kept for the process's life.
+ #include "vk_coop.h"
+ 
++#include <algorithm>
+ #include <atomic>
+ #include <cfloat>
+ #include <cstdio>
+@@ -17,6 +18,7 @@
+ #include "vk_internal.h"   // (logf, memory_read_as_submitted)
+ #include "vk_texture.h"    // (Texture, texture_frame_no)
+ #include "hos_coop_draw.h"
++#include "hos_coop_menu.h"
+ 
+ #ifdef _WIN32
+ #include <windows.h>
+@@ -157,4 +159,73 @@ void draw(uint32_t w, uint32_t h) {
+     chosen = nullptr;   // (the menu's text after it: Hookshot's own font)
+ }
+ 
++// (the module's tabs in the menu, hos_coop_menu.h: all four exports or none; looked for every 60 asks until found, as
++// find() above, from the menu's tick and the present's thread alike)
++namespace {
++std::atomic<hos_coop_menu_tabs_fn> menu_tabs_fn{nullptr};
++std::atomic<hos_coop_menu_tab_name_fn> menu_tab_name_fn{nullptr};
++std::atomic<hos_coop_menu_page_fn> menu_page_fn{nullptr};
++std::atomic<hos_coop_menu_input_fn> menu_input_fn{nullptr};
++std::atomic<hos_coop_menu_wanted_fn> menu_wanted_fn{nullptr};
++
++void find_menu() {
++    static std::atomic<int> wait{0};
++    if (menu_tabs_fn.load(std::memory_order_acquire) || wait.fetch_sub(1, std::memory_order_relaxed) > 0) return;
++    wait.store(60, std::memory_order_relaxed);
++#ifdef _WIN32
++    HMODULE m = GetModuleHandleA("hookshot_coop.dll");
++    if (!m) return;
++    auto look = [m](const char *name) { return (void *)GetProcAddress(m, name); };
++#else
++    void *m = dlopen("hookshot_coop.so", RTLD_NOW | RTLD_NOLOAD);
++    auto look = [m](const char *name) { return m ? dlsym(m, name) : dlsym(RTLD_DEFAULT, name); };
++#endif
++    auto t = (hos_coop_menu_tabs_fn)look("hos_coop_menu_tabs");
++    auto n = (hos_coop_menu_tab_name_fn)look("hos_coop_menu_tab_name");
++    auto p = (hos_coop_menu_page_fn)look("hos_coop_menu_page");
++    auto i = (hos_coop_menu_input_fn)look("hos_coop_menu_input");
++    if (!t || !n || !p || !i) return;   // (an older module: no tabs)
++    menu_tab_name_fn.store(n, std::memory_order_release);
++    menu_page_fn.store(p, std::memory_order_release);
++    menu_input_fn.store(i, std::memory_order_release);
++    menu_wanted_fn.store((hos_coop_menu_wanted_fn)look("hos_coop_menu_wanted"), std::memory_order_release);
++    menu_tabs_fn.store(t, std::memory_order_release);
++    logf("vk: co-op: the module's menu tabs found");
++}
++}  // namespace
++
++int menu_tabs() {
++    find_menu();
++    const auto t = menu_tabs_fn.load(std::memory_order_acquire);
++    return t ? std::clamp(t(), 0, kMaxMenuTabs) : 0;
++}
++
++const char *menu_tab_name(int tab) {
++    const auto n = menu_tab_name_fn.load(std::memory_order_acquire);
++    const char *name = n ? n(tab) : nullptr;
++    return name ? name : "";
++}
++
++bool menu_page(int tab, HosCoopMenuPage *out) {
++    const auto p = menu_page_fn.load(std::memory_order_acquire);
++    if (!p || !out) return false;
++    *out = HosCoopMenuPage{};
++    out->size = sizeof *out;
++    out->selected = -1;
++    if (!p(tab, out)) return false;
++    if (out->rows_n < 0 || !out->rows) out->rows_n = 0;
++    if (out->selected >= out->rows_n) out->selected = -1;
++    return true;
++}
++
++bool menu_input(int tab, int event, int arg, int arg2) {
++    const auto i = menu_input_fn.load(std::memory_order_acquire);
++    return i && i(tab, event, arg, arg2) != 0;
++}
++
++int menu_wanted() {
++    const auto w = menu_wanted_fn.load(std::memory_order_acquire);
++    return w ? w() : HOS_COOP_MENU_WANT_NOTHING;
++}
++
+ }  // namespace mkwvk::coop
+diff --git a/gpu/vk/vk_coop.h b/gpu/vk/vk_coop.h
+index 59acc4be..17c4cf0d 100644
+--- a/gpu/vk/vk_coop.h
++++ b/gpu/vk/vk_coop.h
+@@ -3,6 +3,8 @@
+ 
+ #include <cstdint>
+ 
++#include "hos_coop_menu.h"
++
+ namespace mkwvk {
+ struct Texture;
+ }
+@@ -17,4 +19,16 @@ void draw(uint32_t w, uint32_t h);
+ /// name tags, when it has hos_coop_camera (nothing otherwise). camera: the vertex stage's uniform buffer 3
+ void note_scene_draw(const Texture *color0, uint32_t width, uint32_t height, uint64_t camera, uint64_t camera_size);
+ 
++/// The module's tabs in the menu (hos_coop_menu.h), first in its strip: how many (0 without the module, or an older one)
++constexpr int kMaxMenuTabs = 4;
++int menu_tabs();
++/// A tab's name in the strip ("" none)
++const char *menu_tab_name(int tab);
++/// The tab's page as the module has it now: its rows, the selection, the help box and the prompts' words (false: none)
++bool menu_page(int tab, HosCoopMenuPage *out);
++/// A press on the tab, or the mouse (HOS_COOP_MENU_*): whether the module took it
++bool menu_input(int tab, int event, int arg = 0, int arg2 = 0);
++/// What the module wants of the menu now: HOS_COOP_MENU_WANT_NOTHING, _CLOSE, or a tab to open on
++int menu_wanted();
++
+ }  // namespace mkwvk::coop
+diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
+index 10e332b9..bdd392ed 100644
+--- a/gpu/vk/vk_menu.cpp
++++ b/gpu/vk/vk_menu.cpp
+@@ -15,6 +15,9 @@
+ // started with, and the Graphics tab's help lists them. Closing the menu then asks whether to restart now (menu_restart.h):
+ // Later keeps the saved settings for the next start and is not asked again until they change; Restart now saves and
+ // closes the window as the player would, and the game starts again (WM_APP + 9: host/hos_relaunch.c).
++// (oot-remake-multiplayer) The co-op module's tabs (hookshot_coop.dll, hos_coop_menu.h: Multiplayer, later Mods) lead the tab
++// strip: vk_coop.h finds them, draw_coop_page draws their rows with the menu's own cells and help box, coop_tick hands the
++// presses on; the module says what the rows are and what a press does.
+ #include <atomic>
+ #include <chrono>
+ #include <cmath>
+@@ -1547,6 +1550,20 @@ void outputs_sync() {
+ 
+ int cur_tab = TAB_GRAPHICS;
+ int tab_selected[TAB_COUNT + 1] = {};   // (and the Motion page's)
++// (oot-remake-multiplayer) The co-op module's tabs (vk_coop.h, hos_coop_menu.h), first in the strip: how many it has (asked
++// at each tick), and the one shown (-1: one of Hookshot's, cur_tab). Their rows, help and what a press does are the module's;
++// the menu draws them with its own cells and hands the presses on (coop_tick)
++int coop_tabs = 0;
++int coop_tab = -1;
++/// The place in the strip of the tab shown: the module's first, then Hookshot's (the Motion page under Controls)
++int strip_at() { return coop_tab >= 0 ? coop_tab : coop_tabs + (cur_tab == TAB_MOTION ? TAB_CONTROLS : cur_tab); }
++int strip_count() { return coop_tabs + TAB_COUNT; }
++/// The tab at a place in the strip shown (a press or the module's HOS_COOP_MENU_SHOW follows from coop_tick's look at it)
++void show_strip(int at) {
++    at = (at % strip_count() + strip_count()) % strip_count();
++    if (at < coop_tabs) coop_tab = at;
++    else coop_tab = -1, cur_tab = at - coop_tabs;
++}
+ bool is_motion_row(const Row& r) { return r.tab == TAB_CONTROLS && !r.value && !strcmp(r.name, "Motion"); }
+ 
+ // ---- the rows that take a restart: their values at the start (menu_init, the GPU's at menu_set_gpu_count) ----
+@@ -1636,8 +1653,9 @@ bool menu_refresh = false;
+ int marquee_pos = 0, marquee_max = 0;
+ int64_t marquee_next = 0;
+ constexpr int64_t kMarqueeStep = 150000000LL, kMarqueeRest = 1200000000LL;   // (ns)
+-// (hookshot) the mouse (menu_tick): the tab strip's part under the cursor (a tab 0 to TAB_COUNT - 1, TAB_COUNT the previous,
+-// TAB_COUNT + 1 the next; -1 none); the slider held with the left button (its row in the tab, -1 none)
++// (hookshot) the mouse (menu_tick): the tab strip's part under the cursor (a place in the strip from 0, kHoverPrev the
++// previous, kHoverNext the next; -1 none); the slider held with the left button (its row in the tab, -1 none)
++constexpr int kHoverPrev = 1000, kHoverNext = 1001;
+ int hover_tab = -1;
+ int drag_row = -1;
+ bool mouse_read = false;   // (the menu has read the mouse since it opened)
+@@ -2465,12 +2483,13 @@ double fps_target_ms() {
+     return fps_stats::target_ms_for(cap, fifo, fifo ? (display_refresh_mhz() + 500) / 1000 : 0);
+ }
+ menu_hit::Map hits;      // (the menu's controls as last drawn: the mouse's, menu_tick)
+-float scroll_at[TAB_MOTION + 2];   // (the first row shown, eased toward the selection: the options' tabs and the Motion page, then
++float scroll_at[TAB_MOTION + 3];   // (the first row shown, eased toward the selection: the options' tabs and the Motion page, then
+                                    // the Controls page: kControlsSlot)
+ constexpr int kControlsSlot = TAB_MOTION + 1;
+-int wheel_rows[TAB_MOTION + 2];   // (the mouse wheel's notches since the last drawing, a slot each: scroll_rows scrolls by them)
+-int scrolled_to[TAB_MOTION + 2] = {-1, -1, -1, -1, -1, -1};   // (the selection scroll_rows last brought into view)
+-float scroll_want[TAB_MOTION + 2];   // (where scroll_at is going: the wheel moves it, a new selection too)
++constexpr int kCoopSlot = TAB_MOTION + 2;   // (oot-remake-multiplayer: the co-op module's tab shown)
++int wheel_rows[TAB_MOTION + 3];   // (the mouse wheel's notches since the last drawing, a slot each: scroll_rows scrolls by them)
++int scrolled_to[TAB_MOTION + 3] = {-1, -1, -1, -1, -1, -1, -1, -1};   // (the selection scroll_rows last brought into view)
++float scroll_want[TAB_MOTION + 3];   // (where scroll_at is going: the wheel moves it, a new selection too)
+ float ease_step = 0;     // (this drawing's share of the way: the time since the last one)
+ 
+ ui::Ctx ui_ctx(uint32_t w, uint32_t h) {
+@@ -2963,25 +2982,104 @@ void row_value_cell(ui::Ctx& c, const Row& r, ImVec2 va, ImVec2 vb, bool selecte
+     }
+ }
+ 
++/// (oot-remake-multiplayer) A co-op module's tab under the banner (hos_coop_menu.h): its rows in the column with the menu's
++/// own cells (an action's value cell, or the page arrow when it has none; a choice with its arrows; a toggle's Off and On
++/// halves; a heading as Hookshot's; a note as one line of text), the help box beside it and the prompts the module names.
++/// The hits are the module's row numbers, as Hookshot's own rows: coop_tick hands the cursor and the clicks on
++void draw_coop_page(ui::Ctx& c, float hh) {
++    const float s = c.s;
++    float cx0, cx1, hx0, hx1;
++    bool narrow;
++    columns(c, &cx0, &cx1, &hx0, &hx1, &narrow);
++    column(c, cx0, cx1, hh);
++    HosCoopMenuPage p{};
++    if (!coop::menu_page(coop_tab, &p)) p = HosCoopMenuPage{}, p.selected = -1;
++    auto said = [](const char* t) { return t && *t ? t : nullptr; };
++    ui::Prompt prompt_list[6];
++    int prompts_n = 0;
++    if (!p.typing) prompt_list[prompts_n++] = {ui::kUpDown, "Choose"};
++    if (said(p.change)) prompt_list[prompts_n++] = {ui::kLeftRight, p.change};
++    if (said(p.confirm)) prompt_list[prompts_n++] = {ui::kConfirm, p.confirm};
++    if (!p.typing) prompt_list[prompts_n++] = {ui::kTabs, "Tabs"};
++    prompt_list[prompts_n++] = {ui::kBack, said(p.back) ? p.back : "Close"};
++    const float bar_top = ui::prompt_bar_top(c);
++    float bottom = std::min(c.h - c.safe, bar_top) - 10 * s;
++    if (narrow) {   // (as draw_options: the help over the column's foot, at most half the room)
++        const float help_h = (bottom - hh) * 0.5f;
++        bottom = std::min(bar_top, c.h - c.safe) - help_h - 16 * s;
++        help_box(c, hx0, hx1, bottom + 8 * s, said(p.help_title), said(p.help), said(p.hint), said(p.gold), 0, false,
++                 bottom + 8 * s, bar_top - 10 * s);
++    } else {
++        help_box(c, hx0, hx1, std::max(hh + 26 * s, c.h * 0.30f), said(p.help_title), said(p.help), said(p.hint), said(p.gold),
++                 0, false, hh + 18 * s, bar_top - 12 * s);
++    }
++    const float rh = 40 * s, pitch = 48 * s, top = hh + 24 * s, rx0 = cx0 + 44 * s, rx1 = cx1 - 44 * s,
++                split = rx0 + (rx1 - rx0) * 0.55f;
++    int shown = 0;
++    const float first = scroll_rows(kCoopSlot, p.rows_n, std::max(0, p.selected), top, bottom, pitch, &shown);
++    scroll_bar(c, cx0 + 20 * s, top, top + shown * pitch - (pitch - rh), p.rows_n, shown, first);
++    marquee_max = 0;
++    c.d->PushClipRect(ImVec2(cx0, top - 8 * s), ImVec2(cx1, bottom + 8 * s));
++    for (int i = 0; i < p.rows_n; i++) {
++        const float y = top + (i - first) * pitch;
++        if (y + rh < top - 8 * s || y > bottom + 8 * s) continue;
++        const HosCoopMenuRow& r = p.rows[i];
++        const char* name = r.name ? r.name : "";
++        if (r.kind == HOS_COOP_MENU_HEADING) {   // (as a Hookshot heading: gold, a rule after it)
++            const float ty = y + rh * 0.62f, tw = ui::size_of(c.f.heading, 19 * s, name).x;
++            ui::text_mid(c, c.f.heading, 19 * s, rx0 + 2 * s, ty, ui::kGoldHi, name);
++            c.d->AddLine(ImVec2(rx0 + tw + 16 * s, ty), ImVec2(rx1, ty), ui::alpha(ui::kEdge, 0.9f), std::max(1.0f, s));
++            continue;
++        }
++        if (r.kind == HOS_COOP_MENU_NOTE) {   // (a line of text, nothing to click)
++            const std::string line = fit(c, c.f.body, 18 * s, rx1 - rx0 - 4 * s, name, false);
++            ui::text_mid(c, c.f.body, 18 * s, rx0 + 2 * s, y + rh * 0.5f, ui::kSoft, line.c_str());
++            continue;
++        }
++        const bool selected = i == p.selected, fixed = r.fixed != 0;
++        name_cell(c, ImVec2(rx0, y), ImVec2(split, y + rh), name, selected);
++        const ImVec2 va(split, y), vb(rx1, y + rh);
++        const std::string value = r.value ? r.value : "";
++        if (r.kind == HOS_COOP_MENU_TOGGLE) {
++            halves_cell(c, va, vb, "Off", "On", r.on != 0, selected, fixed);
++        } else if (r.kind == HOS_COOP_MENU_CHOICE) {
++            choice_cell(c, va, vb, value, selected, r.left && !fixed, r.right && !fixed, fixed);
++        } else if (value.empty()) {   // (an action with no value: it opens a page, as Hookshot's own page rows)
++            choice_cell(c, va, vb, "", selected, false, false, fixed);
++            ui::triangle(c, ImVec2(vb.x - 15 * s, (va.y + vb.y) * 0.5f), 10 * s, 1, selected && !fixed ? ui::kGoldInk : ui::kInk);
++        } else {
++            choice_cell(c, va, vb, value, selected, false, false, fixed);
++        }
++        hits.add(rx0, std::max(y, top - 8 * s), rx1, std::min(y + rh, bottom + 8 * s), menu_hit::kRow, i, va.x, vb.x, 0, 0);
++    }
++    c.d->PopClipRect();
++    ui::prompt_bar(c, prompt_list, prompts_n);
++}
++
+ void draw_options(ui::Ctx& c) {
+     const float s = c.s, hh = banner_h(c);
+     ui::banner(c, hh);
+     // the tabs in the banner: dark ink on the tan, the shown one light on a dark inset; the tab keys at their ends (a click there
+     // is the previous or the next tab)
+-    float tw[TAB_COUNT], total = 0;
+-    for (int i = 0; i < TAB_COUNT; i++) tw[i] = ui::size_of(c.f.heading, 23 * s, tab_titles[i]).x + 56 * s, total += tw[i];
++    // (oot-remake-multiplayer: the co-op module's tabs first, then Hookshot's; a place in the strip each, strip_at)
++    const int strip_n = strip_count(), shown_at = strip_at();
++    std::string coop_names[coop::kMaxMenuTabs];
++    for (int i = 0; i < coop_tabs; i++) coop_names[i] = coop::menu_tab_name(i);   // (the module's text: copied at once)
++    auto strip_name = [&](int i) { return i < coop_tabs ? coop_names[i].c_str() : tab_titles[i - coop_tabs]; };
++    float tw[TAB_COUNT + coop::kMaxMenuTabs], total = 0;
++    for (int i = 0; i < strip_n; i++) tw[i] = ui::size_of(c.f.heading, 23 * s, strip_name(i)).x + 56 * s, total += tw[i];
+     float x = (c.w - total) * 0.5f;
+     const float ty = hh * 0.5f + s;
+     const char* const keys[2] = {c.pad ? "L" : "Q", c.pad ? "R" : "E"};
+     for (int i = 0; i < 2; i++) {
+         const float cw = 26 * s, cx = i ? x + total + 22 * s : x - 22 * s - cw;
+-        const bool hover = hover_tab == TAB_COUNT + i;
++        const bool hover = hover_tab == kHoverPrev + i;
+         c.d->AddRectFilled(ImVec2(cx, ty - 13 * s), ImVec2(cx + cw, ty + 13 * s), hover ? ui::kTabInset : ui::kBannerInk, 3 * s);
+         ui::text_mid_centre(c, c.f.strong, 14 * s, cx + cw * 0.5f, ty, ui::kInk, keys[i]);
+         hits.add(i ? cx - 10 * s : 0, 0, i ? c.w : cx + cw + 10 * s, hh, i ? menu_hit::kTabNext : menu_hit::kTabPrev, -1);
+     }
+-    for (int i = 0; i < TAB_COUNT; i++) {
+-        const bool shown = i == (cur_tab == TAB_MOTION ? TAB_CONTROLS : cur_tab);   // (the Motion page: under Controls)
++    for (int i = 0; i < strip_n; i++) {
++        const bool shown = i == shown_at;   // (the Motion page: under Controls)
+         if (shown || i == hover_tab) {
+             c.d->AddRectFilled(ImVec2(x, 0), ImVec2(x + tw[i], hh - 3 * s), shown ? ui::kTabInset : ui::alpha(ui::kTabInset, 0.35f));
+             if (shown) {
+@@ -2989,7 +3087,7 @@ void draw_options(ui::Ctx& c) {
+                 c.d->AddLine(ImVec2(x + tw[i] - 1, 0), ImVec2(x + tw[i] - 1, hh - 3 * s), ui::rgba(52, 34, 16), std::max(1.0f, s));
+             }
+         }
+-        ui::text_mid(c, c.f.heading, 23 * s, x + 28 * s, ty, shown ? ui::kInkBright : ui::kBannerInk, tab_titles[i]);
++        ui::text_mid(c, c.f.heading, 23 * s, x + 28 * s, ty, shown ? ui::kInkBright : ui::kBannerInk, strip_name(i));
+         hits.add(x, 0, x + tw[i], hh, menu_hit::kTab, i);
+         x += tw[i];
+     }
+@@ -3005,6 +3103,10 @@ void draw_options(ui::Ctx& c) {
+         const float fit = ui::fit_px(px, opts.menu_size == 3 ? px : kVersionMinPt * s, 0.5f * s, room, width);
+         if (fit > 0) ui::text_mid(c, c.f.body, fit, c.safe, ty, ui::kBannerInk, ver.c_str());
+     }
++    if (coop_tab >= 0) {   // (oot-remake-multiplayer: a co-op module's tab, its rows the module's)
++        draw_coop_page(c, hh);
++        return;
++    }
+     // the rows, in the column; the help beside it
+     float cx0, cx1, hx0, hx1;
+     bool narrow;
+@@ -4432,7 +4534,7 @@ void game_lang_tick() {
+         return -1;
+     }();
+     if (row < 0 || opts.game_lang == i18n::game_lang_index()) return;
+-    const bool on_row = open_now.load() && page == 0 && cur_tab == rows[row].tab &&
++    const bool on_row = open_now.load() && page == 0 && coop_tab < 0 && cur_tab == rows[row].tab &&
+                         tab_row_to_global(cur_tab, tab_selected[cur_tab]) == row;
+     if (on_row) return;
+     if (!i18n::set_game_language(opts.game_lang)) {
+@@ -4488,6 +4590,58 @@ void outputs_follow_screen() {
+          dm::ratio_name({sw, sh}).c_str(), added);
+ }
+ 
++/// (oot-remake-multiplayer) The co-op module told which of its tabs shows, when that changes (HOS_COOP_MENU_SHOW and _HIDE):
++/// one on the menu's options page, not under the compact bar, or none
++void coop_tell() {
++    static int told = -1;
++    const int now = open_now.load() && page == 0 && !tune_mode ? coop_tab : -1;
++    if (now == told) return;
++    if (told >= 0) coop::menu_input(told, HOS_COOP_MENU_HIDE);
++    if (now >= 0) coop::menu_input(now, HOS_COOP_MENU_SHOW);
++    told = now;
++}
++/// (oot-remake-multiplayer) A tick on a co-op module's tab (hos_coop_menu.h): the arrows, confirm and back go to the module,
++/// the cursor over a row and its clicks too (a value's left or right half, or the name); the tabs change as on Hookshot's own
++/// tabs; back with nothing left to go back to closes the menu (the restart question first, as Esc does on the other tabs)
++void coop_tick(bool* press, bool tab_left, bool tab_right, const MkwVkPointer* ptr, int mx, int my, bool moved, bool& changed) {
++    coop_tell();
++    const int t = coop_tab;
++    if (ptr) {
++        const menu_hit::Hit hit = hits.at((float)mx, (float)my);
++        const int ht = hit.part == menu_hit::kTab ? hit.index : hit.part == menu_hit::kTabPrev ? kHoverPrev
++                     : hit.part == menu_hit::kTabNext ? kHoverNext : -1;
++        if (ht != hover_tab) hover_tab = ht, changed = true;
++        if (hit.part == menu_hit::kRow && (moved || ptr->pressed)) coop::menu_input(t, HOS_COOP_MENU_SELECT, hit.index);
++        if (ptr->pressed & HOS_MOUSE_LEFT) {
++            if (hit.part == menu_hit::kTabPrev) tab_left = true;
++            else if (hit.part == menu_hit::kTabNext) tab_right = true;
++            else if (hit.part == menu_hit::kTab && hit.index != strip_at()) {
++                show_strip(hit.index);
++                changed = true;
++                return;
++            }
++            else if (hit.part == menu_hit::kRow) coop::menu_input(t, HOS_COOP_MENU_CLICK, hit.index, hit.side), changed = true;
++        }
++        if (ptr->pressed & HOS_MOUSE_RIGHT) press[5] = true;   // (as Esc)
++        if (ptr->wheel) wheel_rows[kCoopSlot] += ptr->wheel, changed = true;
++    }
++    if (tab_left || tab_right) {
++        show_strip(strip_at() + (tab_left ? -1 : 1));
++        changed = true;
++        return;
++    }
++    static constexpr int kEvents[][2] = {{1, HOS_COOP_MENU_UP}, {2, HOS_COOP_MENU_DOWN}, {3, HOS_COOP_MENU_LEFT},
++                                         {4, HOS_COOP_MENU_RIGHT}, {7, HOS_COOP_MENU_CONFIRM}};
++    for (const auto& [key, event] : kEvents)
++        if (press[key]) coop::menu_input(t, event), changed = true;
++    if (press[5]) {
++        changed = true;
++        if (coop::menu_input(t, HOS_COOP_MENU_BACK)) return;   // (a page of the tab, or typing: the module went back)
++        if (restart_ask()) page = 5, ask_sel = 0;
++        else open_now = false, tune_mode = false;
++    }
++}
++
+ void menu_tick() {
+     std::lock_guard lk(menu_mu);   // (the control bridge's settings: menu_setting_set)
+     share_finish();   // (Save my pipeline list's worker, done)
+@@ -4629,6 +4783,23 @@ void menu_tick() {
+     // ESC alone (the gamepad's back is Esc only while it is open, above). The press that opened it does not go back a page
+     // below; with the compact menu key held it opens the compact bar, as Insert and F1 do (tune_mode). No
+     // control can be bound to Esc, so nothing in play changes; the window gives the captured mouse back on the close)
++    // (oot-remake-multiplayer) The co-op module's tabs: how many now (the module loads at the game's first frame); the first
++    // shown when they come while the menu is closed (Multiplayer leads the strip); and what the module wants: the menu open on
++    // one of them (the title's Host, Join and Co-op Settings rows), as Insert opens it, or closed (a join at the title: the
++    // game takes the pad again, for the host's save)
++    coop_tabs = coop::menu_tabs();
++    static bool coop_first = true;
++    if (coop_tabs > 0 && coop_first && !open_now.load()) coop_first = false, coop_tab = 0;
++    if (coop_tab >= coop_tabs) coop_tab = -1;
++    const int coop_want = coop::menu_wanted();
++    if (coop_want >= 0 && coop_want < coop_tabs) {
++        if (!open_now.load()) press[0] = true, press[6] = false;
++        else page = 0, listening = 0, tune_mode = false;
++        coop_tab = coop_want, changed = true;
++    } else if (coop_want == HOS_COOP_MENU_WANT_CLOSE && open_now.load()) {
++        open_now = false, page = 0, listening = 0, tune_mode = false, changed = true;
++        press[0] = press[6] = false;
++    }
+     const bool esc_opens = opts.menu_shortcut == 2 && press[5] && !open_now.load();
+     if (esc_opens) press[5] = false;
+     if ((press[0] || press[6]) && open_now.load() && page == 5) {
+@@ -4798,11 +4969,13 @@ void menu_tick() {
+             else teleport_choice = std::clamp(teleport_step_rows(teleport_choice, rows) + (press[4] - press[3]), 0, kTeleports - 1);
+             if (teleport_choice != was) teleport_follow = true, changed = true;
+         }
++    } else if (open_now.load() && coop_tab >= 0 && !tune_mode) {   // (oot-remake-multiplayer) a co-op module's tab
++        coop_tick(press, tab_left, tab_right, mouse ? &ptr : nullptr, mx, my, moved, changed);
+     } else if (open_now.load()) {
+         if (mouse) {   // (the mouse: see the top of this file)
+             const menu_hit::Hit hit = hits.at((float)mx, (float)my);
+-            const int ht = hit.part == menu_hit::kTab ? hit.index : hit.part == menu_hit::kTabPrev ? TAB_COUNT
+-                         : hit.part == menu_hit::kTabNext ? TAB_COUNT + 1 : -1;
++            const int ht = hit.part == menu_hit::kTab ? hit.index : hit.part == menu_hit::kTabPrev ? kHoverPrev
++                         : hit.part == menu_hit::kTabNext ? kHoverNext : -1;
+             if (ht != hover_tab) hover_tab = ht, changed = true;
+             int& sel = tab_selected[cur_tab];
+             const bool on_row = hit.part == menu_hit::kRow || hit.part == menu_hit::kSlider;
+@@ -4825,7 +4998,7 @@ void menu_tick() {
+             if ((ptr.pressed & HOS_MOUSE_LEFT) && drag_row < 0) {
+                 if (hit.part == menu_hit::kTabPrev) tab_left = true;
+                 else if (hit.part == menu_hit::kTabNext) tab_right = true;
+-                else if (hit.part == menu_hit::kTab && hit.index != cur_tab) cur_tab = hit.index, changed = true;
++                else if (hit.part == menu_hit::kTab && hit.index != strip_at()) show_strip(hit.index), changed = true;
+                 else if (hit.part == menu_hit::kSlider) {
+                     Row& d = rows[tab_row_to_global(cur_tab, hit.index)];
+                     drag_row = hit.index;
+@@ -4862,7 +5035,10 @@ void menu_tick() {
+         else if (press[5]) open_now = false, tune_mode = false;
+         // (the tabs: LB and RB, Q and E, or Tab; from the Motion page, as from Controls)
+         if ((tab_left || tab_right) && cur_tab == TAB_MOTION) cur_tab = TAB_CONTROLS;
+-        if (tab_left) cur_tab = (cur_tab + TAB_COUNT - 1) % TAB_COUNT, changed = true;
++        if ((tab_left || tab_right) && !tune_mode) {   // (oot-remake-multiplayer: through the whole strip, the module's tabs too)
++            show_strip(strip_at() + (tab_left ? -1 : 1)), changed = true;
++            if (coop_tab >= 0) std::fill(press, press + K_N, false);   // (on the module's tab now: nothing more for Hookshot's)
++        } else if (tab_left) cur_tab = (cur_tab + TAB_COUNT - 1) % TAB_COUNT, changed = true;
+         else if (tab_right) cur_tab = (cur_tab + 1) % TAB_COUNT, changed = true;
+         const int tab_count = tab_row_count(cur_tab);
+         int& selected = tab_selected[cur_tab];
+@@ -4924,6 +5100,7 @@ void menu_tick() {
+             changed = true;
+         }
+     }
++    coop_tell();   // (oot-remake-multiplayer: the module's tab shown or gone this tick)
+     {   // (hookshot) the window lets the mouse go while the menu is open, and takes it back after (host/display.c)
+         static bool told = false;
+         const bool now_open = open_now.load();
+-- 
+2.56.0.windows.4
+

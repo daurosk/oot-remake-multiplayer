@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+    if (s.title && !s.title->prompt.empty()) {// SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_draw.h"
 
 #include <algorithm>
@@ -495,10 +495,10 @@ std::vector<ChatShown> ShownChat(const std::vector<CoopHook::ChatLine>& lines, b
     return out;
 }
 
-// The title's Multiplayer prompt and menu, as the game's own title menu looks:
-// the game's font, white text with its soft shadow, the chosen row in the
-// highlight colour on a dark band between two thin gold lines, no boxes. The
-// plain look (no pack): the same with Hookshot's font.
+// The title's Multiplayer prompt (the menu itself is the Multiplayer tab of
+// Hookshot's menu, coop_pause.h): the Minus button and the words, bottom left,
+// in the game's font with its soft shadow; the plain look (no pack): the same
+// with Hookshot's font.
 static void DrawTitle(const HosCoopDraw& d, const TitleView& t, const Look* look) {
     const Pic p = Picture(d);
     const float u = p.u;
@@ -509,74 +509,19 @@ static void DrawTitle(const HosCoopDraw& d, const TitleView& t, const Look* look
             d.text(d.user, x, y, px, fill, s.c_str());
         }
     };
-    const std::uint32_t white = Rgba(255, 255, 255, 255);
-    const std::uint32_t gold = look ? kHighlight : Rgba(255, 220, 120, 255);
-    if (!t.menu) {
-        if (t.prompt.empty()) {
-            return;
-        }
-        // The control guide's place, bottom left: the Minus button and the words.
-        Font(d, look ? look->regular : 0);
-        const float px = std::max(14.0f, 24.0f * u);
-        const float r = px * 0.62f;
-        const float cx = p.left + 48.0f * u + r, cy = p.height + (d.height - p.height) / 2 - 44.0f * u;
-        d.circle(d.user, cx, cy, r, Rgba(0, 0, 0, 130), 0.0f);
-        d.circle(d.user, cx, cy, r, Rgba(255, 255, 255, 230), std::max(1.5f, 2.0f * u));
-        d.rect(d.user, cx - r * 0.5f, cy - std::max(1.0f, 1.5f * u), cx + r * 0.5f, cy + std::max(1.0f, 1.5f * u), white,
-               0.0f);
-        text(cx + r + 10.0f * u, cy - px * 0.62f, px, white, t.prompt);
+    if (t.prompt.empty()) {
         return;
     }
-    const CoopTitleMenu::View& v = *t.menu;
-    const float top0 = (d.height - p.height) / 2;
-    d.rect(d.user, 0, 0, d.width, d.height, Rgba(0, 0, 0, 150), 0.0f);   // the title dimmed under the menu
-    const float title_px = std::max(18.0f, 40.0f * u);
-    const float px = std::max(14.0f, 27.0f * u);
-    const float line = px * 1.75f;
-    const float cx = d.width / 2;
-    Font(d, look ? look->medium : 0);
-    text(cx - d.text_width(d.user, title_px, v.title.c_str()) / 2, top0 + 70.0f * u, title_px, gold, v.title);
+    // The control guide's place, bottom left: the Minus button and the words.
+    const std::uint32_t white = Rgba(255, 255, 255, 255);
     Font(d, look ? look->regular : 0);
-    const float rows_h = line * static_cast<float>(v.rows.size());
-    float y = std::max(top0 + 150.0f * u, top0 + (p.height - rows_h) / 2 - 40.0f * u);
-    const float band = std::min(p.width * 0.62f, 760.0f * u);
-    for (const auto& row : v.rows) {
-        std::string s = row.label;
-        if (!row.value.empty() || row.editing) {
-            std::string value = row.value;
-            if (row.editing) {
-                value += "_";
-            }
-            s += row.arrows && row.selected ? ":   < " + value + " >" : ":   " + value;
-        }
-        s = Elided(d, px, s, band - 40.0f * u);
-        const float w = d.text_width(d.user, px, s.c_str());
-        if (row.selected) {
-            const float y0 = y - line * 0.18f, y1 = y + line * 0.82f;
-            d.rect(d.user, cx - band / 2, y0, cx + band / 2, y1, Rgba(0, 0, 0, 120), 0.0f);
-            d.rect(d.user, cx - band / 2, y0, cx + band / 2, y0 + std::max(1.0f, 1.5f * u), WithAlpha(gold, 200), 0.0f);
-            d.rect(d.user, cx - band / 2, y1 - std::max(1.0f, 1.5f * u), cx + band / 2, y1, WithAlpha(gold, 200), 0.0f);
-            const float m = px * 0.28f;   // the title buttons' small diamonds at the ends
-            for (const float sx : {cx - w / 2 - 3 * m, cx + w / 2 + 3 * m}) {
-                const float my = (y0 + y1) / 2;
-                d.triangle(d.user, sx - m, my, sx, my - m, sx + m, my, gold);
-                d.triangle(d.user, sx - m, my, sx + m, my, sx, my + m, gold);
-            }
-        }
-        text(cx - w / 2, y, px, row.selected ? gold : white, s);
-        y += line;
-    }
-    const float small = std::max(13.0f, 22.0f * u);
-    y += line * 0.4f;
-    for (const auto& s : v.status) {
-        const std::string e = Elided(d, small, s, p.width - 80.0f * u);
-        text(cx - d.text_width(d.user, small, e.c_str()) / 2, y, small, white, e);
-        y += small * 1.45f;
-    }
-    if (!v.hint.empty()) {
-        const float hy = top0 + p.height - 70.0f * u;
-        text(cx - d.text_width(d.user, small, v.hint.c_str()) / 2, hy, small, Rgba(220, 220, 220, 255), v.hint);
-    }
+    const float px = std::max(14.0f, 24.0f * u);
+    const float r = px * 0.62f;
+    const float cx = p.left + 48.0f * u + r, cy = p.height + (d.height - p.height) / 2 - 44.0f * u;
+    d.circle(d.user, cx, cy, r, Rgba(0, 0, 0, 130), 0.0f);
+    d.circle(d.user, cx, cy, r, Rgba(255, 255, 255, 230), std::max(1.5f, 2.0f * u));
+    d.rect(d.user, cx - r * 0.5f, cy - std::max(1.0f, 1.5f * u), cx + r * 0.5f, cy + std::max(1.0f, 1.5f * u), white, 0.0f);
+    text(cx + r + 10.0f * u, cy - px * 0.62f, px, white, t.prompt);
 }
 
 bool Wanted(const Scene& s) {

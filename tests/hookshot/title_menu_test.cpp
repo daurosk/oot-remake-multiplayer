@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The Multiplayer menu on Hookshot's title screen (hookshot/src/coop_title_menu.h).
+// What the Multiplayer tab works with (hookshot/src/coop_title_menu.h): the settings files, the Join field,
+// Host and Join in plain words, the addresses for a home network or VPN, and the host's save loaded after a join.
 #include <doctest/doctest.h>
 
 #include <string>
@@ -171,187 +172,6 @@ TEST_CASE("title menu: the Join field is an invite code, an address or an error"
     CHECK(std::get<JoinInvite>(inv).host == "203.0.113.5:27510");
 }
 
-TEST_CASE("title menu: the main page moves round, Back closes it") {
-    Menu m;
-    CHECK(m.Press(Input::kDecide) == Sound::kNone);   // closed: nothing
-    m.Open(Options{});
-    CHECK(m.open());
-    CHECK(m.page() == Page::kMain);
-    CHECK(m.view().title == "Multiplayer");
-    CHECK(m.view().rows.size() == 4);
-    CHECK(m.view().rows[0].selected);
-    CHECK(m.Press(Input::kUp) == Sound::kMove);
-    CHECK(m.selected() == 3);   // round to Back
-    CHECK(m.Press(Input::kDown) == Sound::kMove);
-    CHECK(m.selected() == 0);
-    CHECK(m.Press(Input::kBack) == Sound::kBack);
-    CHECK_FALSE(m.open());
-}
-
-TEST_CASE("title menu: it opens on another page for the title's own rows, and Back closes it") {
-    Menu m;
-    m.Open(Options{}, Page::kSettings);
-    CHECK(m.page() == Page::kSettings);
-    CHECK(m.view().title == "Co-op Settings");
-    CHECK(m.Press(Input::kBack) == Sound::kBack);
-    CHECK_FALSE(m.open());   // (opened by the title's row: back to the title)
-    m.Open(Options{}, Page::kJoin);
-    CHECK(m.view().title == "Join");
-    m.Open(Options{}, Page::kClosed);
-    CHECK(m.page() == Page::kMain);
-}
-
-TEST_CASE("title menu: Host asks the module to host, OK closes the dialog") {
-    Menu m;
-    m.Open(Options{});
-    CHECK(m.Press(Input::kDecide) == Sound::kStart);
-    const auto r = m.TakeRequest();
-    REQUIRE(r.has_value());
-    CHECK(r->kind == Request::Kind::kHost);
-    CHECK_FALSE(m.TakeRequest().has_value());
-    m.ShowPage(Page::kHosting);
-    m.SetStatus({"Send this code to your friends:", "ABCDE-FGHJK"});
-    CHECK(m.view().title == "Host");
-    CHECK(m.view().rows[0].label == "OK");
-    CHECK(m.view().rows[2].label == "Paste friend's answer");
-    m.Press(Input::kDown);
-    CHECK(m.Press(Input::kDecide) == Sound::kDecide);
-    CHECK(m.TakeRequest()->kind == Request::Kind::kCopyInvite);
-    m.Press(Input::kDown);
-    CHECK(m.Press(Input::kDecide) == Sound::kDecide);
-    CHECK(m.TakeRequest()->kind == Request::Kind::kPasteAnswer);
-    REQUIRE(m.view().rows.size() == 4);
-    CHECK(m.view().rows[3].label == "Same network or VPN");
-    m.Press(Input::kDown);
-    CHECK(m.Press(Input::kDecide) == Sound::kDecide);
-    CHECK(m.TakeRequest()->kind == Request::Kind::kCopyLan);
-    CHECK(m.page() == Page::kHosting);
-    CHECK(m.page() == Page::kHosting);   // (the dialog stays: the result shows in it)
-    m.Press(Input::kDown);
-    CHECK(m.Press(Input::kDecide) == Sound::kBack);
-    CHECK_FALSE(m.open());
-}
-
-TEST_CASE("title menu: Join: A on the code pastes, OK joins, Cancel closes") {
-    Menu m;
-    m.Open(Options{}, Page::kJoin);
-    CHECK(m.view().rows[0].value == "(press A to paste it)");
-    CHECK(m.Press(Input::kDecide) == Sound::kDecide);   // A on the code
-    CHECK(m.TakeRequest()->kind == Request::Kind::kPaste);
-    CHECK(m.Paste("  ABCDE-FGHJK\r\n"));
-    CHECK(m.join_text() == "ABCDE-FGHJK");
-    CHECK(m.view().rows[m.selected()].label == "OK");   // the paste put the cursor on OK
-    CHECK(m.Press(Input::kDecide) == Sound::kStart);
-    const auto r = m.TakeRequest();
-    REQUIRE(r.has_value());
-    CHECK(r->kind == Request::Kind::kJoin);
-    CHECK(r->text == "ABCDE-FGHJK");
-    m.Open(Options{}, Page::kJoin);
-    m.Press(Input::kDown);
-    CHECK(m.Press(Input::kDecide) == Sound::kRefuse);   // OK with nothing pasted
-    CHECK_FALSE(m.TakeRequest().has_value());
-    CHECK(m.Char('a'));
-    CHECK(m.Press(Input::kErase) == Sound::kMove);
-    CHECK(m.join_text().empty());
-    m.Press(Input::kDown);
-    CHECK(m.Press(Input::kDecide) == Sound::kBack);   // Cancel
-    CHECK_FALSE(m.open());
-}
-
-TEST_CASE("title menu: Co-op Settings shows name, colour, players and voice, Save writes, Back forgets") {
-    Options start;
-    start.name = "Saria";
-    Menu m;
-    m.Open(start, Page::kSettings);
-    const auto v = m.view();
-    REQUIRE(v.rows.size() == 6);
-    CHECK(v.rows[0].label == "Your name");
-    CHECK(v.rows[0].value == "Saria");
-    CHECK(v.rows[1].label == "Your colour");
-    CHECK(v.rows[2].label == "Players when you host");
-    CHECK(v.rows[3].label == "Voice chat");
-    CHECK(v.rows[4].label == "Save");
-    m.Press(Input::kDown);
-    CHECK(m.Press(Input::kRight) == Sound::kMove);
-    CHECK(m.options().colour == "red");
-    m.Press(Input::kDown);
-    m.Press(Input::kDown);
-    CHECK(m.Press(Input::kDecide) == Sound::kMove);   // voice off
-    CHECK_FALSE(m.options().voice);
-    CHECK(m.Press(Input::kBack) == Sound::kBack);   // not saved
-    CHECK_FALSE(m.open());
-
-    m.Open(start, Page::kSettings);
-    CHECK(m.options().voice);
-    CHECK(m.Press(Input::kDecide) == Sound::kDecide);   // edit the name
-    CHECK(m.editing());
-    m.Press(Input::kErase);
-    CHECK(m.Char('!'));
-    CHECK(m.Press(Input::kDecide) == Sound::kDecide);
-    CHECK(m.options().name == "Sari!");
-    for (int i = 0; i < 4; ++i) {
-        m.Press(Input::kDown);
-    }
-    REQUIRE(m.view().rows[m.selected()].label == "Save");
-    CHECK(m.Press(Input::kDecide) == Sound::kDecide);
-    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
-    CHECK(m.options().name == "Sari!");
-    CHECK_FALSE(m.open());
-}
-
-TEST_CASE("title menu: Save refuses an empty name") {
-    Options start;
-    start.name = "";
-    Menu m;
-    m.Open(start, Page::kSettings);
-    for (int i = 0; i < 4; ++i) {
-        m.Press(Input::kDown);
-    }
-    CHECK(m.Press(Input::kDecide) == Sound::kRefuse);
-    CHECK_FALSE(m.TakeRequest().has_value());
-    CHECK(m.page() == Page::kSettings);
-}
-
-TEST_CASE("title menu: the name stops at 16 characters") {
-    Options start;
-    start.name = "abcdefghijklmno";
-    Menu m;
-    m.Open(start, Page::kSettings);
-    m.Press(Input::kDecide);
-    m.Char('p');
-    m.Char('q');
-    CHECK(m.options().name == "abcdefghijklmnop");
-    CHECK(m.Paste("xyz"));
-    CHECK(m.options().name == "abcdefghijklmnop");
-}
-
-TEST_CASE("title menu: Up or Down while editing ends the edit, and keys only type into a field") {
-    Menu m;
-    m.Open(Options{});
-    CHECK_FALSE(m.Char('a'));   // the main page has no field
-    CHECK_FALSE(m.Paste("x"));
-    m.Open(Options{}, Page::kSettings);
-    m.Press(Input::kDecide);
-    CHECK(m.editing());
-    CHECK(m.Press(Input::kRight) == Sound::kNone);
-    m.Press(Input::kDown);
-    CHECK_FALSE(m.editing());
-    CHECK_FALSE(m.Char('a'));
-}
-
-TEST_CASE("title menu: voice off is LICHII_COOP_VOICE=off, on is the default") {
-    Options o;
-    o.voice = false;
-    std::string c, opt;
-    o.Write(c, opt);
-    CHECK(IniGet(opt, "LICHII_COOP_VOICE") == "off");
-    CHECK_FALSE(Options::Read("", opt).voice);
-    o.voice = true;
-    o.Write(c, opt);
-    CHECK_FALSE(IniGet(opt, "LICHII_COOP_VOICE").has_value());
-    CHECK(Options::Read("", opt).voice);
-}
-
 TEST_CASE("title menu: Host and Join in plain words, nothing about ports or passwords") {
     HostView h;
     h.host = true;
@@ -416,93 +236,6 @@ TEST_CASE("title menu: the kit's options as the launcher's variables") {
     CHECK(v[2] == std::pair<std::string, std::string>{"LICHII_COOP_FLAGS", "shared_flags.txt"});
     CHECK(v[3] == std::pair<std::string, std::string>{"EDEN_NX2_X", "2"});
     CHECK(KitVariables("color =\r\n").empty());
-}
-
-TEST_CASE("title menu: the host's player count, 2 to 16, round the ends, read and written") {
-    Menu m;
-    m.Open(Options{}, Page::kSettings);
-    for (int i = 0; i < 2; ++i) {
-        m.Press(Input::kDown);
-    }
-    REQUIRE(m.view().rows[m.selected()].label == "Players when you host");
-    CHECK(m.view().rows[m.selected()].value == "4");
-    m.Press(Input::kLeft);
-    m.Press(Input::kLeft);
-    CHECK(m.options().max_players == 2);
-    m.Press(Input::kLeft);
-    CHECK(m.options().max_players == 16);
-    m.Press(Input::kRight);
-    CHECK(m.options().max_players == 2);
-    Options o;
-    o.max_players = 12;
-    std::string c, opt;
-    o.Write(c, opt);
-    CHECK(IniGet(opt, "max_players") == "12");
-    CHECK(Options::Read("", opt).max_players == 12);
-    CHECK(Options::Read("", "max_players = 40\r\n").max_players == 16);
-    CHECK(Options::Read("", "max_players = x\r\n").max_players == 4);
-}
-
-TEST_CASE("title menu: Join offers the last host again first, one press") {
-    Menu m;
-    m.Open(Options{}, Page::kJoin);
-    m.SetRejoin("Saria", "ABCDE-FGHJK");
-    auto v = m.view();
-    REQUIRE(v.rows.size() == 4);
-    CHECK(v.rows[0].label == "Join Saria again");
-    CHECK(v.rows[0].selected);
-    CHECK(v.rows[1].label == "Or a new code");
-    CHECK(m.Press(Input::kDecide) == Sound::kStart);
-    const auto r = m.TakeRequest();
-    REQUIRE(r.has_value());
-    CHECK(r->kind == Request::Kind::kJoin);
-    CHECK(r->text == "ABCDE-FGHJK");
-    // a new code still works under it
-    m.Open(Options{}, Page::kJoin);
-    m.SetRejoin("", "ABCDE-FGHJK");
-    CHECK(m.view().rows[0].label == "Join your friend again");
-    CHECK(m.Paste("QWERT-YUPAS"));
-    CHECK(m.view().rows[m.selected()].label == "OK");
-    CHECK(m.Press(Input::kDecide) == Sound::kStart);
-    CHECK(m.TakeRequest()->text == "QWERT-YUPAS");
-    m.Press(Input::kDown);
-    CHECK(m.Press(Input::kDecide) == Sound::kBack);   // Cancel
-    CHECK_FALSE(m.open());
-    // no last code: no such row
-    m.Open(Options{}, Page::kJoin);
-    m.SetRejoin("Saria", "");
-    CHECK(m.view().rows[0].label == "Your friend's code");
-}
-
-TEST_CASE("title menu: a colour the row does not list survives a Save that only changes the name") {
-    for (const std::string colour : {"gray", "#F82", "0xFF8020", "#FF8020FF", "rgb(255, 128, 32)", "Orange"}) {
-        const std::string file = "# Your colour\r\ncolor = " + colour + "  # mine\r\n";
-        Options o = Options::Read("name = Saria\r\n", file);
-        Menu m;
-        m.Open(o, Page::kSettings);
-        m.Press(Input::kDecide);   // edit the name
-        m.Char('!');
-        m.Press(Input::kDecide);
-        for (int i = 0; i < 4; ++i) {
-            m.Press(Input::kDown);
-        }
-        REQUIRE(m.view().rows[m.selected()].label == "Save");
-        m.Press(Input::kDecide);
-        REQUIRE(m.TakeRequest()->kind == Request::Kind::kSave);
-        std::string coop = "name = Saria\r\n", opt = file;
-        m.options().Write(coop, opt);
-        CHECK(IniGet(coop, "name") == "Saria!");
-        CHECK(opt.find("color = " + colour + "  # mine") != std::string::npos);   // the line exactly as it was
-    }
-    // the colour row changed: then it is written
-    Options o = Options::Read("", "color = gray\r\n");
-    Menu m;
-    m.Open(o, Page::kSettings);
-    m.Press(Input::kDown);
-    m.Press(Input::kRight);
-    std::string coop, opt = "color = gray\r\n";
-    m.options().Write(coop, opt);
-    CHECK(IniGet(opt, "color") == "red");
 }
 
 TEST_CASE("title menu: after Join the host's save loads in one step") {
@@ -617,12 +350,57 @@ TEST_CASE("Same network or VPN: the addresses a friend can use, and the line Joi
     CHECK(none[1].find("VPN program") != std::string::npos);
 }
 
-TEST_CASE("Join says what to paste on a home network or VPN until something else is said") {
-    using namespace CoopTitleMenu;
-    Menu m;
-    m.Open(Options{}, Page::kJoin);
-    REQUIRE(m.view().status.size() == 2);
-    CHECK(m.view().status[0].find("home network or VPN") != std::string::npos);
-    m.SetStatus({"Joining..."});
-    CHECK(m.view().status == std::vector<std::string>{"Joining..."});
+TEST_CASE("title menu: voice chat is off unless turned on: on writes ptt, off takes the line away") {
+    Options o;
+    CHECK_FALSE(o.voice);
+    std::string c, opt = "LICHII_COOP_VOICE=ptt\r\n";
+    o.Write(c, opt);
+    CHECK_FALSE(IniGet(opt, "LICHII_COOP_VOICE").has_value());
+    CHECK_FALSE(Options::Read("", opt).voice);
+    o.voice = true;
+    o.Write(c, opt);
+    CHECK(IniGet(opt, "LICHII_COOP_VOICE") == "ptt");
+    CHECK(Options::Read("", opt).voice);
+    // a mode written by hand stays as it is while voice stays on
+    std::string open = "LICHII_COOP_VOICE=open\r\n";
+    Options::Read("", open).Write(c, open);
+    CHECK(IniGet(open, "LICHII_COOP_VOICE") == "open");
+    CHECK_FALSE(Options::Read("", "LICHII_COOP_VOICE=off\r\n").voice);
+    // this run's variable: ptt, or unset for off
+    bool seen = false;
+    for (const auto& [k, v] : o.Environment()) {
+        if (k == "LICHII_COOP_VOICE") {
+            seen = true;
+            CHECK(v == "ptt");
+        }
+    }
+    CHECK(seen);
+}
+
+TEST_CASE("title menu: the host's player count, 2 to 16, read and written") {
+    Options o;
+    o.max_players = 12;
+    std::string c, opt;
+    o.Write(c, opt);
+    CHECK(IniGet(opt, "max_players") == "12");
+    CHECK(Options::Read("", opt).max_players == 12);
+    CHECK(Options::Read("", "max_players = 40\r\n").max_players == 16);
+    CHECK(Options::Read("", "max_players = x\r\n").max_players == 4);
+}
+
+TEST_CASE("title menu: a colour the Look row does not list survives a Save that only changes the name") {
+    for (const std::string colour : {"gray", "#F82", "0xFF8020", "#FF8020FF", "rgb(255, 128, 32)", "Orange"}) {
+        const std::string file = "# Your colour\r\ncolor = " + colour + "  # mine\r\n";
+        Options o = Options::Read("name = Saria\r\n", file);
+        o.name = "Saria!";
+        std::string coop = "name = Saria\r\n", opt = file;
+        o.Write(coop, opt);
+        CHECK(IniGet(coop, "name") == "Saria!");
+        CHECK(opt.find("color = " + colour + "  # mine") != std::string::npos);   // the line exactly as it was
+    }
+    Options o = Options::Read("", "color = gray\r\n");
+    o.colour = "red";   // the row changed: then it is written
+    std::string coop, opt = "color = gray\r\n";
+    o.Write(coop, opt);
+    CHECK(IniGet(opt, "color") == "red");
 }

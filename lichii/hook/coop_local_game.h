@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Local co-op's game side (docs/local-coop.md, step 2): CoopLocal::Game for
-// a game whose Players read their pads through the wraps of patch 0010.
+// a game whose Players read their pads through the wraps of patch 0010 (pads: patch 0016).
 //
 // Local player k (1 to 3) is the game's own Player_<Age>, made by the puppet
 // Director as it makes another player's (coop_native_player.h: made, then
 // left to the game's player code), with the number LocalNumber(k). Its pad is
 // taken from player 1's merged pad and is Npad No.(k+1) (Hookshot's exports,
-// patch 0010), and the Player's reads ask for that controller
+// patch 0016), and the Player's reads ask for that controller
 // (coop_local_input.h). Views (step 3) and the session (step 4) come later.
 //
 // Everything outside (the pads, the Director's slots, guest memory) comes in

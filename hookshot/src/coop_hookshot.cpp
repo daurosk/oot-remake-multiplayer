@@ -936,7 +936,7 @@ void LocalProbe() {
             LOG_INFO(Core, "coop: local probe {}: {}", said, line);
 }
 
-// Local co-op (coop_local_game.h): the exe's pads (patch 0010, hos_coop_pads.h) and the Player's wraps 16, 17 and 19.
+// Local co-op (coop_local_game.h): the exe's pads (patch 0016, hos_coop_pads.h) and the Player's wraps 16, 17 and 19.
 // An exe without them: CoopLocal says NotSupported. LICHII_COOP_LOCAL=<pad slot> starts a second player on that pad
 // at the first frame in play, without the menu (tests).
 void UseLocalPads() {
@@ -952,7 +952,7 @@ void UseLocalPads() {
     if (info && take) {
         deps.pads = [info] {
             std::vector<CoopLocalGame::Pad> pads;
-            for (int slot = 0; slot < 64; slot++) {
+            for (int slot = 1; slot <= 64; slot++) {   // (by place in SDL's list, from 1: patch 0016)
                 char name[64] = {};
                 std::uint32_t serial = 0;
                 int npad = 0;
@@ -972,8 +972,8 @@ void UseLocalPads() {
     deps.slots = [] { return CoopPuppet::TheDirector().Slots(); };
     deps.read = [](std::uint64_t address, void* out, std::size_t size) { return CoopRuntime::Read(address, out, size); };
     deps.log = [](const std::string& line) { LOG_INFO(Core, "coop: {}", line); };
-    LOG_INFO(Core, "coop: local co-op: {}", info && take ? "this Hookshot gives the module its pads (patch 0010)"
-                                                          : "this Hookshot has no pads for local co-op (patch 0010)");
+    LOG_INFO(Core, "coop: local co-op: {}", info && take ? "this Hookshot gives the module its pads (patch 0016)"
+                                                          : "this Hookshot has no pads for local co-op (patch 0016)");
     CoopLocalGame::Install(std::move(deps));
     if (const char* slot = std::getenv("LICHII_COOP_LOCAL"); slot && *slot) {
         CoopLocalGame::AutoStart(std::atoi(slot));

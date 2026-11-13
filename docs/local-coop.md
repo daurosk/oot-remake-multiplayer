@@ -37,15 +37,15 @@ input routing, with no game code (`tests/lichii/local_game_test.cpp`).
   beside the first Link as `Player_<Age>` and then left to the game's player code
   ([native-player.md](native-player.md)). After a scene change the Director makes it again, and the
   input follows the new actor.
-- **The pad** (Hookshot patch 0010, `host/pad_sdl.c`, `host/nn_hid.c`): the exe exports
-  `hos_coop_pad_info`, `hos_coop_pad_read` and `hos_coop_pad_take`
-  (`hookshot/src/hos_coop_pads.h`), found by name as patch 0008's. A taken pad leaves the first
-  player's merged pad, its rumble stops, and the game's reads of Npad No.(k+1) get it (with the
-  menu's button binds). The keyboard and mouse stay the first player's. Without the patch, local
-  co-op is not offered. Patch order: 0010 applies after 0005 (the wraps it adds rows to) and 0007
-  (its `nx2/coop_hooks.py` context); the host C hunks apply on their own. A pad that reconnects
-  (a new opening of its slot) goes back to the first player in Hookshot; the seat takes it again at
-  the next frame.
+- **The pad** (Hookshot patch 0016, on top of pad-select's 0015, `host/pad_sdl.c`, `host/nn_hid.c`):
+  the exe exports `hos_coop_pad_info`, `hos_coop_pad_read` and `hos_coop_pad_take`
+  (`hookshot/src/hos_coop_pads.h`), found by name as patch 0008's. Pads are named as 0015 names
+  them, by their place in SDL's list (from 1); 0015's filter of this game's pads keeps a taken pad
+  too. A taken pad leaves the first player's merged pad (and its motion), its rumble stops, and the
+  game's reads of Npad No.(k+1) get it (with the menu's button binds). The keyboard and mouse stay the
+  first player's. Without the patch, local co-op is not offered. Patch 0010 is native-puppets-b2's
+  wraps alone (after 0005 and 0007). A pad that reconnects (a new opening) goes back to the first
+  player in Hookshot; the seat takes it again at the next frame.
 - **The read.** The Player's two pad reads (wraps 16 and 17) ask the controller manager's
   getController (main+0x3b25e00, wrap 19) for controller 0. While the Player of local player k
   reads, that ask becomes controller k, if the manager has one; every other reader (menus, the

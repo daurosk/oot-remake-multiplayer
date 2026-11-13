@@ -3,7 +3,7 @@
 // PC drives its own Player_<Age> with its own controller, through the game's
 // own controller code.
 //
-// - Hookshot (patch 0010) makes a pad a local player took the game's Npad
+// - Hookshot (patch 0016) makes a pad a local player took the game's Npad
 //   No.2 to No.4, so the game's controller manager has that pad as one of its
 //   controllers, with its own held / pressed / released words.
 // - The Player reads its pad in two functions (wraps 16 and 17,

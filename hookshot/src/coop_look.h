@@ -12,7 +12,7 @@
 // Co-op need not be running: alone, your Link changes and the look is saved.
 //
 // A look is one colour per part. Today the only part is the tunic (with the
-// cap); test11 adds the others, each under its own number, which never
+// cap); more parts can follow, each under its own number, which never
 // changes.
 #pragma once
 
@@ -27,7 +27,7 @@ namespace CoopLook {
 
 enum class Part : std::uint8_t {
     tunic = 0,
-    // test11: shield = 1, sword = 2, boots = 3, gauntlets = 4
+    // later: shield = 1, sword = 2, boots = 3, gauntlets = 4
 };
 inline constexpr std::size_t kParts = 1;
 

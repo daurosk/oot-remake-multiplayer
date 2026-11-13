@@ -72,6 +72,11 @@ struct Harness {
   }
   // The REJOIN_TOKEN each connection was sent last (right after WELCOME).
   std::map<ConnectionId, RejoinTokenBytes> tokens;
+  // The Lobby: the player key each connection's game seals into its
+  // JOIN_PROOF (none: a game without one), and the HELLO and JOIN_CHALLENGE
+  // packets its traffic keys come from.
+  std::map<ConnectionId, PlayerKey> player_keys;
+  std::map<ConnectionId, Bytes> hello_packets, challenge_packets;
   // Every DIFFICULTY sent since the last clear(), in order (not in `sent`).
   std::vector<std::pair<ConnectionId, Difficulty>> difficulties;
   std::vector<Difficulty> difficulty_to(ConnectionId id) const {
@@ -128,6 +133,7 @@ struct Harness {
         }
         if (const auto* challenge = std::get_if<JoinChallenge>(&m)) {
           if (challenge->key_share) server_shares[challenge->nonce] = *challenge->key_share;
+          challenge_packets[s->to] = s->bytes;
           if (auto_answer) {
             to_answer.emplace_back(s->to, challenge->nonce);
             continue;
@@ -144,7 +150,15 @@ struct Harness {
     std::vector<std::pair<ConnectionId, JoinNonce>> answer = std::move(to_answer);
     to_answer.clear();
     for (const auto& [id, nonce] : answer) {
-      session.received(id, kChannelSession, bytes_of(JoinProof{proof(password, nonce)}), now);
+      JoinProof p{proof(password, nonce)};
+      if (const auto key = player_keys.find(id); key != player_keys.end()) {
+        static const KeyPair game_keys = KeyPair::from_secret({7, 7, 7});  // hello_from's
+        const auto keys = derive_traffic_keys(game_keys, server_shares.at(nonce), password, hello_packets[id],
+                                              challenge_packets[id], /*is_server=*/false);
+        REQUIRE(keys);
+        p.player_key = seal_player_key(keys->send, key->second);
+      }
+      session.received(id, kChannelSession, bytes_of(p), now);
       collect();
     }
   }
@@ -156,6 +170,7 @@ struct Harness {
   }
 
   void receive(ConnectionId id, const Message& m, std::uint8_t channel) {
+    if (std::holds_alternative<Hello>(m)) hello_packets[id] = bytes_of(m);
     session.received(id, channel, bytes_of(m), now);
     collect();
   }
@@ -4981,9 +4996,8 @@ PlayerKey key_of(std::uint8_t n) {
 std::optional<Refused> join_keyed(Harness& h, ConnectionId id, const std::string& name, std::uint8_t key,
                                   std::optional<std::uint32_t> address = std::nullopt) {
   h.connect(id, address);
-  Hello hello = hello_from(name);
-  hello.player_key = key_of(key);
-  h.receive(id, hello, kChannelSession);
+  h.player_keys[id] = key_of(key);
+  h.receive(id, hello_from(name), kChannelSession);
   const auto refused = all_to<Refused>(h, id);
   if (!refused.empty()) return refused.front();
   REQUIRE_FALSE(all_to<Welcome>(h, id).empty());
@@ -5068,4 +5082,35 @@ TEST_CASE("lobby: a split-screen seat is kicked alone, its game stays and is tol
   h.clear();
   h.receive(2, LocalJoin{2, "Ruto"}, kChannelSession);
   CHECK(local_joined_to(h, 2).player_number != 0);
+}
+
+TEST_CASE("lobby: two players in at once with one key (a copied kit) are muted and banned one at a time") {
+  Harness h;
+  REQUIRE_FALSE(join_keyed(h, 1, "Link", 1));
+  REQUIRE_FALSE(join_keyed(h, 2, "Zelda", 2));
+  REQUIRE_FALSE(join_keyed(h, 3, "Saria", 2));  // the same key as Zelda: known by name
+  CHECK(h.session.stats().lobby_shared_key == 1);
+  h.receive(1, LobbyAction{LobbyActionKind::mute_chat, 2}, kChannelSession);
+  h.clear();
+  h.receive(3, Chat{0, "not muted"}, kChannelSession);
+  CHECK(all_to<Chat>(h, 1).size() == 1);
+  h.receive(1, LobbyAction{LobbyActionKind::ban, 3}, kChannelSession);  // Saria, by name
+  CHECK(h.session.player_count() == 2);  // Zelda stays
+  h.clear();
+  CHECK(join_keyed(h, 4, "Saria", 7) == Refused{RefuseReason::banned});
+}
+
+TEST_CASE("lobby: a sealed key that does not open counts, and that player is let in, known by name") {
+  Harness h;
+  h.join(1, "Link");
+  h.auto_answer = false;
+  h.connect(2);
+  h.receive(2, hello_from("Zelda"), kChannelSession);
+  const auto challenges = all_to<JoinChallenge>(h, 2);
+  REQUIRE(challenges.size() == 1);
+  JoinProof p{h.proof(h.password, challenges[0].nonce)};
+  p.player_key = SealedPlayerKey{};  // not sealed with this connection's key
+  h.receive(2, p, kChannelSession);
+  CHECK(h.session.stats().lobby_bad_key == 1);
+  CHECK(h.session.player_count() == 2);
 }

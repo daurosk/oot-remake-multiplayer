@@ -318,6 +318,8 @@ struct Stats {
   std::uint64_t lobby_done = 0;      // LOBBY_ACTIONs carried out
   std::uint64_t lobby_refused = 0;   // LOBBY_ACTION from a player who does not host
   std::uint64_t lobby_banned = 0;    // HELLOs and LOCAL_JOINs refused: a banned player
+  std::uint64_t lobby_bad_key = 0;   // a sealed player key that did not open: the player is known by name
+  std::uint64_t lobby_shared_key = 0;  // a player key another player in has too (a copied kit): by name
   std::uint64_t chat_muted = 0;      // CHAT from a player the host muted: dropped
   std::uint64_t voice_muted = 0;     // VOICE_FRAME from a player the host muted: dropped
   // Connections refused at connect: their address already had
@@ -604,7 +606,7 @@ class Session {
                      std::uint64_t now_us);
   // The checks after the password, then WELCOME.
   void admit(ConnectionId id, Connection& c, const protocol::Hello& hello,
-             std::uint64_t now_us);
+             std::uint64_t now_us, const std::optional<protocol::PlayerKey>& player_key);
   // Split screen (docs/protocol.md, "Local players").
   void on_local(ConnectionId id, Connection& c, const protocol::Message& message, std::uint64_t now_us);
   void local_join(ConnectionId id, Connection& c, const protocol::LocalJoin& j, std::uint64_t now_us);
@@ -642,13 +644,16 @@ class Session {
   // The Lobby: the host's kick, ban and mutes (docs/protocol.md "Lobby").
   void on_lobby(ConnectionId id, const protocol::LobbyAction& a, std::uint64_t now_us);
   std::uint8_t lobby_mutes_of(const Connection& c) const;
-  // Who a player is to the Lobby: its player key (HELLO, protocol 11) when it
+  // Who a player is to the Lobby: its player key (sealed in JOIN_PROOF, protocol 11) when it
   // sent one, a split-screen seat by its game's key and seat; the name only
   // without a key. Mutes and bans follow this, so a new name escapes nothing.
   std::string lobby_id(const std::string& nickname, const std::optional<protocol::PlayerKey>& key,
                        std::optional<ConnectionId> parent, std::uint8_t seat) const;
   std::string lobby_id(const Connection& c) const;
-  bool lobby_banned(const std::string& id, std::optional<std::uint32_t> address) const;
+  // A ban of a player known by name (no key, or a key another player had)
+  // holds for that name whatever key comes with it.
+  bool lobby_banned(const std::string& id, const std::string& nickname,
+                    std::optional<std::uint32_t> address) const;
   void on_pvp_hit(ConnectionId id, Connection& c, protocol::Message& message);
   void on_dbno_mode(ConnectionId id, Connection& c, const protocol::DbnoMode& m);
   void on_dbno_revive(ConnectionId id, Connection& c, protocol::Message& message);

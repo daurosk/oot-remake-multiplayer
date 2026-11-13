@@ -24,7 +24,7 @@ struct Settings {
     // this player its slot's colour.
     std::optional<std::uint32_t> color;
     // The player's own key (the Lobby, docs/protocol.md "Lobby"): from
-    // player-key.txt beside coop.ini (LoadPlayerKey); sent in HELLO so the
+    // player-key.txt beside coop.ini (LoadPlayerKey); sent sealed in JOIN_PROOF so the
     // host's mutes and bans follow this player, not the name.
     std::optional<std::array<std::uint8_t, 16>> player_key;
     bool enabled() const { return !server.empty(); }

@@ -1994,38 +1994,24 @@ TEST_CASE("lobby messages have their numbers, channel, senders and layout") {
   CHECK(std::get<LobbyMutes>(back).flags == 0x80);
 }
 
-TEST_CASE("hello: the player key (protocol 11) comes last, with or without the fields before it") {
-  Hello base{kProtocolVersion, "lichii", "e0f3ccfaf50065ae", "1.1.1", "Link"};
-  KeyShare share{};
-  share[0] = 9;
-  PlayerKey key{};
-  for (std::size_t i = 0; i < key.size(); ++i) key[i] = static_cast<std::uint8_t>(0xa0 + i);
-  const std::size_t plain = must_encode(base).size();
-  for (int with_share = 0; with_share < 2; ++with_share) {
-    for (int with_number = 0; with_number < 2; ++with_number) {
-      for (int with_key = 0; with_key < 2; ++with_key) {
-        CAPTURE(with_share);
-        CAPTURE(with_number);
-        CAPTURE(with_key);
-        Hello h = base;
-        if (with_share) h.key_share = share;
-        if (with_number) h.previous_number = 3;
-        if (with_key) h.player_key = key;
-        const Bytes b = must_encode(h);
-        CHECK(b.size() == plain + (with_share ? kKeyShareBytes : 0) + (with_number ? 1 : 0) +
-                              (with_key ? kPlayerKeyBytes : 0));
-        Message back;
-        REQUIRE(decode(b, back) == Error::none);
-        CHECK(std::get<Hello>(back) == h);
-      }
-    }
-  }
-  // Any other size after the nickname is refused.
-  Bytes odd = must_encode(base);
-  odd.insert(odd.end(), 15, 0);
+TEST_CASE("join proof: the sealed player key (protocol 11) comes after the proof, or nothing") {
+  JoinProof p{};
+  p.proof[0] = 1;
+  const Bytes plain = must_encode(p);
+  SealedPlayerKey sealed{};
+  sealed[0] = 7;
+  p.player_key = sealed;
+  const Bytes with_key = must_encode(p);
+  CHECK(with_key.size() == plain.size() + kSealedPlayerKeyBytes);
+  Message back;
+  REQUIRE(decode(with_key, back) == Error::none);
+  CHECK(std::get<JoinProof>(back) == p);
+  REQUIRE(decode(plain, back) == Error::none);
+  CHECK_FALSE(std::get<JoinProof>(back).player_key);
+  Bytes odd = plain;
+  odd.insert(odd.end(), 16, 0);  // half a sealed key
   set_u16(odd, 2, static_cast<std::uint16_t>(odd.size() - kHeaderSize));
-  Message m;
-  CHECK(decode(odd, m) != Error::none);
+  CHECK(decode(odd, back) != Error::none);
 }
 
 TEST_CASE("bad lobby messages are refused") {

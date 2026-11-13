@@ -765,7 +765,11 @@ bool Client::answer_challenge(const proto::JoinChallenge& challenge,
   if (!keys) return false;
   // The proof goes out plain (the server needs it to make its keys); from
   // the next packet on, everything is sealed.
-  const bool sent = send_raw(proto::JoinProof{proof}, proto::kChannelSession);
+  proto::JoinProof answer{proof};
+  // The Lobby: our player key, sealed with a key from this connection's
+  // client-to-server key (nobody on the way reads it).
+  if (config_.player_key) answer.player_key = proto::seal_player_key(keys->send, *config_.player_key);
+  const bool sent = send_raw(answer, proto::kChannelSession);
   cipher_ = std::make_unique<proto::TrafficCipher>(*keys);
   keys->wipe();
   return sent;

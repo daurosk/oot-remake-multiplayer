@@ -266,10 +266,17 @@ void Session::on_join_proof(ConnectionId id, Connection& c, const JoinProof& pro
     refuse(id, c, RefuseReason::wrong_protocol_version, now_us, "unusable traffic key share");
     return;
   }
+  // The Lobby: the player key, sealed with this connection's keys (none, or
+  // one that does not open: a player without a key, known by name).
+  std::optional<PlayerKey> player_key;
+  if (proof.player_key) {
+    player_key = open_player_key(keys->receive, *proof.player_key);
+    if (!player_key) ++stats_.lobby_bad_key;
+  }
   actions_.push_back(EncryptAction{id, *keys});
   keys->wipe();
   c.state = State::awaiting_hello;  // admit() moves it on to joined or closing
-  admit(id, c, hello, now_us);
+  admit(id, c, hello, now_us, player_key);
 }
 
 void Session::note_wrong_password(std::optional<std::uint32_t> address, std::uint64_t now_us) {
@@ -300,7 +307,7 @@ void Session::note_wrong_password(std::optional<std::uint32_t> address, std::uin
 }
 
 void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
-                    std::uint64_t now_us) {
+                    std::uint64_t now_us, const std::optional<PlayerKey>& player_key) {
   std::string expected = config_.game_build_id;
   if (expected.empty()) {
     expected = player_count() == 0 ? hello.game_build_id : session_game_build_;
@@ -315,7 +322,7 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
     refuse(id, c, RefuseReason::bad_name, now_us);
     return;
   }
-  if (lobby_banned(lobby_id(hello.nickname, hello.player_key, std::nullopt, 0), c.address)) {
+  if (lobby_banned(lobby_id(hello.nickname, player_key, std::nullopt, 0), hello.nickname, c.address)) {
     ++stats_.lobby_banned;
     refuse(id, c, RefuseReason::banned, now_us, "banned by the host");
     return;
@@ -371,7 +378,20 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   c.state = State::joined;
   c.number = welcome.player_number;
   c.nickname = hello.nickname;
-  c.player_key = hello.player_key;
+  c.player_key = player_key;
+  // The Lobby: a key another player in has too (a kit copied to a friend):
+  // this one is known by name, so a mute or ban of one never takes both.
+  if (c.player_key) {
+    for (const auto& [other, oc] : connections_) {
+      if (other != id && oc.state == State::joined && !oc.parent && oc.player_key == c.player_key) {
+        c.player_key.reset();
+        ++stats_.lobby_shared_key;
+        log("player " + std::to_string(c.number) + " (" + c.nickname + ") has the same player key as player " +
+            std::to_string(oc.number) + " (a copied kit?): the Lobby knows it by name");
+        break;
+      }
+    }
+  }
   c.last_ping = now_us;
   c.reliable_budget = 2.0 * config_.reliable_per_second;
   c.unreliable_budget = 2.0 * config_.unreliable_per_second;
@@ -2160,8 +2180,10 @@ std::string Session::lobby_id(const Connection& c) const {
   return lobby_id(c.nickname, c.player_key, c.parent, c.seat);
 }
 
-bool Session::lobby_banned(const std::string& id, std::optional<std::uint32_t> address) const {
-  return banned_ids_.contains(id) || (address && banned_addresses_.contains(*address));
+bool Session::lobby_banned(const std::string& id, const std::string& nickname,
+                           std::optional<std::uint32_t> address) const {
+  return banned_ids_.contains(id) || banned_ids_.contains("n:" + name_key(nickname)) ||
+         (address && banned_addresses_.contains(*address));
 }
 
 std::optional<ConnectionId> Session::connection_of(std::uint8_t number) const {
@@ -2470,7 +2492,7 @@ void Session::local_join(ConnectionId id, Connection& c, const LocalJoin& j, std
     answer.reason = RefuseReason::bad_name;
   } else if (holder_of(j.nickname)) {
     answer.reason = RefuseReason::name_taken;
-  } else if (lobby_banned(lobby_id(j.nickname, std::nullopt, id, j.seat), std::nullopt)) {
+  } else if (lobby_banned(lobby_id(j.nickname, std::nullopt, id, j.seat), j.nickname, std::nullopt)) {
     ++stats_.lobby_banned;  // the Lobby: this game's seat was banned
     answer.reason = RefuseReason::banned;
   } else if (player_count() >= max_players()) {

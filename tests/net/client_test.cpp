@@ -50,6 +50,8 @@ class FakeServer {
  public:
   // Set by send_challenge: seals what it sends, opens what it gets.
   std::unique_ptr<proto::TrafficCipher> cipher;
+  // The player key the last JOIN_PROOF sealed, opened with this server's keys.
+  std::optional<proto::PlayerKey> player_key;
   std::optional<proto::TrafficKeys> pending_keys;
   // The two key shares of the last send_challenge, for the proof it expects.
   proto::KeyShare server_share{};
@@ -101,6 +103,9 @@ class FakeServer {
           CHECK(proto::check_received(r.message, proto::Sender::client,
                                       r.channel) == proto::Error::none);
           if (pending_keys && std::holds_alternative<proto::JoinProof>(r.message)) {
+            if (const auto& sealed = std::get<proto::JoinProof>(r.message).player_key) {
+              player_key = proto::open_player_key(pending_keys->receive, *sealed);
+            }
             cipher = std::make_unique<proto::TrafficCipher>(*pending_keys);
             pending_keys.reset();
           }
@@ -608,6 +613,30 @@ TEST_CASE("client: with no join password typed a challenge is still answered (th
   REQUIRE(pump(client, server, [&] { return server.find<proto::JoinProof>().has_value(); }));
   CHECK(std::get<proto::JoinProof>(server.received[*server.find<proto::JoinProof>()].message).proof ==
         proto::join_proof("", nonce, server.client_share, server.server_share));
+}
+
+TEST_CASE("client: the player key goes sealed in JOIN_PROOF, never in the plain HELLO") {
+  FakeServer server;
+  ClientConfig config = config_for(server);
+  config.join_password = "hunter2";
+  proto::PlayerKey key{};
+  key.fill(0x5a);
+  config.player_key = key;
+  Client client(config);
+  REQUIRE(client.start());
+  REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>().has_value(); }));
+  // Not in the HELLO's bytes.
+  const auto& hello_raw = server.received[*server.find<proto::Hello>()].raw;
+  CHECK(std::search(hello_raw.begin(), hello_raw.end(), key.begin(), key.end()) == hello_raw.end());
+  proto::JoinNonce nonce{};
+  nonce[0] = 4;
+  server.send_challenge(nonce, "hunter2");
+  REQUIRE(pump(client, server, [&] { return server.cipher != nullptr; }));
+  const auto& proof = std::get<proto::JoinProof>(server.received[*server.find<proto::JoinProof>()].message);
+  REQUIRE(proof.player_key.has_value());
+  CHECK(std::search(proof.player_key->begin(), proof.player_key->end(), key.begin(), key.end()) ==
+        proof.player_key->end());
+  CHECK(server.player_key == key);  // opens with this connection's keys
 }
 
 TEST_CASE("client: after the challenge the traffic is encrypted both ways") {

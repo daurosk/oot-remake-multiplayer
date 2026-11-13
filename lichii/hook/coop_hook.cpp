@@ -258,7 +258,7 @@ public:
         config.hello.game_build_id = std::string(kGameBuildId);
         config.hello.game_version = std::string(kGameVersion);
         config.hello.nickname = settings_.name;
-        config.hello.player_key = settings_.player_key;
+        config.player_key = settings_.player_key;
         config.join_password = settings_.password;
         client_ = std::make_unique<coop::net::Client>(std::move(config));
         if (!client_->start()) {

@@ -17,6 +17,7 @@ namespace {
 
 constexpr std::uint32_t kGotoCastle = 0xdb89c1a9u;  // Goto_HyruleCastle (the owl's quest)
 constexpr std::uint32_t kFairy = 0x682d1169u;       // Meet_GreatFairy
+constexpr std::uint32_t kEpona = 0x92431c55u;       // Get_Epona (its end only)
 constexpr std::uint32_t kForest = 0x7d776b61u;      // Get_StoneOfForest (the Deku Tree)
 
 host::FlagKey Key(std::uint32_t hash) {
@@ -94,7 +95,7 @@ TEST_CASE("quests: the table is sorted by hash, once, each from NotReady to Comp
         std::set<std::uint32_t> seen;
         for (const char* s : q.steps) CHECK_MESSAGE(seen.insert(host::flag_hash(s)).second, q.name);
     }
-    CHECK(CoopQuests::Quests().size() == 11);
+    CHECK(CoopQuests::Quests().size() == 12);
     CHECK(CoopQuests::Find(0x12345678u) == nullptr);
 }
 
@@ -345,4 +346,63 @@ TEST_CASE("quests: a guest who joins later gets the group's steps") {
     wg.frame(guest.store);
     CHECK(guest.at(kGotoCastle, "Step03"));
     CHECK(wg.frame(guest.store).empty());
+}
+
+TEST_CASE("quests: Get_Epona shares its end only") {
+    const auto key = Key(kEpona);
+    const auto entry = [&](const char* step) {
+        return proto::FlagEntry{key, proto::FlagKind::int32,
+                                static_cast<std::uint32_t>(RankOf(kEpona, step))};
+    };
+    REQUIRE(Q(kEpona).complete_only);
+
+    // A game on its way reads as NotReady; one that has won her reads as Complete.
+    Game g;
+    g.step(kEpona, "AfterTalkMalon");
+    auto e = g.store.read(key);
+    REQUIRE(e.has_value());
+    CHECK(e->value == 0u);
+    CHECK(g.store.is_max(key));
+
+    // Another player's steps never move ours, neither does the host's save load.
+    CHECK(g.store.write(entry("ReadyForGambleRace")));
+    CHECK(g.store.write(entry("AfterWonGambleRace")));
+    CHECK(g.store.write_exact(entry("NotReady")));
+    CHECK(g.at(kEpona, "AfterTalkMalon"));
+    CHECK(g.enum_writes == 0);
+
+    // Another player won her: ours is Complete too, from any step before the race.
+    CHECK(g.store.write(entry("Complete")));
+    CHECK(g.at(kEpona, "Complete"));
+    const auto raised = g.store.take_raised();
+    REQUIRE(raised.size() == 1);
+    CHECK(std::string(raised[0].quest) == "Get_Epona");
+    CHECK(std::string(raised[0].to) == "Complete");
+    e = g.store.read(key);
+    REQUIRE(e.has_value());
+    CHECK(static_cast<std::int32_t>(e->value) == RankOf(kEpona, "Complete"));
+    CHECK(g.store.write_exact(entry("NotReady")));  // a host without her: ours stays
+    CHECK(g.at(kEpona, "Complete"));
+
+    Game fresh;  // a child who never went to the ranch
+    fresh.step(kEpona, "NotReady");
+    CHECK(fresh.store.write_exact(entry("Complete")));
+    CHECK(fresh.at(kEpona, "Complete"));
+
+    // A player in the race, or riding out after it, finishes it themselves.
+    for (const char* step : {"GambleRacePlaying", "AfterWonGambleRace"}) {
+        Game racing;
+        racing.step(kEpona, step);
+        CHECK(racing.store.write(entry("Complete")));
+        CHECK(racing.at(kEpona, step));
+        CHECK(racing.enum_writes == 0);
+    }
+
+    // Unread (GameData not up) or a value not in the list: not written.
+    Game none;
+    CHECK_FALSE(none.store.write_exact(entry("Complete")));
+    Game odd;
+    odd.enums[kEpona] = 0xdeadbeefu;
+    CHECK(odd.store.write_exact(entry("Complete")));
+    CHECK(odd.enums[kEpona] == 0xdeadbeefu);
 }

@@ -21,7 +21,18 @@
 namespace CoopPauseMenu {
 
 enum class Input { kUp, kDown, kLeft, kRight, kDecide, kBack, kPaste, kErase };
-enum class Page { kMain, kHost, kJoin, kLocal, kSettings };
+enum class Page { kMain, kHost, kJoin, kLocal, kSettings, kCommands };
+
+// The chat's commands, as the Commands page lists them (docs/setup.md "Chat
+// commands"): what is typed, and what it does. A new command adds its line here.
+struct Command {
+    const char* typed;   // "/teleport <player>"
+    const char* help;    // one short paragraph
+};
+const std::vector<Command>& Commands();
+// The key that opens the chat box, in words, from LICHII_COOP_CHAT_KEY ("T"
+// by default; "off": none).
+std::string ChatKeyWords(const std::string& chat_key);
 
 struct Request {
     // kHost: start the server and join it. kJoin: `text` is the code or the
@@ -131,7 +142,7 @@ public:
 private:
     enum class Act {
         kNone,
-        kOpenHost, kOpenJoin, kOpenLocal, kOpenSettings,
+        kOpenHost, kOpenJoin, kOpenLocal, kOpenSettings, kOpenCommands, kCommand,
         kStartHost, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan, kLeave,
         kRejoin, kCode, kJoinNow,
         kName, kLook, kPlayers, kVoice

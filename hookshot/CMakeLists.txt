@@ -28,8 +28,8 @@ endforeach()
 list(REMOVE_DUPLICATES _coop_sources)
 
 add_library(hookshot_coop MODULE src/coop_hookshot.cpp src/coop_draw.cpp src/coop_png.cpp src/coop_chatbox.cpp src/coop_cheats_panel.cpp
-  src/coop_host_menu.cpp src/coop_title.cpp src/coop_title_menu.cpp src/coop_pause.cpp src/coop_pause_menu.cpp
-  src/coop_pause_files.cpp
+  src/coop_host_menu.cpp src/coop_title.cpp src/coop_title_menu.cpp src/coop_input.cpp src/coop_pause.cpp
+  src/coop_pause_menu.cpp src/coop_pause_files.cpp
   src/coop_mod_json.cpp src/coop_mod_library.cpp src/coop_mods.cpp src/coop_mod_plugins.cpp src/coop_mod_guard.cpp
   src/coop_mods_runtime.cpp src/coop_rando.cpp src/coop_mods_tab.cpp src/coop_mods_tab_module.cpp
   ${_coop_sources})
@@ -40,6 +40,10 @@ target_compile_definitions(hookshot_coop PRIVATE LICHII_COOP COOP_HOOKSHOT)
 target_link_libraries(hookshot_coop PRIVATE coop coop_net coop_host coop_presence coop_overlay coop_server_lib
                       monocypher fmt::fmt coop_warnings)
 set_target_properties(hookshot_coop PROPERTIES PREFIX "" CXX_VISIBILITY_PRESET hidden)
+# Proximity voice (docs/voice.md): the two exports Hookshot's mixer looks for
+# (hos_coop_voice.h, our patch 0009) and the game-free voice library.
+target_sources(hookshot_coop PRIVATE src/coop_voice_hookshot.cpp)
+target_link_libraries(hookshot_coop PRIVATE coop_voice)
 if(MSVC)
   # The emulator's own code builds with these off too (lichii/README.md).
   target_compile_options(hookshot_coop PRIVATE /wd4456 /wd4457 /wd4458 /wd4459 /bigobj)

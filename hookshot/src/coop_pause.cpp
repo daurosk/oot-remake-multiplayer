@@ -16,6 +16,7 @@
 #include "coop_pause_files.h"
 #include "coop_title.h"
 #include "coop_title_menu.h"
+#include "coop_voice.h"
 #include "hos_coop_host.h"
 #include "nat_codes.hpp"
 
@@ -83,8 +84,8 @@ std::vector<std::string> ChooseLook(const std::string& colour) {
 void WearChosenLook() {}
 
 
-// What the module's host is doing, in plain words (CoopTitleMenu::PlainStatus). The invite code goes on the
-// clipboard by itself, once, as soon as there is one; a guest's answer code too.
+// What the module's host is doing, in plain words (CoopTitleMenu::PlainStatus). Only reads: what follows from
+// the state (codes on the clipboard, the host's save loaded) is Tick's.
 std::vector<std::string> StatusLines(const HosCoopStatus& st) {
     CoopTitleMenu::HostView v;
     v.host = g_doing == "hosting";
@@ -94,21 +95,7 @@ std::vector<std::string> StatusLines(const HosCoopStatus& st) {
     v.invite_done = st.invite_done != 0;
     v.invite = st.invite;
     v.answer = st.answer;
-    if (v.host && !v.invite.empty() && !g_copied) {
-        g_copied = SetClipboardText(v.invite);
-        LOG_INFO(Core, "coop: multiplayer tab: host: the invite code is on the clipboard{}", g_copied ? "" : " (it could not be)");
-    }
-    if (!v.host && v.state == HOS_COOP_WAIT_HOST && !v.answer.empty() && !g_answer_copied) {
-        g_answer_copied = SetClipboardText(v.answer);
-    }
     v.copied = g_copied;
-    if (st.message[0] != 0) {
-        static std::string said;
-        if (said != st.message) {
-            said = st.message;
-            LOG_INFO(Core, "coop: multiplayer tab: {}", said);   // (the English detail, for the log)
-        }
-    }
     if (v.host && v.state == HOS_COOP_HOSTING && !g_lan_lines.empty()) {
         return g_lan_lines;
     }
@@ -120,7 +107,7 @@ std::vector<std::string> StatusLines(const HosCoopStatus& st) {
 }
 
 // A join that connected: remembered for "Join <host> again", and the host's save loaded at the title in one step
-// (the menu closes there, so the game takes the presses).
+// (the menu closes there, so the game takes the presses). From Tick (the game's frame): writes coop.ini.
 void Joined() {
     g_join_saved = true;
     std::string host = "your friend";
@@ -163,9 +150,6 @@ CoopPauseMenu::Session SessionNow() {
         s.players = static_cast<int>(CoopHook::PlayerList().size());
         s.code = st.state == HOS_COOP_WAIT_HOST ? st.answer : "";
     }
-    if (!s.hosting && st.state == HOS_COOP_CONNECTED && !g_join_saved && !g_join_text.empty()) {
-        Joined();
-    }
     s.lines = StatusLines(st);
     return s;
 }
@@ -176,6 +160,30 @@ void RefreshSession(bool now) {
         g_menu.SetSession(SessionNow());
     }
 }
+
+// What follows from co-op's state, whether the tab is shown or not: the invite code on the clipboard once there is
+// one (a guest's answer code too), the message logged, a connected join remembered and the host's save loaded.
+void Follow(const HosCoopStatus& st) {
+    const bool host = g_doing == "hosting";
+    if (host && st.invite[0] != 0 && !g_copied) {
+        g_copied = SetClipboardText(st.invite);
+        LOG_INFO(Core, "coop: multiplayer tab: host: the invite code is on the clipboard{}", g_copied ? "" : " (it could not be)");
+    }
+    if (!host && st.state == HOS_COOP_WAIT_HOST && st.answer[0] != 0 && !g_answer_copied) {
+        g_answer_copied = SetClipboardText(st.answer);
+    }
+    if (st.message[0] != 0) {
+        static std::string said;
+        if (said != st.message) {
+            said = st.message;
+            LOG_INFO(Core, "coop: multiplayer tab: {}", said);   // (the English detail, for the log)
+        }
+    }
+    if (g_doing == "joined" && st.state == HOS_COOP_CONNECTED && !g_join_saved && !g_join_text.empty()) {
+        Joined();
+    }
+}
+std::uint64_t g_next_follow_ms = 0;
 
 // Host and Join through the module's own host (native-host-b, hos_coop_host.h): the co-op server or the
 // invite code's join helper on the module's "coop host" thread, and this game's client connected to it.
@@ -281,6 +289,7 @@ void Save() {
     if (!live) {
         CoopFiles::SetCoopEnvironment(g_menu.options());   // co-op has not started: they count for this run
     }
+    CoopVoice::SetEnabled(g_menu.options().voice);   // voice chat on/off counts at once (ptt when on)
     LOG_INFO(Core, "coop: multiplayer tab: settings saved{}{}", ok ? "" : " (a file could not be written)",
              kit ? "" : " (no kit found: coop.ini only)");
     std::vector<std::string> note;
@@ -400,6 +409,15 @@ void Init(bool coop_on) {
              coop_on ? "; co-op came with the game's start" : "");
 }
 
+void Tick() {
+    std::lock_guard lock(g_mutex);
+    const std::uint64_t now = NowMs();
+    if (now < g_next_follow_ms) {
+        return;
+    }
+    g_next_follow_ms = now + 250;
+    Follow(Status());
+}
 // Tab 1: Mods (coop_mods_tab.h), once the mod loader runs.
 constexpr int kModsTab = 1;
 
@@ -424,7 +442,7 @@ bool Page(int tab, HosCoopMenuPage* out) {
     thread_local Drawn drawn;
     {
         std::lock_guard lock(g_mutex);
-        RefreshSession(false);
+        RefreshSession(false);   // (reads only: no file is written from Hookshot's present thread)
         drawn.view = g_menu.view();
     }
     const CoopPauseMenu::View& v = drawn.view;
@@ -573,7 +591,17 @@ void Open(CoopPauseMenu::Page page) {
 
 std::string Doing() {
     std::lock_guard lock(g_mutex);
-    return g_doing;
+    if (g_doing.empty()) {
+        return {};
+    }
+    switch (Status().state) {   // (what it is now: a join still waiting is not "joined", a failed one is nothing)
+    case HOS_COOP_STARTING:
+    case HOS_COOP_HOSTING: return g_doing == "hosting" ? "hosting" : "";
+    case HOS_COOP_JOINING:
+    case HOS_COOP_WAIT_HOST: return g_doing == "joined" ? "joining" : "";
+    case HOS_COOP_CONNECTED: return g_doing;
+    default: return {};
+    }
 }
 
 }  // namespace CoopPause

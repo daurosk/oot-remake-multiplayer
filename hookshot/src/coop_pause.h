@@ -27,6 +27,11 @@ namespace CoopPause {
 // leaves Host and Join alone.
 void Init(bool coop_on);
 
+// Each game frame (HOS_COOP_SITE_FRAME), shown or not: what follows from
+// co-op's state (the invite code copied, a connected join remembered and the
+// host's save loaded at the title). At most every 250 ms.
+void Tick();
+
 // hos_coop_menu.h's exports.
 int Tabs();
 const char* TabName(int tab);
@@ -45,7 +50,8 @@ bool KeysTaken();
 void Open(CoopPauseMenu::Page page);
 
 // What co-op does since the tab started it, for the title's prompt:
-// "hosting", "joined" or "".
+// "hosting", "joining" (not connected yet), "joined", or "" (none, or it
+// failed).
 std::string Doing();
 
 }  // namespace CoopPause

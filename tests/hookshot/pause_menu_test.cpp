@@ -3,6 +3,7 @@
 // module to do, and what Hookshot is given to draw.
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -63,14 +64,14 @@ TEST_CASE("pause tab: the row kinds are hos_coop_menu.h's numbers") {
     CHECK(static_cast<int>(RowKind::kNote) == HOS_COOP_MENU_NOTE);
 }
 
-TEST_CASE("pause tab: the first page is Host, Join, Local co-op and Settings, Back there closes the menu") {
+TEST_CASE("pause tab: the first page is Host, Join, Local co-op, Settings and Commands, Back there closes the menu") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});
     CHECK(m.page() == Page::kMain);
-    CHECK(Names(m) == std::vector<std::string>{"Host a game", "Join a game", "Local co-op", "Settings"});
+    CHECK(Names(m) == std::vector<std::string>{"Host a game", "Join a game", "Local co-op", "Settings", "Commands"});
     CHECK(Selected(m) == "Host a game");
     m.Press(Input::kUp);   // round the ends
-    CHECK(Selected(m) == "Settings");
+    CHECK(Selected(m) == "Commands");
     m.Press(Input::kDown);
     CHECK(Selected(m) == "Host a game");
     const View v = m.view();
@@ -273,6 +274,47 @@ TEST_CASE("pause tab: Local co-op says split screen comes in the next test relea
     CHECK(v.back == "Back");
     CHECK(m.Press(Input::kBack));
     CHECK(Selected(m) == "Local co-op");
+}
+
+TEST_CASE("pause tab: Commands lists the chat key and every chat command, each with its help") {
+    CoopTitleMenu::Options o;
+    o.chat_key = "Y";
+    Menu m;
+    m.Show(o);
+    SelectRow(m, "Commands");
+    m.Press(Input::kDecide);
+    CHECK(m.page() == Page::kCommands);
+    View v = m.view();
+    CHECK(v.help_title == "Commands");
+    REQUIRE(v.rows.size() == 1 + Commands().size());
+    CHECK(v.rows[0].name == "Open the chat");
+    CHECK(v.rows[0].value == "Y");
+    CHECK(v.help.find("Press Y") != std::string::npos);
+    CHECK(v.confirm.empty());   // read only: nothing happens on a press
+    for (std::size_t i = 0; i < Commands().size(); ++i) {
+        CHECK(v.rows[i + 1].name == Commands()[i].typed);
+    }
+    const auto names = Names(m);
+    for (const char* typed : {"/teleport <player>", "/tp <player>", "/pvp"}) {
+        CHECK(std::find(names.begin(), names.end(), std::string(typed)) != names.end());
+    }
+    m.Press(Input::kDown);
+    CHECK(Selected(m) == "/teleport");
+    CHECK(m.view().help.find("Lists the other players") != std::string::npos);
+    m.Press(Input::kDecide);
+    CHECK(m.page() == Page::kCommands);
+    CHECK_FALSE(m.TakeRequest().has_value());
+    CHECK(m.Press(Input::kBack));
+    CHECK(Selected(m) == "Commands");
+    // no chat key
+    CHECK(ChatKeyWords("off") == "Off");
+    CHECK(ChatKeyWords("") == "T");
+    o.chat_key = "off";
+    m.Show(o);
+    m.Open(Page::kCommands);
+    v = m.view();
+    CHECK(v.rows[0].value == "Off");
+    CHECK(v.help.find("LICHII_COOP_CHAT_KEY") != std::string::npos);
 }
 
 TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off unless turned on)") {

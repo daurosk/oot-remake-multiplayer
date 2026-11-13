@@ -436,6 +436,20 @@ The rule (`Sync::SetEvent`, `Sync::EventNpc`): the NPCs are synced, not the cuts
 - Side effect, not fixed: any event (a signpost, a chest, a shop talk) claims every townsperson within 30 m, not just the ones it moves. If B starts its own talk within 30 m of A's cutscene NPCs, B also drops the owner's wishes for them while its event runs (A keeps them by the fight lock), so B sees them on B's own routine until its talk ends.
 - Not known: whether a story cutscene makes its own NPC actors (no placement hash) instead of moving the placed ones. Those would not be shared at all, and would need the spawn sync.
 
+## Walking townspeople (branch `npc-anim-2`, `coop_npc_anim.h`)
+
+The owner's report for 10.1: townspeople walk and run animated on the host's screen but slide in one pose on the others'. The cause, from a Kakariko run's log (2026-11-12): a copy's own AI asks for its own animation every game frame, and the Mover played the owner's back every game frame (over 100 plays in 5 s for one copy), each time from "the owner's frame" read at AS slot +0xe8. That is not the playing frame: the game's getter 0x37b5e70 reads +0x10c. So each play restarted the walk at the same frame.
+
+The fix (module only, no game patch, no new message):
+- Townspeople (`Npc_`) send the playing frame (+0x10c) and copies compare with it.
+- After the Mover's play on a copy, the slot's name pointer is set back to the name its own AI asked for (the alias). The game's play request skips a name the slot already shows, so the AI's request of every frame does nothing and the owner's walk plays on. It is played again only when the owner changes animation or the AI asks for a different one.
+- The alias is given back (the slot names what really plays) as soon as the copy is no longer wished: it became ours, the owner fell silent, or our Link's event claims it (talks), so its own AI plays its own animation again and talkable townspeople stay talkable.
+- The frame runs on at the speed the owner's last two samples show (a walk the game scales by speed), inside the loop learned from the samples; a copy more than 3 frames off, the short way round the loop, is set.
+- Guards (issue 191) get no alias: their own AI's reaction must show for the hand-over.
+- Logs: every 5 s `coop: npc-anim: in 5 s N owner animations played under the copy's own AI's name, M names given back, K frames set`; with `LICHII_COOP_DEBUG_NPC=1` each copy's shown animation and frame next to its owner's, once a second.
+- Not proven in a game yet: that 0x37b5d70 sets the frame +0x10c shows (if not, the 5 s line's "frames set" climbs with every sample).
+- Not proven in a game yet: that the copy's AI makes its every-frame play request with skip-if-same (request +0x20), so a slot already naming its animation is left alone. If it plays without that, the alias does nothing: the copy shows its own AI's animation, the debug line shows no `(alias of ...)` match with the owner's name, and "frames set" climbs.
+
 ## Waiting for our event (issue 144)
 
 A player test in the Deku Tree: B beat a Deku Scrub and was in its talk. A beat the same scrub in A's game, and B was stuck until A had finished A's own talk. A's kill reached B's scrub during B's talk, and B's event waited on an actor that had changed.

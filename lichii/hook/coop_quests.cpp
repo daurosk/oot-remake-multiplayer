@@ -24,9 +24,9 @@ namespace {
 // false) whose steps only go forward. Left out, each game's own:
 //   - minigames and every quest the tab does not list (their steps go back
 //     and forth: Ready, Playing, Retry, Finish);
-//   - Get_Epona (the race against Ingo is a step), SubEvent_GetSwordBigGoron
-//     (the trading sequence and the egg's timer), SubEvent_MaskSalesman (the
-//     mask rentals): steps of one player's own items;
+//   - SubEvent_GetSwordBigGoron (the trading sequence and the egg's timer),
+//     SubEvent_MaskSalesman (the mask rentals): steps of one player's own
+//     items;
 //   - DoorOfTime (time travel stays each game's own, docs/flags.md), AllSage
 //     (the Chamber of Sages; its Step01_00_01 to _03 are not in an order),
 //     Defeat_Ganon and EscapeFromCrumblingGanonCastle (the final battle).
@@ -35,6 +35,14 @@ namespace {
 //     KokiriForestIn, GotGlassTruth before GetGlassTruth, Step07 before
 //     Step07_pre00, Step07_1_Safety), and with the max rule a wrong order skips
 //     a step. Back in once checked against their event flows.
+//
+// Get_Epona (0x92431c55, not listed in the tab) is shared by its end only
+// (Quest::complete_only): its steps are one player's own (the song as a
+// child, the race against Ingo, which goes back to ReadyForGambleRace when
+// lost), but once one player has won Epona every game's quest is Complete,
+// so every adult can call and ride their own Epona (each game has its own
+// horse: docs/puppet.md, "Riding"). A game in the race itself
+// (GambleRacePlaying, AfterWonGambleRace) is left to finish it.
 //
 // Also writing quest Enums: CoopQuest (coop_quest.cpp, time-story, issue 173)
 // raises DoorOfTime from our Goto_HyruleCastle; both only raise.
@@ -56,6 +64,11 @@ const std::vector<Quest>& Table() {
         {0x7d776b61u, "Get_StoneOfForest",
          {"NotReady", "Ready", "GoInside", "MeetBoss", "GoToBossRoom", "DefeatBoss", "GoToWarpPoint",
           "Complete"}},
+        {0x92431c55u, "Get_Epona",
+         {"NotReady", "Ready", "GuideToLonLonRanch", "GuideToLonLonRanchAdult", "ReadyForGetEponaSong",
+          "AfterGetEponaSong", "ReadyForGambleRace", "AfterTalkMalon", "GambleRacePlaying",
+          "AfterWonGambleRace", "Complete"},
+         0, true},
         {0x9472302bu, "SubEvent_GetScarecrow",
          {"NotReady", "Ready", "MeetPierre", "MeetBonooru", "IntoThePast", "PlayScarecrowSong",
           "IntoTheFuture", "Complete"}},
@@ -88,6 +101,10 @@ bool EnvOff(const char* name) {
     const char* value = std::getenv(name);
     return value != nullptr && std::string_view(value) == "0";
 #endif
+}
+
+std::int32_t Last(const Quest& quest) {
+    return static_cast<std::int32_t>(quest.steps.size()) - 1;
 }
 
 bool Plain(coop::host::FlagKey key) {
@@ -147,7 +164,7 @@ void AddShared(std::optional<coop::host::SharedFlags>& shared) {
     const bool on = On();
     const std::size_t added = Merge(shared, on);
 #ifdef LICHII_COOP
-    LOG_INFO(Core, "coop: quests: sharing {} Threads of Time quests{}", added,
+    LOG_INFO(Core, "coop: quests: sharing {} quests (Threads of Time, and Epona won){}", added,
              on ? "" : " (off: LICHII_COOP_QUESTS=0)");
 #else
     (void)added;
@@ -167,8 +184,9 @@ std::optional<coop::protocol::FlagEntry> Store::read(coop::host::FlagKey key) {
     if (!rank) {
         return std::nullopt;  // a value not in the list: left alone
     }
+    const std::int32_t shown = quest->complete_only && *rank != Last(*quest) ? 0 : *rank;
     return coop::protocol::FlagEntry{key, coop::protocol::FlagKind::int32,
-                                     static_cast<std::uint32_t>(*rank)};
+                                     static_cast<std::uint32_t>(shown)};
 }
 
 bool Store::put(const Quest& quest, const coop::protocol::FlagEntry& entry, bool exact) {
@@ -184,6 +202,15 @@ bool Store::put(const Quest& quest, const coop::protocol::FlagEntry& entry, bool
     }
     const auto now_value = get_(quest.hash);
     const auto now = now_value ? Rank(quest, *now_value) : std::nullopt;
+    if (quest.complete_only) {
+        if (want != Last(quest)) {
+            return true;  // only the end is shared: a save load or a lower value leaves ours
+        }
+        if (now && *now != want && *now >= Last(quest) - 2) {
+            return true;  // in the race, or riding out after winning it: left to finish
+        }
+        exact = false;  // never written blind, never over a value not in the list
+    }
     if (!exact) {
         if (!now_value) {
             return false;  // unread (memory, GameData not up): not written blind

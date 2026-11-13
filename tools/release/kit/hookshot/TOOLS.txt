@@ -3,10 +3,10 @@
 # files). lock_sha256 is of that tools.lock (also in the release's SHA256SUMS); each tool is checked against
 # the SHA-256 the file lists. The source built is hookshot\PIN's commit.
 # Move release= (and lock_sha256=) when a newer release's tools are needed.
-release=v3.0.0-rc.2
+release=v3.0.0-rc.3
 lock_sha256=ec162218fa808e8e3cf82cdbbf867166d1c748defaba9443b3ecb643337d6560
 # Longshot's source: Forgejo's zip archive of hookshot\PIN's commit
 # (https://git.magicbean.dev/api/v1/repos/MagicBeanDev/Longshot/archive/<commit>.zip; the web /archive/ path
 # answers 404 since 2026-11-13, same bytes) and its SHA-256. Moves with the pin.
-source_commit=e7ed2f7a6526cd6b841b86678b3ac96eb6e5b1c8
-source_sha256=fa51b343c0baf3f5726aa568f2dba63afdb9428d602d4228691a194bbd7e0968
+source_commit=0c74253d4c6ed08d57e4f3aa8ce8634c4c017085
+source_sha256=f8be930d45f9b48c72f184859274c8f67e97462285ea0eb8e337fe6d7cced573

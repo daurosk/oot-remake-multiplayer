@@ -1,4 +1,4 @@
-From 56437d55d22b232d83de8e5926e21bda17612afd Mon Sep 17 00:00:00 2001
+From d744ab9fa4cb15b99ef89f8c4333843ba623daf7 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 13:18:16 -0900
 Subject: [PATCH] Co-op title menu: the title screen's hooks, the pad first,
@@ -125,10 +125,10 @@ index 9e2075c4..bc47834c 100644
  
  #endif
 diff --git a/host/nn_hid.c b/host/nn_hid.c
-index 829171b5..65e7a4d9 100644
+index d3f5bf31..02598424 100644
 --- a/host/nn_hid.c
 +++ b/host/nn_hid.c
-@@ -1112,6 +1112,8 @@ static void npad_states(Ctx *c) {
+@@ -1113,6 +1113,8 @@ static void npad_states(Ctx *c) {
      if (connected) buttons = hos_title_input(buttons);
      uint64_t hos_frame_step_buttons(uint64_t buttons);   /* nn_vi.c: the frame step of the wheel and quick menus */
      if (connected) buttons = hos_frame_step_buttons(buttons);

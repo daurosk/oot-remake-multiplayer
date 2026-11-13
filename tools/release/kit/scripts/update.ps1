@@ -464,7 +464,7 @@ function Complete-KitHookshotOnly([string]$KitDir, [bool]$HadEmulator, [string]$
         }
     } catch { }
     if ($HadEmulator -and -not (Test-Path -LiteralPath (Join-Path $KitDir 'emulator\lichii.exe'))) {
-        $lines += 'This version is Hookshot only: the emulator and its .bat files were removed (they are in the backup folder).'
+        $lines += 'This version is Longshot only (no emulator): the emulator and its .bat files were removed (they are in the backup folder).'
         if (Test-Path -LiteralPath (Join-Path $KitDir 'emulator\user')) {
             $lines += 'Your emulator files (emulator\user: its saves, keys and settings) were kept; delete that folder when you no longer need them.'
         }

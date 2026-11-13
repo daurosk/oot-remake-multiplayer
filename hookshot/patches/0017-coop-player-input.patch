@@ -19,7 +19,7 @@ index b4c0d96b..d50a212c 100644
      # installs below add, so its place among them does not matter)
      import coop_world_wraps
      coop_world_wraps.install(lifter, img, build_id)
-+    import coop_player_wraps   # (patch 0010: the other players' Link reads its own input)
++    import coop_player_wraps   # (patch 0017: the other players' Link reads its own input)
 +    coop_player_wraps.install(lifter, img, build_id)
      import coop_actor_lift   # (patch 0007: enemies, breakables, drops, projectiles)
      coop_actor_lift.install(lifter, img, build_id)
@@ -30,7 +30,7 @@ index 00000000..100c3085
 --- /dev/null
 +++ b/nx2/coop_player_wraps.py
 @@ -0,0 +1,33 @@
-+"""Co-op's wrapped game functions for the other players' Link (oot-remake-multiplayer's patch 0010, its
++"""Co-op's wrapped game functions for the other players' Link (oot-remake-multiplayer's patch 0017, its
 +docs/native-player.md).
 +
 +The other player's Link is to be the game's own Player actor, run by the game's own player code from the other

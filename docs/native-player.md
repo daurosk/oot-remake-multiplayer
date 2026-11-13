@@ -40,7 +40,7 @@ player sends tens of bytes a frame, which is what 16 players need.
    components, who the game's own lookup says the player is, whether the second one moved and
    whether it moved with the local Link, and the size of the preload lists. This run answers what
    breaks: camera, HUD, saving, input.
-2. **Its own input.** Two rows in the function-wrap list of the world hooks (Hookshot patch 0010,
+2. **Its own input.** Two rows in the function-wrap list of the world hooks (Hookshot patch 0017 in this repo, the draft 0010 renumbered,
    wrap ids 16 and 17) at the two functions above. On the sending game the wrap copies what the game
    read for the local Link; on the receiving game it fills the same bytes in for the second Player
    and skips the controller read. One game build, with the next batch of hooks.

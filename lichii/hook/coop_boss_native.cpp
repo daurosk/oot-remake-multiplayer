@@ -301,6 +301,12 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
             break;
         }
     }
+    if (main_base != main_base_) {
+        // A new game (or none): our block was its heap's (as the spawn director's).
+        main_base_ = main_base;
+        block_ = 0;
+        allocating_ = false;
+    }
     if (!brain_on_ || main_base == 0) {
         return std::nullopt;
     }
@@ -371,7 +377,7 @@ void Table::Reset() {
     by_bsa_.clear();
     counts_ = {};
     notes_.clear();
-    block_ = 0;  // (a new scene's heap: asked again)
+    block_ = 0;  // (asked again)
     allocating_ = false;
     pending_ = Pending::none;
 }

@@ -210,3 +210,32 @@ TEST_CASE("native boss: a hand-over keeps the state, and switches off leave the 
     CHECK_FALSE(brain.OnActionVerb(kBsa, GameRequest(3, kNode), false));
     CHECK(brain.OnBrainVerb(kBsa, 3, false, false));
 }
+
+TEST_CASE("native boss: the request block is asked again for a new game, not for a new scene") {
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Gohma(Role::copy)});
+    t.OnActionVerb(kBsa, GameRequest(12, kNode), false);  // (its node; no owner's state yet: runs)
+    t.Receive(kActor, BossBsa{1, 2, false, *ActionFromRequest(GameRequest(11, 0))});
+    FakeGuest g;
+    const std::int32_t verb = 2;
+    g.Write(kBsa + addr::kBsaBrainVerb, &verb, 4);
+    auto c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kMalloc);
+    REQUIRE(t.Step(g, true, kBlock, kMain));  // the action, from the block
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    // A new owner's action in the same game: the same block.
+    t.Receive(kActor, BossBsa{2, 2, false, *ActionFromRequest(GameRequest(13, 0))});
+    c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kRequestActionVerb);
+    CHECK(c->x[1] == kBlock);
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    // Another game (main moved): a block of its own first.
+    t.Receive(kActor, BossBsa{3, 2, false, *ActionFromRequest(GameRequest(14, 0))});
+    c = t.Step(g, false, 0, kMain + 0x100000);
+    REQUIRE(c);
+    CHECK(c->function == kMain + 0x100000 + addr::kMalloc);
+    CHECK(addr::kActionTaken == 0);  // (a skipped request answers as a taken one: hookshot's wrap 5)
+}

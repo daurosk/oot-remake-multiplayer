@@ -45,6 +45,9 @@ inline constexpr std::uint64_t kBsaBrainVerb = 0x28;      // s32, the current br
 inline constexpr std::uint64_t kSetBrainVerb = 0x6733b0;       // main+
 inline constexpr std::uint64_t kRequestActionVerb = 0xc08f0;   // main+
 inline constexpr std::uint64_t kMalloc = 0x14c6c90;            // main+, as coop_puppet.h
+// What kRequestActionVerb returns for a request it took (its main path,
+// main+0xc10f4; 2 and 3 are refusals). A skipped request answers the same.
+inline constexpr std::uint64_t kActionTaken = 0;
 
 // The action request (0x60 bytes, built on the asker's stack).
 inline constexpr std::size_t kRequestSize = 0x60;
@@ -129,6 +132,7 @@ public:
     Counts Totals() const;
     // Lines for the log since the last call (first sightings, first applies).
     std::vector<std::string> TakeNotes();
+    // Everything forgotten, the block too (tests; co-op off).
     void Reset();
 
     static constexpr int kCallerOrder = 45;  // after the drops (40), before the boss rooms (50)
@@ -161,6 +165,7 @@ private:
     std::vector<std::string> notes_;
     // The caller's state (frame thread only).
     std::uint64_t block_ = 0;      // our request in guest memory (kRequestSize)
+    std::uint64_t main_base_ = 0;  // the game the block belongs to
     bool allocating_ = false;
     enum class Pending : std::uint8_t { none, malloc, brain, action } pending_ = Pending::none;
 };

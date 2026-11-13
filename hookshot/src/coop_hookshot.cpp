@@ -906,11 +906,14 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
     }
     if (id == HOS_COOP_WRAP_BRAIN_VERB && phase == 0) {
         // Native boss sync: a boss's brain verb change (x0 BSA, w1 verb, w2 force). A copy's own is skipped
-        // once the owner's verbs have come (1: the game's function does not run).
-        return CoopBossNative::TheTable().OnBrainVerb(x[0], static_cast<std::int32_t>(x[1]), (x[2] & 1) != 0,
-                                                      t_own_call)
-                   ? 1
-                   : 0;
+        // once the owner's verbs have come (1: the game's function does not run; x0 0 as a defined result, though
+        // no caller reads one).
+        if (!CoopBossNative::TheTable().OnBrainVerb(x[0], static_cast<std::int32_t>(x[1]), (x[2] & 1) != 0,
+                                                    t_own_call)) {
+            return 0;
+        }
+        x[0] = 0;
+        return 1;
     }
     if (id == HOS_COOP_WRAP_ACTION_VERB && phase == 0) {
         // Native boss sync: a boss's action verb request (x0 BSA, x1 the request in guest memory).
@@ -922,7 +925,13 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
         if (!CoopRuntime::Read(x[1], r.data(), r.size())) {
             return 0;
         }
-        return t.OnActionVerb(x[0], r, t_own_call) ? 1 : 0;
+        if (!t.OnActionVerb(x[0], r, t_own_call)) {
+            return 0;
+        }
+        // Skipped: the result its callers pass up is what the game gives for a request it took (0, its main path
+        // main+0xc10f4; 2 and 3 are its refusals), so the asking node goes on as after its own request.
+        x[0] = CoopBossNative::addr::kActionTaken;
+        return 1;
     }
     if (id == HOS_COOP_WRAP_TIME_SET && phase == 0) {
         // The game's own time change, with its exact time: the time sync's jump (coop_time_sync.h, GameSet).

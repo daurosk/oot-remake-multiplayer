@@ -6,7 +6,9 @@
    has in HOS_COOP_WORLD_HELLO's bits, and the module turns boss sync on only when both are there. Rows (nx2 form):
      (4, 0x6733b0, (0xd503237f, 0xa9bd7bfd, 0xf9000bf5, 0xa9024ff4)),  # pacibsp; stp x29, x30; str x21; stp x20, x19
      (5, 0xc08f0,  (0xd503237f, 0xd10743ff, 0xa9187bfd, 0xf900cbfc)),  # pacibsp; sub sp, #0x1d0; stp x29, x30; str x28
-   Phase 0 may return 1 (skip): neither function returns a value its callers read. Plain C. */
+   Phase 0 may return 1 (skip); the module then sets x0 to the result: 0x6733b0 returns nothing its callers read (0 is
+   set anyway), 0xc08f0 returns 0 for a request it took (main+0xc10f4; 2 and 3 on its refusal paths), and 5 of its 9
+   callers pass that up to their AI node, so a skipped request gives 0, as a taken one. Plain C. */
 #ifndef HOS_COOP_BOSSES_H
 #define HOS_COOP_BOSSES_H
 

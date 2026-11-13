@@ -45,6 +45,7 @@
 #include "coop_runtime.h"
 #include "coop_settings.h"
 #include "coop_svc.h"
+#include "coop_title.h"
 #include "core/core.h"
 #include "coop_host_menu.h"
 #include "hos_coop_api.h"
@@ -58,6 +59,8 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#else
+#include <dlfcn.h>
 #endif
 
 namespace {
@@ -401,6 +404,7 @@ std::uint32_t FromCodePage(unsigned byte) {
 
 CoopDraw::Scene DrawScene() {
     CoopDraw::Scene s;
+    s.title = CoopTitle::View();
     {
         std::lock_guard lock(g_box_mutex);
         if (g_box.open()) {
@@ -487,6 +491,9 @@ CoopDraw::Scene DrawScene() {
 }
 
 bool TypeKey(std::uint32_t vk, bool repeat) {
+    if (CoopTitle::Key(vk, repeat)) {   // the title's Multiplayer menu, while it is open
+        return true;
+    }
     if (!g_on) {
         return false;
     }
@@ -529,12 +536,18 @@ bool TypeChar(std::uint32_t byte) {
         return false;
     }
     std::lock_guard lock(g_box_mutex);
-    if (!g_box.open() && !g_cheats.open()) {
+    if (!CoopTitle::KeysTaken() && (!g_on || (!g_box.open() && !g_cheats.open()))) {
         return false;
     }
     const std::uint32_t cp = FromCodePage(byte);
     if (cp == 0) {
         return true;
+    }
+    if (CoopTitle::Char(cp)) {
+        return true;
+    }
+    if (!g_on) {
+        return false;
     }
     if (g_cheats.open()) {
         return g_cheats.Char(cp, CoopChatBox::Utf8(cp));
@@ -568,6 +581,9 @@ bool Mouse(float fx, float fy, int event) {
 }
 
 bool KeysTaken() {
+    if (CoopTitle::KeysTaken()) {
+        return true;
+    }
     if (!g_on) {
         return false;
     }
@@ -591,15 +607,24 @@ bool Start(const HosCoopApi* api) {
     }
     LOG_INFO(Core, "coop: Hookshot module, game build {}, main at {:#x}{}", g_build.substr(0, 16), api->main_base,
              HasPadButtons(api) ? "" : "; this Hookshot gives no pad word (own Ocarina notes not sent: build it again)");
+    // Started without the kit's launcher: its coop-options.ini switches still count.
+    CoopTitle::ApplyKitOptions();
     const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
     std::vector<std::string> errors;
-    // HOS_COOP_MENU=1 (the title menu's Hookshot): the module stays loaded with co-op idle until the player
-    // hosts or joins from the menu (hos_coop_host.h).
-    const bool menu = EnvOn("HOS_COOP_MENU");
-    if (!menu && (!CoopHook::LoadSettings(ini, errors).enabled() || !errors.empty())) {
+    // The title's menu (patch 0004's Hookshot, or HOS_COOP_MENU=1): the module stays loaded with co-op idle until the
+    // player hosts or joins from the title (coop_title.h, hos_coop_host.h).
+    const bool menu = EnvOn("HOS_COOP_MENU") || TitleMenuPossible(api, Env("LICHII_COOP_TITLE_MENU"));
+    const bool server = CoopHook::LoadSettings(ini, errors).enabled() && errors.empty();
+    for (const auto& e : errors) {
+        LOG_WARNING(Core, "coop: {}", e);
+    }
+    if (!menu && !server) {
         CoopHook::Start();  // logs why co-op is off
         g_api = nullptr;
         return false;
+    }
+    if (!server) {
+        LOG_INFO(Core, "coop: no server in coop.ini: co-op idle until the title's Host or Join");
     }
     // The same switches that make the emulator put its cave in.
     if (EnvOn("LICHII_COOP_PUPPET") || EnvOn("LICHII_COOP_DEBUG_PUPPET")) {
@@ -608,10 +633,14 @@ bool Start(const HosCoopApi* api) {
     g_hold = EnvOn("LICHII_COOP_OBJECTS_AI_HOLD");
     CoopHook::Start();
     g_on = true;
+    CoopTitle::Init(api, server);
     return true;
 }
 
 void Frame(void* ctx, int site) {
+    if (site == HOS_COOP_SITE_FRAME && ctx != nullptr && g_on) {
+        CoopTitle::OnFrame(ctx);
+    }
     if (!g_on) {
         return;
     }
@@ -683,8 +712,39 @@ void DrawWithLook(const HosCoopDraw& d) {
 }  // namespace CoopHookshot
 
 extern "C" {
+// The host's save for a guest (issue 167): hookshot.exe's patch 0008 exports the account save's folder and a
+// re-mount of it; with them a guest switches to the co-op folder when it joins (CoopSave, save::folder_choice).
+// An exe without patch 0008: CoopSave as on a fixed folder (LICHII_COOP_HOST_SAVE, else the player's own).
+void UseSaveSwitch() {
+#ifdef _WIN32
+    const HMODULE exe = GetModuleHandleW(nullptr);
+    using RootFn = int (*)(char*, size_t);
+    using RemountFn = int (*)(const char*);
+    const auto root = reinterpret_cast<RootFn>(reinterpret_cast<void*>(GetProcAddress(exe, "hos_coop_fs_save_root")));
+    const auto remount = reinterpret_cast<RemountFn>(reinterpret_cast<void*>(GetProcAddress(exe, "hos_coop_fs_save_remount")));
+#else
+    using RootFn = int (*)(char*, size_t);
+    using RemountFn = int (*)(const char*);
+    const auto root = reinterpret_cast<RootFn>(dlsym(RTLD_DEFAULT, "hos_coop_fs_save_root"));
+    const auto remount = reinterpret_cast<RemountFn>(dlsym(RTLD_DEFAULT, "hos_coop_fs_save_remount"));
+#endif
+    if (!root || !remount) {
+        LOG_INFO(Core, "coop: save: this Hookshot has no save-folder switch (patch 0008): the host's save goes only to "
+                       "a game started with LICHII_COOP_HOST_SAVE=1");
+        return;
+    }
+    CoopSave::SetSwitch(
+        [root] {
+            char buf[1024];
+            return root(buf, sizeof buf) ? std::string(buf) : std::string();
+        },
+        [remount](const std::string& dir) { return remount(dir.c_str()) != 0; });
+}
+
 COOP_HOOKSHOT_EXPORT int hos_coop_start(const HosCoopApi* api) {
-    return CoopHookshot::Start(api) ? 1 : 0;
+    if (!CoopHookshot::Start(api)) return 0;
+    UseSaveSwitch();
+    return 1;
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_frame(void* ctx, int site) {
     CoopHookshot::Frame(ctx, site);
@@ -721,25 +781,20 @@ COOP_HOOKSHOT_EXPORT int hos_coop_char(uint32_t ch) {
 COOP_HOOKSHOT_EXPORT int hos_coop_keys_taken(void) {
     return CoopHookshot::KeysTaken() ? 1 : 0;
 }
-// The host's save for a guest (patch 0001: nn_fs.c user_mount -> coop_bridge.c). Before the account save is mounted:
-// a guest of another PC's server plays from a folder of its own (CoopSave::SaveDirectory: <folder>-coop, its own saves
-// untouched), into which the host's save comes (issue 167, as on the emulator's patch 0006). 1 = `out` is another folder.
-COOP_HOOKSHOT_EXPORT int hos_coop_save_dir(const char* in, char* out, size_t cap) {
-    if (!in || !out || cap == 0) return 0;
-    const std::string dir = CoopSave::SaveDirectory(in, true);
-    if (dir == in || dir.size() + 1 > cap) return 0;
-    std::memcpy(out, dir.c_str(), dir.size() + 1);
-    return 1;
-}
-// After the mount: the folder the game's saves are in (the host reads its slots there; a guest's gets the host's save).
-COOP_HOOKSHOT_EXPORT void hos_coop_save_opened(const char* dir) {
-    if (dir) CoopSave::NoteSaveDir(dir);
-}
 // The mouse (hos_coop_api.h): the cheats panel's clicks.
 COOP_HOOKSHOT_EXPORT int hos_coop_mouse(float fx, float fy, int event) {
     return CoopHookshot::Mouse(fx, fy, event) ? 1 : 0;
 }
 // Drawing over the picture (hos_coop_draw.h), on Hookshot's render thread.
+// The title menu (hos_coop_api.h, patch 0004): the game's title screen and the pad first.
+COOP_HOOKSHOT_EXPORT void hos_coop_title(void* ctx, uint64_t screen, int event) {
+    if (g_on) {
+        CoopTitle::OnTitle(ctx, screen, event);
+    }
+}
+COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) {
+    return g_on && stick != nullptr ? CoopTitle::OnPad(buttons, stick) : buttons;
+}
 COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void) {
     return g_on && CoopDraw::Wanted(CoopHookshot::DrawScene()) ? 1 : 0;
 }

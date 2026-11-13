@@ -370,6 +370,12 @@ foreach ($key in $options.Keys) {
     Set-Item -Path "env:$key" -Value $value
     Write-Host "Option: $key=$value"
 }
+# The host's save (issue 167): a join (an address or an invite code, whose server is 127.0.0.1) plays from the
+# co-op save folder the host's save comes into; a host from its own saves. Not from coop.ini's address: an old
+# friend's address there says nothing about this start. coop-options.ini may set it itself.
+if (-not $env:LICHII_COOP_HOST_SAVE) {
+    if ($Mode -eq 'join' -or $inviteJoin) { $env:LICHII_COOP_HOST_SAVE = '1' } elseif ($Mode -eq 'host') { $env:LICHII_COOP_HOST_SAVE = '0' }
+}
 # No colour chosen: the colour of the player number you will most likely get, for your own Link too
 # (kit-paths.ps1). Before the pack step, which puts that tunic over the game's.
 [void](Set-KitDefaultColor $Mode $Server)

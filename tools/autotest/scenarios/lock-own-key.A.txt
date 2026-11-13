@@ -1,0 +1,63 @@
+# lock-own-key (locked doors with two players at the door; docs/dungeon.md): both load into the
+# Water Temple entrance. A gets one small key (setflag; the gain is shared, so B has 1 too), is put
+# at the top floor's west door (locks 0x245948bc6d57c9e0 and 0xb2d8d82145ce4d26 at -20.83 119.30
+# -4.50) and waits there while B comes with /teleport A from the entrance (another room of the
+# dungeon). A opens the lock with its key and walks through; B, standing at its own still-shut
+# copy of the lock, opens it with its OWN key and walks through (lock-own-key.B.txt).
+# Pass (LICHII_COOP_DEBUG_FLAGS=1 logs every count change as "int 0x877bdcee ... N -> M item
+# DungeonInfo.WaterTemple.SmallKeyNum"):
+#   A: "0 -> 1" after setflag, then "1 -> 0" when it opens; "world: ... Obj_DoorChainLock_A_01
+#      broken here (gone next to Link): sent"; a-through with x under -22.
+#   B: "0 -> 1" (the shared gain), "teleport: next to A" and b-teleported at about -20.1 119.3 -4.5
+#      (the teleport into another room, picture not black), then "1 -> 0" when B opens its copy and
+#      b-through with x under -22.
+#   Neither log has "one key lent", "given back" or a count above 1; both end at 0.
+# The steps turn Link to the door (toward) before every press: after a wait Link no longer faces
+# it, and a goto into the shut door steps aside and leaves Link off the lock.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1
+#! timeout 420
+mark start
+warp WaterTemple WaterTemple_FromLakeHylia
+wait 1200
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark in
+setflag DungeonInfo.WaterTemple.SmallKeyNum 1
+wait 120
+place -19.6 119.4 -4.5
+wait 150
+goto -20.4 -4.5 0.3 90     # up to the door (it stops Link at about -20.1)
+wait 30
+mark a-at-lock
+wait 900                   # B comes with /teleport A
+mark a-open
+toward -21.5 -4.5 8
+wait 20
+press A 12
+wait 60
+toward -21.5 -4.5 8
+wait 20
+press A 12
+wait 60
+toward -21.5 -4.5 8
+wait 20
+press A 12
+wait 60
+toward -21.5 -4.5 8
+wait 20
+press A 12
+wait 360
+mark a-opened
+goto -26.0 -4.5 1.5 300
+wait 60
+mark a-through
+wait 2400
+mark end

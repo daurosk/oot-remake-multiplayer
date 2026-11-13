@@ -28,7 +28,11 @@ $emu = Join-Path $kit 'emulator'
 $exe = Join-Path $emu 'lichii.exe'
 $ini = Join-Path $emu 'user\config\coop.ini'
 $template = Join-Path $PSScriptRoot 'coop.ini.template'
-# Play-OoT-Coop.bat (play.ps1 choose -Hookshot): one launcher that asks host or join, the last answer first.
+# Play-OoT-Coop.bat (play.ps1 choose -Hookshot): the game starts with no session (mode 'title' below);
+# Host and Join are on its title screen. A session started here (a server in coop.ini) would make the
+# title's Host and Join answer "Co-op is on already in this game".
+if ($Mode -eq 'choose' -and $Hookshot) { $Mode = 'title' }
+# play.ps1 choose without -Hookshot: asks host or join, the last answer first.
 if ($Mode -eq 'choose') {
     $lastMode = Join-Path $kit 'hookshot\last-mode.txt'
     $was = if (Test-Path -LiteralPath $lastMode) { "$(Get-Content -LiteralPath $lastMode -TotalCount 1)".Trim() } else { '' }
@@ -168,6 +172,25 @@ if ($Hookshot) {
     }
     $emu = Split-Path -Parent $exe
     $ini = Join-Path $emu 'coop.ini'
+}
+if ($Mode -eq 'title') {
+    if (-not $Hookshot) { Write-Host 'play.ps1 title is for Hookshot (Play-OoT-Coop.bat).'; exit 1 }
+    $running = Get-Process hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
+    if ($running) { Write-Host 'This Hookshot game is already running: Host and Join are on its title screen.'; exit 1 }
+    # No session from this start: no server and no join password in coop.ini (the name, the colour and the
+    # last invite code stay), and none in the variables an earlier start in this window may have left.
+    Clear-CoopIniSession $template $ini
+    foreach ($v in 'LICHII_COOP_SERVER', 'LICHII_COOP_PASSWORD', 'OOT_COOP_SESSION_PASSWORD', 'OOT_COOP_JOIN_PASSWORD', 'LICHII_COOP_HOST_SAVE') {
+        Remove-Item -Path "env:$v" -ErrorAction SilentlyContinue
+    }
+    [void](Use-KitPuppetPack (Join-Path $emu 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') (Join-Path $kit 'tools\puppet_pack') @(
+        'Puppet pack: not in the Hookshot game, so the other players show only as markers.',
+        '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").'))
+    [void](Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru)
+    Write-Host 'Hookshot started. Host or Join on the title screen (Host, Join and Co-op Settings under the game''s own rows;'
+    Write-Host 'if they are not there, Minus opens them). Same house or a VPN: Host, then "Same network or VPN".'
+    Write-Host 'Host-Hookshot.bat and Join-Hookshot.bat still host or join from a window like this one instead.'
+    exit 0
 }
 
 $current = Read-CoopIni $ini

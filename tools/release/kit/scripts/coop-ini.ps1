@@ -76,3 +76,14 @@ function Write-CoopIni([string]$Template, [string]$Path, [string]$Server, [strin
     # No byte order mark: the emulator reads the first line as it is.
     [System.IO.File]::WriteAllText($Path, (($out -join "`r`n") + "`r`n"), [System.Text.UTF8Encoding]::new($false))
 }
+
+# Play-OoT-Coop.bat: coop.ini with no session in it. The server and join password lines are commented
+# out (the game then starts with co-op idle and offers Host and Join on its title screen); every other
+# line stays: the name, the port, the last invite code the title's "Join again" uses.
+function Clear-CoopIniSession([string]$Template, [string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { Write-CoopIni $Template $Path '' '' '' ''; return }
+    $out = foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
+        if ($line -match '^\s*(server|password)\s*=') { '# ' + $line } else { $line }
+    }
+    [System.IO.File]::WriteAllText($Path, (($out -join "`r`n") + "`r`n"), [System.Text.UTF8Encoding]::new($false))
+}

@@ -494,6 +494,25 @@ try {
     Remove-Item -LiteralPath $hsPack -Recurse -Force
     $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$kit\scripts\play.ps1`" join -Server 127.0.0.1 -Name Saria -Hookshot -NoUpdate < `"$enter`"" 2>&1) -join '|'
     Check ($out -match 'Puppet pack: not in the Hookshot game' -and $out -match 'Hookshot started') "play.ps1 -Hookshot: no pack: says so, still starts [$out]"
+    # Play-OoT-Coop.bat (play.ps1 choose -Hookshot): no question and no session, so the title screen's Host
+    # and Join work (a server in coop.ini makes them answer "Co-op is on already in this game"). After a
+    # host or join run its server and password lines go; the name and the last invite code stay.
+    $stopHs = { Get-Process hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 400 }
+    & $stopHs
+    Write-File (Join-Path $hsGame 'coop.ini') "server = 127.0.0.1`r`nport = 27510`r`nname = Saria`r`npassword = hunter2`r`nlast_invite = ABCDE-FGHJK`r`n"
+    $env:LICHII_COOP_SERVER = '127.0.0.1:27510'
+    $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$kit\scripts\play.ps1`" choose -Hookshot -NoUpdate < nul" 2>&1) -join '|'
+    Remove-Item Env:LICHII_COOP_SERVER -ErrorAction SilentlyContinue
+    $idle = Read-File (Join-Path $hsGame 'coop.ini')
+    Check ($out -match 'Hookshot started' -and $out -match 'Host or Join on the title screen' -and $out -notmatch 'H or J' -and $out -notmatch 'Invite code') "Play-OoT-Coop: starts the game with no question [$out]"
+    Check ($idle -notmatch '(?m)^\s*server\s*=' -and $idle -notmatch '(?m)^\s*password\s*=') "Play-OoT-Coop: no server and no join password left in coop.ini after a host run [$idle]"
+    Check ($idle -match '(?m)^name = Saria\r?$' -and $idle -match '(?m)^last_invite = ABCDE-FGHJK\r?$' -and $idle -match '(?m)^port = 27510\r?$') 'Play-OoT-Coop: the name, the port and the last invite code stay'
+    Check (-not (Test-Path "$kit\server-args.txt") -and -not (Get-Process coop_server -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) })) 'Play-OoT-Coop: no server is started'
+    & $stopHs
+    Remove-Item -LiteralPath (Join-Path $hsGame 'coop.ini') -Force
+    $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$kit\scripts\play.ps1`" choose -Hookshot -NoUpdate < nul" 2>&1) -join '|'
+    $idle = Read-File (Join-Path $hsGame 'coop.ini')
+    Check ($out -match 'Hookshot started' -and $idle -notmatch '(?m)^\s*server\s*=') "Play-OoT-Coop: a first start (no coop.ini) writes one with no server [$out]"
     Get-Process hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
     # A built kit's coop.ini.template and coop-ini.ps1 keep @PORT@ (make_kit.ps1 copies with
     # kit_text.ps1), and play.ps1 writes the port each join needs: 27512 (the join helper) for an

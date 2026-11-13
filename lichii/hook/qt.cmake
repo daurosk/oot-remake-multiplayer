@@ -5,7 +5,8 @@ target_sources(yuzu PRIVATE
     "${_coop_hook}/coop_cheats_window.cpp"
     "${_coop_hook}/coop_window.cpp"
 )
-target_include_directories(yuzu PRIVATE "${_coop_hook}")
+# coop_window.cpp includes coop_puppet.h, which uses the protocol messages (header only here).
+target_include_directories(yuzu PRIVATE "${_coop_hook}" "${LICHII_COOP_DIR}/coop/protocol/include")
 target_compile_definitions(yuzu PRIVATE LICHII_COOP)
 # GCC and Clang (the Linux build, issue 127): Fritchii's own src/yuzu/fritchii/fritchii_ui.cpp copies a
 # QString in two range loops, which its -Werror=all turns into an error with GCC 13. MSVC

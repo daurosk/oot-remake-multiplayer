@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_objects_sync.h"
+#include "coop_enemy_shots.h"
 #include "coop_guard.h"
 #include "coop_world.h"
 
@@ -140,12 +141,20 @@ std::optional<bool> BossHurt(const std::vector<Seen>& seen, std::span<const std:
 
 bool IsShared(std::string_view name) {
     if (IsOwnPuzzle(name)) return false;  // before the Npc_ rule: the pond owner is one
+    // Enemy shots (Enemy_MoblinClub_ShockWave is named like an enemy)
+    // stay with the spawn sync: the game whose enemy fired one sends it.
+    if (CoopEnemyShots::IsEnemyShot(name)) return false;
     if (name.starts_with("Npc_")) {
         // Each player's own: Navi (the fairy sync has her), the equipment
         // a player or NPC holds, and invisible helpers.
         return !name.starts_with("Npc_Navi") && !name.starts_with("Npc_Equipment") &&
                !name.starts_with("Npc_Invisible");
     }
+    // The horse a player rides (CoopRide::kHorse) is each game's own: shared,
+    // one game's Epona was a copy, frozen or pulled back under its rider, or
+    // the other game drew two horses (its copy and the ride's stand-in).
+    // The ride sync (coop_ride.h) shows the other player's horse instead.
+    if (name == "Animal_Epona_Adult") return false;
     return name.starts_with("Enemy_") || name.starts_with("Animal_") ||
            CoopWorld::IsBreakable(name);
 }
@@ -176,6 +185,21 @@ bool IsOwnPuzzle(std::string_view name) {
 
 bool IsFish(std::string_view name) {
     return name.starts_with("Animal_Fish_");
+}
+
+bool IsGuard(std::string_view name) {
+    return name.starts_with("Npc_Hylia_Soldier") || name.starts_with("Npc_Hylia_ImperialSoldier") ||
+           name.starts_with("Npc_Gerudo_GEN_SecurityGuard") ||
+           name.starts_with("Npc_Gerudo_FortressGuard");
+}
+
+bool IsGuardReaction(std::string_view name) {
+    constexpr std::string_view kWords[] = {"Notice", "Discover", "Surprise", "Alert",
+                                           "Found",  "Salute",   "Greeting", "Talk"};
+    for (const std::string_view w : kWords) {
+        if (name.find(w) != std::string_view::npos) return true;
+    }
+    return false;
 }
 
 bool IsRolled(std::string_view name) {
@@ -543,11 +567,34 @@ bool Sync::Hatch(std::uint8_t self, const Seen& s,
     return true;
 }
 
+// An egg of ours still on the walk, marked hatched, within two hatch reaches
+// of `at` (a larva's egg is at most kHatchReachM from it either way).
+Sync::Object* Sync::HatchedSibling(std::uint8_t self, const proto::Vec3& at) {
+    Object* best = nullptr;
+    float best_d = 2.0f * kHatchReachM;
+    for (auto& [address, e] : objects_) {
+        if (!IsHatchingEgg(e.name) || !e.hatched || e.id.kind != proto::ObjectKind::placed) {
+            continue;
+        }
+        const auto owner = owners_.find(e.id);
+        if (owner == owners_.end() || owner->second.player != self) {
+            continue;
+        }
+        const float d = Distance(e.position, at);
+        if (d <= best_d) {
+            best = &e;
+            best_d = d;
+        }
+    }
+    return best;
+}
+
 void Sync::Reset() {
     scene_.clear();
     objects_.clear();
     taken_.clear();  // a new scene's actors were made knowing every key
     chest_animations_.clear();
+    chest_shown_.clear();
     hidden_.clear();
     dead_.clear();
     order_.clear();
@@ -557,6 +604,8 @@ void Sync::Reset() {
     present_once_ = false;
     groups_sent_.clear();
     group_links_.clear();
+    fish_sent_.clear();
+    fish_at_ = 0;
     decided_.clear();
     eggs_.clear();
     bound_.clear();
@@ -582,6 +631,26 @@ std::uint8_t Sync::DeciderOf(std::uint8_t self, std::uint64_t now_us) const {
     return decider;
 }
 
+std::uint8_t Sync::RollerFor(std::uint8_t self, const proto::Vec3& at, std::uint64_t now_us) const {
+    const auto fresh = [now_us](std::uint64_t t) {
+        return t <= now_us ? now_us - t < kSceneStaleUs : t - now_us < kSceneStaleUs;
+    };
+    std::uint8_t roller = self;
+    std::lock_guard lock(inbox_mutex_);
+    for (const auto& [player, seen] : scenes_) {
+        if (player == self || player == 0 || player >= roller || !fresh(seen.second) || seen.first != scene_) {
+            continue;
+        }
+        const auto place = places_.find(player);
+        const bool near = place == places_.end() || !fresh(place->second.second) ||
+                          Distance(place->second.first, at) <= kRollNearM;
+        if (near) {
+            roller = player;
+        }
+    }
+    return roller;
+}
+
 void Sync::Bind(const std::map<std::uint64_t, std::uint64_t>& live) {
     bound_.clear();
     for (const auto& [key, address] : live) {
@@ -605,6 +674,18 @@ std::optional<proto::ObjectId> Sync::IdOf(std::uint64_t address) const {
         return std::nullopt;
     }
     return it->second.id;
+}
+
+std::optional<std::uint8_t> Sync::OwnerOf(std::uint64_t address) const {
+    const auto it = objects_.find(address);
+    if (it == objects_.end()) {
+        return std::nullopt;
+    }
+    const auto owner = owners_.find(it->second.id);
+    if (owner == owners_.end()) {
+        return std::nullopt;
+    }
+    return owner->second.player;
 }
 
 std::vector<std::pair<std::uint64_t, std::string>> Sync::Owned() const {
@@ -647,6 +728,9 @@ proto::ObjectState Sync::StateOf(Object& o, std::uint64_t now_us) {
     state.position = o.position;
     state.velocity = o.velocity;
     state.animation = o.animation;
+    if (!o.slots.empty()) {
+        state.slots = o.slots;  // issue 150: a boss's eye guard and the like
+    }
     if (o.rotation) {
         state.rotation = QuatOf(*o.rotation);
     }
@@ -666,10 +750,40 @@ void Sync::ChaseStep(Object& o, std::uint64_t now_us) {
     }
 }
 
-void Sync::NoteTakeover(std::uint64_t address, std::uint64_t now_us) {
+bool Sync::EventNpc(std::uint64_t address, std::uint64_t now_us) const {
     const auto it = objects_.find(address);
-    if (it != objects_.end() && it->second.reacts) {
-        it->second.took_over_at = now_us;
+    return it != objects_.end() && it->second.npc && it->second.event_until > now_us;
+}
+
+std::uint8_t Sync::OwnerAt(std::uint64_t address) const {
+    const auto it = objects_.find(address);
+    return it == objects_.end() ? 0 : OwnerOf(it->second.id);
+}
+
+std::size_t Sync::EventNpcs(std::uint64_t now_us) const {
+    return static_cast<std::size_t>(std::count_if(objects_.begin(), objects_.end(), [now_us](const auto& e) {
+        return e.second.npc && e.second.event_until > now_us;
+    }));
+}
+
+std::size_t Sync::EventNpcsOurs(std::uint64_t now_us) const {
+    if (self_ == 0) {
+        return 0;
+    }
+    return static_cast<std::size_t>(std::count_if(objects_.begin(), objects_.end(), [&](const auto& e) {
+        return e.second.npc && e.second.event_until > now_us && OwnerOf(e.second.id) == self_;
+    }));
+}
+
+void Sync::NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string_view name) {
+    const auto it = objects_.find(address);
+    if (it == objects_.end()) {
+        return;
+    }
+    Object& o = it->second;
+    if (o.reacts || (o.guard && IsGuardReaction(name))) {
+        o.took_over_at = now_us;
+        o.took_over_name = std::string(name);
     }
 }
 
@@ -783,13 +897,13 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             chests.emplace(s.address, std::move(now));
         }
         chest_animations_.swap(chests);
+        std::erase_if(chest_shown_, [this](const auto& e) { return !chest_animations_.contains(e.first); });
     }
     for (const Seen& s : seen) {
         if (s.hash != 0 && s.hash != kNoHash) {
             if (const auto t = taken_.find(s.hash); t != taken_.end() && RemovedWhenTaken(s.name)) {
                 // A chest has no near rule (issue 87): it is bound beside our
-                // Link too, and then goes at once (below), before our Link can
-                // open it a second time.
+                // Link too, and shown open (below, issue 195).
                 const bool chest = s.name.starts_with("Obj_TBox_");
                 const bool beside = player_ && Finite(*player_) && Finite(s.position) &&
                                     CoopGuard::Near(player_, s.position, kTakeNearM);
@@ -826,30 +940,78 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                         notes_.emplace_back(s.name + " " + key + ": opened in another game, shows open here");
                     } else {
                         notes_.emplace_back(s.name + " " + key +
-                                            (chest ? ": opened in another game, waiting to see it open here"
+                                            (chest ? ": opened in another game"
                                                    : ": taken or opened in another game, removed here"));
                     }
                 }
                 if (t->second.addresses.contains(s.address)) {
-                    // A chest may show itself open from the shared flag (issue
-                    // 87): left so; removed only if still closed after the wait.
-                    // Only while our Link is not beside it: an opening seen then
-                    // is its own AI's, not ours (a closed chest beside our Link
-                    // goes at once, so our Link cannot open it again).
+                    // A chest (issues 87, 195): shown open here, never removed
+                    // unless the play of its open idle does not take.
                     if (chest) {
                         Taking& tk = t->second;
                         if (tk.shown_open.contains(s.address)) {
                             continue;
                         }
-                        const auto b = tk.bound_animation.find(s.address);
-                        const bool changed = b != tk.bound_animation.end() && b->second != animation;
-                        if (open && changed && !beside) {
-                            tk.shown_open.insert(s.address);
-                            notes_.emplace_back(s.name + ": opened in another game, shows open here");
-                            continue;
-                        }
-                        if (!beside && now_us - tk.since_us < kChestOpenWaitUs) {
-                            continue;  // not yet: it may still open itself
+                        // Issue 195: never removed while it can be shown open.
+                        // Its AI does not react to the shared flag while loaded
+                        // (autotest logs: closed until our remove), so we play its
+                        // own open idle on it (Plays, only over its closed idle).
+                        if (!tk.show_failed.contains(s.address)) {
+                            if (animation == kChestOpenIdle && !chest_shown_.contains(s.address)) {
+                                // Made open already (its flag came before it
+                                // was made): left so (the old rule removed these too).
+                                tk.shown_open.insert(s.address);
+                                notes_.emplace_back(s.name + ": opened in another game, already shows open here");
+                                continue;
+                            }
+                            const auto shown = chest_shown_.find(s.address);
+                            if (shown == chest_shown_.end()) {
+                                chest_shown_.emplace(s.address, ChestShow{now_us, false});
+                                notes_.emplace_back(s.name + ": opened in another game, shown open here (" +
+                                                    kChestOpenIdle + " played)");
+                                continue;
+                            }
+                            if (animation == kChestOpenIdle) {
+                                if (!shown->second.took) {
+                                    shown->second.took = true;
+                                    notes_.emplace_back(s.name + ": opened in another game, shows open here");
+                                }
+                                continue;
+                            }
+                            if (animation.find(kChestClosedIdle) == std::string::npos && !animation.empty()) {
+                                // Its own AI plays another: the play is not
+                                // forced over that (PlayWish::only_over). Beside
+                                // our Link: ours opens it again here.
+                                chest_shown_.erase(shown);
+                                tk.shown_open.insert(s.address);
+                                if (beside) {
+                                    ++chests_opened_twice_;
+                                    notes_.emplace_back(s.name + ": opened here too after another game ('" +
+                                                        animation + "', its content may count twice; " +
+                                                        std::to_string(chests_opened_twice_) + " this session)");
+                                } else {
+                                    notes_.emplace_back(s.name + ": its own AI shows it open ('" + animation + "')");
+                                }
+                                continue;
+                            }
+                            if (shown->second.took) {
+                                // Its AI put its closed idle back after it showed
+                                // open (we play it again): the lid may flicker.
+                                const unsigned n = ++shown->second.flicks;
+                                if (n == 1 || n % 10 == 0) {
+                                    notes_.emplace_back(s.name + ": closed idle back after it showed open, " +
+                                                        std::to_string(n) + " walks (the lid may flicker)");
+                                }
+                                continue;
+                            }
+                            if (now_us - shown->second.since_us < kChestShowFailUs) {
+                                continue;  // still to take
+                            }
+                            // Never showed open: the play does not take here.
+                            // Removed as before, so its content is not given twice.
+                            chest_shown_.erase(shown);
+                            tk.show_failed.insert(s.address);
+                            notes_.emplace_back(s.name + ": could not be shown open here, removed");
                         }
                     }
                     // A falling floor or a web's parts (dungeon-switches, the
@@ -919,6 +1081,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             }
         }
         o.animation = s.animation;
+        o.slots = s.slots;
         // A breakable's life can no longer be read once it has died (a crate
         // at 0 for one frame, then its life object is gone): read that as 0.
         std::optional<proto::ObjectLife> life = s.life;
@@ -1049,6 +1212,20 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     r.reason = proto::RemoveReason::gone;
                     r.position = o.position;
                     send.emplace_back(r);
+                } else if (Object* sibling = HatchedSibling(self, o.position); sibling != nullptr) {
+                    // gohma-sync (issue 178, review of gohma-larva): the
+                    // larva came while this egg was still listed and was
+                    // matched to a sibling egg near it, which is still here.
+                    // This one is the egg that hatched: ended now, and the
+                    // sibling may match its own larva later.
+                    sibling->hatched = false;
+                    proto::ObjectRemove r;
+                    r.id = o.id;
+                    r.epoch = owner->second.epoch;
+                    r.reason = proto::RemoveReason::gone;
+                    r.position = o.position;
+                    send.emplace_back(r);
+                    notes_.emplace_back("hatched here (its sibling egg was matched first): " + o.name);
                 } else {
                     eggs_.push_back({o.id, owner->second.epoch, o.position, now_us});
                 }
@@ -1097,11 +1274,14 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.position = s->position;
         o.rotation = s->rotation;
         o.animation = s->animation;
+        o.slots = s->slots;
         o.seen_at = now_us;
         o.name = s->name;
         o.breakable = CoopWorld::IsBreakable(s->name);
         o.reacts = s->name.starts_with("Enemy_");
         o.fish = IsFish(s->name);
+        o.guard = IsGuard(s->name);
+        o.npc = s->name.starts_with("Npc_");
         o.first_position = s->position;
         if (s->animation) {
             o.rest_animation = s->animation->name;
@@ -1131,7 +1311,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 }
             }
         } else if (IsRolled(s->name)) {
-            if (decider_ == self) {
+            if (RollerFor(self, s->position, now_us) == self) {
                 // We roll this scene's enemies: share it.
                 o.id = {proto::ObjectKind::made, self, ++made_counter_};
                 owners_[o.id] = {self, 0};
@@ -1203,6 +1383,13 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 o.late_until = now_us + kHurtLateUs;
                 o.life = o.hurt_target;
                 ++hurt_missed_;
+                // A killing hit written as life 0 on an enemy of ours: it
+                // may stand on at 0 (issue 133, the big Skulltula hit from
+                // its armoured side, a wall Skulltula hit by a seed).
+                const auto own = owners_.find(o.id);
+                if (o.hurt_target <= 0 && own != owners_.end() && own->second.player == self) {
+                    DeadByWrite(o, own->second.epoch, now_us, send, "a hit our game did not take");
+                }
             }
             o.hurt_left = 0;
             o.hurt_until = 0;
@@ -1259,9 +1446,13 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             const std::optional<proto::Quat> rotation =
                 o.rotation ? std::optional(QuatOf(*o.rotation)) : std::nullopt;
             const std::string animation = o.animation ? o.animation->name : std::string();
+            std::string slots;  // issue 150: a boss's other slots' names
+            for (const proto::SlotAnimation& s : o.slots) {
+                slots += std::to_string(s.slot) + ":" + s.animation.name + ";";
+            }
             const bool changed = life != o.sent_life || Moved(o.position, o.sent_position) ||
                                  Turned(rotation, o.sent_rotation) ||
-                                 animation != o.sent_animation;
+                                 animation != o.sent_animation || slots != o.sent_slots;
             if (!o.sent_once || changed || now_us - o.sent_at >= kStillEveryUs) {
                 proto::ObjectSample sample;
                 sample.id = o.id;
@@ -1274,20 +1465,30 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 o.sent_position = o.position;
                 o.sent_rotation = rotation;
                 o.sent_animation = animation;
+                o.sent_slots = std::move(slots);
             }
         }
     }
 
     std::vector<proto::ObjectPresence> present;
     present.reserve(objects_.size());
+    std::vector<proto::FishLureEntry> fish;  // issue 151: FISH_LURE
     for (auto& [address, o] : objects_) {
+        if (o.dead_said) {
+            // Said dead (DeadByWrite): off our list, as the server takes it
+            // (still listed would read as a respawn and undo the kill).
+            continue;
+        }
         std::uint8_t flags = proto::object_presence::awake;
         if (o.fight_until > now_us) {
             flags |= proto::object_presence::in_fight;
         }
         // An enemy of ours coming at our Link (NoteDrift): a fight to the
         // server, so it stays with us.
-        if (o.reacts && player_) {
+        // Issue 191: a guard too, but only for a reaction to our Link
+        // (IsGuardReaction), never its patrol, and from further.
+        if ((o.reacts || o.guard) && player_) {
+            const float wake_m = o.reacts ? kWakeM : kGuardWakeM;
             const auto owner = owners_.find(o.id);
             if (owner != owners_.end() && owner->second.player == self) {
                 proto::Vec3 to{};
@@ -1303,7 +1504,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                         speed += o.velocity[i] * to[i] / d;
                     }
                 }
-                if (d <= kChaseReachM && speed >= kChaseSpeed) {
+                if (o.reacts && d <= kChaseReachM && speed >= kChaseSpeed) {
                     ChaseStep(o, now_us);
                 }
                 // Woken by our Link (issue 132): out of the animation it
@@ -1312,18 +1513,20 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 // flies near us is not held in a fight for good.
                 const std::string_view now_playing =
                     o.animation ? AnimationBase(o.animation->name) : std::string_view();
-                const bool resting = now_playing.empty() || o.rest_animation.empty() ||
-                                     now_playing == AnimationBase(o.rest_animation);
+                const bool resting =
+                    o.reacts ? now_playing.empty() || o.rest_animation.empty() ||
+                                   now_playing == AnimationBase(o.rest_animation)
+                             : !IsGuardReaction(now_playing);
                 if (resting) {
                     o.woke_at = 0;
                 } else if (o.woke_at == 0) {
                     o.woke_at = now_us;
                 }
-                if (wake_ && d <= kWakeM && o.woke_at != 0 && now_us - o.woke_at < kWakeOwnUs) {
+                if (wake_ && d <= wake_m && o.woke_at != 0 && now_us - o.woke_at < kWakeOwnUs) {
                     ChaseStep(o, now_us);
                 }
             } else if (wake_ && owner != owners_.end() && owner->second.player != 0 &&
-                       now_seen.contains(address) && Distance(o.position, *player_) <= kWakeM &&
+                       now_seen.contains(address) && Distance(o.position, *player_) <= wake_m &&
                        !o.received.empty() && now_us >= o.received.back().time &&
                        now_us - o.received.back().time <= kPoseStaleUs &&
                        !(o.react_at != 0 && now_us < o.react_at + kReactHoldUs)) {
@@ -1332,7 +1535,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 const auto& wanted = o.received.back().animation;
                 const bool differs = o.animation && !o.animation->name.empty() && wanted &&
                                      !wanted->name.empty() &&
-                                     AnimationBase(o.animation->name) != AnimationBase(wanted->name);
+                                     AnimationBase(o.animation->name) != AnimationBase(wanted->name) &&
+                                     (o.reacts || IsGuardReaction(o.animation->name));
                 // Or the Mover had to put the owner's one back lately (issue 157).
                 const bool put_back = o.took_over_at != 0 && now_us >= o.took_over_at &&
                                       now_us - o.took_over_at <= kWakeLatchUs;
@@ -1341,35 +1545,20 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 }
             }
         }
-        // Issue 151: a fish of ours at our lure (a bite, a fight, reeled
-        // in) or coming at it stays ours.
-        if (o.fish && !lures_.empty()) {
-            const auto owner = owners_.find(o.id);
-            if (owner != owners_.end() && owner->second.player == self) {
-                std::optional<float> best;
-                float speed = 0.0f;
-                for (const proto::Vec3& lure : lures_) {
-                    if (!Finite(lure)) {
-                        continue;
-                    }
-                    const float d = Distance(o.position, lure);
-                    if (best && d >= *best) {
-                        continue;
-                    }
-                    best = d;
-                    speed = 0.0f;
-                    if (d > 0.0f) {
-                        for (std::size_t i = 0; i < 3; ++i) {
-                            speed += o.velocity[i] * (lure[i] - o.position[i]) / d;
-                        }
-                    }
-                }
-                if (best && (*best <= kLureHookM || (*best <= kLureReachM && speed >= kLureSpeed))) {
-                    ChaseStep(o, now_us);
-                }
-            }
+        // Issue 151 (fishing-3): how near our lure is to each fish. The
+        // server gives the fish to the nearest lure's game (FISH_LURE); a
+        // fish is never flagged targeting or fighting, so no fight lock
+        // holds it in the wrong game.
+        if (o.fish) {
+            fish.push_back(FishClaim(o, self, now_us));
         }
-        if (o.chase_until > now_us) {
+        // Issue 200: our cutscene's (or talk's) townspeople are ours while it
+        // runs, so the other games see them move as they do here.
+        if (o.npc && in_event_ && player_ && Distance(o.position, *player_) <= kEventNpcM) {
+            o.event_until = now_us + kEventNpcKeepUs;
+            o.chase_until = std::max(o.chase_until, o.event_until);
+        }
+        if (o.chase_until > now_us && !o.fish) {
             flags |= proto::object_presence::targeting;
         }
         present.push_back({o.id, flags});
@@ -1419,6 +1608,74 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         send.emplace_back(std::move(g));
     }
     groups_sent_ = std::move(groups);
+
+    // Fishing (issue 151): after the presence, so the server knows the fish.
+    // On a change (at most every kFishEveryUs, a hook or bite at once) and
+    // again every kFishRepeatUs (the server takes a list older than 2.5 s as
+    // no lure); an empty list once, when the last fish went.
+    std::sort(fish.begin(), fish.end(),
+              [](const auto& a, const auto& b) { return a.id < b.id; });
+    if (fish.size() > proto::kMaxFishLures) {
+        fish.resize(proto::kMaxFishLures);
+    }
+    auto flags_of = [](const std::vector<proto::FishLureEntry>& v) {
+        std::vector<std::pair<proto::ObjectId, std::uint8_t>> out;
+        for (const auto& e : v) out.emplace_back(e.id, e.flags);
+        return out;
+    };
+    const bool changed = fish != fish_sent_;
+    const bool urgent = changed && flags_of(fish) != flags_of(fish_sent_);
+    const bool due = fish_at_ == 0 || now_us < fish_at_ || now_us - fish_at_ >= kFishEveryUs;
+    const bool repeat = fish_at_ == 0 || now_us < fish_at_ || now_us - fish_at_ >= kFishRepeatUs;
+    if ((!fish.empty() || !fish_sent_.empty()) &&
+        ((changed && (urgent || due)) || (!fish.empty() && (present_went || repeat)))) {
+        proto::FishLure m;
+        m.fish = fish;
+        send.emplace_back(std::move(m));
+        fish_sent_ = std::move(fish);
+        fish_at_ = now_us;
+    }
+}
+
+proto::FishLureEntry Sync::FishClaim(const Object& o, std::uint8_t self,
+                                     std::uint64_t now_us) const {
+    proto::FishLureEntry e;
+    e.id = o.id;
+    std::optional<float> best;
+    float speed = 0.0f;  // towards the nearest lure, metres a second
+    for (const proto::Vec3& lure : lures_) {
+        if (!Finite(lure)) {
+            continue;
+        }
+        const float d = Distance(o.position, lure);
+        if (best && d >= *best) {
+            continue;
+        }
+        best = d;
+        speed = 0.0f;
+        if (d > 0.0f) {
+            for (std::size_t i = 0; i < 3; ++i) {
+                speed += o.velocity[i] * (lure[i] - o.position[i]) / d;
+            }
+        }
+    }
+    if (!best || !(*best <= kLureReachM)) {
+        return e;  // no lure of ours in reach
+    }
+    // Rounded down to kFishStepCm, so a fish that hovers does not send a new
+    // list each walk.
+    const auto cm = static_cast<std::uint32_t>(*best * 100.0f);
+    e.distance_cm = static_cast<std::uint16_t>(
+        std::min<std::uint32_t>(cm - cm % kFishStepCm, proto::kFishLureNone - 1));
+    const auto owner = owners_.find(o.id);
+    const bool ours = owner != owners_.end() && owner->second.player == self;
+    if (ours && *best <= kLureHookM) {
+        e.flags |= proto::fish_lure::hooked;
+    } else if (ours ? speed >= kLureSpeed : o.chase_until > now_us) {
+        // Ours coming at our lure; a copy whose own AI swims at it (NoteDrift).
+        e.flags |= proto::fish_lure::drawn;
+    }
+    return e;
 }
 
 // Objects that left our walk. A break read just before it went (a pot's life
@@ -1483,8 +1740,8 @@ void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& g
             // Its life 0 alone does not reach a copy whose life cannot be
             // read (the big Skulltula), nor end a copy whose game did not
             // take the life we wrote. Rolled ones say it in Tick already.
-            const bool died = (o.life && *o.life <= 0) ||
-                              (o.animation && IsDeathAnimation(o.animation->name));
+            const bool died = !o.dead_said && ((o.life && *o.life <= 0) ||
+                                               (o.animation && IsDeathAnimation(o.animation->name)));
             // A fish of ours gone in our Link's hands: caught here (issue
             // 151), gone for everyone.
             const bool caught = o.fish && player_ && Distance(o.position, *player_) <= kCatchNearM;
@@ -1660,7 +1917,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 o->hit_at = 0;
                 o->react_at = 0;
                 o->sent_once = false;
-                if (before != 0 && o->reacts && ours_now_.size() < 64) {
+                if (before != 0 && (o->reacts || o->guard) && ours_now_.size() < 64) {
                     ours_now_.push_back(o->address);  // was a copy: its hold ends
                 }
             } else if (before == self) {
@@ -1681,7 +1938,9 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 const std::uint64_t t = sample->state.time.server_time_us;
                 if (o->received.empty() || t > o->received.back().time) {
                     o->received.push_back({t, *sample->state.position, sample->state.rotation,
-                                           sample->state.velocity, sample->state.animation});
+                                           sample->state.velocity, sample->state.animation,
+                                           sample->state.slots.value_or(
+                                               std::vector<proto::SlotAnimation>{})});
                     while (o->received.size() > kKeepSamples) {
                         o->received.pop_front();
                     }
@@ -1740,6 +1999,12 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             const std::int32_t have = o->hurt_until != 0 ? o->hurt_target : *o->life;
             Lower(*o, std::max(0, have - amount), now_us, writes, damage->player_number);
             o->fight_until = now_us + kFightUs;
+            if (!hurt_ && have - amount <= 0) {
+                // Hurt off: the life was written, not given as a hit.
+                const auto own = owners_.find(o->id);
+                DeadByWrite(*o, own != owners_.end() ? own->second.epoch : 0, now_us, send,
+                            "life written to 0");
+            }
         } else if (const auto* ask = std::get_if<proto::HandoverAsk>(&m)) {
             proto::HandoverState state;
             state.id = ask->id;
@@ -1757,9 +2022,31 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             if (o != nullptr && handed->state.life && o->life &&
                 handed->state.life->life < *o->life) {
                 write(*o, handed->state.life->life);
+                if (handed->state.life->life <= 0) {
+                    // Killed in the old owner's game as it came to us.
+                    DeadByWrite(*o, handed->epoch, now_us, send, "dead in the hand-over");
+                }
             }
         }
     }
+}
+
+void Sync::DeadByWrite(Object& o, std::uint16_t epoch, std::uint64_t now_us,
+                       std::vector<proto::Message>& send, const char* why) {
+    if (!o.reacts || o.dead_at != 0 || o.dead_said) {
+        return;
+    }
+    o.dead_at = now_us;  // deleted kDeadGraceUs later if still here (Removes)
+    if (o.id.kind == proto::ObjectKind::placed) {
+        proto::ObjectRemove r;
+        r.id = o.id;
+        r.epoch = epoch;
+        r.reason = proto::RemoveReason::dead;
+        r.position = o.position;
+        send.emplace_back(r);
+        o.dead_said = true;
+    }
+    notes_.emplace_back(std::string("dead by ") + why + ", said to the others: " + o.name);
 }
 
 void Sync::Lower(Object& o, std::int32_t life, std::uint64_t now_us,
@@ -1868,6 +2155,11 @@ float FrameAfter(float frame, float rate, std::int64_t age_us) {
 }
 
 void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
+    for (const auto& [address, since] : chest_shown_) {
+        // Issue 195: a chest opened elsewhere shows its open idle; played
+        // again only over its closed idle (sample 1: its frame is set once).
+        out.push_back({address, kChestOpenIdle, 1.0f, 0.0f, 1, 0, kChestClosedIdle});
+    }
     for (const auto& [address, o] : objects_) {
         if (o.received.empty() || now_us < o.received.back().time ||
             now_us - o.received.back().time > kPoseStaleUs) {
@@ -1895,7 +2187,27 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
             static_cast<std::int64_t>(now_us - last.time) - static_cast<std::int64_t>(kBehindUs),
             -static_cast<std::int64_t>(kBehindUs), static_cast<std::int64_t>(kExtrapolateUs));
         out.push_back({address, wanted->name, rate, FrameAfter(wanted->frame, rate, age),
-                       last.time});
+                       last.time, 0, {}});
+        // Issue 150: a boss's other slots (Gohma's eye guard and eyelids,
+        // whose AS events open and close the eye's guard). Without them
+        // each game's copy kept its own AI's guard: the eye stood open for
+        // one player and guarded for the other.
+        for (const proto::SlotAnimation& s : last.slots) {
+            if (s.animation.name.empty()) {
+                continue;
+            }
+            const float r = std::isfinite(s.animation.rate) && s.animation.rate > 0.0f
+                                ? s.animation.rate
+                                : 1.0f;
+            out.push_back({address, s.animation.name, r, FrameAfter(s.animation.frame, r, age),
+                           last.time, s.slot, {}});
+        }
+    }
+}
+
+void Sync::ChestPlayHeld(std::uint64_t address, std::uint64_t now_us) {
+    if (const auto it = chest_shown_.find(address); it != chest_shown_.end() && !it->second.took) {
+        it->second.since_us = now_us;
     }
 }
 

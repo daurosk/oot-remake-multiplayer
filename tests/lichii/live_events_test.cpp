@@ -1,10 +1,12 @@
 // Tests for starting another player's gimmick event here (lichii/hook/coop_live_events.cpp).
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>

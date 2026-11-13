@@ -1,0 +1,18 @@
+# ocarina-lazy, B's part: takes out its own Ocarina (DLEFT), closes the first-use note (A),
+# plays one note (L) and puts it away (B B), before A's song starts.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_OCARINA_SOUND=1
+mark b-start
+wait 900               # the scene shows (black until ~10 s after load)
+press DLEFT 12
+wait 240
+press A 12
+wait 120
+mark b-ready
+hold L 30
+wait 60
+mark b-note
+press B 12
+wait 30
+press B 12
+wait 60
+mark b-end

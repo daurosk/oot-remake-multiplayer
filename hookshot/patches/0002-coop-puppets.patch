@@ -1,0 +1,194 @@
+From ac22975ef1765aec43ac8d8afe9b4415eb00cf3b Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Thu, 12 Nov 2026 07:28:40 -0900
+Subject: [PATCH] Co-op puppets: null-pointer reads give 0, as on the emulator
+
+A co-op puppet is a stripped copy of Link; the game's code for it reads
+through pointers of components the puppet does not have. On the emulator
+those reads give 0 and the code takes its own way out; on Hookshot they
+crashed the game (guest 0x20 in the create, guest 0x7d8 in the update).
+
+nx2/coop_puppet_guard.py: main+0x4b8240 leaves through its own exit when
+the actor has no component in slot 10 (build e0f3ccfa only, words
+checked). The first time, it also calls host/coop_null_page.c: the guest's
+first MB is committed read-only with a guard bit, so a null-pointer read
+gives 0 from then on and is counted in the log (the first 32 with where
+from, then a count a minute); a write still faults. HOS_COOP_NULL_READS=0
+leaves it as shipped. Linux maps the whole window already: only a log
+line there. Called from nx2/coop_hooks.py install().
+---
+ host/coop_null_page.c    | 84 ++++++++++++++++++++++++++++++++++++++++
+ nx2/coop_hooks.py        |  2 +
+ nx2/coop_puppet_guard.py | 61 +++++++++++++++++++++++++++++
+ 3 files changed, 147 insertions(+)
+ create mode 100644 host/coop_null_page.c
+ create mode 100644 nx2/coop_puppet_guard.py
+
+diff --git a/host/coop_null_page.c b/host/coop_null_page.c
+new file mode 100644
+index 00000000..e64d21c5
+--- /dev/null
++++ b/host/coop_null_page.c
+@@ -0,0 +1,84 @@
++/* (oot-remake-multiplayer's patch 0002, nx2/coop_puppet_guard.py) Null-pointer reads give 0 once a co-op puppet exists.
++
++   On the emulator a guest read of an unmapped page gives 0, and the game's code for a co-op puppet (a stripped copy of
++   Link, CoopPuppet_*) relies on that without knowing it: it follows pointers of components the puppet does not have,
++   reads 0 and takes its own "nothing there" branch. Hookshot's guest window leaves the first MB unmapped on purpose
++   (mkw_glue.c commit_on_touch: a null pointer is the game's own fault), so each such read crashed the game ("guest 0x20",
++   "guest 0x7d8").
++
++   hos_coop_null_page() is called the first time nx2/coop_puppet_guard.py meets a puppet (so never in a game without
++   co-op puppets). It commits the guest's first MB read-only with PAGE_GUARD: a read there gives 0, as on the emulator,
++   and a write still faults and is reported as a crash. Only guest memory, only that MB. The guard bit makes each page's
++   first read since the last minute raise STATUS_GUARD_PAGE_VIOLATION once: the handler counts it, logs the first 32 (host
++   code as hookshot.exe+offset, guest address), and lets the read go on. Once a minute a thread logs the minute's count and
++   puts the guard bits back, so null reads the game makes stay visible in the log.
++   HOS_COOP_NULL_READS=0: left as shipped (the puppet's update then crashes).
++   Linux: the whole guest window is mapped readable already (hos_main.c), so nothing changes there. */
++#include "hos.h"
++#include <stdlib.h>
++
++#ifdef _WIN32
++#define WIN32_LEAN_AND_MEAN
++#include <windows.h>
++
++enum { COOP_NULL_SIZE = 0x100000, COOP_NULL_SAID = 32 };
++static volatile LONG coop_null_hits, coop_null_minute;
++
++static LONG CALLBACK coop_null_read(EXCEPTION_POINTERS *info) {
++    const EXCEPTION_RECORD *rec = info->ExceptionRecord;
++    if (rec->ExceptionCode != STATUS_GUARD_PAGE_VIOLATION || rec->NumberParameters < 2) return EXCEPTION_CONTINUE_SEARCH;
++    const uint8_t *p = (const uint8_t *)rec->ExceptionInformation[1];
++    if (p < (const uint8_t *)GP(0) || p >= (const uint8_t *)GP(COOP_NULL_SIZE)) return EXCEPTION_CONTINUE_SEARCH;
++    InterlockedIncrement(&coop_null_minute);
++    if (InterlockedIncrement(&coop_null_hits) <= COOP_NULL_SAID)
++        hos_log("coop: null read: guest %#llx from hookshot.exe+%#llx (%s; reads 0, as on the emulator)",
++                (unsigned long long)(p - (const uint8_t *)GP(0)),
++                (unsigned long long)((uintptr_t)rec->ExceptionAddress - (uintptr_t)GetModuleHandleW(NULL)),
++                rec->ExceptionInformation[0] ? "a write: it faults next" : "a read");
++    return EXCEPTION_CONTINUE_EXECUTION;   /* (the guard bit is off for that page now: the access runs again) */
++}
++
++static DWORD WINAPI coop_null_rearm(LPVOID unused) {
++    (void)unused;
++    for (;;) {
++        Sleep(60000);
++        const LONG n = InterlockedExchange(&coop_null_minute, 0);
++        if (n) hos_log("coop: null reads in the last minute: %ld page(s) first touched (%ld since the first puppet)", n,
++                       coop_null_hits);
++        DWORD was;
++        VirtualProtect(GP(0), COOP_NULL_SIZE, PAGE_READONLY | PAGE_GUARD, &was);
++    }
++    return 0;
++}
++
++void hos_coop_null_page(void) {
++    static volatile LONG done;
++    if (done || InterlockedExchange(&done, 1)) return;
++    const char *v = getenv("HOS_COOP_NULL_READS");
++    if (v && v[0] == '0' && !v[1]) {
++        hos_log("coop: null-pointer reads fault (HOS_COOP_NULL_READS=0)");
++        return;
++    }
++    MEMORY_BASIC_INFORMATION mbi;
++    if (VirtualQuery(GP(0), &mbi, sizeof mbi) && mbi.State == MEM_COMMIT) {
++        hos_log("coop: the guest's first MB is mapped already (HOS_LARGE_PAGES?): null-pointer reads give 0, not counted");
++        return;
++    }
++    AddVectoredExceptionHandler(1, coop_null_read);
++    if (!VirtualAlloc(GP(0), COOP_NULL_SIZE, MEM_COMMIT, PAGE_READONLY | PAGE_GUARD)) {
++        hos_log("coop: the guest's first MB could not be mapped (error %lu): null-pointer reads still fault",
++                (unsigned long)GetLastError());
++        return;
++    }
++    CloseHandle(CreateThread(NULL, 0, coop_null_rearm, NULL, 0, NULL));
++    hos_log("coop: the guest's first MB reads as zeros from now on (null-pointer reads give 0, as on the emulator; "
++            "counted in this log; HOS_COOP_NULL_READS=0: off)");
++}
++#else
++void hos_coop_null_page(void) {
++    static int done;
++    if (done) return;
++    done = 1;
++    hos_log("coop: the guest window is readable whole on this system: null-pointer reads give 0 already");
++}
++#endif
+diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
+index a3aa4a38..9648af65 100644
+--- a/nx2/coop_hooks.py
++++ b/nx2/coop_hooks.py
+@@ -58,4 +58,6 @@ def install(lifter, img, build_id):
+     _add(lifter, MAIN + HOLD_CALL + 4, HOLD_TEXT)
+     print("co-op hooks: frame hook at main+%#x and main+%#x, AI hold at main+%#x" % (
+         FRAME_SITES[0][0], FRAME_SITES[1][0], HOLD_CALL + 4))
++    import coop_puppet_guard   # (patch 0002: the other players' Link)
++    coop_puppet_guard.install(lifter, img, build_id)
+     return len(FRAME_SITES) + 1
+diff --git a/nx2/coop_puppet_guard.py b/nx2/coop_puppet_guard.py
+new file mode 100644
+index 00000000..a1055fc3
+--- /dev/null
++++ b/nx2/coop_puppet_guard.py
+@@ -0,0 +1,61 @@
++"""Co-op's guard for the other players' Link (oot-remake-multiplayer's patch 0002, its docs/hookshot.md "Link puppets").
++
++A co-op puppet is a stripped copy of Link (CoopPuppet_*: the pack keeps Link's model, animation and a few other
++components, not his input, camera, physics or life). Making one on Hookshot crashed the game in its create, on
++BaseProcCreateAndDeleteThread: "exception 0xc0000005 (read ..., guest 0x20)", guest lr main+0x4b8338.
++
++main+0x4b8240 (called from main+0x10aceb0 when its mode is 0) sets ns_tex_mtx0 on the model's Mt_Hairs, then marks the
++entries of another component dirty: x8 = [actor+0x270] (the actor's component table), [x8+0x50] (slot 10), [+0x20],
++[+0x1c8], and when that is 0 it skips the marking (cbz to main+0x4b83b8). The puppet has no component in slot 10, so the
++read of [0+0x20] faults. On the emulator unmapped guest reads give 0, so there the chain ends in that same cbz and the
++create goes on; on Hookshot a guest read is a host read and it crashes.
++
++The guard: C after `ldr x8, [x8, #0x50]` (main+0x4b833c): when the component is missing, go to main+0x4b83b8, the
++function's own way out for "nothing to mark" (what the emulator does); the same when that component's +0x20 is 0. The first few are logged. Link (who has the
++component) runs as shipped.
++
++More of the puppet's create and update reads through such missing pointers ("guest 0x7d8" next, on BaseProcExecutor1).
++So the first time the guard meets such a puppet it also calls host/coop_null_page.c (once): the guest's first MB is
++committed read-only, and a read through a null pointer gives 0 from then on, as on the emulator (HOS_COOP_NULL_READS=0:
++off); such reads are counted in the log. Only a game that made a co-op puppet changes; the game alone runs as shipped.
++
++The words are checked and the build id; another game version leaves the guard out.
++"""
++
++MAIN = 0x80020000
++BUILD_ID = "e0f3ccfaf50065ae4ea01eb5aeb13b1a45da3348"
++SITE = 0x4b833c           # ldr x8, [x8, #0x50]
++SKIP = 0x4b83b8           # the epilogue the function's cbz at main+0x4b8348 goes to
++WORDS = ((0x4b8338, 0xf9413aa8),   # ldr x8, [x21, #0x270]
++         (0x4b833c, 0xf9402908),   # ldr x8, [x8, #0x50]
++         (0x4b8340, 0xf9401108),   # ldr x8, [x8, #0x20]
++         (0x4b8344, 0xf940e508),   # ldr x8, [x8, #0x1c8]
++         (0x4b8348, 0xb4000388))   # cbz x8, main+0x4b83b8
++THEN = 0x4b8340           # ldr x8, [x8, #0x20]: its +0x20 missing too ends the same way
++TEXT_THEN = "if (!c->x[8]) goto L_%x;   /* (nx2/coop_puppet_guard.py) */" % (MAIN + SKIP)
++TEXT = ("if (!c->x[8]) { extern void hos_log(const char *fmt, ...); extern void hos_coop_null_page(void); "
++        "static volatile long said; hos_coop_null_page(); "
++        "if (said++ < 8) hos_log(\"coop: puppet guard: actor %%#llx has no component in slot 10: its hair's marks \"\n"
++        "\"skipped, as on the emulator (nx2/coop_puppet_guard.py)\", (unsigned long long)c->x[21]); "
++        "goto L_%x; }   /* (nx2/coop_puppet_guard.py) */") % (MAIN + SKIP)
++
++
++def install(lifter, img, build_id):
++    """The guard into lifter.after; nothing when the build or a word differs. Returns 1 when it went in."""
++    if build_id != BUILD_ID:
++        print("co-op puppet guard: build %s is not %s: left out" % (build_id or "?", BUILD_ID))
++        return 0
++    for off, want in WORDS:
++        try:
++            have = img.word(MAIN + off)
++        except Exception:
++            have = None
++        if have != want:
++            print("co-op puppet guard: main+%#x holds %s, not %08x: left out" % (
++                off, "?" if have is None else "%08x" % have, want))
++            return 0
++    pc = MAIN + SITE
++    lifter.after[pc] = (lifter.after[pc] + "\n" if pc in lifter.after else "") + TEXT
++    print("co-op puppet guard: at main+%#x (a missing component skips to main+%#x); null reads give 0 from the "
++          "first puppet on" % (SITE, SKIP))
++    return 1

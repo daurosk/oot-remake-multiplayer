@@ -123,7 +123,7 @@ TEST_CASE("boss: intro, fight and the boss's death") {
     Sync s;
     s.Tick(At("ForestTemple", Forest().arrive), 1 * kS);
     auto a = s.Tick(At("ForestTemple", Forest().arrive, true), 2 * kS);
-    CHECK(Has(a, proto::BossState::intro_start));
+    CHECK_FALSE(Has(a, proto::BossState::intro_start));  // no shut-in flag here: past the door at its end
     CHECK(s.phase() == Sync::Phase::intro);
     a = s.Tick(At("ForestTemple", Forest().arrive, false), 20 * kS);
     CHECK(Has(a, proto::BossState::intro_end));
@@ -170,7 +170,8 @@ TEST_CASE("boss: the heartbeat says how far we are, so a late joiner moves in on
     CHECK(States(out) == std::vector{proto::BossState::in_room});  // only near: in_room
     a.Tick(At("ForestTemple", Forest().arrive, true), 4 * kS);      // the intro starts
     out = a.Tick(At("ForestTemple", Forest().arrive, true), 6 * kS);
-    CHECK(States(out) == std::vector{proto::BossState::intro_start});
+    // The Forest Temple has no shut-in flag: past the door only once the intro is over (issue 148).
+    CHECK(States(out) == std::vector{proto::BossState::in_room});
     a.Tick(At("ForestTemple", Forest().arrive, false), 7 * kS);     // the fight
     out = a.Tick(At("ForestTemple", Forest().arrive, false), 9 * kS);
     CHECK(States(out) == std::vector{proto::BossState::intro_end});
@@ -267,7 +268,8 @@ TEST_CASE("boss: our intro is skipped once another player's intro is over") {
 TEST_CASE("boss: a pulled player who arrives in an event treats it as the intro") {
     Sync s;
     s.Receive(From(1, Forest(), proto::BossState::intro_end));
-    auto a = s.Tick(At("ForestTemple", Forest().arrive, true, 2), 1 * kS);
+    REQUIRE(s.Tick(At("ForestTemple", kForestEntrance, false, 2), 1 * kS).pull);
+    auto a = s.Tick(At("ForestTemple", Forest().arrive, true, 2), 1 * kS + 500'000);
     CHECK(Has(a, proto::BossState::in_room));
     CHECK(Has(a, proto::BossState::intro_start));
     CHECK(a.skip_intro);
@@ -453,8 +455,9 @@ TEST_CASE("boss: an event right after a skipped intro is not the boss's death (i
     Sync t;
     t.Tick(At("ForestTemple", Forest().arrive), 1 * kS);
     t.Tick(At("ForestTemple", Forest().arrive, true), 2 * kS);
-    t.Tick(At("ForestTemple", Forest().arrive, false), 3 * kS);
-    a = t.Tick(At("ForestTemple", Forest().arrive, true), 3 * kS + Sync::kMinFightUs);
+    t.Tick(At("ForestTemple", Forest().arrive, false), 6 * kS);  // a 4 s intro (kMinIntroUs is 3 s)
+    REQUIRE(t.phase() == Sync::Phase::fight);
+    a = t.Tick(At("ForestTemple", Forest().arrive, true), 6 * kS + Sync::kMinFightUs);
     CHECK(Has(a, proto::BossState::defeated));
 }
 
@@ -495,4 +498,173 @@ TEST_CASE("boss: the boss's bodies are the boss actor, and Koume and Kotake for 
     REQUIRE(twinrova != nullptr);
     CHECK(CoopBoss::Bodies(*twinrova).size() == 3);
     CHECK(CoopBoss::Bodies(Forest()).size() == 1);
+}
+
+// Issue 148: the move-in waits until the leader is really in the boss room.
+namespace {
+
+const CoopBoss::Room& Deku() {
+    return *CoopBoss::RoomOfScene("InsideTheDekuTree");
+}
+// Inside Gohma's circle but on the way to its door (the circle takes that in).
+constexpr Vec kDekuOnTheWay{7.5f, 47.0f, 97.0f};
+// Elsewhere in the Deku Tree: below the room's height band.
+constexpr Vec kDekuElsewhere{0.0f, 0.0f, 0.0f};
+
+Local DekuAt(Vec p, bool event, std::optional<bool> shut_in, std::uint8_t self) {
+    Local l = At("InsideTheDekuTree", p, event, self);
+    l.shut_in = shut_in;
+    return l;
+}
+
+// A's messages as B hears them.
+void Relay(const Actions& from_a, Sync& b) {
+    for (auto m : from_a.send) {
+        m.player_number = 1;
+        b.Receive(m);
+    }
+}
+
+bool Logged(const Actions& a, std::string_view text) {
+    for (const auto& line : a.log) {
+        if (line.find(text) != std::string::npos) return true;
+    }
+    return false;
+}
+
+bool Committed(const Actions& a) {
+    return Has(a, proto::BossState::intro_start) || Has(a, proto::BossState::intro_end);
+}
+
+} // namespace
+
+TEST_CASE("boss: the Deku Tree has a shut-in flag, the other rooms none") {
+    CHECK(CoopBoss::ShutInFlag(Deku()) == "InsideTheDekuTree_BossArea_ShutIn");
+    for (const auto& r : CoopBoss::Rooms()) {
+        if (r.index != 0) CHECK(CoopBoss::ShutInFlag(r).empty());
+    }
+}
+
+TEST_CASE("boss: A on the way to Gohma's door moves no one, A shut in moves B (issue 148)") {
+    Sync a;
+    Sync b;
+    REQUIRE(CoopBoss::Inside(Deku(), kDekuOnTheWay));
+    REQUIRE_FALSE(CoopBoss::Inside(Deku(), kDekuElsewhere));
+    std::uint64_t t = 1 * kS;
+    const auto step = [&](Vec pa, bool event, bool shut) {
+        Actions out = a.Tick(DekuAt(pa, event, shut, 1), t);
+        Relay(out, b);
+        Actions bo = b.Tick(DekuAt(kDekuElsewhere, false, false, 2), t);
+        t += 250'000;
+        return std::pair{std::move(out), std::move(bo)};
+    };
+    // A walks into the circle on the way; the door opening is an event of 5 s (longer than
+    // kMinIntroUs) with A still outside: the game's flag says A is not shut in.
+    for (int i = 0; i < 8; ++i) CHECK_FALSE(step(kDekuOnTheWay, false, false).second.pull);
+    for (int i = 0; i < 20; ++i) CHECK_FALSE(step(kDekuOnTheWay, true, false).second.pull);
+    {
+        const auto [out, bo] = step(kDekuOnTheWay, false, false);
+        CHECK_FALSE(bo.pull);
+        CHECK_FALSE(Committed(out));
+        CHECK(Logged(out, "not the intro"));
+    }
+    CHECK(a.phase() == Sync::Phase::waiting);
+    // Text boxes or Navi on the way: still nothing; 20 s of heartbeats say only in_room.
+    for (int i = 0; i < 80; ++i) {
+        const auto [out, bo] = step(kDekuOnTheWay, i % 10 < 3, false);
+        CHECK_FALSE(bo.pull);
+        CHECK_FALSE(Committed(out));
+    }
+    // A reaches the door's cutscene: the door shuts behind A and the game sets ShutIn. Now B moves in.
+    bool pulled = false;
+    bool said = false;
+    for (int i = 0; i < 8 && !pulled; ++i) {
+        const auto [out, bo] = step(Deku().arrive, true, true);
+        said = said || (Has(out, proto::BossState::intro_start) && Logged(out, "past the door (shut in)"));
+        CHECK_FALSE(out.pull);  // A, in the room, is never moved
+        pulled = bo.pull.has_value();
+    }
+    CHECK(said);
+    CHECK(pulled);
+}
+
+TEST_CASE("boss: in the Deku Tree an event that ends with A not shut in moves no one (issue 148)") {
+    Sync a;
+    a.Tick(DekuAt(kDekuOnTheWay, false, false, 1), 1 * kS);
+    a.Tick(DekuAt(kDekuOnTheWay, true, false, 1), 2 * kS);
+    auto out = a.Tick(DekuAt(kDekuOnTheWay, false, false, 1), 20 * kS);  // long, but not shut in
+    CHECK_FALSE(Committed(out));
+    CHECK(a.phase() == Sync::Phase::waiting);
+    // Still not shut in 10 s later: the fight counts here, but nobody is moved in.
+    out = a.Tick(DekuAt(kDekuOnTheWay, false, false, 1), 31 * kS);
+    CHECK(a.phase() == Sync::Phase::fight);
+    CHECK_FALSE(Committed(out));
+    // The intro seen before (no event) and the flag set: past the door, the fight is on.
+    out = a.Tick(DekuAt(Deku().arrive, false, true, 1), 32 * kS);
+    CHECK(Has(out, proto::BossState::intro_end));
+    out = a.Tick(DekuAt(Deku().arrive, false, true, 1), 35 * kS);
+    CHECK(States(out) == std::vector{proto::BossState::intro_end});
+}
+
+TEST_CASE("boss: with no shut-in flag a short event near the room is not the intro (issue 148)") {
+    Sync a;
+    a.Tick(At("ForestTemple", Forest().arrive), 1 * kS);
+    a.Tick(At("ForestTemple", Forest().arrive, true), 2 * kS);
+    auto out = a.Tick(At("ForestTemple", Forest().arrive, false), 3 * kS);  // 1 s: a door, a text
+    CHECK_FALSE(Committed(out));
+    CHECK(a.phase() == Sync::Phase::waiting);
+    a.Tick(At("ForestTemple", Forest().arrive, true), 4 * kS);
+    out = a.Tick(At("ForestTemple", Forest().arrive, false), 12 * kS);  // the real intro
+    CHECK(Has(out, proto::BossState::intro_end));
+    CHECK(a.phase() == Sync::Phase::fight);
+}
+
+TEST_CASE("boss: shut in while the intro runs says intro_start, then intro_end at its end") {
+    Sync a;
+    a.Tick(DekuAt(Deku().arrive, false, false, 1), 1 * kS);
+    auto out = a.Tick(DekuAt(Deku().arrive, true, false, 1), 2 * kS);
+    CHECK_FALSE(Committed(out));
+    out = a.Tick(DekuAt(Deku().arrive, true, true, 1), 3 * kS);  // the door shuts in the cutscene
+    CHECK(Has(out, proto::BossState::intro_start));
+    out = a.Tick(DekuAt(Deku().arrive, true, true, 1), 5 * kS + 1);
+    CHECK(States(out) == std::vector{proto::BossState::intro_start});  // the heartbeat
+    out = a.Tick(DekuAt(Deku().arrive, false, true, 1), 20 * kS);
+    CHECK(Has(out, proto::BossState::intro_end));
+    CHECK_FALSE(Has(out, proto::BossState::intro_start));
+    CHECK(a.phase() == Sync::Phase::fight);
+}
+
+TEST_CASE("boss: a real intro long after an event that was not the intro is the intro, not the death") {
+    // Review of issue 148: the rejected event started the 10 s no-intro wait again; the real
+    // intro 12 s later came in the no-intro fight and was taken for the boss's death.
+    Sync a;
+    a.Tick(Alive(Forest().arrive, false, true, 1), 1 * kS);
+    a.Tick(Alive(Forest().arrive, true, true, 1), 2 * kS);
+    a.Tick(Alive(Forest().arrive, false, true, 1), 3 * kS);  // 1 s: a door, a text
+    REQUIRE(a.phase() == Sync::Phase::waiting);
+    a.Tick(Alive(Forest().arrive, false, true, 1), 14 * kS);  // no intro for 10 s
+    REQUIRE(a.phase() == Sync::Phase::fight);
+    auto out = a.Tick(Alive(Forest().arrive, true, true, 1), 15 * kS);  // the real intro, 16 s long
+    CHECK(a.phase() == Sync::Phase::intro);
+    for (std::uint64_t t = 16; t < 31; ++t) {
+        out = a.Tick(Alive(Forest().arrive, true, true, 1), t * kS);
+        CHECK_FALSE(Has(out, proto::BossState::defeated));
+    }
+    out = a.Tick(Alive(Forest().arrive, false, true, 1), 31 * kS);
+    CHECK(Has(out, proto::BossState::intro_end));  // past the door: the others are moved in
+    CHECK_FALSE(Has(out, proto::BossState::defeated));
+    CHECK(a.phase() == Sync::Phase::fight);
+    // Now the fight's events are the fight's again: the boss gone in one is its death.
+    a.Tick(Alive(Forest().arrive, true, true, 1), 50 * kS);
+    out = a.Tick(Alive(Forest().arrive, true, false, 1), 52 * kS);
+    CHECK(Has(out, proto::BossState::defeated));
+}
+
+TEST_CASE("boss: in a no-intro fight nobody is past the door for, the boss dead in an event is its death") {
+    Sync a;
+    a.Tick(Alive(Forest().arrive, false, true, 1), 1 * kS);
+    a.Tick(Alive(Forest().arrive, false, true, 1), 12 * kS);
+    REQUIRE(a.phase() == Sync::Phase::fight);
+    auto out = a.Tick(Alive(Forest().arrive, true, false, 1), 40 * kS);
+    CHECK(Has(out, proto::BossState::defeated));
 }

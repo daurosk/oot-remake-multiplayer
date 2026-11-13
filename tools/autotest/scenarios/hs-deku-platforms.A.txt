@@ -1,0 +1,68 @@
+# hs-deku-platforms (Hookshot and emulator, issue #176): deku-platforms with the compass room's timed platforms (event InsideTheDekuTree_Gimmick_RoomD_PlatformUp) not yet played.
+# bigrun (2026-11-12): INCONCLUSIVE, both games in the Deku Tree but no "our game started the event" line:
+# the kit saves are past the Deku Tree. The Hookshot pairs' baselines have these set too (save_flags.py get
+# on hookshot-A, 2026-11-12: all 1): HavePlayedEvent.InsideTheDekuTree_Gimmick_RoomD_PlatformUp (0x50cbaf1b).
+# BEFORE the run (games closed; a Hookshot pair needs save_flags.py from save-flags-hookshot), for both
+# games of the pair (emulator kits: <kit>\autotest-save\*\*\slot_0*\progress.sav), and put them back
+# from <pair>\autotest-save-backup afterwards (all three hs-deku-* in one run: clear once with
+# bool:0x50cbaf1b=0 bool:0x429126ef=0 bool:0xfcbd74e3=0 bool:0x8d2b85ef=0 bool:0x392a228a=0, restore once):
+#   ..\oot-remake-recomp\.venv\Scripts\python.exe tools\autotest\save_flags.py set <pair>\autotest-save\slot_0*\progress.sav bool:0x50cbaf1b=0
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-deku-platforms (emulator: -Scenario deku-platforms)
+# Pass: B "our game started the event InsideTheDekuTree_Gimmick_RoomD_PlatformUp: sent to the others"; A "player 2
+#   started the event InsideTheDekuTree_Gimmick_RoomD_PlatformUp in this scene" and "starting the event ... here"
+#   within about 1 s; shots up1/up2: the lifts up in both games at once.
+# deku-platforms's own notes follow.
+# deku-platforms (deku-dungeon-2, #176 and Caleb's 2026-11-12 test: the timed platforms came in
+# the other game only after the presser's cutscene, then went out of step). The compass room
+# (InsideTheDekuTree room D): plate Obj_StepSwitch_A_02 d22a395cb75bc832 at -17.5 119.6 -4.9
+# (timed), lifts Obj_InsideTheDekuTree_ElevatorLift_A_01/_02/_03 at -25.4 114.4 -1.6, -29.9 114.4
+# 3.2, -32.7 114.0 -2.0, the event's asker at -22.6 122.6 -3.8. B steps on the plate; A stands by
+# the lifts (8 m from the asker) and only watches.
+# Expect:
+#  - B "coop: dungeon: our game started the event InsideTheDekuTree_Gimmick_RoomD_PlatformUp: sent to
+#    the others" while B's cutscene runs.
+#  - A "coop: dungeon: player 2 started the event InsideTheDekuTree_Gimmick_RoomD_PlatformUp in this
+#    scene", then "starting the event ... here" and "live event ... asked of the game (result N)"
+#    within about 1 s of B's line (not after B's cutscene ended), then A's own "our game started the
+#    event" line is NOT sent back as a new start in B (B: no "starting the event" line).
+#  - Shots "up1"/"up2": the lifts up in both games at the same time; "down": down in both at about
+#    the same time (the lifts' own timer, StopTime/SlowDownTime, started together).
+#  - Probe lines "gimmick probe: ... ElevatorLift" / "StepSwitch_A_02" in both logs: keep them if the
+#    lifts are out of step (the words for a later lift-state share).
+#  - If A shows "FindRunningEvent" found nothing (B has no "our game started" line): the name is not
+#    in the event or session blocks; send B's log tail.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_GIMMICK_PROBE=1
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 240
+place -28.0 115.2 6.5
+wait 240
+mark placed
+toward -29.9 3.2 6      # face the lifts
+press ZL 10
+wait 600
+mark ready
+wait 300
+mark up1
+wait 300
+mark up2
+wait 900
+mark mid
+wait 1500
+mark down
+wait 600
+mark late

@@ -17,11 +17,17 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "coop_ocarina.h"
+#include "coop_snap.h"
+#include "coop_puppet_sound.h"
 
 namespace coop::protocol {
 struct Equipment;
@@ -259,6 +265,11 @@ struct Target {
     // PLAYER_EQUIP's drawn bits: bit i set when the player's equipment slot i
     // is in hand (sword out, shield on the arm). Unset: not known.
     std::optional<std::uint8_t> drawn;
+    // The player's colour, 0xRRGGBB (coop_colors.h): the puppet is tinted
+    // with it while live. Unset: no tint.
+    std::optional<std::uint32_t> color;
+    // The player's newest OCARINA_NOTE, played on the puppet (issue 152).
+    CoopPuppetSound::Wanted ocarina;
 };
 
 struct Input {
@@ -296,6 +307,27 @@ public:
     // Move each puppet with the game's own setter as well (addr::kSetMatrix),
     // once a frame: for an actor with a physics body, such as the fairy.
     void SetMatrixCall(bool on) { matrix_call_ = on; }
+    // Tint each live puppet in its target's colour with this strength (the
+    // alpha of the game's hit-flash colour, coop_colors.h); 0, the default,
+    // writes no colour (the fairies' director).
+    void SetTint(float strength) { tint_ = strength; }
+    // Tunic puppets (CoopPuppet_<Age>_<Colour>) found not to work: the mod is
+    // a pack from before the colours (two create timeouts of that actor while
+    // no tunic puppet has spawned yet), or one spawned without a Player_ model
+    // (kTunicModelCheckMs). The planner uses the plain puppet for these. Any
+    // thread.
+    std::vector<std::string> FailedTunics() const {
+        std::lock_guard lock(tunic_mutex_);
+        return {tunic_failed_.begin(), tunic_failed_.end()};
+    }
+    // How long after a tunic puppet spawns its model is checked.
+    static constexpr std::uint64_t kTunicModelCheckMs = 3000;
+    // CoopPuppet_<Age>_<Colour>, not the plain CoopPuppet_<Age>.
+    static bool IsTunicActor(std::string_view name) {
+        constexpr std::string_view kBase = "CoopPuppet_";
+        return name.substr(0, kBase.size()) == kBase &&
+               name.find('_', kBase.size()) != std::string_view::npos;
+    }
 
     // Any thread. The next frame of the cave uses it.
     void SetInput(Input input);
@@ -331,6 +363,10 @@ public:
     // After this many refusals in a row (a long load or cutscene), every 5 s.
     static constexpr int kRefusedFast = 3;
     static constexpr std::uint64_t kRefusedSlowMs = 5000;
+    // A tunic actor (CoopPuppet_<Age>_<Colour>) refused this many times in a
+    // row, before any tunic puppet spawned, is not in the pack: the plain
+    // puppet from then on (about 3 x 1 s + 3 x 5 s, longer than a load).
+    static constexpr int kRefusedTunicFallback = 6;
     // A live puppet whose player drops out of the plan in the same scene
     // (a stalled or late peer fades to 0 for a moment) is kept this long
     // before it is deleted, so a hiccup does not delete and create it again.
@@ -377,11 +413,17 @@ private:
         std::uint64_t wanted_since_ms = 0;  // since when (Input::settle_ms)
         int refused = 0;                    // creates refused in a row
         std::string anim_name;        // played on it; "" none yet
+        CoopOcarina::HandBind ocarina_hand;  // issue 152: Ocarina in hand while it plays
+        std::string their_anim;              // their last AS command (debug log)
         std::uint32_t anim_serial = 0;
         std::uint64_t anim_buffer = 0;  // which name buffer is next
         std::optional<float> frame_to_set;  // after a play
         std::optional<float> held_frame;    // while held
+        CoopSnap::Smoother smooth;          // issue 194: where it is drawn, jumps eased
+        CoopSnap::Meter meter;              // issue 194: its place read back, snaps logged
+        bool meter_skip = false;            // the next read is still the parked spot
         Show shown = Show::show;            // the last `show` acted on (log on change)
+        bool model_checked = false;         // a tunic puppet's model (kTunicModelCheckMs)
         std::uint64_t frame_set_in = 0;     // the cave frame of the last frame set
         std::string play_name;              // the play being made
         float play_frame = 0.0f;
@@ -398,6 +440,8 @@ private:
         bool hold_in_hand = false;
         std::uint64_t hold_retry_ms = 0;    // no new change before this
         std::array<std::uint32_t, kGearCount> hold_id{};  // the piece each change was made for
+        std::uint64_t tint_actor = 0;       // the actor the colour line was logged for
+        std::uint32_t tint_color = 0;       // and its colour
         std::uint64_t rewear_ms = 0;        // no new "left behind" check before this
         std::array<std::uint64_t, kGearCount> far_since_ms{};  // first far reading of each piece; 0 near
         std::array<std::uint8_t, kGearCount> rewear_tries{};   // re-wears since the piece was last near
@@ -409,9 +453,11 @@ private:
         std::array<std::uint64_t, kGearCount> off_since_ms{};  // its player's slot empty since (0: not)
         std::array<bool, kGearCount> unequip_refused{};        // the take-off call returned 0
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
+        CoopPuppetSound::State sound;       // the player's Ocarina on it (issue 152)
     };
     enum class Pending {
-        none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold, move
+        none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold, move,
+        sound
     };
 
     void NewFrame(Guest& guest, std::uint64_t now_ms);
@@ -430,8 +476,12 @@ private:
     std::optional<Call> SetFrame(Slot& slot, std::uint64_t controller, float frame);
     static std::uint64_t Controller(Guest& guest, std::uint64_t actor);
     static std::optional<float> Frame(Guest& guest, std::uint64_t controller);
+    // The colour into the live puppet's model (coop_colors.h), every frame
+    // it is not there yet (a new actor, or the game wrote its own).
+    void Tint(Slot& slot, Guest& guest, std::uint32_t color);
     void Pose(Slot& slot, Guest& guest, const Vec3& position, const Mat3* rotation,
               std::uint64_t now_ms);
+    void DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint64_t now_ms);
     void Poll(Slot& slot, Guest& guest, std::uint64_t now_ms);
     const Target* Wanted(std::uint8_t number) const;
     bool Drawn(const Slot& slot, std::uint64_t now_ms) const;
@@ -444,6 +494,12 @@ private:
     bool anim_;
     bool pose_copy_ = false;
     bool matrix_call_ = false;
+    float tint_ = 0.0f;
+    mutable std::mutex tunic_mutex_;
+    std::set<std::string> tunic_failed_;           // guarded by tunic_mutex_
+    std::map<std::string, int> tunic_timeouts_;    // by actor name
+    bool tunic_proven_ = false;  // a tunic puppet spawned with its model: the pack has them
+    void TunicFails(const std::string& actor, const std::string& why);
 
     mutable std::mutex input_mutex_;
     Input next_input_;  // guarded
@@ -478,6 +534,10 @@ struct Remote {
     std::uint32_t anim_serial = 0;
     Gear gear;  // as Target::gear
     std::optional<std::uint8_t> drawn;               // as Target::drawn
+    // PLAYER_EQUIP's colour; unset: the player chose none, and Plan gives the
+    // player's slot colour (coop::protocol::slot_color).
+    std::optional<std::uint32_t> color;
+    CoopPuppetSound::Wanted ocarina;                 // as Target::ocarina
 };
 
 struct PlannerSettings {
@@ -485,28 +545,57 @@ struct PlannerSettings {
     // player's age (LICHII_COOP_PUPPET_ACTOR overrides it).
     std::string actor;
     bool debug_anim = false;      // LICHII_COOP_DEBUG_ANIM
+    // Each player's tunic in their colour (docs/puppet.md, "Colour"): the
+    // puppet pack's CoopPuppet_<Age>_<Colour>. LICHII_COOP_TUNICS=0: off.
+    bool tunics = true;
+    // Your own Link wears another colour (LICHII_COOP_SELF_TUNIC, set by the
+    // kit when it put that colour's tile over the game's): the plain puppet
+    // would wear it too, so a green player gets CoopPuppet_<Age>_Green.
+    bool green_puppet = false;
     bool debug = false;           // LICHII_COOP_TEST_PUPPET: one more, beside you,
                                   // wearing your own gear
     std::uint64_t debug_delay_ms = 3000;  // after the scene is known
     Vec3 debug_offset{2.0f, 0.0f, 0.0f};  // from you, in game units (about metres)
 };
 
+// A puppet pack's coop_puppet.json lists both green puppets
+// (CoopPuppet_Child_Green, CoopPuppet_Adult_Green): only then may
+// PlannerSettings::green_puppet ask for them. An older pack has neither, and a
+// green player would wait for an actor ActorInfo does not know.
+bool PackHasGreenPuppets(std::string_view manifest);
+
+// A puppet pack's coop_puppet.json lists at least one tunic puppet
+// (CoopPuppet_Child_<Colour> or CoopPuppet_Adult_<Colour>). A pack made
+// before the tunics (or with --tunics none) lists only the plain ones; the
+// game refuses an actor its ActorInfo does not have, so with such a pack every
+// puppet must be the plain one (Hookshot proof 3: no puppet at all).
+bool PackHasTunicPuppets(std::string_view manifest);
+
 class Planner {
 public:
     explicit Planner(PlannerSettings settings = {}) : settings_(std::move(settings)) {}
     // `local_event`: our own cutscene runs (it hides every puppet;
     // coop::host::local_event_hides). Each remote's case is
-    // coop::host::visibility, with its animation (riding parks it).
+    // coop::host::visibility, with its animation (riding shows it, issue 199).
     Input Plan(std::uint64_t main_base, const std::optional<std::string>& scene,
                const std::optional<Vec3>& position, bool local_event,
                const std::vector<Remote>& remotes, std::uint64_t now_ms,
                const Gear& own_gear = {},
-               std::optional<std::uint8_t> own_drawn = {});
-    std::string ActorFor(bool adult) const;
+               std::optional<std::uint8_t> own_drawn = {},
+               std::optional<std::uint32_t> own_color = {});
+    // The actor for a player of that age and colour: CoopPuppet_<Age>, or
+    // CoopPuppet_<Age>_<Colour> (CoopColors::TunicOf) while tunics are on.
+    std::string ActorFor(bool adult, std::optional<std::uint32_t> color = {}) const;
+    void SetTunics(bool on) { settings_.tunics = on; }
+    void SetGreenPuppet(bool on) { settings_.green_puppet = on; }
+    // Tunic actors that do not work here (Director::FailedTunics): the plain
+    // puppet for them.
+    void SetFailedTunics(std::vector<std::string> names) { failed_tunics_ = std::move(names); }
     const PlannerSettings& settings() const { return settings_; }
 
 private:
     PlannerSettings settings_;
+    std::vector<std::string> failed_tunics_;
     std::string scene_;
     std::uint64_t scene_since_ms_ = 0;
     std::optional<Vec3> debug_spot_;
@@ -542,5 +631,15 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
 // The session's on_event (network thread): keeps each remote player's latest
 // animation from PLAYER_SAMPLE field 7 and gear from PLAYER_EQUIP.
 void OnEvent(const coop::net::Event& event);
+
+// The colour another player chose (their PLAYER_EQUIP), unset when they chose
+// none or are not known; and ours (SetOwnColor, from the settings). For the
+// co-op window's names (coop_window.cpp). Any thread.
+std::optional<std::uint32_t> PlayerColor(std::uint8_t number);
+void SetOwnColor(std::optional<std::uint32_t> rgb);
+std::optional<std::uint32_t> OwnColor();
+// The colour to show player `number` in (we are `self`): theirs (ours), else
+// their slot's (coop::protocol::slot_color).
+std::uint32_t NameColor(std::uint8_t number, std::uint8_t self);
 
 } // namespace CoopPuppet

@@ -1,0 +1,15 @@
+# A first set of Hookshot groups for tools/autotest/groups.py (docs/testing.md, "Hookshot test loop").
+# Group N plays on <kit>\hookshot-A<N> + -B<N>, port 27560 + 10*(N-1), pipes coop-auto-g<N>-A/-B.
+# expect= is a regex for the run's hookshot_log-A.txt / -B.txt ("A:" / "B:" in front, either log without).
+
+[g1]
+walk           expect="A:coop: connected"  expect="B:coop: connected"
+teleport-same  expect="A:coop: connected"
+
+[g2]
+time           expect="A:coop: connected"
+warp
+
+[g3]
+wear           expect="A:coop: connected"
+turn

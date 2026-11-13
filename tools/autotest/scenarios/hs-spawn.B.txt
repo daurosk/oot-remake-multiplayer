@@ -1,0 +1,12 @@
+# hs-spawn, B: as cutscene.B.txt (see hs-spawn.A.txt).
+mark start
+wait 120
+stick 0 -1 300          # its save is further up the Graveyard path than A's
+wait 420
+mark kakariko
+stick 0 1 60            # out of the gate passage first
+goto -2.5 72.5 1.0      # the post to the west
+toward -7.46 71.12 10   # face it, so the camera looks at it
+mark watching
+wait 900
+mark end

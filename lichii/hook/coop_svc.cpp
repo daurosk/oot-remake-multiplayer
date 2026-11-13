@@ -7,10 +7,14 @@
 #include <cstring>
 #include <optional>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <mutex>
 #include <string>
 #include <utility>
 
+#include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_process.h"
@@ -19,9 +23,11 @@
 #include "core/loader/nso.h"
 #include "core/memory.h"
 
+#include "coop_counters.h"
 #include "coop_hold.h"
 #include "coop_sites.h"
 #include "coop_puppet.h"
+#include "coop_puppet_config.h"
 
 namespace CoopSvc {
 namespace {
@@ -53,23 +59,6 @@ bool EnvOn(const char* name) {
 bool Wanted() {
     return EnvOn("LICHII_COOP_PUPPET") || EnvOn("LICHII_COOP_DEBUG_PUPPET") ||
            EnvOn("LICHII_COOP_SPAWN") || EnvOn("LICHII_COOP_LIVE_EVENTS");
-}
-
-// Settings for the puppets, once, when the patch goes in.
-void ConfigurePuppets() {
-    CoopPuppet::PlannerSettings settings;
-    // The test puppet has its own switch: the logs alone must not put a
-    // second Link in the game (Caleb's run of 2026-11-09 with the logs on).
-    settings.debug = EnvOn("LICHII_COOP_TEST_PUPPET");
-    settings.debug_anim = EnvOn("LICHII_COOP_DEBUG_ANIM");
-    if (const auto actor = Env("LICHII_COOP_PUPPET_ACTOR"); !actor.empty()) {
-        settings.actor = actor;
-    }
-    const bool verbose = EnvOn("LICHII_COOP_DEBUG_PUPPET");
-    LOG_INFO(Core, "coop: puppets on, actor {}{}", settings.actor.empty() ? "by age" : settings.actor,
-             settings.debug ? ", test puppet beside you" : "");
-    CoopPuppet::Configure(std::move(settings), verbose,
-                          [](const std::string& line) { LOG_INFO(Core, "{}", line); });
 }
 
 std::uint32_t Word(const std::vector<std::uint8_t>& bytes, std::size_t at) {
@@ -105,27 +94,7 @@ private:
 };
 
 
-// The callers after the puppets, by order. The mutex is held across a step;
-// only AddCaller (rare) waits on it.
-struct Callers {
-    std::mutex mutex;
-    std::vector<std::pair<int, Caller>> list;
-};
-Callers& TheCallers() {
-    static Callers callers;
-    return callers;
-}
-
 } // namespace
-
-void AddCaller(int order, Caller caller) {
-    Callers& c = TheCallers();
-    std::lock_guard lock(c.mutex);
-    const auto at = std::upper_bound(
-        c.list.begin(), c.list.end(), order,
-        [](int o, const std::pair<int, Caller>& e) { return o < e.first; });
-    c.list.emplace(at, order, std::move(caller));
-}
 
 namespace {
 std::mutex g_refusal_mutex;
@@ -221,8 +190,34 @@ void PatchMain(std::uint64_t title_id, std::string_view module, std::string_view
                      CoopHold::kCaveOffset, CoopHold::kHookOffset);
         }
     }
+    // Looping platforms' pause counters (coop_counters.h, Hot Onion's
+    // method): on with the cave unless LICHII_COOP_PLATFORMS=0.
+    if (Env("LICHII_COOP_PLATFORMS") != "0") {
+        const std::size_t at = header + CoopCounters::kStartOffset;
+        const std::size_t cave_at = header + CoopCounters::kCaveOffset;
+        bool room = cave_at + CoopCounters::kCave.size() <= original.size() &&
+                    header + CoopCounters::kRingPointer + 8 <= original.size();
+        for (std::size_t i = cave_at; room && i < cave_at + CoopCounters::kCave.size(); ++i) {
+            room = original[i] == 0 && out[i] == 0;
+        }
+        for (std::size_t i = 0; room && i < 8; ++i) {
+            const std::size_t p = header + CoopCounters::kRingPointer + i;
+            room = original[p] == 0 && out[p] == 0;
+        }
+        if (Word(original, at) != CoopCounters::kStartOriginal ||
+            Word(out, at) != CoopCounters::kStartOriginal || !room) {
+            LOG_WARNING(Loader, "    - Skipping \"coop counters\": main+{:#x} holds {:#010x}{}",
+                        CoopCounters::kStartOffset, Word(out, at), room ? "" : ", cave not room");
+        } else {
+            const std::uint32_t jump = CoopCounters::HookWord();
+            std::memcpy(out.data() + at, &jump, sizeof(jump));
+            std::memcpy(out.data() + cave_at, CoopCounters::kCave.data(), CoopCounters::kCave.size());
+            LOG_INFO(Loader, "    - Applying \"coop counters\": b {:#x} at main+{:#x}",
+                     CoopCounters::kCaveOffset, CoopCounters::kStartOffset);
+        }
+    }
     if (EnvOn("LICHII_COOP_PUPPET") || EnvOn("LICHII_COOP_DEBUG_PUPPET")) {
-        ConfigurePuppets();  // the cave may be here for the other callers alone
+        CoopPuppetConfig::Configure();  // the cave may be here for the other callers alone
     }
 }
 
@@ -240,27 +235,8 @@ bool Call(Core::System& system, std::uint32_t imm, std::array<std::uint64_t, 8>&
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
     const std::uint64_t buffer = args[0];
-    // Caller 0 is the puppet director, then the others by order. Each is asked
-    // once a frame (after_call false) when its turn comes and gets the result
-    // of each call it made; the turn passes on when it has no more calls.
-    static std::size_t current = 0;  // who made the last call; the calc thread only
-    Callers& callers = TheCallers();
-    std::lock_guard lock(callers.mutex);
-    const auto step = [&](std::size_t i, bool after_call, std::uint64_t result) {
-        return i == 0 ? CoopPuppet::TheDirector().Step(guest, after_call, result, now_ms)
-                      : callers.list[i - 1].second(guest, after_call, result, now_ms);
-    };
-    const std::size_t count = callers.list.size() + 1;
-    std::optional<CoopPuppet::Call> call;
-    std::size_t i = 0;
-    if (args[2] != 0 && current < count) {
-        call = step(current, true, args[1]);
-        i = current + 1;
-    }
-    for (; !call && i < count; ++i) {
-        call = step(i, false, 0);
-        current = i;
-    }
+    // The puppet director, then the others by order (coop_callers.h).
+    const auto call = CoopCallers::Next(guest, args[2] != 0, args[1], now_ms);
     if (!call) {
         args[0] = 0;
         return true;

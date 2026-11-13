@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <optional>
+#include <functional>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -116,6 +117,42 @@ constexpr std::uint32_t kGold = 0x40ae1183;    // PouchData.Armor_Adult_Gauntlet
 std::optional<std::uint32_t> lift_grade_raise(std::int32_t goron, std::int32_t silver,
                                               std::int32_t gold, std::uint32_t current);
 
+// Issue 190 (docs/items.md, "The ocarina"): D-pad Left takes out the ocarina
+// named in PlayerStatus.EquipOcarina (String64, an actor name, "" by
+// default). The game writes it when Link gets an ocarina himself; an ocarina
+// shared by another player leaves it "", so nothing comes out. Every save of
+// a player who got it from Saria holds "Item_Ocarina_Fairy".
+namespace ocarina {
+constexpr std::uint32_t kEquip = 0xb72cd3fc;  // PlayerStatus.EquipOcarina
+constexpr std::uint32_t kFairy = 0xb7df60f1;  // PouchData.Item_Ocarina_Fairy.StockNum
+constexpr std::uint32_t kTime = 0x54e2a3d1;   // PouchData.Item_Ocarina_Time.StockNum
+constexpr std::string_view kFairyName = "Item_Ocarina_Fairy";
+constexpr std::string_view kTimeName = "Item_Ocarina_Time";
+// The Bools a real get sets beside the count (tools/autotest/save_flags.py
+// NO_OCARINA clears the same ones for a player who never met Saria). A
+// shared ocarina brought only the count (ocarina-given, bigrun 2026-11-12:
+// B's EquipOcarina was mended, but D-pad Left still took nothing out).
+constexpr std::uint32_t kIsGetFairy = 0x42bd296f;   // IsGet.Item_Ocarina_Fairy
+constexpr std::uint32_t kIsGetTime = 0x1da2c511;    // IsGet.Item_Ocarina_Time
+constexpr std::uint32_t kSlotA = 0xaacdef1f;        // 0x541947d0.Ocarina
+constexpr std::uint32_t kSlotB = 0xda41879d;        // 0x57f52eb8.Ocarina
+constexpr std::uint32_t kGotFairy = 0x137df1ac;     // 0x41f3e410.Item_Ocarina_Fairy
+constexpr std::uint32_t kGotTime = 0xac6a85e3;      // 0x41f3e410.Item_Ocarina_Time
+}  // namespace ocarina
+
+// The ocarina to equip for the held ones (Ocarina of Time over the Fairy
+// Ocarina), when `current` is "" or the Fairy Ocarina and a better one is
+// held. Nothing otherwise: never lowered, and a name we do not know is left
+// alone.
+std::optional<std::string_view> ocarina_equip_mend(std::int32_t fairy, std::int32_t time,
+                                                   std::string_view current);
+
+// The ocarina Bools to raise for the held ones (ocarina::kIsGet*, kSlot*,
+// kGot*): those `get` reads as false (not true, not unreadable). Only ever
+// raised; nothing for an ocarina not held.
+std::vector<std::uint32_t> ocarina_bools_mend(std::int32_t fairy, std::int32_t time,
+                                              const std::function<std::optional<bool>(std::uint32_t)>& get);
+
 // When to mend (ItemFlagStore::mend), kept by the hook across frames: for
 // the first frames after Link comes into the game (a save or a scene
 // loaded: no Link, then Link), once a frame. The load may still be writing
@@ -187,8 +224,11 @@ class ItemFlagStore final : public FlagStore {
   bool write(const protocol::FlagEntry& entry) override;
   // A named count item (ItemRule::count).
   bool is_count(FlagKey key) override;
+  // A named int32 item merged by the highest value (ItemRule::max).
+  bool is_max(FlagKey key) override;
   // DungeonInfo.<dungeon>.IsGetMap and .IsGetCompass (issue 146).
   bool is_one_way(FlagKey key) override;
+  bool busy(FlagKey key) override { return inner_.busy(key); }
   // The value as it is (no max, OR or mirror merging; per-player flags still
   // refused): the host's save decides (docs/flags.md, "Saves").
   bool write_exact(const protocol::FlagEntry& entry) override;

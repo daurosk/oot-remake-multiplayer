@@ -1,0 +1,28 @@
+# world-reset (#159): a guest's save load must not reset the host's world. Run:
+#   tools\autotest\run.ps1 -Scenario world-reset
+# A (host) loads its save and stands in the save's place (outdoors, so its clock runs about
+# 100 in-game seconds a real second). 30 s later B loads the same save: B's clock goes back to
+# the save's 11:59, about an hour behind A's. Before the fix B sent that as a jump and A set its
+# own clock to it, so A's world was made again (grass and objects back where the map puts them;
+# every autotest's guest did it, "time: set to 11:59:26" in 15 host logs). Now B does not send
+# it and takes A's clock instead, once. Then both stand in the same area for 70 s.
+# Pass: A's log has no "time: set to"; B's log has no jump sent and at most two sets (joining on
+# the title screen, and once after its load); shots b-loaded, still-30s, still-60s show the same
+# grass and objects in each game.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_TIME=1
+start A B
+load A
+sleep 30
+shot a-playing
+load B
+sleep 10
+shot b-loaded
+sleep 30
+shot still-30s
+sleep 30
+shot still-60s
+sleep 10
+shot end
+lines a-set A max=0 time: set to
+lines b-jump B max=0 time: sent .*\(jump\)
+lines b-set B max=2 time: set to

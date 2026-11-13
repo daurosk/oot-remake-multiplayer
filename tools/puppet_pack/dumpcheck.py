@@ -53,7 +53,7 @@ REQUIRED = (
 VERSIONED = REQUIRED[3]
 # Read when there, not needed: the shots' sources, for the stand-ins (build.py STAND_INS). A
 # .nup build extracts only what nup_files names, so without these the pack had no stand-ins
-# ("shots": []) and other players' seeds, arrows, hookshot tips and lures had no copy to show.
+# ("shots": []) and other players' seeds, arrows, hookshot tips, lures and boomerangs had no copy to show.
 OPTIONAL = (
     "Pack/Actor/Shootable_DekuSeed.pack.zs",
     "Pack/Actor/NormalArrow.pack.zs",
@@ -62,6 +62,20 @@ OPTIONAL = (
     "Pack/Actor/Weapon_Lure.pack.zs",
     "Pack/Actor/Weapon_SinkingLure.pack.zs",
     "Pack/Actor/Item_Bomb.pack.zs",
+    "Pack/Actor/Weapon_Boomerang.pack.zs",
+    # Issue 199: the horse another player rides (build.py STAND_INS, CoopRide_Epona).
+    "Pack/Actor/Animal_Epona_Adult.pack.zs",
+    # Issue 166: the AI the impact actors are made from (build.py IMPACT_SOURCE).
+    "Pack/Actor/Shootable_ScrubBusinessSees.pack.zs",
+    # The tunic colours (puppet_pack/tunic.py): the green tile and the two player models.
+    "Tex/Angin_Tile_A_Alb.bntx.zs",
+    "Tex/Angin_Tile_A_Dark_Alb.bntx.zs",
+    "Tex/Mt_Vest_Player_Adult_Alb.bntx.zs",
+    "Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs",
+    "Tex/Mt_Cloth_Parts_Player_Child_Alb.bntx.zs",
+    "Tex/Mt_Vest_Player_Child_Alb.bntx.zs",
+    "Model/Player_Child.Player_Child.bfres.zs",
+    "Model/Player_Adult.Player_Adult.bfres.zs",
 )
 
 REDUMP = ("Delete the folder {romfs} and dump again: Join.bat, right-click the game, "

@@ -1,0 +1,55 @@
+# The Hookshot parity run (reports/hookshot-parity.md, "Big-run checks"): every hs-* scenario on integrate-p12, in
+# three groups that play at the same time (tools/autotest/groups.py; docs/testing.md, "Hookshot test loop").
+# Group N plays on <kit>\hookshot-A<N> + -B<N>, port 27560 + 10*(N-1), pipes coop-auto-g<N>-A/-B.
+# BLOCKER from main (docs/hookshot.md, proofs 3 and 4): the module refuses to make other players' Link
+# (CoopPuppet_*) on Hookshot because making one crashed it; LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1 makes them
+# again and the game then crashes. Every run that reads puppet lines (g1, hs-ocarina-show, hs-teleport-room's
+# 'next to', hs-door, hs-gohma) proves nothing until that crash is fixed (B's hs-crash-b) or is run with the
+# switch on a build that has the fix. Runs without puppets (world, flags, drops, overlay text) are not affected.
+# g5 and g6 (hs-scenarios-2) need nothing done to the saves; the other groups' steps are below.
+# Hookshot must be built with integrate-p12's patch (hs.py build): the module's start line must NOT end in
+# "gives no pad word" (expect= cannot check an absence: look once in any run's hookshot_log-A.txt).
+# Before `groups.py run`:
+#  - g3's hs-ladder: clear the ladder's flag in g3's baselines (save_flags.py from save-flags-hookshot: set <kit>\hookshot-A3\autotest-save\slot_0*\progress.sav
+#    bool:0xb3a4fe84=0, the same for hookshot-B3) and put them back from <kit>\autotest-save-backup afterwards.
+#  - g4's hs-gohma-door (#178 #148): clear the six Deku boss flags in g4's baselines, after hs-gohma ran
+#    (save_flags.py set <kit>\hookshot-A4\autotest-save\slot_0*\progress.sav bool:0xffde6400=0 bool:0x00c0a2f6=0
+#    bool:0x66b97a4a=0 bool:0xe44433dc=0 bool:0x88b1b922=0 bool:0x3d5c0bad=0, the same for hookshot-B4); hs-gohma warps
+#    into the boss rush and does not need them. Put them back afterwards.
+# On the emulator (a server restart is a steps-file step): `stray` proves keep-number (#175 #86).
+#  - g7 (save setups, once for the group, put back afterwards):
+#    save_flags.py set <kit>\hookshot-A7\autotest-save\slot_0*\progress.sav bool:0x50cbaf1b=0 bool:0x429126ef=0
+#    bool:0xfcbd74e3=0 bool:0x8d2b85ef=0 bool:0x392a228a=0 bool:0x89787395=0 (and the same for hookshot-B7),
+#    then save_flags.py no-ocarina <kit>\hookshot-B7\autotest-save\slot_0*\progress.sav (B only).
+# After the groups, by hand on one pair (no expect= possible: the keys are posted to the window):
+#  - hs-chatbox (row 7): any run with -KeepOpen, then the PostMessage snippet in reports/hookshot-parity.md (T, "hi", Enter).
+#  - hs-cheats (row 8): the same with LICHII_COOP_CHEATS=1 (F8, "token", Enter, F8).
+#  - g2's hs-seed (row 15): the pairs' puppet pack made again with this branch's pack tool first (its log:
+#    "stand-in effects (seed trail): left out"); with the old pack the seed copy is still dropped.
+
+# WAVE 4 of 4: the master's g10, g11, g12, made by tools/autotest/groups/mkwaves.py from hookshot-parity.txt
+# (do not edit here: edit the master and make the waves again). Here they are g1..g3: pairs
+# hookshot-A1..3 / -B1..3. A setup step above that names a master group (g3, g4, g7) applies to
+# the pair that group has here.
+
+[g1]
+# Teleport, PvP and the gate on Hookshot as on the emulator.
+teleport-other  expect='A:scene change taken'  label="#197 teleport between overworld scenes"
+kak-gate  expect='B:bool 0x19898d14.*0 -> 1'  label="#171 Kakariko gate (test switch)"
+pvp  expect='A:coop: pvp: our sword reached P2'  label="PvP hits"
+
+[g2]
+# Steps files on Hookshot (G7, tools/autotest/hs_steps.py through run.ps1 -Runtime hookshot): close, start, kill,
+# server stop/start, password tries. Graded by each run's counts.txt (PASS/FAIL lines, as on the emulator).
+# stray and screens count puppets (expect A=1): they FAIL while the module refuses Link puppets on Hookshot
+# (docs/hookshot.md, proofs 3 and 4) unless the crash is fixed; their joins, leaves and server restart still show.
+join-password  password=zelda-test-ocarina-42  label="#160 #201 join password and encrypted traffic (G6)"
+world-reset  label="#159 world reset"
+threads-of-time  label="#193 Threads of Time"
+stray  label="#175 stray: leave, rejoin, crash, server restart, keep-number"
+screens  label="screens: rejoin on other screens"
+
+[g3]
+# Moving platforms in step (platforms-b, #196 #194: one clock word per platform, PLATFORM_CLOCK). The Dodongo's Cavern
+# room 1 lifts; its own warp (noload). Shots s1..s4: the lift under A's Link at the same height in both games.
+hs-platforms-dodongo  expect='A:coop: platforms: .*: ours to send'  expect="B:coop: platforms: .*following player 1's clock"  label="#196 #194 moving platforms (Dodongo lifts)"

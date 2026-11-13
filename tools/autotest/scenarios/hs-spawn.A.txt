@@ -1,0 +1,33 @@
+# hs-spawn (Hookshot and emulator): the puppet's spawn pop. In the cutscene run (bigrun3/4,
+# 2026-11-12) B's log had "P1 snap 0.835 m (show)" the frame A's puppet was made in Kakariko: the
+# game makes the actor where A was when it was asked for, a few frames old, and our first pose put
+# it 0.8 m on in one frame. Since spawn-pop a new puppet is drawn from where the game made it and
+# eased to A (CoopSnap::Smoother::Spawned). Same A/B scripts as `cutscene` (A walks to the
+# Kakariko signpost and reads it; B by the gate watches).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-spawn (the emulator: -Scenario
+# cutscene, whose steps file now has spawn-snap-B).
+# Pass, B's log: no "coop: puppet: P1 snap ... m" before the first "P1 show -> hold (their
+# cutscene)" (and none after, as before); when A's puppet is made more than 0.75 m behind A,
+# "coop: puppet: P1 eased from where it was made, 0.8.. m" instead. Shots: A's puppet does not jump
+# as it appears.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_DEBUG_OBJECTS=1
+mark start
+wait 120
+stick 0 -1 120          # back down the path, out of the Graveyard
+wait 420                # Kakariko loads
+mark kakariko
+stick 0 1 60
+goto -5.9 70.5 0.6      # just east of the post
+toward -7.46 71.12 8
+mark at-post
+wait 20
+press A 12              # read it
+wait 240
+mark reading
+press A 12              # through the text
+wait 60
+press A 12
+wait 60
+press B 12
+wait 180
+mark closed

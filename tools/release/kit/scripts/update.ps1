@@ -37,11 +37,16 @@
 # still arrives. The kit also carries scripts\coop-options.default.ini, and every run
 # (-Status too, which play.ps1 runs on every start) adds missing keys from it: a kit an
 # older updater left short gets them on its next start.
-# No data about you is sent: one request for the release list and the two downloads.
+# Then, when this kit has scripts\verify_kit.ps1 and the GitHub CLI is logged in, the zip's
+# release signature (attestation) is checked too; a zip that fails it is refused
+# (verify_signature = no in coop-options.ini skips that check).
+# No data about you is sent: one request for the release list and the two downloads (and, for
+# the signature check, gh's lookup of the zip's attestation by its SHA-256).
 #
 # For tests: -Api (or the environment variable OOT_COOP_UPDATE_API, which play.ps1 passes on)
 # names the release list (a URL or a local .json file) and the download addresses in it may
 # be local files; -NoRun only loads the functions.
+# OOT_COOP_VERIFY_NO_AUTH_CHECK=1 skips the 'gh auth status' step before the signature check.
 param(
     [string]$Kit = '',
     [switch]$Yes,
@@ -364,6 +369,52 @@ function Update-KitOptions([string]$KitDir) {
 
 # --- Installing -------------------------------------------------------------------------
 
+# coop-options.ini's verify_signature: 'no' skips the signature check, anything else is 'auto'.
+function Get-KitVerifySignature([string]$KitDir) {
+    $file = Join-Path $KitDir 'coop-options.ini'
+    if (Test-Path -LiteralPath $file) {
+        foreach ($line in [System.IO.File]::ReadAllLines($file)) {
+            if ($line -match '^\s*verify_signature\s*=\s*no\s*$') { return 'no' }
+        }
+    }
+    return 'auto'
+}
+
+# The release signature (issue 161): this kit's OWN scripts\verify_kit.ps1 (never the one in the
+# download, which is not trusted yet) checks the zip's attestation with the GitHub CLI. Its exit
+# codes: 0 good, 1 does not check, 2 could not check. Returns 'good', 'none' (no verifier in
+# this kit, gh missing or not logged in, or verify_signature = no) or throws when it does not
+# check. A kit from before the verifier has none: the SHA-256 is then the only check.
+function Test-KitSignature([string]$KitDir, [string]$Zip) {
+    if ((Get-KitVerifySignature $KitDir) -eq 'no') { Write-Host 'Signature check skipped (verify_signature = no).'; return 'none' }
+    $verifier = Join-Path $KitDir 'scripts\verify_kit.ps1'
+    if (-not (Test-Path -LiteralPath $verifier -PathType Leaf)) { return 'none' }
+    # gh that is not logged in fails every check: that is "could not check", not a bad file.
+    $gh = Get-Command gh -ErrorAction SilentlyContinue
+    if (-not $env:OOT_COOP_VERIFY_NO_AUTH_CHECK -and $gh) {
+        & $gh.Source auth status *> $null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Signature not checked: the GitHub CLI is not logged in ('gh auth login'). The SHA-256 is checked."
+            return 'none'
+        }
+    }
+    $ps = Join-Path $PSHOME 'powershell.exe'
+    if (-not (Test-Path -LiteralPath $ps)) { $ps = 'powershell' }
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $verifier -Zip $Zip -Repo $Repo 2>&1 | ForEach-Object { "$_" }
+    $code = $LASTEXITCODE
+    if ($code -eq 0) { return 'good' }
+    if ($code -eq 1) {
+        $last = @($out | Where-Object { $_ -match 'FAIL' } | Select-Object -Last 1)
+        if ($last) { Write-Host $last[0] }
+        Write-Host 'A release only minutes old may not be signed yet: try again later. To update on the SHA-256 alone,'
+        Write-Host "put 'verify_signature = no' in coop-options.ini."
+        throw "The download's release signature does not check. Nothing changed."
+    }
+    $why = @($out | Where-Object { $_ -match 'Could not' } | Select-Object -First 1)
+    Write-Host "Signature not checked$(if ($why) { ': ' + $why[0] } else { '' }) The SHA-256 is checked."
+    return 'none'
+}
+
 # Why a kit's emulator must not be installed, or ''. A kit holds only the co-op build of the
 # emulator: never a plain Fritchii (no co-op), and never one with Fritchii's own updater,
 # which would offer to swap the co-op build for a plain one.
@@ -614,6 +665,7 @@ function Invoke-KitUpdate {
         $got = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($got -ne $want) { throw "The download is damaged (SHA-256 $got, the release says $want). Nothing changed; try again." }
         Write-Host "SHA-256 checked: $got"
+        if ((Test-KitSignature $dir $zip) -eq 'good') { Write-Host 'Signature checked: signed by this project''s release workflow.' }
 
         $unpacked = Join-Path $work 'kit'
         New-Item -ItemType Directory -Force -Path $unpacked | Out-Null

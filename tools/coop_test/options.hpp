@@ -27,6 +27,9 @@ struct Options {
   // Nicknames are this and the client's index, 1 to 4 ("test" then the index). Two
   // processes on one server need different ones.
   std::string name = "test";
+  // The join password (every session has one, and it encrypts the traffic):
+  // the server's here, or the one to give with --connect.
+  std::string password = "coop-test";
   bool help = false;
 };
 

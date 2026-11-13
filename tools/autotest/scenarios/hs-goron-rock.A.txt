@@ -1,0 +1,54 @@
+# hs-goron-rock (Hookshot and emulator; #84, a Goron City rock broken in one game breaks in both).
+# goron-rock never threw: `place 15.9 106.5 1.9` put A over the city's central drop and A fell (marks:
+# Link height 71.6 at-flower, 32.0 lifted, -22.4 thrown, then back at the start: a void-out; bigrun
+# 2026-11-12 00:43, shots\goron-rock\20261112-004338). Here A uses the OTHER bomb flower,
+# Obj_BombFlower_A_03 3f1b02416cb9ca3b at 14.17 106.59 -3.77, on the far side of the rock from the drop,
+# is put 0.8 m from it, lifts it, takes one step to the rock Obj_Goron_BrokenRock_A_01 751d254f812d5cfb
+# (16.07 104.91 -1.58) and SETS IT DOWN beside it (A standing still; no throw to miss), then backs off.
+# B watches from beside the start point (as goron-rock.B).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-goron-rock   (emulator: -Scenario hs-goron-rock)
+# Check first: A's "mark at-flower (Link at x Y z)" with Y about 106 (not falling). Y below 100 = A fell:
+# INCONCLUSIVE, move the place spot.
+# Pass:
+# - A: "objects: life Obj_Goron_BrokenRock_A_01 ... hash 0x751d254f812d5cfb: 6 -> 0" (or "share gone") after
+#   "mark set", and "world: 751d254f812d5cfb Obj_Goron_BrokenRock_A_01 broken here".
+# - B: "world: 751d254f812d5cfb ... broken by another player" within about 1 s of A's break, and B's rock
+#   gone in "b-mid"/"b-end" (shots), as in A's "boom".
+# INCONCLUSIVE: no life change on A's rock (the flower went off too far: see A's "set" shot), or A still
+# holds the flower at "mark set" (then the game wants ZR to put it down: change the press).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 360
+mark start
+warp GoronCity_Child GoronCity_LostWoodSide_before
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place 13.8 107.0 -4.5     # 0.8 m from flower 3f1b02416cb9ca3b, away from the drop
+wait 180
+mark at-flower
+toward 14.17 -3.77 20
+wait 20
+press A 12               # lift the bomb flower
+wait 60
+mark lifted
+toward 16.07 -1.58 10    # face the rock
+goto 15.1 -2.7 0.4 120   # one step: the rock is about 1.4 m ahead now
+wait 10
+press A 12               # set it down beside the rock (standing still)
+wait 20
+mark set
+goto 11.5 -6.5 1.0 200   # back off, away from the drop
+wait 300                 # the fuse
+mark boom
+wait 600
+mark end

@@ -1,4 +1,4 @@
-# Wire protocol, version 9
+# Wire protocol, version 10
 
 The one protocol that the emulator build, the recomp build and the server all speak. The messages of stages 0 and 1 are coded in `coop/protocol/` (`messages.hpp`, `codec.hpp`); the later stages are still a design. The code and this page change together in the same pull request.
 
@@ -22,6 +22,7 @@ Each rule answers a way the TotK online sync was seen to break.
 
 - ENet over UDP, default port **27510** (changeable in settings).
 - Datagrams of at most **1100 bytes** (ENet's MTU, `kDatagramBytes`), set on the server and in every game; ENet takes the smaller of the two sides at connect, so this is not part of the protocol version. ENet's default 1392 made 1420-byte IP packets, more than a VPN carries (Hamachi about 1404, Tailscale 1280; issue 143). Larger messages are split by ENet into several datagrams.
+- Smaller paths (issue 143, `coop/net/enet_path.hpp`): when a reliable command too big for a 576-byte datagram has been sent 3 times and then once more without an ACK, each time while packets sent after it were acknowledged, the path loses full datagrams and no full-size command has got through on that connection yet (plain loss and short outages do not count: small commands are not looked at, one full-size command acknowledged (within 32 bytes of the datagram size), as the join snapshot is at once on a good line, ends the check for that connection, and a big one resent after the line is back gets through). The server then ends that connection with ENet disconnect data `0x534D4C4C` ("SMLL") and remembers the address for 60 s; the game connects again at once with **576-byte** datagrams (ENet's smallest, 604 bytes on the wire) and keeps them until it is restarted. A game that sees it on its own sends does the same. A remembered address that connects again with bigger datagrams within those 60 s gets the same disconnect at once, before anything big is sent, and is then forgotten. The game never switches back until it is restarted. No message type or version change: the size is agreed by ENet at connect.
 - Channels:
 
 | Channel | Kind | Carries |
@@ -34,7 +35,7 @@ Each rule answers a way the TotK online sync was seen to break.
 
 - Each message type has its channel, and each is sent by the client, the server or both (table below). A receiver refuses a message that came on the wrong channel or from a side that may not send it (`check_received` in the code).
 - The server relays and decides; it never runs the game. The host player's game is the source of truth for shared progress (stage 4).
-- The server holds each player to at most 60 messages a second on channels 0 to 2 and 240 on channels 3 and 4, with bursts of twice that, and drops the rest without a word. A packet longer than any message can be (4 + 65535 bytes) is thrown away unread.
+- The server holds each player to at most 60 messages a second on channels 0 to 2 and 240 on channels 3 and 4, with bursts of twice that, and drops the rest without a word. A packet longer than any message can be (4 + 65535 bytes, plus 24 when sealed) is thrown away unread.
 
 ## Encoding
 
@@ -50,29 +51,52 @@ Each rule answers a way the TotK online sync was seen to break.
 
 ## Handshake
 
-1. The client connects and sends `HELLO`: protocol version (`u16`), build id (string, up to 64 characters: emulator or recomp, and its version), game build id (string, up to 32, for example `e0f3ccfaf50065ae`), game version (string, up to 16, for example `1.1.1`), nickname (string, 1 to 16 characters). The protocol version is the first 2 bytes of the body in every version of the protocol, so a server can read it, and refuse with the right reason, even from a `HELLO` whose rest it cannot read.
-2. The server answers `WELCOME` or `REFUSED`; a server with a join password first answers `JOIN_CHALLENGE` (see "Join password" below), and `WELCOME` or `REFUSED` follows the client's `JOIN_PROOF`.
+1. The client connects and sends `HELLO`: protocol version (`u16`), build id (string, up to 64 characters: emulator or recomp, and its version), game build id (string, up to 32, for example `e0f3ccfaf50065ae`), game version (string, up to 16, for example `1.1.1`), nickname (string, 1 to 16 characters), since protocol 10 the game's 32-byte traffic key share (see "Encrypted traffic"), and, after it, one byte: the player number this game had in its last session (1 to 4; none on a first join). The server gives that number back when it is free (a server restart: the games come back in the order they notice it, and without this the numbers, colours and objects' owners swapped). The protocol version is the first 2 bytes of the body in every version of the protocol, so a server can read it, and refuse with the right reason, even from a `HELLO` whose rest it cannot read.
+2. The server first answers `JOIN_CHALLENGE` (see "Join password" below; every session has one since protocol 10, this release's), or `REFUSED` for a wrong version; `WELCOME` or `REFUSED` follows the client's `JOIN_PROOF`.
    - `WELCOME`: `u8` the player's number (1 to 4), `u64` server time, `u16` tick rate (not 0), `u8` count (at most 4), then for each player already in: `u8` number, nickname. Every number in it is different, and the new player's own is not in the list.
-   - `REFUSED`: `u8` reason, which the client shows: 1 wrong protocol version, 2 wrong game build, 3 server full, 4 name taken, 5 bad name (a nickname of nothing but spaces), 6 bad password (the join password did not match, protocol 9). A reason the client does not know is kept and shown as unknown.
+   - `REFUSED`: `u8` reason, which the client shows: 1 wrong protocol version, 2 wrong game build, 3 server full, 4 name taken, 5 bad name (a nickname of nothing but spaces), 6 bad password (the join password did not match, protocol 9). Reason 200, not encrypted, is the game's own and never sent ("Encrypted traffic", 7). A reason the client does not know is kept and shown as unknown.
 3. No `HELLO` within 10 seconds: the server drops the connection.
 4. One address may hold at most 4 connections that have not sent `HELLO` yet (a server option; 0 for no limit). The server drops one more at once, without `REFUSED`.
 
 ### Join password (protocol 9, types 191 to 195)
 
-The host may set a join password (`coop_server --password TEXT`, or `--password-env NAME` to read it from an environment variable so it is not on the command line; the kit's `server_password` in `coop-options.ini`). Empty means none, and the handshake is as above.
+Every session has a join password (since protocol 10, this release's; before, it was optional): `coop_server --password TEXT`, or `--password-env NAME` to read it from an environment variable so it is not on the command line; the kit's `server_password` in `coop-options.ini`, or with none there (no line or an empty one) a new random one that `Host.bat` / `Host.sh` make for each start. `coop_server` does not start a game server without one (only `--relay`, which forwards sealed bytes, needs none), and a session made without one in code refuses every `HELLO` (`REFUSED` 6).
 
-1. With a password, the server checks the `HELLO`'s protocol version (a wrong one is refused as before) and then, before any other check, answers `JOIN_CHALLENGE` (191, channel 0, server only): 32 bytes, a fresh random nonce for this connection (the OS's random source).
-2. The client answers `JOIN_PROOF` (192, channel 0, client only): 32 bytes, HMAC-SHA256 keyed with the password's UTF-8 bytes over the nonce. A client with no password answers with the empty password's proof. It answers one challenge per connection.
+1. The server checks the `HELLO`'s protocol version (a wrong one is refused as before) and then, before any other check, answers `JOIN_CHALLENGE` (191, channel 0, server only): 32 bytes, a fresh random nonce for this connection (the OS's random source), then (protocol 10) the server's 32-byte traffic key share.
+2. The client answers `JOIN_PROOF` (192, channel 0, client only): 32 bytes, HMAC-SHA256 keyed with the password's UTF-8 bytes over the nonce (since protocol 10, over the nonce followed by the game's and the server's key shares: see "Encrypted traffic"). A client with no password typed answers with the empty password's proof, which the server refuses (`REFUSED` 6). It answers one challenge per connection.
 3. The server compares in constant time. Right: the usual checks (game build, name, full) and `WELCOME` or `REFUSED`. Wrong: `REFUSED` 6, bad password, and the connection is closed; the client shows "wrong join password" and does not retry.
 
 The password never goes on the wire, and a proof is good for one nonce only, so a recorded proof is refused on any other connection. The server sends one challenge per connection (a second `HELLO` gets none), takes one proof, and the 10 s `HELLO` timeout covers the proof too; a connection waiting for its proof counts as half-open. A `JOIN_PROOF` from a joined player is dropped, never relayed. Guessing is slowed down: 5 wrong proofs from one address within 60 s close that address at connect for 60 s (`SessionConfig::max_wrong_passwords`, stat `password_blocked`; the log line names no address). Someone who records a challenge and its proof can still try passwords offline against it, as with any password check without a key exchange: use a long password used nowhere else. Passwords are at most 128 bytes with no control characters; the kit also refuses spaces.
 
+
+### Encrypted traffic (protocol 10, no new types)
+
+Every session is encrypted (since protocol 10, this release's: there is no plain mode, both ways): everything after the password check is encrypted and authenticated, so someone on the path (a shared Wi-Fi, a VPN, the relay) can neither read chat, names, positions or flags nor change or replay them. The game's co-op panel's first line ends in ", encrypted" and its log has "coop: traffic encrypted". The code is `coop/protocol/traffic_crypto.*`; the primitives are [Monocypher](https://monocypher.org) 4.0.2's (X25519, BLAKE2b, XChaCha20-Poly1305), none of our own.
+
+1. Every game makes a fresh X25519 key pair per connection and sends its public key, 32 bytes, at the end of `HELLO` (after the nickname).
+2. The server refuses a `HELLO` without one (`REFUSED` 1, wrong version; stat `no_key_share`), so nobody can strip the key on the way and get a plain session. It makes its own key pair and sends its public key, 32 bytes, at the end of `JOIN_CHALLENGE` (after the nonce). A game that sent a key and gets a challenge without one stops (shown as wrong version), never falls back to plain.
+3. Both ends make the keys from: the X25519 secret, the join password, and the exact bytes of that `HELLO` and `JOIN_CHALLENGE` packet (BLAKE2b keyed with the secret over a context string and those three, each with its length; then one key per direction). Without the password nobody can make them, even someone who swapped in their own key share; anyone who changed a byte of either packet leaves the two ends with different keys, so nothing after opens.
+4. `JOIN_PROOF` goes plain (the server needs it to check the password). It is HMAC-SHA256 keyed with the password over the nonce, the game's key share and the server's key share (32 bytes each, as they went in `HELLO` and `JOIN_CHALLENGE`), so a proof relayed by someone who swapped both shares to sit in the middle does not match and is refused (`REFUSED` 6) at once. From the next packet on, the game seals everything it sends. The server seals everything from the answer to the right proof on (`WELCOME`, or `REFUSED` for a full server or a taken name). A wrong proof gets a plain `REFUSED` 6, as the server has no keys then; that is the only plain packet a game takes once it sent its proof. A plain `REFUSED` with any other reason is dropped (it would only be someone on the path).
+7. A game never plays unencrypted, whether or not a password was typed: a `WELCOME` that comes without a challenge before it (an older server, or someone answering for one) is refused by the game itself with reason 200, not encrypted (never on the wire; "the server did not ask for the join password ..."), and nothing more is sent.
+8. The key pairs, nonces and rejoin tokens come from the OS's random source directly (`BCryptGenRandom`, `getrandom`, `arc4random_buf`).
+
+5. A sealed packet: `u64` counter (from 1, one count per channel and direction), the encrypted message, 16-byte tag (XChaCha20-Poly1305; the nonce is the counter and the ENet channel, so a packet moved to another channel does not open). The message inside is the usual one; ENet's channels, reliability and fragments work as before (sealing is per packet, before ENet splits it). Each costs 24 bytes more; the longest packet ENet takes grows by the same.
+6. A packet that does not open (wrong key, changed, too short), or whose counter was used already or is more than 64 behind the newest on its channel (unreliable channels may drop and reorder), is dropped unread (server stat `unsealed_drops`, client `rejected_count`).
+
+What it does not change: someone who records a challenge and its proof can still try passwords offline against them, as before (the made password is 100 random bits, so that is hopeless for it; a short host-set one is not). Someone who only listens cannot read the traffic even if they know the password (they lack the X25519 secrets); someone who knows it and sits in the middle of a new connection, answering both sides, can, as they could also just join. The host's server reads everything (it relays), as before.
+
+
+Other datagrams on the server's port, outside the protocol: STUN answers and NAT punches for the invite code (`coop_server --invite`; datagrams starting with `OCP` and version 1, signed with a key made from the join password). They are handled before ENet sees them, use no message types and change nothing in the session; the punch only opens the way through the routers, and the join password check above still decides who joins. [play-online.md](play-online.md), "How the invite code works".
+
 ### Rejoin after a crash
 
-A killed emulator stays in the session until the server times it out, so its restart would be refused as name taken. A `HELLO` whose nickname (ignoring ASCII case) a player already holds takes that player's place only when both hold:
+A dropped or killed emulator stays in the session until the server times it out, so its new connection would be refused as name taken. A `HELLO` whose nickname (ignoring ASCII case) a player already holds takes that player's place only when all three hold:
 
+- the new connection showed that player's rejoin token: after each `WELCOME` the server sends `REJOIN_TOKEN` (345), 32 fresh random bytes for that place; the client keeps it and sends `REJOIN_CLAIM` (346) with it before its `HELLO` on every later connection (the first claim on a connection counts; one after `HELLO` is dropped, stat `stray_rejoin_claim`). It works with a join password too: claim, `HELLO`, challenge, proof. The server compares in constant time, and each `WELCOME` brings a new token, so an old one is spent. The `REJOIN_TOKEN` comes encrypted ("Encrypted traffic"), but the `REJOIN_CLAIM` on the next connection still goes plain before `HELLO`, so someone who can read the link then sees it once; it is spent by the next `WELCOME`. Either way, someone who can read the link and is behind the same address could still take the place. That is outside issue 163 (two honest players behind one router);
 - it comes from the same IP address as that player, and
 - the server has heard nothing from that player for 1 second (a server option; 0 turns the takeover off). Every build answers the server's `PING` every 250 ms, so a live player is never this quiet.
+
+Issue 163: before protocol 10 the token was not needed, so two players behind one router (one public address) could push each other out by name during a stall of over a second. A `HELLO` that is quiet and from the same address but shows no token, or a wrong one, is now refused as name taken (stat `rejoin_no_token`). The token lives in the client only, not on disk: a reconnect of a running game (connection lost) takes its place at once; a restarted emulator has no token and waits, through the name taken retries below, for the server to time the old player out (10 s).
 
 Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the host handed on as on any leave, and the new connection is welcomed with the old player's number. Otherwise the `HELLO` is refused as name taken as before: someone on another PC, or anyone while the player is still talking, cannot push a player out by using their name. A build restarted within that second is refused, so the client asks again: a `REFUSED` name taken is tried again every 1.5 s for 12 s (`name_taken_retry_ms`, `name_taken_retry_for_ms` in `ClientConfig`; either one 0 turns it off, and the interval is at least 100 ms) before it is reported. The 12 s count from the first name taken in a row: an attempt that ends any other way (timeout, lost connection) closes the window, so a later name taken gets the full 12 s again. That covers the second of silence on the same PC, and also a restart that comes from another address (the same PC joining by its LAN address after `127.0.0.1`), which waits for the server to time the old player out (10 s). Any other refusal is reported at once and not retried. While it retries the client is in `waiting_retry` and reports nothing (`retrying_name_taken()` is true, and the player list shows "name in use, asking again"); a name that someone else is really using is reported after the 12 s.
 
@@ -105,14 +129,25 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 15 | `FLAG_SNAPSHOT` | 1 | both | `u16` part, `u16` part count (at least 1, more than part), a flag list of 0 to 3600 entries |
 | 135 | `FLAG_RESET` | 1 | both | `u8` player field, a flag list of 1 to 3600 entries, no count deltas (protocol 7; types 135 to 139 are for saves) |
 | 150 | `FLAG_ORIGIN` | 1 | server | `u8` player (1 to 4: who asked), a flag list of 1 to 3600 entries, count deltas allowed: the FLAG_SET the server just gave the host, sent to every other player but the host and the asker, before the host's answer (protocol 8; types 150 to 154 are for "who did it", the chat notices in [setup.md](setup.md)) |
+| 140 | `OCARINA_NOTE` | 0 | both | `u8` player field, `u8` note: 0 the note held so far was let go, 1 to 19 the game's note (protocol 10; types 140 to 144 are for the Ocarina, below) |
 | 191 | `JOIN_CHALLENGE` | 0 | server | 32-byte nonce (protocol 9, "Join password"; 191 to 195 kept for it) |
 | 192 | `JOIN_PROOF` | 0 | client | 32-byte HMAC-SHA256(password, nonce) |
 | 206 | `SAVE_ASK` | 0 | both | `u8` player field: a guest asks the host for its save (protocol 9; types 206 to 215 are for the save transfer, below) |
 | 207 | `SAVE_PART` | 0 | both | `u8` player field, `u8` to player (0 every guest), `u32` transfer id, `u8` reason (1 join, 2 host load), `u32` total size (1 to 1 MiB), `u32` CRC-32 of all of it, `u16` index, `u16` count, then the part's bytes (below) |
+| 320 | `FISH_LURE` | 2 | client | `u8` player field, `u16` count (0 to 256), then per fish: object id (10 bytes), `u16` centimetres from the sender's nearest cast lure (`0xffff`: none within 6 m), `u8` flags (bit 0 hooked, bit 1 drawn; both 0 with `0xffff`); no fish twice. Not relayed (protocol 10; types 320 to 324 are for fishing, "Fish and lures" below) |
+| 345 | `REJOIN_TOKEN` | 0 | server | 32-byte random token, sent right after `WELCOME` (protocol 10, "Rejoin after a crash"; 345 to 349 kept for it) |
+| 346 | `REJOIN_CLAIM` | 0 | client | 32-byte token from the last `REJOIN_TOKEN`, sent before `HELLO` on a new connection |
+| 355 | `DUNGEON_EVENT` | 0 | both | `u8` player field, scene (string, 1 to 64), event name (string, 1 to 96, no `HavePlayedEvent.`): a room gimmick's event started in the sender's game. Relayed to the others in that scene (only while the sender is in it), never kept (protocol 10, branch `deku-dungeon-2`; 356 to 359 kept; [dungeon.md](dungeon.md), "Live events") |
+| 385 | `PLAYER_RIDE` | 3 | both | `u8` player field, `u8` flags (bit 0 riding; other bits refused), horse actor name (string, up to 64 characters; not empty when riding), offset 3 x f32 (each within 10 m), rotation 4 x f32 quaternion, `u8` 1 when an animation follows (string name up to 64 characters, f32 frame, f32 rate) else 0. Relayed (protocol 10, issue 199; 385 to 389 are for riding, [Riding](#riding-player_ride)) |
+| 401 | `PLATFORM_COUNTER` | 4 | both | `u8` player field, scene (string, 1 to 64), `u64` server time (microseconds), `u8` count (1 to 32), then per looping pause counter `u64` key (not 0, no key twice), `u32` period (microseconds, at least 100,000), `u32` time since its last start (microseconds), `u32` starts seen (at least 1). Relayed to the others in the sender's scene, never kept (protocol 10, branch `platforms-b2`; [Moving platforms](#moving-platforms-platform_clock)) |
+| 400 | `PLATFORM_CLOCK` | 4 | both | `u8` player field, scene (string, 1 to 64), `u64` server time (microseconds) the words were read at, `u8` count (1 to 16), then per platform `u64` placement hash of its driver, `u64` key (region << 32 or byte offset: region 0 the actor, offset under 0x600; 2 + n the component in table entry n, under 0x200; 0xffff the AS slot 0 frame, offset 0; offsets a multiple of 4), `f32` value, `f32` rate a second (not 0, at most 10,000 either way), `f32` cycle (0 to 10^7, 0: not seen); finite floats, no hash twice. Relayed to the others in the sender's scene, never kept (protocol 10, branch `platforms-b`; 401 to 404 kept; [Moving platforms](#moving-platforms-platform_clock)) |
 | 16 | `HOST` | 1 | server | `u8` the hosting player's number (1 to 4) |
 | 17 | `PLAYER_EQUIP` | 0 | both | `u8` player field, then the components below |
+| 251 | `PLAYER_LIFE` | 0 | both | `u8` player field, `u16` life, `u16` max life, quarter hearts (protocol 10; 251 to 255 are the co-op HUD's, [Hearts](#hearts-player_life)) |
 
 Type numbers are never reused or renumbered; new types are added at the end.
+
+Protocol 10 also keeps 360 to 364 for `cutscene-snap` (issue 194); none is used yet (the fix needs no message).
 
 `PLAYER_SAMPLE` components:
 
@@ -213,6 +248,22 @@ Small keys, Gold Skulltula tokens and heart pieces are counts ([items.md](items.
 - A count change does not wait for an answer of its own. A delta not answered when the host changes is sent again to the new host (the sum, if there were several); when the new host is us, it is dropped, since our game holds it and our snapshot carries it. A host's own count change goes out as its total. Our own delta that comes back to us as host (sent before we knew we host) is not added again.
 - Not covered: a delta that reached a host who left before its `FLAG_STATE` went out is lost with that host's game; one answered by a `FLAG_STATE` for the same flag from another player's change is no longer sent again on a host change.
 
+### Riding (`PLAYER_RIDE`)
+
+Issue 199 (protocol 10): a player riding Epona stays seen by the others, on a copy of the horse ([puppet.md](puppet.md#riding-issue-199)). While its Link's command names a horse, a build sends `PLAYER_RIDE` about 30 times a second on the samples channel: the horse it sits on (`Animal_Epona_Adult`), the horse's place minus its Link's and the horse's turn, both in its Link's own frame (turned back by its rotation), and the horse's AS slot 0. Getting off sends riding off (flags 0, no name) three times. The others put the copy at the rider's puppet plus the offset turned by the puppet's turn, so horse and puppet move together whatever the delay; a ride not heard of for 0.6 s is over (the channel is unreliable). The server relays it to everyone else with the sender's number. A build without it ignores the type; its riders show on foot in their riding pose.
+
+### Hearts (`PLAYER_LIFE`)
+
+Protocol 10, type 251 (251 to 255 are the co-op HUD's). Each player's hearts, for the HUD's player blocks ([lichii.md](lichii.md#the-game-look)) and PvP. On channel 0, reliable; the server relays it to the others like `PLAYER_STATUS` and keeps nothing.
+
+| Bytes | Field |
+|---|---|
+| u8 | player: 0 from a client, 1 to 4 relayed |
+| u16 | life now, in quarter hearts (4 = one heart), as the game keeps it |
+| u16 | the most life can be (heart containers), same unit; 0: not known |
+
+Both at most 160 (`kMaxLifeQuarters`, 40 hearts); more is refused. A game sends it when its Link's hearts change (at most ten a second), every 5 s anyway, and again when a player joins (`CoopHud::Frame`, `lichii/hook/coop_hud.cpp`). The values are Link's own Life component as the object walk reads it (`CoopObjects::OurLife`, the one source; `LICHII_COOP_OBJECTS=1`, on in the kit), not the `PlayerStatus.Life` flag, which is a copy ([items.md](items.md), live check 2). A receiver forgets a player's hearts when they leave or the connection drops. An older game skips the type as unknown.
+
 ### Equipment (`PLAYER_EQUIP`)
 
 What a player wears and holds, so the puppet of that player in everyone else's game wears it too ([puppet.md](puppet.md), "Equipment"). On channel 0, reliable: it changes seldom and must not be lost, unlike a sample.
@@ -236,8 +287,9 @@ Components, as in `PLAYER_SAMPLE` (id, length, data; unknown ids skipped, a know
 | 13 | `third_weapon` | string: the actor in slot 2 (ThirdWeapon); bit 2 | the same |
 | 14 | `tool` | string: the actor in slot 5 (Tool); bit 5 | the same |
 | 15 | `sub_tool` | string: the actor in slot 6 (SubTool); bit 6 | the same |
+| 16 | `color` | 3 bytes: red, green, blue. The player's colour; others dress that player's puppet in the tunic of the nearest colour ([puppet.md](puppet.md#colour)). Left out: the player chose none, and a receiver uses the player number's colour | `coop-options.ini` `color` (`LICHII_COOP_COLOR`) |
 
-Each string is the game's actor name of the piece, for example `Weapon_Sword_Kokiri` or `Armor_Adult_Goron`; an empty string means nothing in that slot. A component that is left out is unknown (the sender could not read it): the receiver keeps what it had for it (`merge_equipment` in the code). Age is not here: it is in `PLAYER_SAMPLE`.
+Each string (all but `drawn` and `color`) is the game's actor name of the piece, for example `Weapon_Sword_Kokiri` or `Armor_Adult_Goron`; an empty string means nothing in that slot. A component that is left out is unknown (the sender could not read it): the receiver keeps what it had for it (`merge_equipment` in the code). Age is not here: it is in `PLAYER_SAMPLE`.
 
 How it moves:
 
@@ -266,6 +318,14 @@ Every game shows the host's time of day ([time.md](time.md)).
 - The host sends it about once a second; a game more than two in-game minutes away from it moves its clock there.
 - A game whose clock jumped by itself (the Sun's Song, sleeping, an event) sends it with the jump bit, and every other game, the host's too, takes it at once.
 - The server relays it to everyone else like `CHAT`, with the sender's number in the player field.
+
+### Ocarina (`OCARINA_NOTE`, protocol 10)
+
+The other players hear a player's Ocarina from that player's puppet (issue 152; [puppet.md](puppet.md), "Ocarina").
+
+- A game sends `OCARINA_NOTE` when its own Link, playing the Ocarina, starts a note (a note button pressed) and with note 0 when the last note is let go. Notes 1 to 19 are the game's own table in `OcarinaMgr` (+0x40), plus one: LowB, LowC, LowCsharp, D, Dsharp, E, F, Fsharp, G, Gsharp, A, Asharp, B, C, Csharp, HighD, HighDsharp, HighE, HighF (the SLink assets `Ocarina_<note>`). A note above 19 is refused.
+- The server relays it to everyone else like `CHAT`, with the sender's number in the player field.
+- Only the sound: a song played this way has no effect in the other games (no warp, no rain, no door); the song itself is checked only in the game that played it.
 
 ### Field grass (`GRASS_CUT`)
 
@@ -301,13 +361,13 @@ Shared enemies and projectiles; the design and the reasons are in [objects.md](o
 The server's rules today (`server/session.cpp`):
 
 - A player's scene is the one of its latest `OBJECT_PRESENT` or `PLAYER_SAMPLE` scene. Changing scene lets go of everything it had loaded or made in the old one.
-- `OBJECT_PRESENT` is not relayed. The first game to list a placed object owns it (epoch 0) and everyone in that scene gets `OBJECT_OWNER`; a later game listing it gets `OBJECT_OWNER` alone. A made id in the list counts only for a made enemy the server knows (the lister has its copy and may be given it); unknown made ids and projectiles are ignored. Every 10 s the answer to a list is `OBJECT_OWNER` for everything in it.
+- `OBJECT_PRESENT` is not relayed. The first game to list a placed object owns it (epoch 0) and everyone in that scene gets `OBJECT_OWNER`; a later game listing it gets `OBJECT_OWNER` alone. Except right after the server starts (the owner hold, `owner_hold_us`, 2 s from the session's first listing; branch `stray-hold`): objects first listed in that time get no owner and no `OBJECT_OWNER` yet, and when it ends each goes, at epoch 0, to the lowest player number that lists it (with keep-number, player 1 gets back what it owned; between other players the lowest number need not be the old owner). After a server restart the games come back in whatever order they notice it, and the first to list would have taken every object the others owned; a game whose live actors all became copies at once aborted (stray, 2026-11-12). No message changed: no version bump. A made id in the list counts only for a made enemy the server knows (the lister has its copy and may be given it); unknown made ids and projectiles are ignored. Every 10 s the answer to a list is `OBJECT_OWNER` for everything in it.
 - `PLAYER_SAMPLE` and `OBJECT_PRESENT` both say the sender's scene. One that names a new scene for its own kind changes the player's scene at once; one that repeats the scene its kind said before, after the other kind moved the player on, is late and is ignored.
 - At a player's first `OBJECT_PRESENT` in a scene the server sends it every `OBJECT_SPAWN` still alive there (player field: the owner; the last relayed state), each followed by `OBJECT_OWNER` when the owner is not the maker or the epoch is not 0.
 - `OBJECT_SAMPLE` and `OBJECT_REMOVE` are relayed only from the owner, with the object's current epoch, to the others in its scene; `OBJECT_SPAWN` of a made id only from the maker named in the id, once; of a placed id only from its current owner, in its scene (relayed, nothing registered). Anything else is dropped.
-- `DAMAGE` goes to the owner alone, whatever its epoch; one on a boss or a part of its group from a non-owner also asks the boss over to the hitter, at most every 8 s (issue 150, [dungeons-boss.md](dungeons-boss.md)); dropped when there is no owner or it comes from the owner. It starts the object's fight (12 s, 60 s for a boss).
+- `DAMAGE` goes to the owner alone, whatever its epoch; dropped when there is no owner or it comes from the owner. On a boss or a part of its group, since protocol 10 (gohma-sync) only one of amount 0 (a stun, below) from a non-owner asks the boss over, at most every 8 s; a hit that takes life is the owner's to apply and the boss stays (`boss_hit_handover` true: any hit asks it over, as before; issue 150, [dungeons-boss.md](dungeons-boss.md)). It starts the object's fight (12 s, 60 s for a boss).
 - A `DAMAGE` of amount 0 is a stun with no life lost: a boss copy whose own game went into a stun the owner's boss is not in (a seed in Gohma's eye) sends one, at most every 2 s, so the server hands the boss to that player. The owner's game takes it as no hit (issue 150).
-- A boss in its fight also moves to a fit player within 15 m of it and 4 m nearer than its owner for 4 s in a row (not while the owner hits it, not within 8 s of the last change; `boss_near_hold_us` 0 turns it off), since the boss's AI chases only its owner's Link (issue 150).
+- Off by default since protocol 10 (gohma-sync; `boss_near_hold_us` 4000000 turns it on): a boss in its fight also moves to a fit player within 15 m of it and 4 m nearer than its owner for 4 s in a row (not while the owner hits it, not within 8 s of the last change), since the boss's AI chases only its owner's Link (issue 150).
 - The server moves an object by the rules in [objects.md](objects.md) ("Enemies": the player near it out of a fight, a hit from the player near it, an owner that is loading, paused 6 s or dead 10 s, a group member after its root). It sends the owner `HANDOVER_ASK`; the owner answers `HANDOVER_STATE` with the ask's epoch (anything else is dropped); the server then sends the new owner `HANDOVER_STATE` with epoch + 1 (player field: the old owner) and everyone in the scene `OBJECT_OWNER`. No answer in 500 ms: the same with the last relayed sample. Until then the old owner's samples are still relayed.
 - `OBJECT_REMOVE` with reason dead from the owner before the last change, with the epoch before, is taken for 2 s after it and passed on with the current epoch.
 - An owner also sends `OBJECT_REMOVE` reason dead for a placed enemy that died in its game (issue 133, [objects.md](objects.md) "Kills and woken enemies"); the server keeps the id, owned by nobody, until no game lists it. Receivers end their copy. No new message: the server took this from protocol 4 on. The server also remembers it per scene, and a game that lists it later without having seen it die (a late entrant or a rejoin) gets the same `OBJECT_REMOVE` dead from the server, with no owner, until a game that saw it die lists it again (respawned) or the scene is empty ([objects.md](objects.md) "Kills for late entrants").
@@ -331,11 +391,11 @@ The server's rules today (`server/session.cpp`):
 
 An **object id** is 10 bytes: `u8` kind (0 placed, 1 made), `u8` maker (0 for placed, 1 to 4 for made), `u64` value (the placement hash, or the maker's own counter). Any other kind, or a maker that does not fit the kind, is refused.
 
-Object components use the same scheme as `PLAYER_SAMPLE` (`u16` id, `u16` length, unknown ids skipped, each known id at most once, `time` required): 1 `time` (12), 2 `position` (12), 3 `velocity` (12), 4 `rotation` (16), 7 `animation` (as in `PLAYER_SAMPLE`), 16 `life` (`s32` life, `s32` max, 8), 17 `fuse` (f32 seconds left, 4), 18 `state` (`u8`: bit 0 in a fight, bit 1 held, bit 2 asleep, 1). Floats must be finite.
+Object components use the same scheme as `PLAYER_SAMPLE` (`u16` id, `u16` length, unknown ids skipped, each known id at most once, `time` required): 1 `time` (12), 2 `position` (12), 3 `velocity` (12), 4 `rotation` (16), 7 `animation` (as in `PLAYER_SAMPLE`), 16 `life` (`s32` life, `s32` max, 8), 17 `fuse` (f32 seconds left, 4), 18 `state` (`u8`: bit 0 in a fight, bit 1 held, bit 2 asleep, 1), 19 `slots` (protocol 10, branch gohma-sync, issue 150: a boss's AS slots after slot 0, such as Gohma's eye guard and eyelids: `u8` count up to 8, then per slot `u8` slot 1 to 31, name as in `animation` (empty: the slot plays nothing), `f32` frame, `f32` rate; no slot twice; sent only for bosses, older builds skip it). Floats must be finite. Types 370 to 374 were kept for gohma-sync and are not used: the slots ride in the samples, so no new message was needed.
 
 The player field follows the `PLAYER_SAMPLE` rule (0 from a client, the sender's number when relayed).
 
-Fish and lures (issue 151, fishing-2, protocol 8) use no new message: a fish moves to the game whose lure it goes for through `OBJECT_PRESENT`'s targeting flag, a landed fish is `OBJECT_REMOVE` reason dead, and lures are `OBJECT_SPAWN`/`OBJECT_SAMPLE`/`OBJECT_REMOVE` made objects ([objects.md](objects.md), "Fish and lures"). Types 186 to 190 stay free for it.
+Fish and lures (issue 151). A landed fish is `OBJECT_REMOVE` reason dead, and lures are `OBJECT_SPAWN`/`OBJECT_SAMPLE`/`OBJECT_REMOVE` made objects ([objects.md](objects.md), "Fish and lures"). Since protocol 10 (branch fishing-3) each game sends `FISH_LURE` (320) after its `OBJECT_PRESENT`: every fish it has loaded, how near its own cast lure is, and whether the fish is hooked (the sender owns it, within 1 m of the lure) or drawn (it swims at the lure). It goes on a change (at most every 250 ms, a change of hooked or drawn at once), every second while a fish is loaded, and once empty when the last fish left. The server marks each listed object a fish: a fish is never moved by the distance rule, never held by a fight lock, and a hit does not move it; it goes to the game whose lure beats its owner's (the same rank and 1 m nearer, or drawn against the owner's plain distance and not over 1 m farther), held 300 ms, not within 1 s of its last change. Only the owner's hooked counts, and the owner keeps a hooked fish: on its last list for 10 s, and while its game stands still (paused, dead). Any other list older than 2.5 s counts as no lure; a fish whose owner stands still with no hooked fish goes to the best lure, else as any object. Types 186 to 190 (protocol 8) were never used; 321 to 324 are kept.
 
 ### Drops
 
@@ -344,10 +404,24 @@ The rupees, hearts and ammo that an enemy, a pot, grass or a rock leaves ([objec
 | Type | Name | Channel | Sent by | Body |
 |---|---|---|---|---|
 | 36 | `DROP_SPAWN` | 2 | both | `u8` player field, object id (kind made: the game that rolled it and its counter), scene (string, 1 to 64), actor name (string, 1 to 64), position (3 x f32), `u64` server time when its maker first saw it, `u8` flags (bit 0 the sender owns what dropped it, bit 1 told again for a player who came later; other bits refused) |
-| 37 | `DROP_TAKE` | 2 | both | `u8` player field, object id (kind made), `u8` reason (0 picked up, 1 blinked out; others refused) |
+| 37 | `DROP_TAKE` | 2 | both | `u8` player field, object id (kind made, or since version 10 kind placed: a bush's or grass tuft's fixed loot by its placement hash), `u8` reason (0 picked up, 1 blinked out; others refused) |
 | 38 | `DROP_ASK` | 2 | both | `u8` player field, scene (string, 1 to 64): the sender came into this scene and asks for its drops |
 
 Type 39 is kept for drops and not used. A `DROP_SPAWN` told again may come from any game that still shows the drop, so the maker in its id need not be the sender.
+
+### Gimmick events (`DUNGEON_EVENT`)
+
+Protocol 10, type 355 (355 to 359 kept; branch `deku-dungeon-2`, issues 176 and 196). When a game starts one of the room gimmick events whose played flag the others hold ([dungeon.md](dungeon.md), "Live events"), it sends the event's name at once. The others in that scene start the same event as soon as their Link is near its place, instead of waiting for the played flag, which comes only at the end of the sender's event. On channel 0, reliable; the server writes the sender's number, relays it to the others in the sender's scene and keeps nothing (a game that comes later gets the played flag). A version 9 server refuses it as unknown. Story cutscenes use the same message (branch `shared-cutscenes`): the name is one of the story cutscenes in `coop_shared_scenes.cpp`, and the others in the room play it at once ([scenes.md](scenes.md), "Shared story cutscenes"); a game without that branch ignores such a name.
+
+### Moving platforms (`PLATFORM_CLOCK`)
+
+Protocol 10, type 400 (400 to 404 kept; branch `platforms-b`, issues 196 and 194). The game moves its lifts, moving floors and turning floors by delta time, so one word of each platform's driver (an elapsed time, a phase, an angle) decides where it is. The game that owns a platform sends that word about once a second, and at once when it jumped (it looped, or a switch started it), with the server time it read it at (the clock of [Keep-alive and clock](#keep-alive-and-clock)). Every other game in the scene puts value + rate x (its server time now - the sent server time) into its own word, looped by the cycle when one was seen, only when its own is more than 0.1 s of the clock off, and at most every 0.5 s. Latency and the games' own clocks drop out: both sides use the server's time. Which word it is, and its rate, the sender finds in its running game ([objects.md](objects.md), "Moving platforms"); the key says where it is, the same in every game of one build.
+
+Owner: the game that has sent a platform's clock the longest without a 3 s break; two that began within 0.2 s of each other: the lower player number. A game that comes later follows, so a platform already moving in the others keeps its place. A sender quiet for 3 s (left, another scene) loses it to the next.
+
+Type 401 `PLATFORM_COUNTER` (branch `platforms-b2`, the method of Hot Onion): the looping platforms whose AI graph times each pause with a counter node. Every 3 s each game sends, per looping counter, its key, period, the time since its last start and how many starts it has seen. A game more than 0.3 s out of phase with another's start of the same key, that has seen fewer starts (a tie: the higher player number), shifts that one pause and is in phase from then on. Same channel, relay and refusal as type 400 below.
+
+Both: on channel 4 like `WORLD_MOVE`, not reliable: the next one comes a second later. The server writes the sender's number, relays it to the others in the sender's scene (dropped when the sender is not in that scene) and keeps nothing. A version 10 server refuses it as unknown.
 
 ### Boss rooms (`BOSS_ROOM`)
 
@@ -358,6 +432,20 @@ Where a player stands with a dungeon's boss ([dungeons-boss.md](dungeons-boss.md
 | 50 | `BOSS_ROOM` | 0 | both | `u8` player field, scene (string, 1 to 64: the dungeon), `u8` room (0 to 15, the index in `coop_boss.h`'s table), `u8` state: 1 in the room (sent on entering and every 2 s while there), 2 intro started, 3 intro over (the fight has begun), 4 left the room, 5 the boss is beaten; others refused |
 
 Types 51 to 54 are kept for boss rooms and not used.
+
+### PvP (protocol 10, `PVP_MODE`, `PVP_HIT`, `PVP_HURT`)
+
+Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hook/coop_pvp.h`). Off unless the host turns it on. Types 241 to 250 are kept for it.
+
+| Type | Name | Channel | Sent by | Body |
+|---|---|---|---|---|
+| 241 | `PVP_MODE` | 0 | both | `u8` set by (0 the server's start, 1 to 4 the player who changed it), `u8` mode (0 off, 1 on; others refused). No player field |
+| 242 | `PVP_HIT` | 2 | both | `u8` player field (the attacker), `u8` victim (1 to 4, not the attacker), `u8` cause (as in `DAMAGE`; others kept), `s32` amount (quarter hearts, 1 to 80), 3 x `f32` where the blow landed, 3 x `f32` where the attacker stood (all finite) |
+| 243 | `PVP_HURT` | 2 | both | `u8` player field (the victim), `u8` attacker (1 to 4, not the victim), `s32` amount taken (0 to 80), `s32` life left (0 to 80), `u8` flags: bit 0 the hit took the last life, bit 1 kept off (amount 0); other bits refused |
+
+- **The session's value is the server's.** `coop_server --pvp on|off` (the host's `pvp` line in coop-options.ini; off by default) sets it. A game starts every connection with PvP off; while it is on, the server sends `PVP_MODE` to each player at join, after `HOST`. The host may change it with its own `PVP_MODE` (the `/pvp` chat command): the server sends the new value, with the host's number, to everyone. A `PVP_MODE` from anyone else is not taken; the server answers that player alone with the value as it is. When the session empties, the value goes back to the server's start value.
+- **Hits go to their victim only, and only while PvP is on.** The server passes a `PVP_HIT` to the victim alone, with the attacker's number written in, and drops it while PvP is off (counted in `pvp_hits_dropped`), so a game with PvP off never gets one, whatever an attacker's game believes.
+- **The victim decides.** Its game takes the hit (or not, by the rules in play-online.md) and sends `PVP_HURT`, which the server relays to everyone else. A `PVP_HURT` naming its own sender as the attacker is dropped.
 
 ## Later stages (outline only)
 
@@ -388,3 +476,15 @@ Types 51 to 54 are kept for boss rooms and not used.
 - Version 8 also (chunk 7, world-objects): no new message (171 to 175 kept). The placed rolling boulders now go as `WORLD_MOVE` ([world.md](world.md), "Rolling boulders").
 - Version 8 also (items-progress): adds no message type (176 to 180 kept, unused). The Deku Shield (`PouchData.Weapon_Shield_Deku.StockNum`, `IsGet.Weapon_Shield_Deku`) is each player's own, and the Gold Skulltula token count is guarded by the 100 Skulltula keys ([items.md](items.md), issues 130 and 89).
 - Version 9 (chunk 8, join-password, issue 160): `JOIN_CHALLENGE` (191), `JOIN_PROOF` (192) and `REFUSED` reason 6, bad password; 191 to 195 kept. A version 8 game cannot answer the challenge, so every game and the server must be 9. Other chunk 8 branches add their types under protocol 9 without a bump of their own.
+- Version 10 (chunk 11): one bump for all of these. New types: `PVP_MODE` (241), `PVP_HIT` (242), `PVP_HURT` (243), 241 to 250 kept for PvP (branch `pvp`); `PLAYER_LIFE` (251), 251 to 255 kept for the co-op HUD (branch `game-hud`). Changed: `DROP_TAKE` may carry a placed id (kind placed, maker 0, the placement hash), so the loot a bush or grass tuft lays out in every game is taken from all when one player picks it up (branch `enemy-drops`, issue 102); a version 9 game refuses such a take. Enemy shots (branch `enemy-shots`) go as `OBJECT_SPAWN` with the projectile flag and add no type. A version 9 server would not relay or check the new types, so every game and the server must be 10. The Deku Shield's two flags are shared again (max / any, branch `shop-shield-2`, issue 130); a version 9 game keeps them per player, so it would not take a shield bought elsewhere.
+- Protocol 10 also (branch `puppet-colors-3`): `PLAYER_EQUIP` component 16, `color`, with no bump. An older reader skips it, but a server without it drops it when it relays (it reads and writes the message again): every game then shows the others in their player number's colour.
+- Protocol 10 (items-sync, issues 89 and 130): adds no message type (325 to 329 kept, unused). A Gold Skulltula token that appears within 5 s of its Skulltula leaving the walk, up to 12 m away, is now known as its token ([world.md](world.md), tokens).
+- Version 10 also brings `FISH_LURE` (320; 320 to 324 kept, branch `fishing-3`, issue 151), from a client only and not relayed. A version 9 server refuses it as unknown.
+- Version 10 also brings `DUNGEON_EVENT` (355; 355 to 359 kept, branch `deku-dungeon-2`, issues 176 and 196), from either side, relayed to the sender's scene, never kept.
+- Version 10 (host-fixes, issue 163): `REJOIN_TOKEN` (345) and `REJOIN_CLAIM` (346); 345 to 349 kept. A build without them is never given a takeover (it shows no token), which is only slower, so no bump of its own.
+- Version 10 also brings `PLAYER_RIDE` (385; 385 to 389 kept, branch `epona-ride`, issue 199), on the samples channel, relayed to everyone else. A build without it ignores the type and its riders show on foot.
+- Version 10 also (puppet-looks, issue 152): `OCARINA_NOTE` (140); 140 to 144 kept for the Ocarina. A version 9 server would not relay it.
+- Version 10 also (branch `net-encrypt`): encrypted traffic with a join password ("Encrypted traffic"). No new type; `HELLO` and `JOIN_CHALLENGE` may end with a 32-byte key share. A version 10 build without it sends no key share and is refused by a server with a password, so with a password every game and the server need it; with no password nothing changes (replaced below, still in version 10: every session has a password).
+- Version 10 also (branch `keep-number`, stray server restart, 2026-11-12): `HELLO` may end with one more byte, the player's previous number, after the key share. Version 10 also brings `PLATFORM_CLOCK` (400, branch `platforms-b`) and `PLATFORM_COUNTER` (401, branch `platforms-b2`; 402 to 404 kept).
+- Version 10 also (branch `encrypt-always-b`, 2026-11-12): every session has a join password and is encrypted; the plain path is gone both ways (a server refuses a `HELLO` without a key share and every `HELLO` when it has no password, and `coop_server` does not start without one; a game refuses a `WELCOME` without keys). No new type, no format change.
+- Version 10 is this release's protocol: everything above marked version 10 ships in it. `main` before this release had an unreleased draft of version 10 (without keep-number, encrypt-always and the platform types); a build of that draft and one of this release both say 10 but do not work together (the draft's `HELLO` has no previous number and may have no key share, and its server lets a game in without a password). The draft was never released, so no player has it. These were briefly numbered 11 on the integration branch.

@@ -112,7 +112,7 @@ constexpr ItemFlag kItems[] = {
   {"PouchData.Item_Arrow_Normal.StockNum", 0x518ec74b, K::int32, R::per_player, true},
   {"PouchData.Item_CojiroCucco.StockNum", 0x51d89ef0, K::int32, R::mirror, true},
   {"PouchData.Obj_Heart_Piece.StockNum", 0x51ec97b3, K::int32, R::count, true},
-  {"IsGet.Weapon_Shield_Deku", 0x5217da1e, K::boolean, R::per_player, true},  // issue 130
+  {"IsGet.Weapon_Shield_Deku", 0x5217da1e, K::boolean, R::any, true},  // issue 130: shared again
   {"PouchData.BottleD.StockNum", 0x5324f9d3, K::int32, R::any, true},
   {"PouchData.Item_Ocarina_Time.StockNum", 0x54e2a3d1, K::int32, R::max, true},
   {"PouchData.Item_NormalBoot.StockNum", 0x55e804de, K::int32, R::max, true},
@@ -155,7 +155,7 @@ constexpr ItemFlag kItems[] = {
   {"DungeonInfo.SpiritTemple.SmallKeyNum", 0x79eeec8e, K::int32, R::count, true},
   {"IsGet.Weapon_Sword_Master", 0x7ae38e5b, K::boolean, R::any, true},
   {"PouchData.Item_BulletBag_Large.StockNum", 0x7b9673f5, K::int32, R::max, true},
-  {"PouchData.Weapon_Shield_Deku.StockNum", 0x7ca64f23, K::int32, R::per_player, true},  // issue 130
+  {"PouchData.Weapon_Shield_Deku.StockNum", 0x7ca64f23, K::int32, R::max, true},  // issue 130: shared again
   {"PlayerStatus.AssignableItem.BottleInfo.BottleA.BottleItem", 0x7d48df76, K::uint32, R::per_player, true},
   {"PouchData.Item_Stone_Fire.StockNum", 0x7d69ad47, K::int32, R::max, true},
   {"DungeonInfo.BottomOfTheWell.SmallKeyNum", 0x7dd79d10, K::int32, R::count, true},
@@ -593,6 +593,30 @@ std::optional<std::uint32_t> lift_grade_raise(std::int32_t goron, std::int32_t s
   return kOrder[want];
 }
 
+std::optional<std::string_view> ocarina_equip_mend(std::int32_t fairy, std::int32_t time,
+                                                   std::string_view current) {
+  const std::string_view want =
+      time >= 1 ? ocarina::kTimeName : fairy >= 1 ? ocarina::kFairyName : std::string_view{};
+  if (want.empty() || current == want) return std::nullopt;
+  if (current.empty() || (current == ocarina::kFairyName && want == ocarina::kTimeName)) {
+    return want;
+  }
+  return std::nullopt;  // the better one already, or a name we do not know
+}
+
+std::vector<std::uint32_t> ocarina_bools_mend(std::int32_t fairy, std::int32_t time,
+                                              const std::function<std::optional<bool>(std::uint32_t)>& get) {
+  std::vector<std::uint32_t> want;
+  if (fairy >= 1) want.insert(want.end(), {ocarina::kIsGetFairy, ocarina::kGotFairy});
+  if (time >= 1) want.insert(want.end(), {ocarina::kIsGetTime, ocarina::kGotTime});
+  if (fairy >= 1 || time >= 1) want.insert(want.end(), {ocarina::kSlotA, ocarina::kSlotB});
+  std::vector<std::uint32_t> out;
+  for (const std::uint32_t hash : want) {
+    if (get(hash) == false) out.push_back(hash);  // unreadable (nullopt) is left alone
+  }
+  return out;
+}
+
 void ItemFlagStore::grant(std::uint32_t item, bool new_item) {
   if (!ready_) {
     // No Link: a load would undo it. A new item gets it all at the mend.
@@ -706,6 +730,13 @@ bool ItemFlagStore::is_count(FlagKey key) {
   if (key.kind != protocol::FlagKeyKind::named || key.index != 0) return false;
   const ItemFlag* item = find_item(key.hash);
   return item != nullptr && item->on && item->rule == ItemRule::count;
+}
+
+bool ItemFlagStore::is_max(FlagKey key) {
+  if (key.kind != protocol::FlagKeyKind::named || key.index != 0) return false;
+  const ItemFlag* item = find_item(key.hash);
+  return item != nullptr && item->on && item->rule == ItemRule::max &&
+         item->kind == protocol::FlagKind::int32;
 }
 
 }  // namespace coop::host

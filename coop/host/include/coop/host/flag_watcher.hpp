@@ -54,6 +54,7 @@ struct FlagStats {
   std::uint64_t not_shared = 0;        // incoming entries not in the shared list
   std::uint64_t pickups_learned = 0;   // 64-bit keys taken as pickups from a message
   std::uint64_t pickup_resets = 0;     // a pickup's 0, ours or incoming: not passed on
+  std::uint64_t max_drops_kept = 0;    // a max-rule value our game lowered: ours, not sent
   std::uint64_t read_failures = 0;
   std::uint64_t write_failures = 0;    // each failed try; it is tried again next frame
   std::uint64_t bad_snapshots = 0;     // parts out of order: the snapshot is dropped
@@ -63,6 +64,8 @@ struct FlagStats {
   std::uint64_t host_resets = 0;       // host: FLAG_RESETs sent after its save load
   std::uint64_t reset_applied = 0;     // player: values written from a FLAG_RESET
   std::uint64_t counts_guarded = 0;    // a guarded count's gain taken back (guard_count)
+  std::uint64_t doubled_gains = 0;     // a chest opened again here: its gain taken back (expect_doubled_gain)
+  std::uint64_t entries_unsent = 0;    // entries a message kind cannot carry: left out, the rest sent
 };
 
 class FlagWatcher {
@@ -157,6 +160,24 @@ class FlagWatcher {
   };
   // The gains guard_count put back since the last call, for the log.
   std::vector<CountGuarded> take_counts_guarded() { return std::exchange(counts_guarded_, {}); }
+
+  // Issue 195: our Link opened a chest that another player had opened
+  // already (the hook shows it open, but its AI still lets it open again).
+  // Its content was given in the other game and counted for the group, so
+  // the next gain of a count (a small key, a heart piece; never a guarded
+  // count, guard_count: no chest holds a token) in our own game within
+  // kDoubledGainFrames is put back and not sent (take_counts_guarded reports
+  // it). One call drops one gain. There is no table of what a chest holds,
+  // so the caller bounds it to that chest's own get scene: the hook calls
+  // end_doubled_gain() when our Link's event ends (or never started), and
+  // kDoubledGainFrames is only a cap. Inside the scene our Link is held, so
+  // the only count gain there is the chest's own (none for a map, compass
+  // or rupees, and then nothing is taken).
+  void expect_doubled_gain();
+  // The reopened chest's get scene is over: nothing more is taken back.
+  void end_doubled_gain() { doubled_ = 0; }
+  static constexpr std::uint64_t kDoubledGainFrames = 5 * 60;
+  static constexpr std::int32_t kMaxDoubledGains = 4;
 
   // The host left and this player takes over, or the other way round. Keeps
   // what is known of the game; drops a snapshot being held.
@@ -300,6 +321,8 @@ class FlagWatcher {
   std::map<FlagKey, FlagKey> guard_source_;  // a source: its count
   Table added_;                              // count deltas add() put in this frame
   std::vector<CountGuarded> counts_guarded_;  // take_counts_guarded
+  std::int32_t doubled_ = 0;                  // expect_doubled_gain: gains still to drop
+  std::uint64_t doubled_until_ = 0;           // the frame they lapse
   void settle_guards(FlagStore& store, Table& changes);
   // Notes a 64-bit key about to be written to 1 when the game has it at 0.
   void note_for_others(FlagStore& store, const protocol::FlagEntry& entry);

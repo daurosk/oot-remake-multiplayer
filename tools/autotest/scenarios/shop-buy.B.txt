@@ -1,0 +1,47 @@
+# shop-buy (#130), B (P2): empties its own Deku Shield, waits in the shop while A buys one,
+# then equips the Deku Shield from the menu (as menu-gear: Equipment page, the cursor on the
+# worn Hylian Shield, the Deku Shield to its left). Pass lines are in shop-buy.A.txt.
+mark start
+warp KokiriForest_Child
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark loaded
+setflag PouchData.Weapon_Shield_Deku.StockNum 0
+wait 300
+place -0.40 110.30 -20.20
+wait 300
+mark b-in-shop
+# A talks, picks and buys (about 25 s from A's `loaded`); B waits past A's `bought`.
+wait 2700
+mark b-before-menu
+press PLUS
+wait 60
+press L
+wait 30
+press L
+wait 30
+press L
+wait 30
+press L
+wait 30
+press R
+wait 45
+mark b-equipment
+press DLEFT
+wait 30
+press A
+wait 45
+mark equipped
+press PLUS
+wait 90
+mark b-closed
+wait 600
+mark end

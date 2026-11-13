@@ -241,6 +241,17 @@ std::optional<Skeleton> FindSkeleton(CoopPuppet::Guest& guest, std::uint64_t act
 
 }  // namespace
 
+std::optional<std::string> ModelNameOf(CoopPuppet::Guest& guest, std::uint64_t actor) {
+    if (actor == 0) {
+        return std::nullopt;
+    }
+    const auto s = FindSkeleton(guest, actor);
+    if (!s || s->model.empty()) {
+        return std::nullopt;
+    }
+    return s->model;
+}
+
 // The local player's actor, as coop::host::PlayerReader finds it (addresses.hpp).
 std::uint64_t FindPlayer(CoopPuppet::Guest& guest, std::uint64_t main_base) {
     std::uint64_t scene = 0, table = 0, array = 0, manager = 0, must = 0;

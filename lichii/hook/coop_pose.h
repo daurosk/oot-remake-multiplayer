@@ -102,6 +102,9 @@ Quat Nlerp(const Quat& a, const Quat& b, float t);
 // puppet applies only a pose of its own model.
 std::uint32_t SkeletonId(std::uint32_t bone_count, std::string_view model_name);
 std::uint32_t BoneCountOf(std::uint32_t skeleton);
+// The name of the actor's model ("Player_Child", "Player_Adult") when it has
+// a skeleton and an FMDL model resource; nothing when not (yet).
+std::optional<std::string> ModelNameOf(CoopPuppet::Guest& guest, std::uint64_t actor);
 
 // The newest poses of one remote player, and the blend shown now.
 class Track {

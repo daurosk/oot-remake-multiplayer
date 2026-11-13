@@ -67,6 +67,7 @@ net::ClientConfig config_for(std::uint16_t port, const std::string& name) {
   c.hello.game_build_id = "e0f3ccfaf50065ae";
   c.hello.game_version = "1.1.1";
   c.hello.nickname = name;
+  c.join_password = "test-pass";  // every session has one (and is encrypted)
   c.retry_first_ms = 50;
   c.retry_max_ms = 400;
   return c;
@@ -107,6 +108,7 @@ struct Peer {
 coop::server::ServerOptions any_port() {
   coop::server::ServerOptions o;
   o.port = 0;
+  o.session.join_password = "test-pass";
   return o;
 }
 

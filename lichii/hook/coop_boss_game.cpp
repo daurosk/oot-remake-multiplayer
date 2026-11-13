@@ -205,7 +205,7 @@ struct Glue {
     }
 
     void Frame(Core::System& system, std::uint64_t main, const std::optional<std::string>& scene,
-               const std::optional<coop::protocol::Vec3>& position, bool event,
+               const std::optional<coop::protocol::Vec3>& position, bool event, std::optional<bool> shut_in,
                coop::host::Session* session, std::uint64_t now_us) {
         if (!on) {
             return;
@@ -232,6 +232,7 @@ struct Glue {
             local.position = Vec{(*position)[0], (*position)[1], (*position)[2]};
         }
         local.event = event;
+        local.shut_in = shut_in;
         if (scene) {
             if (const Room* room = RoomOfScene(*scene)) {
                 local.boss_alive = CoopObjects::LastBossAlive(Bodies(*room));
@@ -245,9 +246,10 @@ struct Glue {
         }
         if (debug && now_us - debug_at >= kDebugEveryUs) {
             debug_at = now_us;
-            LOG_INFO(Core, "coop: boss: phase {}, scene {}, at {:.1f} {:.1f} {:.1f}, event {}",
+            LOG_INFO(Core, "coop: boss: phase {}, scene {}, at {:.1f} {:.1f} {:.1f}, event {}, shut in {}",
                      PhaseName(sync.phase()), scene.value_or("?"), position ? (*position)[0] : 0.0f,
-                     position ? (*position)[1] : 0.0f, position ? (*position)[2] : 0.0f, event);
+                     position ? (*position)[1] : 0.0f, position ? (*position)[2] : 0.0f, event,
+                     shut_in ? (*shut_in ? "1" : "0") : "-");
         }
         if (act.pull) {
             const Room& room = *act.pull->room;
@@ -284,9 +286,9 @@ Glue& TheGlue() {
 } // namespace
 
 void Frame(Core::System& system, std::uint64_t main_base, const std::optional<std::string>& scene,
-           const std::optional<coop::protocol::Vec3>& position, bool event_running,
+           const std::optional<coop::protocol::Vec3>& position, bool event_running, std::optional<bool> shut_in,
            coop::host::Session* session, std::uint64_t server_now_us) {
-    TheGlue().Frame(system, main_base, scene, position, event_running, session, server_now_us);
+    TheGlue().Frame(system, main_base, scene, position, event_running, shut_in, session, server_now_us);
 }
 
 bool Fighting() {

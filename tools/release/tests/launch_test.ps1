@@ -20,17 +20,16 @@ function Write-File([string]$Path, [string]$Text) {
     [System.IO.File]::WriteAllText($Path, $Text)
 }
 function Read-File([string]$Path) { if (Test-Path -LiteralPath $Path) { [System.IO.File]::ReadAllText($Path) } else { '<none>' } }
-# A kit file as make_kit.ps1 writes it: Windows line ends, the port filled in.
-function Copy-KitText([string]$From, [string]$To) {
-    $text = [System.IO.File]::ReadAllText($From).Replace("`r`n", "`n").Replace('@PORT@', '27510')
-    Write-File $To $text.Replace("`n", "`r`n")
-}
+# A kit file as make_kit.ps1 writes it (its own copy function): Windows line ends, the port
+# filled in, except in coop.ini.template.
+. (Join-Path $release 'kit_text.ps1')
+function Copy-KitFile([string]$From, [string]$To) { Copy-KitText $From $To 27510 }
 # A kit of this repo's scripts. Tag: its release; Marker: a line its play.ps1 writes to
 # played.txt when it runs, so a test sees which kit's play.ps1 started the game.
 function New-Kit([string]$Dir, [string]$Tag, [string]$Marker) {
-    foreach ($f in 'Host.bat', 'Join.bat', 'play.cmd', 'coop-options.ini') { Copy-KitText (Join-Path $kitSrc $f) (Join-Path $Dir $f) }
-    foreach ($f in Get-ChildItem (Join-Path $kitSrc 'scripts') -Filter *.ps1) { Copy-KitText $f.FullName (Join-Path $Dir "scripts\$($f.Name)") }
-    Copy-KitText (Join-Path $kitSrc 'coop.ini.template') (Join-Path $Dir 'scripts\coop.ini.template')
+    foreach ($f in 'Host.bat', 'Join.bat', 'play.cmd', 'coop-options.ini') { Copy-KitFile (Join-Path $kitSrc $f) (Join-Path $Dir $f) }
+    foreach ($f in Get-ChildItem (Join-Path $kitSrc 'scripts') -Filter *.ps1) { Copy-KitFile $f.FullName (Join-Path $Dir "scripts\$($f.Name)") }
+    Copy-KitFile (Join-Path $kitSrc 'coop.ini.template') (Join-Path $Dir 'scripts\coop.ini.template')
     $play = Join-Path $Dir 'scripts\play.ps1'
     $text = [System.IO.File]::ReadAllText($play)
     $at = $text.IndexOf('$current = Read-CoopIni $ini')
@@ -109,8 +108,21 @@ try {
     [System.IO.File]::WriteAllText($opt, "# server_allow = 9.9.9.9`r`n")
     $a = Read-KitServerAccess $opt
     Check ($a.Allow -eq '' -and $a.Bind -eq '') 'server_allow behind # is off'
-    # server_password (join-password): $null when no line sets it (Host.bat asks), '' for none.
-    Check ($null -eq $a.Password) 'no server_password line: Password is $null (Host.bat asks once)'
+    Check (-not $a.Pvp) 'no pvp line: PvP is off'
+    # pvp (the host's server only): read for the server, never set for the emulator.
+    [System.IO.File]::WriteAllText($opt, "pvp = on`r`nLICHII_COOP_PUPPET=1`r`n")
+    $said = Read-KitOptions $opt 6>&1 | Where-Object { $_ -is [System.Management.Automation.InformationRecord] }
+    $o = Read-KitOptions $opt 6>$null
+    Check ((($o.Keys) -join ',') -eq 'LICHII_COOP_PUPPET' -and -not $said) 'pvp is not an emulator switch and is not warned about'
+    Check ((Read-KitServerAccess $opt).Pvp) 'pvp = on is read'
+    foreach ($off in 'pvp = off', '# pvp = on', 'pvp = maybe', 'pvp =') {
+        [System.IO.File]::WriteAllText($opt, "$off`r`n")
+        Check (-not (Read-KitServerAccess $opt).Pvp) "'$off': PvP is off"
+    }
+    [System.IO.File]::WriteAllText($opt, "# server_allow = 9.9.9.9`r`n")
+    $a = Read-KitServerAccess $opt
+    # server_password (join-password): $null when no line sets it or it is empty (Host.bat makes one).
+    Check ($null -eq $a.Password) 'no server_password line: Password is $null (Host.bat makes one)'
     [System.IO.File]::WriteAllText($opt, "# --- Who may join ---`r`n# server_password = `r`nLICHII_COOP_PUPPET=1`r`n")
     Check ($null -eq (Read-KitServerAccess $opt).Password) 'server_password behind # is not set'
     Set-KitServerPassword $opt 'hunter2'
@@ -121,7 +133,20 @@ try {
     Check (-not $said -and -not (Read-KitOptions $opt 6>$null).Contains('server_password')) 'server_password is not an emulator switch and is not warned about'
     Set-KitServerPassword $opt ''
     $p = (Read-KitServerAccess $opt).Password
-    Check ($null -ne $p -and $p -eq '' -and ([regex]::Matches([System.IO.File]::ReadAllText($opt), 'server_password')).Count -eq 1) "no password chosen: one empty server_password line, not asked again [$p]"
+    Check ($null -eq $p -and ([regex]::Matches([System.IO.File]::ReadAllText($opt), 'server_password')).Count -eq 1) "an empty server_password line is not 'no password': Host.bat makes one (every session has one) [$p]"
+    # color (puppet-colors): passed as LICHII_COOP_COLOR when it is a colour, with a comment after it too.
+    . (Join-Path $kitSrc 'scripts\coop-ini.ps1')
+    foreach ($good in 'blue', 'Purple', '#FF8020', 'ff8020') { Check (Test-CoopColor $good) "a colour: $good" }
+    foreach ($bad in 'blurple', '#FF802', '#GG8020', '') { Check (-not (Test-CoopColor $bad)) "not a colour: '$bad'" }
+    [System.IO.File]::WriteAllText($opt, "# color = red`r`ncolor = #FF8020  # mine`r`nLICHII_COOP_PUPPET=1`r`n")
+    $said = Read-KitOptions $opt 6>&1 | Where-Object { $_ -is [System.Management.Automation.InformationRecord] }
+    $o = Read-KitOptions $opt 6>$null
+    Check ($o['LICHII_COOP_COLOR'] -eq '#FF8020' -and $o['LICHII_COOP_PUPPET'] -eq '1' -and -not $said) "color is passed as LICHII_COOP_COLOR [$($o['LICHII_COOP_COLOR'])]"
+    [System.IO.File]::WriteAllText($opt, "color = blurple`r`n")
+    $said = Read-KitOptions $opt 6>&1 | Where-Object { $_ -is [System.Management.Automation.InformationRecord] }
+    Check ($said -and -not (Read-KitOptions $opt 6>$null).Contains('LICHII_COOP_COLOR')) 'a bad color is said and not passed'
+    [System.IO.File]::WriteAllText($opt, "color =`r`n# color = blue`r`n")
+    Check (-not (Read-KitOptions $opt 6>$null).Contains('LICHII_COOP_COLOR')) 'an empty or commented color passes nothing'
     [System.IO.File]::WriteAllText($opt, "auto_update = ask`r`n")
     Set-KitServerPassword $opt 'x'
     Check ([System.IO.File]::ReadAllText($opt) -eq "auto_update = ask`r`nserver_password = x`r`n") 'no server_password line at all: added at the end'
@@ -146,17 +171,120 @@ try {
     Check ((Get-PuppetPackHint $man $tool) -match 'without the other players'' sounds.*make-puppet-pack\.cmd') 'a pack without "sound": run make-puppet-pack again'
     Write-File $man '{"actors": [], "sound": false}'
     Check ((Get-PuppetPackHint $man $tool) -match 'sounds') 'a --no-sound pack: the same line'
-    Write-File $man "{`"actors`": [], `"sound`": true, `"tool_sha256`": `"$hash`"}"
+    Write-File $man "{`"actors`": [], `"sound`": true, `"tunics`": {`"Red`": [`"x`"]}, `"tool_sha256`": `"$hash`"}"
     (Get-Item (Join-Path $tool 'b_c.py')).LastWriteTimeUtc = [datetime]::UtcNow.AddHours(10)
     Check ($null -eq (Get-PuppetPackHint $man $tool)) 'the same tool, its files dated hours ahead (a zip from another time zone): nothing said'
     Check ($null -eq (Get-PuppetPackHint $man (Join-Path $ph 'no-tool'))) 'no tool folder: nothing said'
-    Write-File $man '{"actors": [], "sound": true}'
+    Write-File $man '{"actors": [], "sound": true, "tunics": {"Red": ["x"]}}'
     Check ($null -eq (Get-PuppetPackHint $man $tool)) 'sound and no tool hash: nothing said'
-    Write-File $man '{"actors": [], "sound": true, "tool_sha256": "0000"}'
+    Write-File $man '{"actors": [], "sound": true}'
+    Check ((Get-PuppetPackHint $man $tool) -match 'without the tunic colours.*green.*make-puppet-pack\.cmd') 'a pack from before the tunics: run make-puppet-pack again (#202)'
+    Write-File $man '{"actors": [], "sound": true, "tunics": {}, "tunics_off": true}'
+    Check ($null -eq (Get-PuppetPackHint $man $tool)) 'a --tunics none pack: no tunic line'
+    Write-File $man '{"actors": [], "sound": true, "tunics": {}, "tool_sha256": "0000"}'
+    Check ((Get-PuppetPackHint $man $tool) -match 'without the tunic colours') 'a pack with no tunics made: the tunic line first'
+    Write-File $man '{"actors": [], "sound": true, "tunics": {"Red": ["x"]}, "tool_sha256": "0000"}'
     Check ((Get-PuppetPackHint $man $tool) -match 'another version of the pack tool') 'another tool hash: run make-puppet-pack again'
     Write-File $man '{ not json'
     Check ((Get-PuppetPackHint $man $tool) -match 'could not be read') 'a broken coop_puppet.json: a line, no throw'
     Check ((Get-PuppetPackHint (Join-Path $ph 'none.json') $tool) -match 'could not be read') 'a missing coop_puppet.json: a line, no throw'
+    # Your own Link in your colour (#202): the nearest preset, as coop_colors.cpp TunicOf.
+    Check ((Get-KitTunic 'red') -eq 'red') 'tunic: red'
+    Check ((Get-KitTunic ' Blue ') -eq 'blue') 'tunic: a name, any case'
+    Check ((Get-KitTunic '#FF3333') -eq 'red') 'tunic: #RRGGBB nearest'
+    Check ((Get-KitTunic 'A0A0A0') -eq 'white') 'tunic: gray is white, as the emulator says'
+    Check ((Get-KitTunic 'gray') -eq 'white') 'tunic: the name gray too'
+    Check ((Get-KitTunic 'green') -eq 'green') 'tunic: green'
+    Check ((Get-KitTunic 'blurple') -eq '') 'tunic: not a colour'
+    Check ((Get-KitTunic '') -eq '') 'tunic: none chosen'
+    $sp = Join-Path $ph 'self-pack'
+    New-Item -ItemType Directory -Force -Path (Join-Path $sp 'coop_self') | Out-Null
+    Write-File (Join-Path $sp 'coop_self\red.bntx.zs') 'RED'
+    Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"], "green": ["y"]}, "self_tiles": {"red": "coop_self/red.bntx.zs"}}'
+    $tile = Join-Path $sp 'romfs\Tex\Angin_Tile_A_Alb.bntx.zs'
+    Check ((Set-KitSelfTunic $sp 'red') -eq 'red') 'self tunic: red put in'
+    Check ((Test-Path -LiteralPath $tile) -and [System.IO.File]::ReadAllText($tile) -eq 'RED') 'self tunic: the red tile over the game''s'
+    Check ((Set-KitSelfTunic $sp 'blue') -eq '') 'self tunic: no blue in the pack: none'
+    Check (-not (Test-Path -LiteralPath $tile)) 'self tunic: and the old copy taken away'
+    [void](Set-KitSelfTunic $sp 'red')
+    Check ((Set-KitSelfTunic $sp 'green') -eq '' -and -not (Test-Path -LiteralPath $tile)) 'self tunic: green: the game''s own tile'
+    [void](Set-KitSelfTunic $sp 'red')
+    Check ((Set-KitSelfTunic $sp '') -eq '' -and -not (Test-Path -LiteralPath $tile)) 'self tunic: no colour: the game''s own tile'
+    Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"]}, "self_tiles": {"red": "coop_self/red.bntx.zs"}}'
+    Check ((Set-KitSelfTunic $sp 'red') -eq '' -and -not (Test-Path -LiteralPath $tile)) 'self tunic: no green puppet in the pack: none (green players would wear yours)'
+    Write-File (Join-Path $sp 'coop_puppet.json') '{ not json'
+    Check ((Set-KitSelfTunic $sp 'red') -eq '') 'self tunic: a broken coop_puppet.json: none, no throw'
+    Check ((Set-KitSelfTunic (Join-Path $ph 'no-pack') 'red') -eq '') 'self tunic: no pack: none, no throw'
+    # the dark tile (the child's tunic body, #202): copied with the main one, taken away with it
+    Write-File (Join-Path $sp 'coop_self\red.dark.bntx.zs') 'REDDARK'
+    Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"], "green": ["y"]}, "self_tiles": {"red": "coop_self/red.bntx.zs"}, "self_dark_tiles": {"red": "coop_self/red.dark.bntx.zs"}}'
+    $dark = Join-Path $sp 'romfs\Tex\Angin_Tile_A_Dark_Alb.bntx.zs'
+    Check ((Set-KitSelfTunic $sp 'red') -eq 'red' -and (Test-Path -LiteralPath $dark) -and [System.IO.File]::ReadAllText($dark) -eq 'REDDARK') 'self tunic: the red dark tile over the game''s'
+    Check ((Set-KitSelfTunic $sp 'green') -eq '' -and -not (Test-Path -LiteralPath $dark) -and -not (Test-Path -LiteralPath $tile)) 'self tunic: green: the game''s own dark tile too'
+    Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"], "green": ["y"]}, "self_tiles": {"red": "coop_self/red.bntx.zs"}}'
+    Write-File $dark 'STALE'
+    Check ((Set-KitSelfTunic $sp 'red') -eq 'red' -and -not (Test-Path -LiteralPath $dark)) 'self tunic: an older pack without dark tiles: no stale dark copy'
+    # self_files (#202 adult): every tunic texture of your colour, all taken away on a change
+    Write-File (Join-Path $sp 'coop_self\red.vest.bntx.zs') 'REDVEST'
+    Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"], "green": ["y"]}, "self_files": {"red": {"Tex/Angin_Tile_A_Alb.bntx.zs": "coop_self/red.bntx.zs", "Tex/Angin_Tile_A_Dark_Alb.bntx.zs": "coop_self/red.dark.bntx.zs", "Tex/Mt_Vest_Player_Adult_Alb.bntx.zs": "coop_self/red.vest.bntx.zs", "../evil.bntx.zs": "coop_self/red.vest.bntx.zs"}}}'
+    $vest = Join-Path $sp 'romfs\Tex\Mt_Vest_Player_Adult_Alb.bntx.zs'
+    Check ((Set-KitSelfTunic $sp 'red') -eq 'red' -and [System.IO.File]::ReadAllText($vest) -eq 'REDVEST' -and [System.IO.File]::ReadAllText($dark) -eq 'REDDARK' -and [System.IO.File]::ReadAllText($tile) -eq 'RED') 'self tunic: self_files: tile, dark tile and vest put in'
+    Check (-not (Test-Path -LiteralPath (Join-Path $sp 'evil.bntx.zs'))) 'self tunic: self_files: a path outside Tex/ is not written'
+    Check ((Set-KitSelfTunic $sp 'green') -eq '' -and -not (Test-Path -LiteralPath $vest) -and -not (Test-Path -LiteralPath $dark) -and -not (Test-Path -LiteralPath $tile)) 'self tunic: self_files: green takes every copy away'
+    # the adult's model copy (bigrun5): from the pack's romfs over Model/Player_Adult
+    New-Item -ItemType Directory -Force -Path (Join-Path $sp 'romfs\Model') | Out-Null
+    Write-File (Join-Path $sp 'romfs\Model\CoopTunic_Adult_Red.Player_Adult.bfres.zs') 'REDMODEL'
+    Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"], "green": ["y"]}, "self_files": {"red": {"Tex/Angin_Tile_A_Alb.bntx.zs": "coop_self/red.bntx.zs", "Model/Player_Adult.Player_Adult.bfres.zs": "romfs/Model/CoopTunic_Adult_Red.Player_Adult.bfres.zs", "Model/Other.bfres.zs": "coop_self/red.bntx.zs"}}}'
+    $model = Join-Path $sp 'romfs\Model\Player_Adult.Player_Adult.bfres.zs'
+    Check ((Set-KitSelfTunic $sp 'red') -eq 'red' -and [System.IO.File]::ReadAllText($model) -eq 'REDMODEL') 'self tunic: self_files: the adult model copy put in'
+    Check (-not (Test-Path -LiteralPath (Join-Path $sp 'romfs\Model\Other.bfres.zs'))) 'self tunic: self_files: no other model path written'
+    Check ((Set-KitSelfTunic $sp '') -eq '' -and -not (Test-Path -LiteralPath $model) -and (Test-Path -LiteralPath (Join-Path $sp 'romfs\Model\CoopTunic_Adult_Red.Player_Adult.bfres.zs'))) 'self tunic: self_files: no colour takes the model copy away, the puppet''s stays'
+    # a pack made again by an older tool (self_tiles only): the newer copies do not stay
+    [void](Set-KitSelfTunic $sp 'red')
+    Write-File $vest 'STALEVEST'
+    Write-File (Join-Path $sp 'romfs\Tex\Mt_Angin_Acs_Player_Adult_Alb.bntx.zs') 'STALEACS'
+    Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"], "green": ["y"]}, "self_tiles": {"red": "coop_self/red.bntx.zs"}}'
+    Check ((Set-KitSelfTunic $sp 'red') -eq 'red' -and -not (Test-Path -LiteralPath $model) -and -not (Test-Path -LiteralPath $vest) -and -not (Test-Path -LiteralPath (Join-Path $sp 'romfs\Tex\Mt_Angin_Acs_Player_Adult_Alb.bntx.zs')) -and [System.IO.File]::ReadAllText($tile) -eq 'RED') 'self tunic: an older pack: no stale model, vest or acs copy'
+    # Use-KitPuppetPack: one pack step for the emulator and Hookshot (play.ps1, G5)
+    $oldEnv = @{}; foreach ($n in 'LICHII_COOP_COLOR', 'LICHII_COOP_TUNICS', 'LICHII_COOP_SELF_TUNIC', 'LICHII_COOP_PUPPET') { $oldEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
+    try {
+        Write-File (Join-Path $sp 'coop_puppet.json') '{"sound": true, "tunics": {"red": ["x"], "green": ["y"]}, "self_tiles": {"red": "coop_self/red.bntx.zs"}}'
+        $env:LICHII_COOP_COLOR = 'red'; $env:LICHII_COOP_TUNICS = $null; $env:LICHII_COOP_SELF_TUNIC = $null; $env:LICHII_COOP_PUPPET = '1'
+        $said = @(Use-KitPuppetPack (Join-Path $sp 'coop_puppet.json') (Join-Path $ph 'no-tool') @('MISSING') 6>&1)
+        Check ($said[-1] -eq $true -and $env:LICHII_COOP_SELF_TUNIC -eq 'red' -and [System.IO.File]::ReadAllText($tile) -eq 'RED') "pack step: found, red: LICHII_COOP_SELF_TUNIC=red and the tile in [$($said -join '|')]"
+        Check ((($said -join '|') -match 'Puppet pack: found\.') -and (($said -join '|') -match 'Your Link: the red tunic') -and $env:LICHII_COOP_PUPPET -eq '1') 'pack step: found: the lines said, puppets stay on'
+        $env:LICHII_COOP_TUNICS = '0'
+        $said = @(Use-KitPuppetPack (Join-Path $sp 'coop_puppet.json') (Join-Path $ph 'no-tool') @('MISSING') 6>&1)
+        Check (-not $env:LICHII_COOP_SELF_TUNIC -and -not (Test-Path -LiteralPath $tile)) 'pack step: LICHII_COOP_TUNICS=0: no own colour, the game''s tile'
+        $env:LICHII_COOP_TUNICS = $null
+        Write-File (Join-Path $sp 'coop_puppet.json') '{"sound": true, "tunics": {}}'
+        $said = @(Use-KitPuppetPack (Join-Path $sp 'coop_puppet.json') (Join-Path $ph 'no-tool') @('MISSING') 6>&1)
+        Check ((($said -join '|') -match 'without the tunic colours') -and (($said -join '|') -match 'Your Link stays green') -and -not $env:LICHII_COOP_SELF_TUNIC) "pack step: an old pack: the hint and 'stays green' [$($said -join '|')]"
+        # Set-KitDefaultColor: no colour chosen = the colour of the likely player number, own Link included
+        $env:LICHII_COOP_COLOR = $null
+        $said = @(Set-KitDefaultColor 'host' '127.0.0.1' 6>&1)
+        Check ($said[-1] -eq 'blue' -and $env:LICHII_COOP_COLOR -eq 'blue' -and (($said -join '|') -match 'player 1')) "default colour: the host is blue [$($said -join '|')]"
+        Write-File (Join-Path $sp 'coop_puppet.json') '{"sound": true, "tunics": {"blue": ["x"], "green": ["y"]}, "self_tiles": {"blue": "coop_self/blue.bntx.zs"}}'
+        Write-File (Join-Path $sp 'coop_self\blue.bntx.zs') 'BLUE'
+        [void](Use-KitPuppetPack (Join-Path $sp 'coop_puppet.json') (Join-Path $ph 'no-tool') @('MISSING') 6>&1)
+        Check ($env:LICHII_COOP_SELF_TUNIC -eq 'blue' -and [System.IO.File]::ReadAllText($tile) -eq 'BLUE') 'default colour: the host''s own Link wears the blue tile'
+        $env:LICHII_COOP_COLOR = $null
+        Check ((Set-KitDefaultColor 'join' '203.0.113.7:27510' 6>$null) -eq 'red' -and $env:LICHII_COOP_COLOR -eq 'red') 'default colour: a joiner is red'
+        $env:LICHII_COOP_COLOR = $null
+        Check ((Set-KitDefaultColor 'join' '127.0.0.1' 6>$null) -eq 'red') 'default colour: a relay join (127.0.0.1) is no host: red'
+        Check ((Set-KitDefaultColor 'join' '10.0.0.2' 6>$null) -eq '' -and $env:LICHII_COOP_COLOR -eq 'red') 'default colour: one already set is kept'
+        $env:LICHII_COOP_COLOR = 'purple'
+        Check ((Set-KitDefaultColor 'host' '' 6>$null) -eq '' -and $env:LICHII_COOP_COLOR -eq 'purple') 'default colour: a chosen colour is kept'
+        $env:LICHII_COOP_COLOR = $null; $env:LICHII_COOP_TUNICS = 'off'
+        Check ((Set-KitDefaultColor 'host' '' 6>$null) -eq '' -and -not $env:LICHII_COOP_COLOR) 'default colour: LICHII_COOP_TUNICS=off: none'
+        $env:LICHII_COOP_TUNICS = $null
+        Check ((Set-KitDefaultColor '' '' 6>$null) -eq '' -and -not $env:LICHII_COOP_COLOR) 'default colour: alone (no server): none'
+        $env:LICHII_COOP_SELF_TUNIC = 'red'
+        $said = @(Use-KitPuppetPack (Join-Path $ph 'no-pack\coop_puppet.json') (Join-Path $ph 'no-tool') @('MISSING 1', 'MISSING 2') 6>&1)
+        Check ($said[-1] -eq $false -and (($said -join '|') -match 'MISSING 1\|MISSING 2') -and -not $env:LICHII_COOP_PUPPET -and -not $env:LICHII_COOP_SELF_TUNIC) "pack step: no pack: the given lines, puppets and own colour off [$($said -join '|')]"
+    } finally {
+        foreach ($n in $oldEnv.Keys) { [Environment]::SetEnvironmentVariable($n, $oldEnv[$n]) }
+    }
 } finally {
     Remove-Item -LiteralPath $ph -Recurse -Force -ErrorAction SilentlyContinue
 }
@@ -318,7 +446,7 @@ try {
     $ini = Read-File "$kit\emulator\user\config\coop.ini"
     Check (($out -join ' ') -match "'26\.1\.2' is not an address") 'Join.bat: a typo is asked again'
     Check ($ini -match '(?m)^server = 26\.1\.2\.3\s*$' -and $ini -match '(?m)^port = 27511\s*$') "Join.bat: ' 26.1.2.3:27511. ' is saved as server 26.1.2.3, port 27511"
-    Check (($out -join ' ') -match 'A join password has no spaces' -and $ini -match '(?m)^password = hunter2\s*$') "Join.bat: a password with a space is asked again, then saved in coop.ini [$(($ini -split "`n") -match 'password' -join '|')]"
+    Check (($out -join ' ') -match 'Type the join password the host sent you' -and $ini -match '(?m)^password = hunter2\s*$') "Join.bat: a password with a space is asked again, then saved in coop.ini [$(($ini -split "`n") -match 'password' -join '|')]"
     $summary = @($out | Where-Object { "$_" -match '^Co-op: server' }) -join ' '
     Check ($summary -match 'join password set' -and $summary -notmatch 'hunter2') "Join.bat: the summary says 'join password set', not the password [$summary]"
     [System.IO.File]::WriteAllText($in, "`r`n`r`n")
@@ -327,10 +455,59 @@ try {
     Check ((Read-File "$kit\emulator\user\config\coop.ini") -match '(?m)^password = hunter2\s*$') 'Join.bat: Enter keeps the saved password'
     Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 300
-    [System.IO.File]::WriteAllText($in, "`r`n-`r`n")
+    # Every session has a join password: '-' (once "none") is asked again.
+    [System.IO.File]::WriteAllText($in, "`r`n-`r`nzelda42`r`n")
     $out = cmd /c "`"$kit\Join.bat`" < `"$in`"" 2>&1
     $ini = Read-File "$kit\emulator\user\config\coop.ini"
-    Check ($ini -notmatch '(?m)^password' -and ($out -join ' ') -match 'join password none') "Join.bat: '-' clears the password [$(($ini -split "`n") -match 'password' -join '|')]"
+    Check ($ini -match '(?m)^password = zelda42\s*$' -and ($out -join ' ') -match 'Type the join password' -and ($out -join ' ') -notmatch 'join password none') "Join.bat: '-' is no password any more, asked again [$(($ini -split "`n") -match 'password' -join '|')]"
+    # play.ps1 -Hookshot (G5): the same pack step as the emulator: your own tunic in Hookshot's
+    # mods\contents pack before the game starts, LICHII_COOP_SELF_TUNIC for the module, the hints.
+    $kit = Join-Path $tmp 'kit hookshot'; New-Kit $kit 'v0.1.0-beta4' 'hs'
+    $hsGame = Join-Path $kit 'hookshot\game'
+    New-Item -ItemType Directory -Force -Path $hsGame | Out-Null
+    [System.IO.File]::WriteAllBytes((Join-Path $hsGame 'hookshot.exe'), [System.IO.File]::ReadAllBytes((Join-Path $env:SystemRoot 'System32\rundll32.exe')))
+    Write-File (Join-Path $hsGame 'hookshot_coop.dll') 'module'
+    $hsPack = Join-Path $hsGame 'mods\contents\0400486024DEC000\coop-puppet'
+    New-Item -ItemType Directory -Force -Path (Join-Path $hsPack 'coop_self') | Out-Null
+    Write-File (Join-Path $hsPack 'coop_self\red.bntx.zs') 'RED'
+    Write-File (Join-Path $hsPack 'coop_puppet.json') '{"sound": true, "tunics": {"red": ["x"], "green": ["y"]}, "self_tiles": {"red": "coop_self/red.bntx.zs"}}'
+    Add-Content -LiteralPath (Join-Path $kit 'coop-options.ini') -Value "`r`ncolor = red"
+    # A saved join password (Enter keeps it): the join goes on whether play.ps1 asks for one or insists on one.
+    # Its join always asks (every session has a password): Enter, from a file as the Join.bat tests do.
+    $enter = Join-Path $tmp 'enter.txt'; [System.IO.File]::WriteAllText($enter, "`r`n")
+    Write-File (Join-Path $hsGame 'coop.ini') "server = 127.0.0.1`r`nport = 27510`r`nname = Saria`r`npassword = hunter2`r`n"
+    $env:OOT_COOP_UPDATE_API = Join-Path $tmp 'no-such-releases.json'
+    $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$kit\scripts\play.ps1`" join -Server 127.0.0.1 -Name Saria -Hookshot -NoUpdate < `"$enter`"" 2>&1) -join '|'
+    Check ($out -match 'Puppet pack: found\.' -and $out -match 'Your Link: the red tunic' -and $out -match 'Hookshot started') "play.ps1 -Hookshot: the pack found and your red tunic said [$out]"
+    Check ([System.IO.File]::ReadAllText((Join-Path $hsPack 'romfs\Tex\Angin_Tile_A_Alb.bntx.zs')) -eq 'RED') 'play.ps1 -Hookshot: the red tile in the Hookshot pack before the game starts'
+    Remove-Item -LiteralPath $hsPack -Recurse -Force
+    $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$kit\scripts\play.ps1`" join -Server 127.0.0.1 -Name Saria -Hookshot -NoUpdate < `"$enter`"" 2>&1) -join '|'
+    Check ($out -match 'Puppet pack: not in the Hookshot game' -and $out -match 'Hookshot started') "play.ps1 -Hookshot: no pack: says so, still starts [$out]"
+    Get-Process hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
+    # A built kit's coop.ini.template and coop-ini.ps1 keep @PORT@ (make_kit.ps1 copies with
+    # kit_text.ps1), and play.ps1 writes the port each join needs: 27512 (the join helper) for an
+    # invite code, the given port for host:port.
+    $kit = Join-Path $tmp 'kit port'; New-Kit $kit 'v0.1.0-beta4' 'old'
+    Check ((Read-File "$kit\scripts\coop.ini.template") -match '(?m)^port = @PORT@\r?$') 'kit: coop.ini.template keeps @PORT@'
+    Check ((Read-File "$kit\scripts\coop-ini.ps1") -match "'@PORT@'") 'kit: coop-ini.ps1 looks for @PORT@'
+    Check ((Read-File "$kit\scripts\play.ps1") -notmatch '@PORT@') 'kit: play.ps1 has the default port filled in'
+    # start-join.cmd stub: notes what it was started with (no join helper, no network).
+    Write-File "$kit\start-join.cmd" "@echo %*> `"%~dp0join-args.txt`"`r`n@exit /b 0`r`n"
+    $env:OOT_COOP_UPDATE_API = Join-Path $tmp 'no-such-releases.json'
+    $out = cmd /c "`"$kit\play.cmd`" -Server CHFSA-6JFPP-5AATB-UCVDW-EXFYG-ZH2J3-KSGWK-S2GA -Name Saria < nul" 2>&1
+    $ini = Read-File "$kit\emulator\user\config\coop.ini"
+    Check ($ini -match '(?m)^server = 127\.0\.0\.1\s*$' -and $ini -match '(?m)^port = 27512\s*$') "invite code: coop.ini is 127.0.0.1 port 27512, the join helper [$(($ini -split "`n") -match '^(server|port)' -join '|')]"
+    Check ($ini -match '(?m)^password = ABCDEFGHJKLMNPQRSTUV\s*$') 'invite code: the password from the code is in coop.ini'
+    $deadline = (Get-Date).AddSeconds(5)
+    while (-not (Test-Path "$kit\join-args.txt") -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 100 }
+    Check ((Read-File "$kit\join-args.txt") -match '203\.0\.113\.5:27510.*-GamePort 27512') "invite code: the join helper is started for the host, game port 27512 [$((Read-File "$kit\join-args.txt").Trim())]"
+    Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 300
+    $out = cmd /c "`"$kit\play.cmd`" -Server 26.1.2.3:27600 -Name Saria < nul" 2>&1
+    $ini = Read-File "$kit\emulator\user\config\coop.ini"
+    Check ($ini -match '(?m)^server = 26\.1\.2\.3\s*$' -and $ini -match '(?m)^port = 27600\s*$') "host:port: coop.ini has the given port 27600 [$(($ini -split "`n") -match '^(server|port)' -join '|')]"
+    Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 300
     # The launch files run all on one line (the update may replace them while they run).
     foreach ($f in 'Host.bat', 'Join.bat', 'play.cmd') {
         $last = @(Get-Content (Join-Path $kitSrc $f) | Where-Object { $_ -and $_ -notmatch '^(@echo off|rem )' })

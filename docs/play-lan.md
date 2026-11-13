@@ -16,14 +16,14 @@ One player is the **host**: their PC runs the server, and they play on it too. T
    ```
 
    Keep that window open while you play; closing it ends the session for everyone.
-3. Tell the others the **Same house** address. Without a VPN program it is already copied: paste it into a chat with Ctrl+V.
+3. Tell the others the **Same house** address. Without a VPN program it is already copied: paste it into a chat with Ctrl+V. Also give them the line **Join password for this session** from the same window: `Host.bat` makes a new password each time it starts, unless you set your own with `server_password` in `coop-options.ini`. (The window also shows an invite code; that is for friends over the internet, see [play-online.md](play-online.md).)
 4. The first time, Windows Firewall asks about `coop_server.exe`: tick **Private networks** and click **Allow access**. If you missed it, see [Firewall](#firewall).
 5. Start the game in the emulator and load your save.
 
 ## Join
 
 1. Double-click `Join.bat`.
-2. Paste or type the host's address (for example `192.168.1.20`) and press Enter (Join.bat says when you are connected, or what is most likely wrong). Next time Enter keeps the last address. The first time it also asks for your player name; use a different one from the others.
+2. Paste or type the host's address (for example `192.168.1.20`) and press Enter, then the join password the host gave you (Join.bat says when you are connected, or what is most likely wrong). Next time Enter keeps the last address and password. The first time it also asks for your player name; use a different one from the others.
 3. Start the game and load your save.
 
 In the server window you see `player 2 joined: <name>`, and in each game the panel in the top-left corner lists the other players with their distance. In the same area, each player sees the others as Link.

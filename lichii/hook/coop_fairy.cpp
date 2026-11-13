@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <iterator>
 #include <string_view>
 #include <utility>
 
@@ -28,7 +29,9 @@ Vec3 Follower::Goal(const CoopPuppet::Target& puppet, float t, std::uint8_t numb
     const float phase = static_cast<float>(number) * 1.7f;
     Vec3 local = settings_.offset;
     const std::string_view actor = puppet.actor;
-    if (actor.size() >= 6 && actor.substr(actor.size() - 6) == "_Adult") {
+    // CoopPuppet_Adult, or a tunic colour of it (CoopPuppet_Adult_Red).
+    if (actor.size() >= 6 && (actor.substr(actor.size() - 6) == "_Adult" ||
+                              actor.find("_Adult_") != std::string_view::npos)) {
         for (float& v : local) {
             v *= settings_.adult_scale;
         }
@@ -45,7 +48,7 @@ Vec3 Follower::Goal(const CoopPuppet::Target& puppet, float t, std::uint8_t numb
 }
 
 CoopPuppet::Input Follower::Follow(const CoopPuppet::Input& puppets, std::uint64_t now_ms,
-                                   std::uint32_t live) {
+                                   std::uint32_t live, const std::optional<Vec3>& local) {
     CoopPuppet::Input out;
     out.main_base = puppets.main_base;
     out.scene = puppets.scene;
@@ -57,7 +60,23 @@ CoopPuppet::Input Follower::Follow(const CoopPuppet::Input& puppets, std::uint64
     if (puppets.scene != scene_) {
         scene_ = puppets.scene;
         tracks_.clear();
+        rooms_.Clear();
+        room_parked_.clear();
     }
+    // Rooms, if this scene is a dungeon the table knows (issue 145). Every
+    // player is tracked each frame, so no kept room goes stale.
+    const bool rooms = settings_.rooms && rooms_.table().Has(puppets.scene);
+    std::optional<int> our_room;
+    if (rooms && local) {
+        our_room = rooms_.Update(kLocalKey, puppets.scene, *local);
+    } else {
+        rooms_.Forget(kLocalKey);
+    }
+    rooms_.ForgetUnless([&](std::uint32_t key) {
+        if (key == kLocalKey) return true;
+        return std::any_of(puppets.targets.begin(), puppets.targets.end(),
+                           [&](const CoopPuppet::Target& t) { return t.number == key; });
+    });
     const float t = static_cast<float>(now_ms % 3600000ULL) / 1000.0f;
     std::map<std::uint8_t, Track> kept;
     for (const auto& p : puppets.targets) {
@@ -89,9 +108,36 @@ CoopPuppet::Input Follower::Follow(const CoopPuppet::Input& puppets, std::uint64
             f.show = CoopPuppet::Show::hide;
             f.why = "her puppet is not shown";
         }
+        // Issue 145: only in our room. Testers saw a far player's Navi glow
+        // alone in their room (the puppet there, live, was not seen: the game
+        // seems not to draw it in a room it has not loaded, but draws her).
+        std::optional<int> their_room;
+        if (rooms) {
+            their_room = rooms_.Update(p.number, puppets.scene, p.position);
+        }
+        const bool other_room = our_room && their_room && *their_room != *our_room &&
+                                Distance(*local, p.position) > settings_.room_near;
+        const bool room_hide = other_room && f.show != CoopPuppet::Show::hide;
+        if (room_hide) {
+            f.show = CoopPuppet::Show::hide;
+            f.why = "her player is in another room";
+        }
+        bool& was_parked = room_parked_[p.number];
+        if (room_hide != was_parked && log_) {
+            const auto name = [](const std::optional<int>& r) {
+                return r ? std::to_string(*r) : std::string("?");
+            };
+            log_("rooms: P" + std::to_string(p.number) + " in room " + name(their_room) +
+                 ", we in room " + name(our_room) + ": " +
+                 (room_hide ? "Navi parked" : "no longer parked for the room"));
+        }
+        was_parked = room_hide;
         out.targets.push_back(std::move(f));
     }
     tracks_ = std::move(kept);
+    for (auto it = room_parked_.begin(); it != room_parked_.end();) {
+        it = tracks_.count(it->first) != 0 ? std::next(it) : room_parked_.erase(it);
+    }
     return out;
 }
 
@@ -200,9 +246,12 @@ void Wings::Frame(CoopPuppet::Guest& guest, std::uint64_t main_base,
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <vector>
 
+#include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "coop/host/session.hpp"
 #include "coop/presence/presence.hpp"
@@ -233,6 +282,36 @@ bool EnvOn(const char* name) {
     return !v.empty() && v != "0";
 }
 
+// The dungeon room table the puppet pack made from this player's game
+// (coop_rooms.txt in a mod folder under load/<title id>, as coop_puppet.json;
+// issue 145). None: no room rule.
+CoopRooms::Table LoadRooms() {
+    std::vector<CoopRooms::Point> points;
+    int bad_all = 0;
+    std::error_code ec;
+    const auto title = Common::FS::GetEdenPath(Common::FS::EdenPath::LoadDir) / "0400486024DEC000";
+    for (const auto& mod : std::filesystem::directory_iterator(title, ec)) {
+        std::ifstream in(mod.path() / "coop_rooms.txt", std::ios::binary);
+        if (!in) {
+            continue;
+        }
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        int bad = 0;
+        auto more = CoopRooms::Parse(text, &bad);
+        bad_all += bad;
+        points.insert(points.end(), std::make_move_iterator(more.begin()),
+                      std::make_move_iterator(more.end()));
+    }
+    CoopRooms::Table table(std::move(points));
+    if (table.empty()) {
+        LOG_INFO(Core, "coop: no room table, make the puppet pack again (a far player's Navi may show in your dungeon room)");
+    } else {
+        LOG_INFO(Core, "coop: room table: {} placements{}", table.size(),
+                 bad_all ? ", " + std::to_string(bad_all) + " bad lines skipped" : std::string());
+    }
+    return table;
+}
+
 struct Glue {
     bool on = false;
     std::unique_ptr<CoopPuppet::Director> director;
@@ -252,18 +331,22 @@ struct Glue {
         if (const auto actor = Env("LICHII_COOP_FAIRY_ACTOR"); !actor.empty()) {
             settings.actor = actor;
         }
+        settings.rooms = Env("LICHII_COOP_FAIRY_ROOMS") != "0";  // issue 145
         // The same plan as the puppets' (CoopSvc's ConfigurePuppets); the
         // actor name is not used, the fairy has its own.
         CoopPuppet::PlannerSettings puppet_settings;
         puppet_settings.debug = EnvOn("LICHII_COOP_TEST_PUPPET");
-        LOG_INFO(Core, "coop: fairies on, actor {}", settings.actor);
+        LOG_INFO(Core, "coop: fairies on, actor {}, rooms {}", settings.actor, settings.rooms ? "on" : "off");
         director = std::make_unique<CoopPuppet::Director>(
             [](const std::string& line) { LOG_INFO(Core, "fairy {}", line); },
             EnvOn("LICHII_COOP_DEBUG_PUPPET"));
         // Navi has a physics body: a plain write of her place is undone.
         director->SetMatrixCall(true);
         planner = std::make_unique<CoopPuppet::Planner>(puppet_settings);
-        follower = std::make_unique<Follower>(std::move(settings));
+        CoopRooms::Table rooms = settings.rooms ? LoadRooms() : CoopRooms::Table{};
+        follower = std::make_unique<Follower>(
+            std::move(settings), std::move(rooms),
+            [](const std::string& line) { LOG_INFO(Core, "fairy coop: {}", line); });
         // LICHII_COOP_FAIRY_WINGS=0: no wing beat (the fairies hang still).
         if (Env("LICHII_COOP_FAIRY_WINGS") != "0") {
             wings = std::make_unique<Wings>(
@@ -313,7 +396,11 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
     auto puppets = glue.planner->Plan(main_base, scene, position, local_event, remotes, now_ms);
     CoopPuppet::StampDrawing(puppets, now_ms);
     glue.director->SetInput(
-        glue.follower->Follow(puppets, now_ms, CoopPuppet::LivePuppets()));
+        glue.follower->Follow(puppets, now_ms, CoopPuppet::LivePuppets(), position));
+}
+
+CoopRooms::Table RoomTable() {
+    return LoadRooms();
 }
 
 } // namespace CoopFairy

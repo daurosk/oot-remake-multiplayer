@@ -26,10 +26,15 @@ TEST_CASE("command line: defaults, flags and mistakes") {
   auto off = parse_command_line({"--max-half-open", "0"}, error);
   REQUIRE(off.has_value());
   CHECK(off->max_half_open == 0u);
+  // The owner hold after a start (stray-hold): its default when not given, 0 turns it off.
+  CHECK(!none->owner_hold_ms.has_value());
+  auto hold = parse_command_line({"--owner-hold-ms", "0"}, error);
+  REQUIRE(hold.has_value());
+  CHECK(hold->owner_hold_ms == 0u);
 
   for (std::vector<std::string> bad : std::vector<std::vector<std::string>>{
            {"--port"}, {"--port", "70000"}, {"--port", "12x"}, {"--port", "-1"},
-           {"--game-build"}, {"--run-for-ms", "soon"},
+           {"--game-build"}, {"--run-for-ms", "soon"}, {"--owner-hold-ms"}, {"--owner-hold-ms", "x"},
            {"--max-half-open"}, {"--max-half-open", "-2"}, {"--frobnicate"}}) {
     error.clear();
     CHECK(!parse_command_line(bad, error).has_value());
@@ -87,4 +92,24 @@ TEST_CASE("command line: --password and --password-env") {
   }
   CHECK(password_problem(std::string(128, 'x')) == nullptr);
   CHECK(password_problem("") == nullptr);
+}
+
+TEST_CASE("command line: --pvp on or off, off by default") {
+  std::string error;
+  CHECK_FALSE(parse_command_line({}, error)->pvp);
+  for (const char* on : {"on", "1", "yes"}) {
+    auto line = parse_command_line({"--pvp", on}, error);
+    REQUIRE(line.has_value());
+    CHECK(line->pvp);
+  }
+  auto off = parse_command_line({"--pvp", "off", "--port", "4000"}, error);
+  REQUIRE(off.has_value());
+  CHECK_FALSE(off->pvp);
+  CHECK(off->port == 4000);
+  for (std::vector<std::string> bad : std::vector<std::vector<std::string>>{
+           {"--pvp"}, {"--pvp", "maybe"}, {"--pvp", ""}}) {
+    error.clear();
+    CHECK(!parse_command_line(bad, error).has_value());
+    CHECK(!error.empty());
+  }
 }

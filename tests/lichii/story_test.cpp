@@ -72,6 +72,15 @@ TEST_CASE("story: Saria's goodbye, the owl, the Deku Tree and the forest-exit wa
         CHECK(std::string(f->name) == name);
     }
     CHECK(CoopStory::Find(host::flag_hash(kWall))->kind == CoopStory::Kind::world);
+    // Caleb's play-test (2026-11-12): Link's house door, the Deku Tree's mouth after
+    // its talk, the Kokiri Shop keeper's talks.
+    for (const char* name : {"HavePlayedEvent.Dm_Kokiri_0045", "HavePlayedEvent.Dm_Kokiri_0050",
+                             "KokiriForest_LinkHouseDoor_Open", "KokiriForest_Meet_DekuTree_OpenDekuTreeMouth",
+                             "HavePlayedEvent.Dm_Kokiri_0070", "HavePlayedEvent.Dm_Kokiri_0075",
+                             "HaveTalked.Npc_Kokiri_001_Shop_Child",
+                             "HaveTalked_Npc_Kokiri_001_Shop_Child_PresentDekuShield"}) {
+        CHECK_MESSAGE(CoopStory::Find(host::flag_hash(name)) != nullptr, name);
+    }
     CHECK(CoopStory::Find(host::flag_hash(kSaria))->kind == CoopStory::Kind::scene);
 }
 
@@ -100,14 +109,18 @@ TEST_CASE("story: what must stay each game's own is left out") {
                 "HavePlayedEvent.SageOfWater_KingZora_IsMelted_Ice", "SageOfWater_Icedelete"};
             CHECK_MESSAGE(kOverworld.contains(name), name);
         }
-        if (name.rfind("HaveTalked", 0) == 0) {  // a talk is one player's, the owl's is story
+        if (name.rfind("HaveTalked", 0) == 0 && f.kind != CoopStory::Kind::talk) {
+            // a talk is one player's, the owl's is story (and the few Caleb asked for)
             CHECK_MESSAGE(name.rfind("HaveTalked_Special.Npc_Kaepora_", 0) == 0, name);
         }
+        if (f.kind == CoopStory::Kind::talk) {  // only the Kokiri Shop keeper's (play-test 2026-11-12)
+            CHECK_MESSAGE(name.find("Npc_Kokiri_001_Shop_Child") != std::string::npos, name);
+        }
     }
-    // The opening of a new game: a fresh save still wakes up and walks out of its house.
+    // The opening of a new game: a fresh save still wakes up (leaving the house,
+    // 0045 and 0050, is shared since Caleb's play-test of 2026-11-12).
     for (const char* opening : {"HavePlayedEvent.Dm_Kokiri_0000", "HavePlayedEvent.Dm_Kokiri_0010",
-                                "HavePlayedEvent.Dm_Kokiri_0030", "HavePlayedEvent.Dm_Kokiri_0045",
-                                "HavePlayedEvent.Dm_Kokiri_0050"}) {
+                                "HavePlayedEvent.Dm_Kokiri_0030"}) {
         CHECK_MESSAGE(CoopStory::Find(host::flag_hash(opening)) == nullptr, opening);
     }
     // The Chamber of Sages: each game plays its own (time travel, the blue warps' scenes).
@@ -223,4 +236,63 @@ TEST_CASE("story: the host's save load decides, also back to a wall (FLAG_RESET)
     wg.frame(guest);
     CHECK(guest.get(wall) == 1);
     CHECK(guest.get(saria) == 0);
+}
+
+TEST_CASE("story: the Meet_DekuTree quest's hashes are its step names and shared story flags (issue 130)") {
+    namespace q = CoopStory::quest;
+    CHECK(host::flag_hash("NotReady") == q::kNotReady);
+    CHECK(host::flag_hash("Ready") == q::kReady);
+    CHECK(host::flag_hash("Step01") == q::kStep01);
+    CHECK(host::flag_hash("Step02") == q::kStep02);
+    CHECK(host::flag_hash("Step03") == q::kStep03);
+    CHECK(host::flag_hash("Complete") == q::kComplete);
+    CHECK(host::flag_hash("KokiriForest_Npc_Kokiri_Mido_Child_Blocker") == q::kMidoBlocker);
+    CHECK(host::flag_hash("HavePlayedEvent.Dm_Kokiri_0075") == q::kMetDekuTree);
+    // Both inputs are shared story flags, so every game sees the same story.
+    CHECK(CoopStory::Find(q::kMidoBlocker) != nullptr);
+    CHECK(CoopStory::Find(q::kMetDekuTree) != nullptr);
+}
+
+TEST_CASE("story: a player whose Mido was moved by another player gets the shop's quest step (issue 130)") {
+    namespace q = CoopStory::quest;
+    using CoopStory::QuestCatchUp;
+    // Another player got past Mido: ours never talked to him (Step01) or only
+    // heard him out (Step02). Raised to Step03, so the shop sells (>= Step02).
+    CHECK(QuestCatchUp(q::kStep01, false, false) == q::kStep03);
+    CHECK(QuestCatchUp(q::kStep02, false, false) == q::kStep03);
+    CHECK(QuestCatchUp(q::kReady, false, false) == q::kStep03);
+    // The Deku Tree scene played (shared): the quest is complete here too.
+    CHECK(QuestCatchUp(q::kStep01, false, true) == q::kComplete);
+    CHECK(QuestCatchUp(q::kStep03, false, true) == q::kComplete);
+    // Mido still blocks everyone: each player talks to him, as in one game.
+    CHECK_FALSE(QuestCatchUp(q::kStep01, true, false));
+    CHECK_FALSE(QuestCatchUp(q::kStep01, std::nullopt, std::nullopt));
+}
+
+TEST_CASE("story: the Meet_DekuTree catch-up never lowers the quest nor runs before the opening (issue 130)") {
+    namespace q = CoopStory::quest;
+    using CoopStory::QuestCatchUp;
+    CHECK_FALSE(QuestCatchUp(q::kStep03, false, false));
+    CHECK_FALSE(QuestCatchUp(q::kComplete, false, false));
+    CHECK_FALSE(QuestCatchUp(q::kComplete, false, true));
+    // A host save load that puts Mido back (blocker 1) leaves our step as it is.
+    CHECK_FALSE(QuestCatchUp(q::kStep03, true, false));
+    // A new game before Navi woke Link, an unknown value, or no read: left alone.
+    CHECK_FALSE(QuestCatchUp(q::kNotReady, false, true));
+    CHECK_FALSE(QuestCatchUp(0x12345678u, false, true));
+    CHECK_FALSE(QuestCatchUp(std::nullopt, false, true));
+}
+
+TEST_CASE("story: the Kakariko guard's gate and the letter scene are shared (issue 171)") {
+    // The guard's flow Npc_Hylia_Soldier_003 and the letter scene Dm_Kakariko_0010
+    // set Npc_Hylia_Soldier_003_GateOpen (romfs Event/EventFlow); the scene's
+    // own played flag goes with it, so the other game neither keeps the gate
+    // shut nor plays the scene again (its letter is already gone: shared item).
+    for (const char* name : {"Npc_Hylia_Soldier_003_GateOpen", "HavePlayedEvent.Dm_Kakariko_0010"}) {
+        INFO(name);
+        const auto* f = CoopStory::Find(host::flag_hash(name));
+        REQUIRE(f != nullptr);
+        CHECK(std::string(f->name) == name);
+    }
+    CHECK(host::flag_hash("Npc_Hylia_Soldier_003_GateOpen") == 0x19898d14u);
 }

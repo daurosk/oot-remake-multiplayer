@@ -1,0 +1,54 @@
+# hs-chest-other, B: chest-other's B (see hs-chest-other.A.txt).
+# chest-other: B opens the map chest by hand while A watches (header in A).
+# Expect in B: its own get scene (Item_Dungeon_Map), "key64 0x771092ae2f3b7100 0 -> 1" or the
+# opened bool going out, bool 0x89787395 "0 -> 1"; no "opened in another game" line for this chest.
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place 5.45 108.9 6.15
+wait 240
+toward 6.51 7.25 10       # face the chest
+mark placed
+press A
+wait 60
+press A
+wait 60
+press A
+wait 600                  # the get scene
+press A
+wait 120
+press A
+wait 120
+press B
+wait 600
+mark opened
+wait 900                  # A's a-look, a-look2
+mark b-look2
+place 3.5 108.9 4.2       # out of A's way while A tries the chest
+wait 240
+toward 6.51 7.25 10
+wait 60
+wait 600
+wait 120
+wait 300
+mark b-try
+place -29 117.6 0         # room 3, as A
+wait 600
+mark far
+place 5.45 108.9 6.15
+wait 240
+toward 6.51 7.25 10
+wait 360
+mark back
+wait 300
+mark end

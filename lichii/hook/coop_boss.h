@@ -10,8 +10,13 @@
 //   from the room's placements in the RomFS (Rooms()).
 // - A game whose Link is in a boss room sends BOSS_ROOM at once and every 2 s
 //   while there, saying how far it is: in_room (only near the room: its
-//   circle also takes in the way to the door), intro_start (its intro runs:
-//   it is inside and the door has shut behind it), intro_end (the fight).
+//   circle also takes in the way to the door), intro_start (its intro runs
+//   and it is past the door: its game's shut-in flag is set), intro_end (the
+//   fight, once past the door). Until a game is past the door it sends only
+//   in_room (issue 148: an event on the way, such as the door
+//   opening, must not move anyone in). Past the door is the room's shut-in
+//   flag (ShutInFlag) where one is known; else the end of an intro of at
+//   least kMinIntroUs with Link still in the room; or having been moved in.
 //   Another game in the same dungeon scene whose Link is not in that room is
 //   moved in (Pull), again every 3 s up to 5 times, but only once a player
 //   there has started the intro or the fight: never on in_room alone (issue
@@ -95,6 +100,13 @@ struct Room {
 // its eggs, minions, hands, tentacles or shots.
 std::span<const std::string_view> Bodies(const Room& room);
 
+// The game's own flag that says Link is shut in that boss room (the door has
+// shut behind Link), or "" when none is known. Issue 148: only a player whose
+// game says this moves the others in. Only the Deku Tree's is known
+// (InsideTheDekuTree_BossArea_ShutIn, the flag that locked players out when
+// it was shared); for the other rooms the end of the intro stands for it.
+std::string_view ShutInFlag(const Room& room);
+
 // The eight boss rooms, by index: 0 to 2 child, 3 to 7 adult.
 std::span<const Room> Rooms();
 const Room* RoomByIndex(std::uint8_t index);
@@ -138,6 +150,9 @@ struct Local {
     // An untouched boss is not dying, so a long event then is not its death
     // (Gohma's ceiling intro starts well after the room's entry event).
     std::optional<bool> boss_hurt;
+    // ShutInFlag(room) of the scene's boss room as the game has it: nothing
+    // when the room has no such flag or it cannot be read (issue 148).
+    std::optional<bool> shut_in;
 };
 
 class Sync {
@@ -160,6 +175,9 @@ public:
     // (integrate-p8: B skipped its intro and 0.1 s later took the next event
     // for Dm_..._BossOut, so the fight counted as won with nobody fighting).
     static constexpr std::uint64_t kMinFightUs = 10'000'000;
+    // An event shorter than this near a boss room with no shut-in flag is not
+    // its intro (a door opening, a text, Navi): it moves no one in (issue 148).
+    static constexpr std::uint64_t kMinIntroUs = 3'000'000;
 
     // Network thread: BOSS_ROOM from the others. Taken on the next Tick.
     void Receive(const coop::protocol::Message& message);
@@ -187,6 +205,7 @@ private:
     void Say(Actions& out, const Room& room, coop::protocol::BossState state);
     bool FightActive(const Room& room, std::uint64_t now_us) const;
     bool OtherFinishedIntro(const Room& room, std::uint64_t now_us) const;
+    void Commit(Actions& out, const char* why);  // we are past the door (issue 148)
 
     // Our side.
     const Room* here_ = nullptr;
@@ -201,7 +220,7 @@ private:
     bool skip_asked_ = false;
     std::uint64_t skip_since_ = 0;
     bool event_ = false;  // last Tick's event
-    bool committed_ = false;  // our intro started in this room: our heartbeat says how far (issue 148)
+    bool committed_ = false;  // we are past the door: shut in, or our intro is over (issue 148)
     std::uint64_t last_now_ = 0;  // the clock never goes back (server time can)
     std::optional<std::string> scene_;  // the scene of the last Tick with one
     std::vector<std::uint8_t> defeated_;  // rooms beaten while we were in this scene
@@ -240,9 +259,10 @@ private:
 //
 // Present thread, once per presented frame. `main_base` 0 when the game is
 // not up; `session` null when not connected.
+// `shut_in`: Local::shut_in, read by the hook from the game's flags.
 void Frame(Core::System& system, std::uint64_t main_base, const std::optional<std::string>& scene,
            const std::optional<coop::protocol::Vec3>& position, bool event_running,
-           coop::host::Session* session, std::uint64_t server_now_us);
+           std::optional<bool> shut_in, coop::host::Session* session, std::uint64_t server_now_us);
 
 // Network thread, from the session's on_event.
 void OnEvent(const coop::net::Event& event);

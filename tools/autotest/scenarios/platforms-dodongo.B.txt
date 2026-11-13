@@ -1,0 +1,47 @@
+# platforms-dodongo (platforms-b, #196 #194): the up/down lifts of Dodongo's Cavern room 1 at the same height in both games.
+# Room 1 lifts (Banc DodongoCavern_Static): Obj_DodongoCave_MoveFloor_A_01 6aaec6828516aa4b (10.5 96.5 -23.0),
+# 51802f1732232227 (-10.5 96.5 -23.0), 765ad7b13c763297 (0.0 96.5 -12.6); _A_02 562f2db3e8559542 (10.5 100.0 -23.0);
+# GroundControlActor_SimpleMoveTo d0fca64033c988bf (10.5 101.0 -19.0). The lifts run their own AI
+# (UpDownLiftMove: a physics slider and pause counters). platforms-b2 (Hot Onion's method): the loader log says
+# "Applying "coop counters": b 0x3c46700 at main+0x5e6760", both logs "coop: platforms: pause counter ring at 0x...",
+# then per lift "<hash> Obj_DodongoCave_MoveFloor_A_01: pause counter <key> loops every <s> s" (same key and about the same
+# seconds in A and B), and in ONE game (fewer starts; a tie: B) one "... pause counter <key> <gap> s off player N's: frames
+# left <x> -> <y>" per lift that was out of phase, then no more such lines. After its loop line a lift gets no more "clock ...: ours to send" lines.
+# B stands on the lift 765ad7b13c763297 (0.0 96.5 -12.6), 11.6 m from A's. Both get there at the same time ("placed"), then shots every 3 s and at each mark.
+# Expect (both logs; LICHII_COOP_DEBUG_OBJECTS shows the "+ Obj_DodongoCave_MoveFloor_A_01" lines):
+#  - A: "coop: platforms: <hash> Obj_DodongoCave_MoveFloor_A_01: clock <where>, <rate> a second, cycle <c>: ours to send"
+#    (or for GroundControlActor_SimpleMoveTo), within ~2 s of "placed".
+#  - B: "coop: platforms: <hash> ...: following player 1's clock <same where>" and at most a few
+#    "coop: platforms: <hash> <where> <ours> -> <theirs>" lines, then none while in step.
+#  - No "do not hold" line. Shots s1..s4: each lift at the same height in A and B (compare the lift
+#    under A's Link against the same lift in B's view). FAIL: keep both logs (the word picked is in them).
+#  - Inconclusive if no "+ Obj_DodongoCave_MoveFloor" line (the room did not load at the place: then
+#    warp to DodongoCavern EntrancePos and walk north by hand as a CALEB TEST).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 300
+mark start
+warp DodongoCavern EntrancePos
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place 0.0 97.6 -12.6
+wait 240
+mark placed
+wait 600
+mark s1
+wait 600
+mark s2
+wait 900
+mark s3
+wait 1200
+mark s4

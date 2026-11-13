@@ -1,0 +1,5 @@
+# hs-hud: B waits; its shots show A's block under B's hearts (hs-hud.A.txt).
+wait 290
+mark b-hud
+wait 120
+mark b-end

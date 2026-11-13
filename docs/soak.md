@@ -35,7 +35,7 @@ On the second, one client pointed at the first PC, with another nickname (the se
 coop_test --connect 100.64.0.1:27510 --clients 1 --name pcb --seconds 600 --report-every 60
 ```
 
-Start the second within a few seconds of the first; each stops sending after its own `--seconds`. Port 27510 (UDP) must be open on the first PC. `--server-only` runs just the server, for a third machine.
+Every session has a join password (it also encrypts the traffic): `coop_test` uses `coop-test` for its own server and its clients, and `--password TEXT` sets another (with `--connect`, the one of that server). Start the second within a few seconds of the first; each stops sending after its own `--seconds`. Port 27510 (UDP) must be open on the first PC. `--server-only` runs just the server, for a third machine.
 
 The exit code is 0 for a pass and 1 for a fail; the last lines say why it failed.
 

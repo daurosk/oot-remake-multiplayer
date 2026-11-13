@@ -11,11 +11,33 @@ body:
       label: Co-op build and game version for each player
     validations:
       required: true
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Where you played
+      options:
+        - The kit's emulator (Lichii / Fritchii)
+        - Hookshot (experimental)
+        - The Linux kit (experimental)
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: hosting
+    attributes:
+      label: How you connected
+      options:
+        - Invite code (Host.bat / Join.bat)
+        - VPN (Radmin VPN, Hamachi, ZeroTier, Tailscale)
+        - Port forwarding
+        - Relay with a join code
+        - Same network (LAN)
+        - Not sure
   - type: input
     id: players
     attributes:
-      label: Number of players and how you connected
-      description: For example "2 players, LAN" or "3 players, Tailscale".
+      label: Number of players and who hosted
+      description: For example "2 players, P1 hosted".
     validations:
       required: true
   - type: textarea

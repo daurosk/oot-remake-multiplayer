@@ -9,8 +9,10 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
+#include "coop_callers.h"
 #include "coop_puppet.h"
 
 namespace Core {
@@ -78,17 +80,15 @@ void PatchMain(std::uint64_t title_id, std::string_view module, std::string_view
 // off. Empty when the game is as shipped.
 std::string Refusal();
 
-// Something else that calls game functions from the cave, with the same
-// contract as CoopPuppet::Director::Step: once a frame it is asked with
-// after_call false; each call it returns is made, and it is asked again with
-// after_call true and the call's x0 in result; nothing means done for this
-// frame. The puppet director always goes first, then the callers by order
-// (CoopSpawn 10). Runs on the game's calc thread; keep it short. Any thread,
-// best before the game starts. The cave is patched only when Wanted() is
-// true (LICHII_COOP_PUPPET, LICHII_COOP_DEBUG_PUPPET or LICHII_COOP_SPAWN).
-using Caller = std::function<std::optional<CoopPuppet::Call>(
-    CoopPuppet::Guest& guest, bool after_call, std::uint64_t result, std::uint64_t now_ms)>;
-void AddCaller(int order, Caller caller);
+// Something else that calls game functions, with the same contract as
+// CoopPuppet::Director::Step (coop_callers.h, shared with the Hookshot build):
+// the puppet director always goes first, then the callers by order (CoopSpawn
+// 10). The cave is patched only when Wanted() is true (LICHII_COOP_PUPPET,
+// LICHII_COOP_DEBUG_PUPPET or LICHII_COOP_SPAWN).
+using Caller = CoopCallers::Caller;
+inline void AddCaller(int order, Caller caller) {
+    CoopCallers::Add(order, std::move(caller));
+}
 
 // Kernel::Svc::Call, before any other SVC: handles svc 0xf4 from Ocarina
 // and returns true, with the registers to give back in `args`. False for

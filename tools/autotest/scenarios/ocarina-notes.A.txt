@@ -1,0 +1,57 @@
+# ocarina-notes (issue 152 part 2, puppet-looks): A takes out the Ocarina (DLEFT) and plays the
+# five notes, low to high as the game's prompt "Play a note: L R Y X A" lists them, each held
+# half a second, then Zelda's Lullaby (X A Y, twice) and puts it away. B hears them from A's
+# puppet; the test cannot hear, so the logs are the proof:
+# - A: "coop: ocarina note 4 (Ocarina_D) sent" ... "note 16 (Ocarina_HighD) sent", and
+#   "note 0 (let go) sent" after each.
+# - B: "P1's sound user 0x... is 'Player_Child' (SLink ...)", then per note
+#   "P1 plays sound 'Ocarina_D' (returned ...)"; with LICHII_COOP_DEBUG_ANIM
+#   "P1 sounds: Ocarina_D" while it sounds and "P1 sounds: none" after (and the puppet's other
+#   sounds, issue 131: footsteps while A walks in).
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_OCARINA_SOUND=1
+mark start
+wait 120
+hold LSTICK_UP 40
+wait 60
+press DLEFT 12
+wait 240
+mark out
+# The first Ocarina use shows an "Ocarina Audio Input" note that eats L R Y X; A closes it
+# (the A press may also send one HighD note before the test notes).
+press A 12
+wait 120
+mark ready
+mark note-L
+hold L 30
+wait 90
+mark note-R
+hold R 30
+wait 90
+mark note-Y
+hold Y 30
+wait 90
+mark note-X
+hold X 30
+wait 90
+mark note-A
+hold A 30
+wait 90
+mark lullaby
+press X 15
+wait 30
+press A 15
+wait 30
+press Y 15
+wait 30
+press X 15
+wait 30
+press A 15
+wait 30
+press Y 15
+wait 300
+mark after-song
+press B 12
+wait 120
+press B 12
+wait 90
+mark end

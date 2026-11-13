@@ -1,0 +1,26 @@
+# ocarina (issue 86), checked by itself: A takes out the Ocarina and plays notes (ocarina.A.txt);
+# B watches. Playing freely is not a cutscene: no hide in A, no hold in B while it plays.
+# Run: tools\autotest\run.ps1 -Scenario ocarina
+# Shots at "playing*": B's window shows A's puppet with the Ocarina; A's window still shows B.
+# ocarina-out-A 0 = A never had the Ocarina out (the probe logs it): INCONCLUSIVE. The command
+# B sees for it is listed by ocarina-cmd-B (bigrun 2: a free-play Ocarina may come as 'EvtWait'
+# with the event bit, not 'Ocarina...'; then no-hold-B is the real check and may FAIL).
+# no-hide-A counts only between A's "coop: test mark start" and "mark end" lines (not the load);
+# no-hold-B only after B's load script is done ("coop: test script done"). A FAIL line's time should still be read
+# against the playing* marks in steps.txt.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_OCARINA_PROBE=1
+start A B
+load A B
+expect both-in A=1 B=1
+play A ocarina.A.txt
+lines ocarina-out-A A min=1 ocarina probe: our Link plays the ocarina
+lines ocarina-cmd-B B max=99 (?<!fairy )coop: puppet: P\d+ (?:their command|plays) '(?:Ocarina|DemoOcarina|Evt)
+lines no-hold-B B max=1 (?<!fairy )coop: puppet: P\d+ show -> hold \(their cutscene\)(?<=coop: test script done[\s\S]*)
+lines no-hide-A A max=1 (?<!fairy )coop: puppet: P\d+ show -> hide \(our cutscene\)(?<=coop: test mark start [\s\S]*)(?=[\s\S]*coop: test mark end )
+# ocarina-b (2026-11-12): taking the Ocarina out is a plain 'EvtWait' event (about 4 s, as any talk),
+# so one hold in B and one hide in A are expected then (a script that takes it out twice needs max=2);
+# once A plays ('DemoOcarina', shown since
+# ocarina-show) the puppet shows again in B and B again in A:
+lines play-show-B B min=1 (?<!fairy )coop: puppet: P\d+ hold -> show \(ocarina\)
+lines play-show-A A min=1 (?<!fairy )coop: puppet: P\d+ hide -> show(?<=ocarina probe: our Link plays the ocarina[\s\S]*)
+expect after A=1 B=1

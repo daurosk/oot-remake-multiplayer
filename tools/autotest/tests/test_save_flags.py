@@ -74,6 +74,27 @@ class SaveFlagsTest(unittest.TestCase):
         sf.set_values(data, changes)
         self.assertEqual(sf.get(data, 6, sf.LIFT_GRADE), high)
 
+    def test_no_ocarina_takes_the_ocarina_away(self):
+        # Issue 190: a Saria save, the equipped name in the pool.
+        name = b"Item_Ocarina_Fairy".ljust(64, b"\x00")
+        data = make_save({
+            0: [(h, 1) for k, h, _ in sf.NO_OCARINA if k == "bool"],
+            2: [(h, 1) for k, h, _ in sf.NO_OCARINA if k == "int"],
+            16: [(sf.EQUIP_OCARINA, 0)],  # offset set below
+        }, pool_extra=name)
+        text = struct.unpack_from("<I", data, 8)[0]
+        struct.pack_into("<I", data, sf.index(data)[(16, sf.EQUIP_OCARINA)], text)
+        done = sf.no_ocarina(data)
+        self.assertEqual(len(done), len(sf.NO_OCARINA) + 1)
+        for k, h, _ in sf.NO_OCARINA:
+            self.assertEqual(sf.get(data, sf.TYPES[k], h), 0)
+        self.assertEqual(bytes(data[text:text + 64]), bytes(64))
+        self.assertEqual(sf.no_ocarina(data), [])  # twice: nothing more
+
+    def test_no_ocarina_needs_the_equipped_name(self):
+        with self.assertRaises(sf.SaveError):
+            sf.no_ocarina(autotest_like())
+
     def test_missing_flag_changes_nothing(self):
         data = make_save({2: [(0xdb1bcd4f, 0)]})
         before = bytes(data)
@@ -151,6 +172,28 @@ class CommandLineTest(unittest.TestCase):
         self.assertEqual(sf.main(["set", self.slots[0], "int:0x99=1"]), 1)  # not in the save
         self.assertEqual(sf.main(["set", self.slots[0], "float:0x1=1"]), 1)  # type not handled
         self.assertEqual(sf.main(["list", os.path.join(self.root, "kit", "autotest-save")]), 0)
+
+    def test_a_hookshot_pair_baseline(self):
+        # hookshot-A/-B keep <pair>/autotest-save/slot_NN/progress.sav, no user or title folders.
+        d = os.path.join(self.root, "hookshot-A", "autotest-save", "slot_00")
+        os.makedirs(d)
+        path = os.path.join(d, "progress.sav")
+        with open(path, "wb") as f:
+            f.write(autotest_like())
+        old = sf.read_file(path)
+        self.assertEqual(sf.main(["set", path, "int:0xdb1bcd4f=9"]), 0)
+        self.assertEqual(sf.get(sf.read_file(path), 2, 0xdb1bcd4f), 9)
+        kept = sf.backup_dir(path)
+        self.assertEqual(kept, os.path.join(self.root, "hookshot-A", "autotest-save-backup", "slot_00"))
+        self.assertEqual(sf.read_file(os.path.join(kept, os.listdir(kept)[0])), old)
+        self.assertEqual(os.listdir(d), ["progress.sav"])
+        self.assertEqual(sf.main(["list", os.path.join(self.root, "hookshot-A", "autotest-save")]), 0)
+        # Still never a player's own saves, in either layout.
+        own = os.path.join(self.root, "roaming", "x", "autotest-save", "slot_00", "progress.sav")
+        os.makedirs(os.path.dirname(own))
+        with open(own, "wb") as f:
+            f.write(autotest_like())
+        self.assertEqual(sf.main(["get", own, "int:0xdb1bcd4f"]), 1)
 
     def test_only_baseline_saves_are_touched(self):
         def refused(path):

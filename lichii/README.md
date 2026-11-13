@@ -22,6 +22,24 @@ powershell -ExecutionPolicy Bypass -File lichii\fetch.ps1
 
 This clones `fritchii-src` beside the main checkout of this repo (`-Dest <folder>` picks another place), checks out the pinned commit and puts our patches on a local branch `coop`. It refuses to run if the source has uncommitted changes. Running it again resets `coop` to the pin and applies the patches afresh; build folders and the download cache (`.cache/`) are ignored by the emulator's `.gitignore` and are kept.
 
+On Linux (or macOS), `lichii/fetch.sh [folder]` does the same.
+
+## Build (Linux)
+
+`lichii/build-linux.sh` fetches (with `fetch.sh`), configures and builds the co-op emulator in one go, with the flags of Fritchii's own Linux release, `ENABLE_UPDATE_CHECKER=OFF`, `LICHII_COOP=ON` and `trim_paths.cmake`:
+
+```sh
+lichii/build-linux.sh                                  # source in fritchii-src, build in fritchii-src/build/coop-linux
+lichii/build-linux.sh --appimage ~/lichii.AppImage     # also a self-contained AppImage (the kit's emulator/lichii.AppImage)
+lichii/build-linux.sh --hook-only                      # only compile the co-op hook (a quick check; CI does this on every push)
+```
+
+It needs CMake 3.24+, Ninja, gcc 13+ or clang 17+, Qt 6 (6.8, as Fritchii's release; point `QT_ROOT_DIR` at it, or install the distribution's `qt6` development packages) and the packages Fritchii's Linux release installs (Ubuntu 24.04 names): `autoconf g++ glslang-tools libglu1-mesa-dev libpulse-dev libtool libudev-dev libxkbcommon-x11-0 mesa-common-dev nasm ninja-build pkg-config zlib1g-dev libva-dev libvdpau-dev libavfilter-dev libavcodec-dev libswscale-dev spirv-tools spirv-headers libusb-1.0-0-dev libboost-dev libboost-fiber-dev libboost-context-dev libopus-dev libasound2-dev`. The rest (SDL3, ENet, OpenSSL and so on) is downloaded into `.cache/cpm` on the first configure. The program is `build/coop-linux/bin/lichii`; the AppImage needs glibc 2.39 or newer to run (Ubuntu 24.04, Fedora 40, Debian 13, Arch).
+
+On Linux the emulator's portable folder is `user/` in the **current directory** (not beside the program, as on Windows); without one it uses `~/.local/share/eden` and the other XDG folders. So start it from the folder that holds `user/` (the kit's start scripts do: `cd emulator`, then `./lichii.AppImage`).
+
+CI (`.github/workflows/build.yml`, job `linux-emulator`) compiles the hook on every push, and builds the whole emulator, its AppImage and a start without a game on the `linux-build` branch, on tags and by hand (workflow_dispatch); the AppImage is kept as the artifact `lichii-linux-x86_64`.
+
 ## Build (Windows)
 
 Tools:
@@ -94,7 +112,7 @@ What in v5.6 matters to co-op:
 Then `fritchii-v5.7` (2026-11-10). 0002, 0003 and 0004 applied as they were, at new line numbers. 0001 needed one change: v5.7 adds an `nx_tools` block (.nx archives) at the end of `src/yuzu/CMakeLists.txt`, right where our `qt.cmake` include sits; both blocks are kept, ours after it. The updater is still only built with `ENABLE_UPDATE_CHECKER`, so 0001's refusal still covers it.
 
 What in v5.7 matters to co-op:
-- **Its high refresh code (Ctrl+U) moved to main+0x3C46E00..0x3C46F10**, at the free end of the page, because the Hyrule Cheat Menu mod uses the spot after Dark's routine. Before (v5.6) it lived at main+0x3C46280, where our cave (0003, `CoopGameBuild` `svc_cave`) is, so turning Ctrl+U on while playing wrote over our cave. In v5.7 a live Ctrl+U writes only its call (main+0x6E6CC4), the water hook (main+0x475F8) and main+0x3C46E00.., none of which our code uses (our cave 0x3C46280..0x3C46300, the AI hold 0x3C46300.., its table 0x3C46400..0x3C46610). One thing stays as it was: when the setting is on at start, the built-in patch writes its cave before ours, and our check that main+0x3C46280..0x3C47000 is free fails, so "coop puppet" is skipped (the log says `main+0x3c46e00 is not free`). Keep Ctrl+U off when starting a co-op game; narrowing that check to the bytes we use is a possible follow-up.
+- **Its high refresh code (Ctrl+U) moved to main+0x3C46E00..0x3C46F10**, at the free end of the page, because the Hyrule Cheat Menu mod uses the spot after Dark's routine. Before (v5.6) it lived at main+0x3C46280, where our cave (0003, `CoopGameBuild` `svc_cave`) is, so turning Ctrl+U on while playing wrote over our cave. In v5.7 a live Ctrl+U writes only its call (main+0x6E6CC4), the water hook (main+0x475F8) and main+0x3C46E00.., none of which our code uses (our cave 0x3C46280..0x3C46300, the AI hold 0x3C46300.., its table 0x3C46400..0x3C46610, the pause counters' cave 0x3C46700..0x3C46728 and ring address 0x3C46780..0x3C46788 with their hook at main+0x5E6760). One thing stays as it was: when the setting is on at start, the built-in patch writes its cave before ours, and our check that main+0x3C46280..0x3C47000 is free fails, so "coop puppet" is skipped (the log says `main+0x3c46e00 is not free`). Keep Ctrl+U off when starting a co-op game; narrowing that check to the bytes we use is a possible follow-up.
 - **Stretched or glowing geometry and white areas after area changes fixed** (the GPU kept showing freed memory that was reused). Should make long co-op sessions with many scene changes cleaner.
 - **No out-of-memory crash on 16 GB PCs**, less VRAM (about 6 GB instead of up to 10 GB) and more free RAM: two emulators on one PC (the autotests) should fit better.
 - **About 5 fps more in fights, less stutter after area changes, shorter hitches on loads and kills** (file reads no longer held to 40 MB/s): loads finish sooner, which shortens the window where our flags and objects wait for a scene.

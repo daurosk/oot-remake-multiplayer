@@ -364,11 +364,12 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
             g.events.Want(Trip::kSceneEvent);
         }
         if (act.move && local.scene && local.position) {
-            // Issue 197: never into another room of a dungeon (Link stays held).
+            // Issue 197: never into another room of a dungeon right after a load (Link
+            // stays held). Within our scene (no load) any room is fine (door-unlock).
             // Read once, at the first move: a pack made (again) while the game runs is
             // seen after a restart; until then no table means short moves only.
             static const CoopRooms::Table rooms = CoopFairy::RoomTable();
-            const auto check = CheckMove(rooms, *local.scene, *local.position, *act.move);
+            const auto check = CheckMove(rooms, *local.scene, *local.position, *act.move, act.after_load);
             if (check != MoveCheck::ok) {
                 LOG_INFO(Core, "coop: teleport: not moved to {:.1f} {:.1f} {:.1f}: {} (issue 197)", act.move->x,
                          act.move->y, act.move->z,

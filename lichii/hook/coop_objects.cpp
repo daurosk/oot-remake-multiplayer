@@ -1282,6 +1282,9 @@ public:
                     world_.ForgetKept();
                 }
             }
+            // door-unlock: opened locks stay and get a lent key, unless asked otherwise.
+            static const bool delete_locks = EnvFlag("LICHII_COOP_LOCK_DELETE");
+            world_.SetDeleteLocks(delete_locks);
             world_.Tick(*scene, self, server_now_us, seen, player_, world);
             for (auto& m : world.send) {
                 send.emplace_back(std::move(m));

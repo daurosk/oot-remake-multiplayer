@@ -508,12 +508,13 @@ std::string NotMovedLine(MoveCheck check, std::string_view name, bool after_load
     out += check == MoveCheck::other_room
                ? who + " in another room of this dungeon"
                : who + " too far away in this dungeon to move you there (no room table for it: make the puppet pack again)";
-    out += after_load ? "; you are at its entrance: walk there" : "; walk there";
+    out += after_load ? "; you are at its entrance: type /teleport again, or walk there" : "; walk there";
     return out;
 }
 
-MoveCheck CheckMove(const CoopRooms::Table& rooms, std::string_view scene, const Vec& from, const Vec& to) {
-    if (!CoopDungeon::IsDungeonScene(scene)) {
+MoveCheck CheckMove(const CoopRooms::Table& rooms, std::string_view scene, const Vec& from, const Vec& to,
+                    bool after_load) {
+    if (!after_load || !CoopDungeon::IsDungeonScene(scene)) {
         return MoveCheck::ok;
     }
     const auto a = rooms.Nearest(scene, CoopRooms::Vec3{from.x, from.y, from.z});

@@ -1,6 +1,6 @@
 # Sync coverage: what is shared between games, and what is not
 
-The goal (dauro, 2026-11-11): everything one player does to the world is the same in every game, **live** (not only after a room reload), and nothing one player does can leave another unable to continue. This page is the map for that work. The fix branches (`dungeon-live`, `breakables`, `softlock-audit`) update their own rows when they change something.
+The goal (Alex, 2026-11-11): everything one player does to the world is the same in every game, **live** (not only after a room reload), and nothing one player does can leave another unable to continue. This page is the map for that work. The fix branches (`dungeon-live`, `breakables`, `softlock-audit`) update their own rows when they change something.
 
 State on `main` at 99332d9 (chunk 4 merged, protocol 6). Later branches changed some rows themselves; what the integration branch `integrate-p11` (protocol 10) added beyond the rows is listed in [Added for protocol 10](#added-for-protocol-10). Sources are the docs named in each row and the reports of the chunk 3 and 4 test turns (integrate-p6, integrate-p7). The actor classes are read from the romfs (`Pack/Actor`, 8,373 packs, grouped by name).
 
@@ -75,7 +75,7 @@ Dungeon state is in named flags that the room logic reads ([dungeon.md](dungeon.
 | Mechanic | Actors | Path | Live | Proven | Risk if not live | P |
 |---|---|---|---|---|---|---|
 | Floor switches that stay down | `Obj_StepSwitch`, `Obj_Stepswitch`, `Obj_*_StepSwitch`, `Obj_InsideJabu_Jabu_Stepswitch` | flags (the room's `…_Switch_…`, `…_StepSwitch`) | ? | logs (deku-late: the flag crosses) | Door open in A, shut in B | **P1** |
-| Floor switches held down (a player or block on them) | same actors; the held state is in the actor | none | - | - | dauro's case: "stands on a button that opens something". A holds, B's door stays shut. B cannot hold its own while A stands on A's | **P1** |
+| Floor switches held down (a player or block on them) | same actors; the held state is in the actor | none | - | - | Alex's case: "stands on a button that opens something". A holds, B's door stays shut. B cannot hold its own while A stands on A's | **P1** |
 | Timed switches, timed torches | `Obj_CandleStick_TimeExtinguish`, reset type 280 | none (room-local) | - | - | Each player solves their own; two players cannot share one timer | P2 |
 | Eye switches | `Obj_EyeSwitch_*` (5) | flags | ? | logs (Deku Tree slingshot room, chunk 4) | B's door or ladder stays: the Deku Tree ladder softlock (#129) | **P1** |
 | Crystal switches (hit) | `Obj_SwitchHit_*`, `Obj_InsideJabu_Jabu_SwitchHit_*`, `Obj_LakeHrl_SwitchHit_*`, `Obj_LightSwitchHitBase` | flags | ? | unit | As above | **P1** |
@@ -121,7 +121,7 @@ The P1 rows above, grouped by the fix branch that should take them:
 
 1. **dungeon-live** (types 110 to 119):
    - Make a loaded door, shutter, ladder, water plane or platform react to a shared flag at once. Covers the switches, eye and crystal switches, torches, shutters, locked doors, water level, and the room-twist check.
-   - Held floor switches (dauro's button case): share the held state, or make "pressed by anyone" hold the door in every game.
+   - Held floor switches (Alex's button case): share the held state, or make "pressed by anyone" hold the door in every game.
    - Enemy-clear rooms: the clear and the shutters must agree with B's live enemies.
    - Silver rupee counters: one count for the group.
    - The Water Temple level and its event.

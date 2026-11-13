@@ -837,7 +837,7 @@ private:
     std::map<std::uint64_t, ChestAnimation> chest_animations_;
     // Issue 195: a loaded closed chest that another player opened is shown
     // open here with its own open idle (kChestOpenIdle, through Plays), not
-    // removed (it vanished in dauro's play-test). Address: when first played.
+    // removed (it vanished in Alex's play-test). Address: when first played.
     // Removed only if it still shows its closed idle kChestShowFailUs after.
     static constexpr const char* kChestOpenIdle = "OpenWait";
     static constexpr const char* kChestClosedIdle = "Close";  // "CloseWait"

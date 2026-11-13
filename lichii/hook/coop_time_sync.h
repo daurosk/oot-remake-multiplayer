@@ -104,7 +104,7 @@ public:
     // Present thread: our Link cannot be read this frame (a load, a death's
     // reload, a door). A guest's jump within kAfterLoadUs of it is not sent
     // either; the host's clock is then taken as after a save load. Issue 159:
-    // a reload that brings no flags back logs no "save load seen" (dauro's hand test 2026-11-11, game A,
+    // a reload that brings no flags back logs no "save load seen" (Alex's hand test 2026-11-11, game A,
     // 245.8 s: the actor list fell to 8, the jump was read 0.6 s later).
     void Loading(std::uint64_t now_us);
 

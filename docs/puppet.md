@@ -141,7 +141,7 @@ Age: the sample's age field (GameUI +0x5c0) chooses `CoopPuppet_Child` or `CoopP
 
 ## Equipment
 
-dauro (2026-11-09): the puppet wears the remote player's tunic, boots, sword, shield and mask, and holds what they hold, drawn or sheathed. Read from the dump and the romfs, then checked in the game on 2026-11-09 (child Link, one emulator: shield Hylian and Deku, sword drawn and sheathed, shield raised, a held item taken out; no second sword, tunic, boots or mask to try). Message: `PLAYER_EQUIP` ([protocol.md](protocol.md)).
+Alex (2026-11-09): the puppet wears the remote player's tunic, boots, sword, shield and mask, and holds what they hold, drawn or sheathed. Read from the dump and the romfs, then checked in the game on 2026-11-09 (child Link, one emulator: shield Hylian and Deku, sword drawn and sheathed, shield raised, a held item taken out; no second sword, tunic, boots or mask to try). Message: `PLAYER_EQUIP` ([protocol.md](protocol.md)).
 
 ### How the game shows equipment
 
@@ -188,7 +188,7 @@ Research (s2-equip-create) showed that create argument +0x40 is a name pointer, 
 
 ### In hand or put away (built, not run in the game)
 
-dauro's hand test (2026-11-09): only the shield showed on puppets, always on the back, also while its player held it on the arm or guarded. The logs of that test show the sword was worn too (`wears weapon ... (returned 0x1)`); a piece is worn put away and nothing ever changed that.
+Alex's hand test (2026-11-09): only the shield showed on puppets, always on the back, also while its player held it on the arm or guarded. The logs of that test show the sword was worn too (`wears weapon ... (returned 0x1)`); a piece is worn put away and nothing ever changed that.
 
 Read from the dump (static, not run):
 
@@ -204,7 +204,7 @@ What the director does (`Director::Hold`), for a live puppet, after its gear is 
 - After the call the slot's byte is read: with the wanted bit set the change is taken and logged, `P<n> equipment slot <s> in hand` or `put away`. Otherwise the call is made again after 250 ms (`not taken (byte ..)` with `LICHII_COOP_DEBUG_ANIM`).
 - Where the piece sits (hand bone, arm, guard) is the game's own: the state picks the bone, and the pose copy moves the arm.
 
-**Two-player run (dauro, 2026-11-09, main 2e3f68b): "swords and equipment didn't show".** What the logs of that run say:
+**Two-player run (Alex, 2026-11-09, main 2e3f68b): "swords and equipment didn't show".** What the logs of that run say:
 
 - Each time a player drew the sword, the other game logged `P<n> equipment slot 0 in hand` and, about 40 ms later, `put away`. So the call is taken, but the player's `drawn` bit lasted one or two frames. The byte at +0x13bc is a **request**, not the state: the setters write it (0x6b6820 writes 2, 0xe34c70 writes 4, also when a piece is created) and the game clears it when the change is done. 0xce7ab0 reads the state from the piece itself once the byte is 0. "Bit 1 is set while the piece is out" (above) was wrong.
 - Fix (`PlayerReader::read_drawn`): the reader remembers the last request seen for each slot (2: in hand; 4 or 1: not) until the next one; a piece the game makes anew starts put away, as the game makes it. The readers of all frames share one `PlayerReader::DrawnState` (the hook and `Session` keep it).
@@ -216,7 +216,7 @@ What the director does (`Director::Hold`), for a live puppet, after its gear is 
 What else the runs showed:
 
 - A puppet equips itself: `CoopPuppet_Child` gets sword, sheath and shield about 65 ms after its actor exists, from the **local** game's `PlayerStatus.Equip*` flags. Our equip calls then make the pieces again and the game removes the first set.
-- **A parked puppet leaves its pieces behind.** While the puppet is parked 500 under the floor (`Show::hide`, our event or scene exit), its sword and shield read `up 500.88`: they stay where they were. In dauro's run (e2ed2aa) the second set was made while the puppet was parked (first seen at y = -339.87), which would leave it 500 under the puppet once it comes up. So: no equip or in-hand call is made while the puppet is parked (`Director::Equip`, `Director::Hold`), and a worn sword or shield found more than 5 from its shown puppet is worn again, at most once a second (`Director::LeftBehind`, log `P<n> weapon '..' left behind (<distance> away): worn again`). Built and unit tested; the left-behind case itself was not reached in a run (a puppet came back from a park only by a scene change, which deletes it).
+- **A parked puppet leaves its pieces behind.** While the puppet is parked 500 under the floor (`Show::hide`, our event or scene exit), its sword and shield read `up 500.88`: they stay where they were. In Alex's run (e2ed2aa) the second set was made while the puppet was parked (first seen at y = -339.87), which would leave it 500 under the puppet once it comes up. So: no equip or in-hand call is made while the puppet is parked (`Director::Equip`, `Director::Hold`), and a worn sword or shield found more than 5 from its shown puppet is worn again, at most once a second (`Director::LeftBehind`, log `P<n> weapon '..' left behind (<distance> away): worn again`). Built and unit tested; the left-behind case itself was not reached in a run (a puppet came back from a park only by a scene change, which deletes it).
 - Tunic, boots and head pieces go through the same equip call; the test saves have none, so they are not seen.
 
 With `LICHII_COOP_DEBUG_ANIM=1` every live puppet logs, every 2 s, after its `gear:` line:
@@ -232,7 +232,7 @@ A run that checks it: `tools/autotest/run.ps1 -Scenario back -Switches "LICHII_C
 
 ### The held item (slot 3)
 
-dauro's hand test (2026-11-09): "sword appears in hand, slingshot does not". The slingshot is not in any `PlayerStatus.Equip*` flag, so nothing told the other games about it.
+Alex's hand test (2026-11-09): "sword appears in hand, slingshot does not". The slingshot is not in any `PlayerStatus.Equip*` flag, so nothing told the other games about it.
 
 - **Where it is.** Slot 3 of the EquipmentUser is the bow slot: the equip call 0x2df7b20 tests slot 3's link (EquipmentUser +0x70, +0x78) when its slot kind is 5, as it tests slot 0's for kind 0 and slot 1's for kind 1 (read from the dump). A child with the slingshot has the actor `Weapon_Range_SlingShot` there all the time: in state 6 while it is put away (`slot 3: ... state 6 ... flags 0x804` in the local player's debug line), and `drawn` bit 3 is set while Link aims.
 - **Sent.** `PLAYER_EQUIP` component 10, `held`: the name of the actor in slot 3 ([protocol.md](protocol.md)).
@@ -276,7 +276,7 @@ The adult scenarios (`held-adult`, `wear-adult`) now play in Kakariko by day wit
 2. The name of the actor in each slot (for a held tool such as the hookshot or bombs, which are not in `PlayerStatus.Equip*`): the actor's name field was not found. The item buttons are `PlayerStatus.AssignableItem.*` (an enum, [items.md](items.md)).
 3. 0x2df7b20's other arguments, the armor slot kinds, the change-state call, and where a create request carries blackboard instance parameters.
 5. Where the puppet's Deku shield came from (see the pack load test) and whether the create request (not a placement) carries `EquipmentUser_*`.
-6. Adult slots, tunic, boots and mask: dauro has no adult save and none of those items (2026-11-09). Run them when a save has them.
+6. Adult slots, tunic, boots and mask: Alex has no adult save and none of those items (2026-11-09). Run them when a save has them.
 4. String64 flags still in the write queue (the getter checks an object at manager + 0x608 first).
 
 ## The frame hook
@@ -354,7 +354,7 @@ What the game needs for a new actor, read from the files (**checked**) and the T
 
 **Load test.** `tools/puppet_pack/place_test.py` adds actors to one scene file of a built mod (a throwaway one), for example both puppets and a cow as a control in `Banc/KakarikoVillage/KakarikoVillage_Child_Dynamic.bcett.byml.zs`. **Proven in game (2026-11-08).** Fritchii v5 (coop build, `.nup` loaded with `-g`) applies LayeredFS to a `.nup` with no patch: the log has `Patching RomFS for title_id=0400486024DEC000` and then `RomFS: LayeredFS patches applied successfully`. With both puppets and a control `Animal_Cow` placed at Link's Kakariko save position (about -119, 96.7, 58.7, from `LICHII_COOP_DEBUG_CAMERA`), the game shows the cow and a second, standing child Link: `CoopPuppet_Child` loads, with the player's model, from the pack alone. `CoopPuppet_Adult` was placed too but was not seen in that child-era scene.
 
-**With the EquipmentUser (2026-11-09, dauro, child save, equip-A kit).** The packs with `EquipmentUserRef` load: the log shows LayeredFS applied, and in Kakariko the cow and the child puppet stand beside Link, the game keeps running. The puppet was placed with `Dynamic` `EquipmentUser_Weapon` `Weapon_Sword_Kokiri`, `_Shield` `Weapon_Shield_Hylian`, `_ArmorHead` `Armor_Child_Mask_Keaton`; it showed **the Deku shield on its back, no sword, no mask**. So a placement's `Dynamic` keys are not worn (the Hylian shield and mask would show), and a piece of equipment does appear on the puppet. The Deku shield was also the player's own shield then (`PlayerStatus.EquipShield` in the log), so it may come from the save's game data or from a default; not told apart. The same run logged 4 null reads (`Unmapped read 0x20` and `0x1c8`, pc 0x80cf4338) at the scene load, none in earlier runs without the EquipmentUser; the game went on. The adult puppet (placed in `KakarikoVillage_Adult_Dynamic` with Master Sword, Mirror Shield, Goron tunic, Hover boots) was not seen: no adult save.
+**With the EquipmentUser (2026-11-09, Alex, child save, equip-A kit).** The packs with `EquipmentUserRef` load: the log shows LayeredFS applied, and in Kakariko the cow and the child puppet stand beside Link, the game keeps running. The puppet was placed with `Dynamic` `EquipmentUser_Weapon` `Weapon_Sword_Kokiri`, `_Shield` `Weapon_Shield_Hylian`, `_ArmorHead` `Armor_Child_Mask_Keaton`; it showed **the Deku shield on its back, no sword, no mask**. So a placement's `Dynamic` keys are not worn (the Hylian shield and mask would show), and a piece of equipment does appear on the puppet. The Deku shield was also the player's own shield then (`PlayerStatus.EquipShield` in the log), so it may come from the save's game data or from a default; not told apart. The same run logged 4 null reads (`Unmapped read 0x20` and `0x1c8`, pc 0x80cf4338) at the scene load, none in earlier runs without the EquipmentUser; the game went on. The adult puppet (placed in `KakarikoVillage_Adult_Dynamic` with Master Sword, Mirror Shield, Goron tunic, Hover boots) was not seen: no adult save.
 
 An earlier run that saw no mod at all had copied the kit folder: its `qt-config.ini` still had `load_directory` (and the NAND and SD folders) pointing at the original kit, so the emulator never read the copy's `user\load`. The log's `LoadDir:` line shows the folder actually used. `build.py --user-dir` now follows that setting.
 
@@ -384,11 +384,11 @@ Approach (a), in `lichii/hook/` and one small emulator patch. Not yet run with t
 | SVC | `CoopSvc::Call` | 0xf4 from Ocarina only. Hands the SVC to the director and writes the call it wants into the buffer. |
 | Director | `coop_puppet.cpp`, calc thread | One slot per puppet. A slot gets a 0x300-byte block from the game's `malloc` (0x14c6c90) once, and keeps it. It writes the create argument (position, rotation, scale 1, +0x40 from the GOT entry 0x4c7dad0, and as SeqExecuteCreateActor does at 0x32bca40..0x32bcaa0: +0x48 = 0, +0x98 = 1), the name and a handle slot into the block, and asks for `create(manager, &name, &arg, &handle, 1, 0, 0, 0)` with 0 stack arguments. Create fills the handle slot with a 0x30-byte **create request**: +0 low 16 bits the state, +8 the actor. State 3 = ready: the director takes the actor with **0x36fbd0(request, 1, 0)**, as SeqExecuteCreateActor's check (0x32bcb30) does, and clears the slot; state 4 is dropped with 0x36fde0(request), 5 and 6 are failures. Once the actor is in state 4 the puppet is live and its +0x31c and +0x328 are written every frame. (With the walker's +0x48 = 0x10001 the request stayed in state 2.) |
 | Delete | 0xa6490 | The run of `OneShotGenericDeleteThisActor` (its node's last vtable slot, 0xc706f0) calls 0xa6490 with the actor and 0. It returns at once for an actor in state 7 to 11. The director asks for it when the player has been out of the plan for 2 s (`kLeaveGraceMs`: a stalled peer fades to 0 for a moment, and without the wait the puppet was deleted and made again), changes model, or the local scene is not the one the puppet was made in. An actor the engine deleted itself (state 7 to 11, or a holder whose id no longer matches) is noticed and made again. |
-| Planner | `coop_puppet.cpp`, present thread | `CoopPuppet::Publish`, from `CoopHook::OnFrame`: every remote player that presence shows in your scene and has not faded becomes a target, at its shown position and rotation (`QuatToMatrix`, the inverse of the reader's). With `LICHII_COOP_TEST_PUPPET=1` one more (the test puppet), 2 units along x from where you stood 3 s after the scene was known, staying there. It had no switch of its own until 2026-11-09: `LICHII_COOP_DEBUG_PUPPET=1` made it too, so a run with the logs on showed a second Link and fairy standing frozen where each player started (dauro's run of that day). Now `LICHII_COOP_DEBUG_PUPPET` only writes the status lines. Nothing is planned while the scene is not known (loading). |
+| Planner | `coop_puppet.cpp`, present thread | `CoopPuppet::Publish`, from `CoopHook::OnFrame`: every remote player that presence shows in your scene and has not faded becomes a target, at its shown position and rotation (`QuatToMatrix`, the inverse of the reader's). With `LICHII_COOP_TEST_PUPPET=1` one more (the test puppet), 2 units along x from where you stood 3 s after the scene was known, staying there. It had no switch of its own until 2026-11-09: `LICHII_COOP_DEBUG_PUPPET=1` made it too, so a run with the logs on showed a second Link and fairy standing frozen where each player started (Alex's run of that day). Now `LICHII_COOP_DEBUG_PUPPET` only writes the status lines. Nothing is planned while the scene is not known (loading). |
 
 The actor is `CoopPuppet_Child` or `CoopPuppet_Adult`, by the age in the player's samples (a change of age deletes it and makes the other); `LICHII_COOP_PUPPET_ACTOR=<pack name>` sets one actor for everyone (`Animal_Cow_LinkHouse` was the default before the pack).
 
-**No create while loading.** The scene is readable as soon as a load starts, but a puppet created during the loading screen reaches state 4 and is never drawn; it showed only after it was deleted and made again (dauro's two-player run, 2026-11-09: player 2 made player 1's puppet at 37.1 s, during its loading screen from 36.8 to 40.2 s, and saw it only after it was remade at 230 s). So a create waits until the renderer's camera (`CoopCamera::Latest`, fresh within 250 ms as for the markers) has run unbroken for 0.75 s (`kDrawnMs`), begun after the last local scene change or engine delete of that puppet; if the camera never broke over such a change, 3 s after it (`kSteadyMs`). The log says `P<n>: waiting for the game to draw` once per wait. With no camera seen since start, creates go at once as before. A dropped or failed create waits 5 s only before the same actor is tried again: a different one (the age read wrong while the other player was loading, which made an adult create) goes at once. To not make that wrong one at all, a create also waits until the wanted actor has stayed the same for 1 s (`Input::settle_ms`): in the two-game runs of 2026-11-09 the game that loaded first read the other's age as adult for about 0.6 s, made `CoopPuppet_Adult`, dropped it and made the child 0.6 s later.
+**No create while loading.** The scene is readable as soon as a load starts, but a puppet created during the loading screen reaches state 4 and is never drawn; it showed only after it was deleted and made again (Alex's two-player run, 2026-11-09: player 2 made player 1's puppet at 37.1 s, during its loading screen from 36.8 to 40.2 s, and saw it only after it was remade at 230 s). So a create waits until the renderer's camera (`CoopCamera::Latest`, fresh within 250 ms as for the markers) has run unbroken for 0.75 s (`kDrawnMs`), begun after the last local scene change or engine delete of that puppet; if the camera never broke over such a change, 3 s after it (`kSteadyMs`). The log says `P<n>: waiting for the game to draw` once per wait. With no camera seen since start, creates go at once as before. A dropped or failed create waits 5 s only before the same actor is tried again: a different one (the age read wrong while the other player was loading, which made an adult create) goes at once. To not make that wrong one at all, a create also waits until the wanted actor has stayed the same for 1 s (`Input::settle_ms`): in the two-game runs of 2026-11-09 the game that loaded first read the other's age as adult for about 0.6 s, made `CoopPuppet_Adult`, dropped it and made the child 0.6 s later.
 
 ### Animation playback
 
@@ -397,7 +397,7 @@ What [How the puppet plays it](#how-the-puppet-plays-it) planned, built in the d
 1. A name it has not played: the name goes into one of two 0x50-byte buffers in the block (in turn, since the slot may keep the pointer), the request at block +0x200 is {actor, name, slot 0, rate, -1.0, -1.0, skip-if-same 0, node 0} (node 0 as the game's own caller at 0x2a95c4), and the cave calls **0x2022a0**(request).
 2. In the same frame, **0x37b5d70**(controller, 0, `s0` = received frame). 0x37b5d70 checks the slot index against the count and works on the slot's player (slot +0x48), so it is called rather than writing +0xe8.
 3. After that the game plays it on. A new sample (the counter moved) with the same name sets the frame again only when the puppet's slot 0 frame (+0xe8) is more than 3 frames off (`kFrameSlack`), so keep-alives correct drift without jerking.
-4. Then every other slot (1 to the slot count, at most 8) gets slot 0's command with **0x3abec10**(actor, 0, slot, 0, 0), the call behind `ExecuteASSyncPartialAnimation`: it reads the source slot's command (+0x10) and rate (0xdf49e0) and plays it on the target slot through 0x37b59c0 (request skip-if-same 1). dauro's test of the slot-0-only version (2026-11-09) showed the legs animating and the upper body in T-pose: the upper body is a partial slot. Not yet run.
+4. Then every other slot (1 to the slot count, at most 8) gets slot 0's command with **0x3abec10**(actor, 0, slot, 0, 0), the call behind `ExecuteASSyncPartialAnimation`: it reads the source slot's command (+0x10) and rate (0xdf49e0) and plays it on the target slot through 0x37b59c0 (request skip-if-same 1). Alex's test of the slot-0-only version (2026-11-09) showed the legs animating and the upper body in T-pose: the upper body is a partial slot. Not yet run.
 
 **Pose against the actor's own calc.** In the same test the puppet did not follow while it played animations. The engine's matrix setter, the run of `OneShotActorRequestSetMtx` (0x28b2050), calls **0xc6fd60**(actor, mtx34, 0): for an actor with a physics body (component table +0x50, its +0x20) it hands the matrix to the body (0x4c6630); otherwise it stores a pending transform, position at actor **+0x358** and rotation rows at **+0x364**, and sets or clears bit 0x8000 of +0x4a8 (from the third argument). The actor's calc applies that over +0x31c/+0x328. The director now writes both pairs every frame (`Pose`), as the setter would. With `LICHII_COOP_DEBUG_ANIM=1` a line a second, `P<n> pose: at <+0x31c>, request <+0x358>, now to <target>`, shows what the game left there since the last write. Not yet run; the applier itself was not found.
 
@@ -486,7 +486,7 @@ Not yet seen: animation (the puppet stands in its default pose), rotation in the
 
 ## Pose
 
-Full-body copy, built because playing the same AS command left the legs slower and stiffer than the body (dauro's test, 2026-11-09). Each frame the puppet takes the other player's whole skeleton, as Anchor's dummy player does on N64 (idea only, no code). Position and rotation still come from `PLAYER_SAMPLE` and the follow fix above.
+Full-body copy, built because playing the same AS command left the legs slower and stiffer than the body (Alex's test, 2026-11-09). Each frame the puppet takes the other player's whole skeleton, as Anchor's dummy player does on N64 (idea only, no code). Position and rotation still come from `PLAYER_SAMPLE` and the follow fix above.
 
 ### Where the skeleton is
 
@@ -551,7 +551,7 @@ A player test: B saw A's slingshot pulled back with a seed in it, and it stayed 
 
 ## Adult
 
-dauro (2026-11-09): adult Link is synced like child Link. Everything here is built and unit tested; **none of it was run in a game** (in-game tests were stopped on 2026-11-09 before the adult run). What to check is listed at the end.
+Alex (2026-11-09): adult Link is synced like child Link. Everything here is built and unit tested; **none of it was run in a game** (in-game tests were stopped on 2026-11-09 before the adult run). What to check is listed at the end.
 
 | Piece | What | Status |
 |---|---|---|
@@ -646,7 +646,7 @@ Test switch for that case: `--sound-user NAME` gives each puppet its own SLink p
 
 ## Riding (issue 199)
 
-dauro (2026-11-12): "epona makes another player disappear when they mount her". Up to then a remote rider was parked out of sight on purpose (cutscene-hide): the other game has no horse, so the puppet would sit in the air. Now the rider stays seen, on a copy of the horse (`lichii/hook/coop_ride.h`):
+Alex (2026-11-12): "epona makes another player disappear when they mount her". Up to then a remote rider was parked out of sight on purpose (cutscene-hide): the other game has no horse, so the puppet would sit in the air. Now the rider stays seen, on a copy of the horse (`lichii/hook/coop_ride.h`):
 
 | Part | Where | What |
 |---|---|---|

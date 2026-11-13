@@ -1,6 +1,6 @@
 # Boss rooms together
 
-Issue 109. dauro: "if two players are in the same dungeon and one walks into boss room, both players should receive the same cutscene and fight it together."
+Issue 109. Alex: "if two players are in the same dungeon and one walks into boss room, both players should receive the same cutscene and fight it together."
 
 Game: main of build e0f3ccfaf50065ae (1.1.1), romfs of the same version. **Checked** means read from the game's files. **Live** means seen in the running game. Nothing on this page has been seen live yet.
 

@@ -3,14 +3,14 @@
 Checks every file tracked by git (or every file under the repository when git
 is not available). Exit code 0 means clean, 1 means something must be removed.
 
-Release names (dauro, 2026-11-11: "nothing should reference old releases in the
+Release names (Alex, 2026-11-11: "nothing should reference old releases in the
 repo"): the newest build is on the releases page, and history notes give the
 date or the issue instead of the release. Text files are searched for "test"
 followed by a number as a whole word, and for the tag form (v, 0.1.0, dash, test).
 Example tags in tests use another word ("beta").
 
 Private names: the owner's real name must never appear in the repository (in
-any case, also inside a path or a longer word); the owner is "dauro". The guard
+any case, also inside a path or a longer word); the owner is "Alex". The guard
 keeps only a hash of the name, so the name itself is not in this file either.
 """
 
@@ -146,7 +146,7 @@ def main():
         for line in named:
             print("  " + line)
     if private:
-        print("Content guard failed. These name the owner by a private name; write dauro:")
+        print("Content guard failed. These name the owner by a private name; write Alex:")
         for line in private:
             print("  " + line)
     if bad or named or private:

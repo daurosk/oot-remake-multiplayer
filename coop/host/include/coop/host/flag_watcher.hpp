@@ -192,7 +192,7 @@ class FlagWatcher {
   // flags, also over ones the group set just before (issue 129: a switch
   // shared by the snapshot was reset by the joiner's save load, sent back as
   // 0, and the group's later 1 was written while the load ran and lost).
-  // Saves (dauro, 2026-11-11, docs/flags.md "Saves"): the host's save is the
+  // Saves (Alex, 2026-11-11, docs/flags.md "Saves"): the host's save is the
   // truth. While there is no Link nothing is sent. A save was loaded when,
   // in one window, no scene was loaded for kTitleFrames (the title screen
   // or file select) and kSaveLoadMin named flags went back (a Bool to 0, an

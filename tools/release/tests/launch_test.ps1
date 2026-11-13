@@ -656,6 +656,9 @@ try {
     # hs-missing (a tester read "No co-op Hookshot game" as "couldn't find Hookshot"): antivirus took the module
     Remove-Item -LiteralPath (Join-Path $hk 'hookshot\hookshot_coop.dll')
     Check ((Get-KitHookshotNeed $hk) -eq 'quarantine') 'hookshot need: the module in neither the kit nor the game -> quarantine (no build)'
+    Rename-Item -LiteralPath (Join-Path $hk 'hookshot\PIN') 'PIN.off'
+    Check ((Get-KitHookshotNeed $hk) -ne 'quarantine') 'hookshot need: a kit made without the Hookshot part (no PIN) -> not quarantine'
+    Rename-Item -LiteralPath (Join-Path $hk 'hookshot\PIN.off') 'PIN'
     Write-File (Join-Path $other 'bin\hookshot_coop.dll') 'MODULE 2'
     Check ((Get-KitHookshotNeed $hk) -ne 'quarantine') 'hookshot need: the kit''s module gone, the game''s there -> the game still starts'
     Remove-Item -LiteralPath (Join-Path $other 'bin\hookshot_coop.dll')
@@ -696,7 +699,7 @@ try {
     $built = { Test-Path -LiteralPath (Join-Path $hm 'hookshot\tools') }
     # never built: plain words, the offer, n = no build, a pointer to Build-Hookshot-Coop.bat
     $out = & $runHs 'join'
-    Check ($out -match 'Playing on the emulator\? Use Join\.bat \(or Host\.bat\).*\|Hookshot isn''t set up yet' -and $out -match 'Set it up now\? \(then the game starts\) \[Y/n\]' -and $out -match 'Not now\. Build-Hookshot-Coop\.bat' -and $out -notmatch 'Hookshot started' -and -not (& $built)) "Join-Hookshot, no game: says not set up yet, offers the build, n builds nothing [$out]"
+    Check ($out -match 'Playing on the emulator\? Use Join\.bat \(or Host\.bat\).*\|Hookshot isn''t set up yet' -and $out -match 'Set it up now\? \(then the game starts; closing this window cancels\) \[Y/n\]' -and $out -match 'Not now\. Build-Hookshot-Coop\.bat' -and $out -notmatch 'Hookshot started' -and -not (& $built)) "Join-Hookshot, no game: says not set up yet, offers the build, n builds nothing [$out]"
     $out = & $runHs 'host'
     Check ($out -match "Hookshot isn't set up yet" -and $out -match 'Set it up now\?' -and $out -notmatch 'Hookshot started') "Host-Hookshot, no game: the same offer [$out]"
     $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$hm\scripts\play.ps1`" choose -Hookshot -NoUpdate < `"$no`"" 2>&1) -join '|'

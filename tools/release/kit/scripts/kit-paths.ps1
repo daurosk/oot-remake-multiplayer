@@ -585,7 +585,9 @@ function Get-KitHookshotNeed([string]$Kit) {
     $exe = Get-KitHookshotExe $game
     # (a kit always carries hookshot\hookshot_coop.dll; with the game's copy gone too, nothing can put co-op in)
     $gameHas = $exe -and (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $exe) 'hookshot_coop.dll'))
-    if (-not $gameHas -and -not (Test-Path -LiteralPath (Join-Path $Kit 'hookshot\hookshot_coop.dll'))) { return 'quarantine' }
+    # (only a kit with the Hookshot part: one made without it has no module to lose and no game to start)
+    if (-not $gameHas -and (Test-Path -LiteralPath (Join-Path $Kit 'hookshot\PIN')) -and
+        -not (Test-Path -LiteralPath (Join-Path $Kit 'hookshot\hookshot_coop.dll'))) { return 'quarantine' }
     if (-not $exe) {
         if (Test-Path -LiteralPath (Join-Path $Kit 'hookshot\game-folder.txt')) { return 'moved' }
         return 'game'

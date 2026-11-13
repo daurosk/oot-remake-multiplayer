@@ -446,11 +446,11 @@ TEST_CASE("hookshot draw: the mouse finds the cheats panel's rows where they are
     CHECK_FALSE(CoopDraw::CheatsRowAt(1280, 720, v, texts[3].x, texts[5].y + box.line + 5));  // below the last row
 }
 
-TEST_CASE("hookshot draw: the title's Multiplayer prompt, and the menu with the chosen row in the highlight") {
+TEST_CASE("hookshot draw: the title's Multiplayer prompt (the menu is Hookshot's Multiplayer tab)") {
     {
         Canvas c(1280, 720);
         CoopDraw::Scene s;
-        s.title = CoopDraw::TitleView{"Multiplayer", std::nullopt};
+        s.title = CoopDraw::TitleView{"Multiplayer"};
         CHECK(CoopDraw::Wanted(s));
         CoopDraw::Draw(c.d, s, GameLook());
         bool said = false;
@@ -460,30 +460,7 @@ TEST_CASE("hookshot draw: the title's Multiplayer prompt, and the menu with the 
         CHECK(said);
         CHECK(c.Of("circle").size() == 2);   // the Minus button
     }
-    {
-        CoopDraw::Scene none;
-        none.title = CoopDraw::TitleView{};
-        CHECK_FALSE(CoopDraw::Wanted(none));
-    }
-    Canvas c(1280, 720);
-    CoopTitleMenu::Menu m;
-    m.Open(CoopTitleMenu::Options{});
-    m.Press(CoopTitleMenu::Input::kDown);   // Join a game chosen
-    CoopDraw::Scene s;
-    s.title = CoopDraw::TitleView{"", m.view()};
-    CHECK(CoopDraw::Wanted(s));
-    CoopDraw::Draw(c.d, s, GameLook());
-    std::uint32_t join = 0, host = 0;
-    bool title = false, hint = false;
-    for (const auto& t : c.Of("text")) {
-        if (t.text == "Join a game" && AlphaOf(t.rgba) == 255) join = t.rgba;
-        if (t.text == "Host a game" && AlphaOf(t.rgba) == 255) host = t.rgba;
-        title |= t.text == "Multiplayer";
-        hint |= t.text.find("A: choose") != std::string::npos;
-    }
-    CHECK(join == CoopDraw::kHighlight);
-    CHECK(host == CoopDraw::Rgba(255, 255, 255, 255));
-    CHECK(title);
-    CHECK(hint);
-    CHECK(c.Of("triangle").size() == 4);   // the diamonds at the chosen row's ends
+    CoopDraw::Scene none;
+    none.title = CoopDraw::TitleView{};
+    CHECK_FALSE(CoopDraw::Wanted(none));
 }

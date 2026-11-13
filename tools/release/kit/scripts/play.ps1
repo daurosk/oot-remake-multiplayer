@@ -151,11 +151,22 @@ if (-not $NoUpdate -and (Test-Path $updater)) {
 
 # Hookshot: the game as this kit wants it, with no step of the player's. Build-Hookshot-Coop runs by
 # itself: co-op only (seconds) when the Hookshot pin is the same, the game built again when the update moved it,
-# and the first build when there is no game yet (the game files are asked for once and remembered).
+# and the first build when there is no game yet (the game files are asked for once and remembered). The long
+# builds (no game, a moved game, another pin) ask Y/n first; a module antivirus took is said, not built.
 if ($Hookshot) {
     $need = Get-KitHookshotNeed $kit
+    if ($need -eq 'quarantine') {
+        Write-Host (Get-KitHookshotNeedText $need) -ForegroundColor Yellow
+        exit 1
+    }
     if ($need) {
-        Write-Host (Get-KitHookshotNeedText $need)
+        Write-Host (Get-KitHookshotNeedText $need $hsGame)
+        # The long builds ask first (yes by itself after a minute, so an unattended start still builds).
+        $question = Get-KitHookshotNeedQuestion $need
+        if ($question -and -not (Read-YesNo "$question (then the game starts; closing this window cancels)" 60)) {
+            Write-Host 'Not now. Build-Hookshot-Coop.bat sets it up (SETUP.md, "Play on Hookshot"); then start this again.'
+            exit 1
+        }
         $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
         & $ps -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'hookshot-build.ps1')
         if ($LASTEXITCODE -ne 0) {
@@ -166,8 +177,13 @@ if ($Hookshot) {
         $hsGame = Get-KitHookshotGame $kit
         $exe = Get-KitHookshotExe $hsGame
     }
-    if (-not $exe -or -not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $exe) 'hookshot_coop.dll'))) {
-        Write-Host "No co-op Hookshot game in $hsGame. Run Build-Hookshot-Coop.bat (SETUP.md, ""Play on Hookshot"")."
+    if (-not $exe) {
+        Write-Host "Hookshot isn't set up yet: no Hookshot game in $hsGame. Run Build-Hookshot-Coop.bat and let it finish (SETUP.md, ""Play on Hookshot"")."
+        exit 1
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $exe) 'hookshot_coop.dll'))) {
+        # The build put it there a moment ago (or the game was ready): gone again means antivirus.
+        Write-Host (Get-KitHookshotQuarantineText) -ForegroundColor Yellow
         exit 1
     }
     $emu = Split-Path -Parent $exe

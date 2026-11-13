@@ -40,6 +40,10 @@ struct Quest {
     // opening is not moved on (time-story's CoopQuest DoorOfTime rule reads
     // our Goto, reports/review-time-story.md).
     std::int32_t floor = 0;
+    // Only the end is shared (Get_Epona): a game not at Complete reads as
+    // NotReady, and only Complete is ever written. The steps before it stay
+    // each game's own.
+    bool complete_only = false;
 };
 
 // Every shared quest, sorted by hash.

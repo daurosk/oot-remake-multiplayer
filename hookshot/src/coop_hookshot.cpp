@@ -39,12 +39,14 @@
 #include "coop_hook.h"
 #include "coop_hud.h"
 #include "coop_hud_hearts.h"
+#include "coop_input.h"
 #include "coop_png.h"
 #include "coop_puppet.h"
 #include "coop_puppet_config.h"
 #include "coop_runtime.h"
 #include "coop_settings.h"
 #include "coop_svc.h"
+#include "coop_pause.h"
 #include "coop_title.h"
 #include "core/core.h"
 #include "coop_host_menu.h"
@@ -492,7 +494,7 @@ CoopDraw::Scene DrawScene() {
 }
 
 bool TypeKey(std::uint32_t vk, bool repeat) {
-    if (CoopTitle::Key(vk, repeat)) {   // the title's Multiplayer menu, while it is open
+    if (CoopPause::Key(vk, repeat)) {   // the Multiplayer tab's field, while it is typed into
         return true;
     }
     if (!g_on) {
@@ -537,18 +539,15 @@ bool TypeChar(std::uint32_t byte) {
         return false;
     }
     std::lock_guard lock(g_box_mutex);
-    if (!CoopTitle::KeysTaken() && (!g_on || (!g_box.open() && !g_cheats.open()))) {
+    if (!CoopPause::KeysTaken() && !g_box.open() && !g_cheats.open()) {
         return false;
     }
     const std::uint32_t cp = FromCodePage(byte);
     if (cp == 0) {
         return true;
     }
-    if (CoopTitle::Char(cp)) {
+    if (CoopPause::Char(cp)) {
         return true;
-    }
-    if (!g_on) {
-        return false;
     }
     if (g_cheats.open()) {
         return g_cheats.Char(cp, CoopChatBox::Utf8(cp));
@@ -582,7 +581,7 @@ bool Mouse(float fx, float fy, int event) {
 }
 
 bool KeysTaken() {
-    if (CoopTitle::KeysTaken()) {
+    if (CoopPause::KeysTaken()) {
         return true;
     }
     if (!g_on) {
@@ -593,6 +592,36 @@ bool KeysTaken() {
     const bool box = g_box.KeysTaken(closing);
     const bool cheats = g_cheats.KeysTaken(closing || AsyncDown(CoopCheatsPanel::kKeyToggle));
     return box || cheats;
+}
+
+// This game's controller and keyboard (coop_input.h): longshot.exe's patch 0015 exports the choice; the kit's
+// LICHII_COOP_PAD and LICHII_COOP_KEYBOARD set it. Applied before co-op may turn itself off, so two games on one PC
+// keep their own pads either way (the choice stays in the exe). An exe without patch 0015: every pad counts.
+void UseInputSelect() {
+    CoopInput::Exports e;
+#ifdef _WIN32
+    const HMODULE exe = GetModuleHandleW(nullptr);
+    e.select = reinterpret_cast<decltype(e.select)>(reinterpret_cast<void*>(GetProcAddress(exe, "hos_coop_input_select")));
+    e.pad_name =
+        reinterpret_cast<decltype(e.pad_name)>(reinterpret_cast<void*>(GetProcAddress(exe, "hos_coop_input_pad_name")));
+#else
+    e.select = reinterpret_cast<decltype(e.select)>(dlsym(RTLD_DEFAULT, "hos_coop_input_select"));
+    e.pad_name = reinterpret_cast<decltype(e.pad_name)>(dlsym(RTLD_DEFAULT, "hos_coop_input_pad_name"));
+#endif
+    CoopInput::Bind(e);
+    std::vector<std::string> warnings;
+    const auto s = CoopInput::FromValues(Env("LICHII_COOP_PAD"), Env("LICHII_COOP_KEYBOARD"), &warnings);
+    for (const auto& w : warnings) {
+        LOG_WARNING(Core, "coop: {}", w);
+    }
+    CoopInput::Apply(s);
+    if (!CoopInput::Available()) {
+        if (s != CoopInput::Setting{}) {
+            LOG_WARNING(Core, "coop: this Hookshot cannot choose a controller (patch 0015): every pad counts");
+        }
+        return;
+    }
+    LOG_INFO(Core, "coop: controller {}, keyboard {}", CoopInput::PadValue(s.pad), CoopInput::KeyboardValue(s.keyboard));
 }
 
 bool Start(const HosCoopApi* api) {
@@ -610,10 +639,11 @@ bool Start(const HosCoopApi* api) {
              HasPadButtons(api) ? "" : "; this Hookshot gives no pad word (own Ocarina notes not sent: build it again)");
     // Started without the kit's launcher: its coop-options.ini switches still count.
     CoopTitle::ApplyKitOptions();
+    UseInputSelect();
     const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
     std::vector<std::string> errors;
-    // The title's menu (patch 0004's Hookshot, or HOS_COOP_MENU=1): the module stays loaded with co-op idle until the
-    // player hosts or joins from the title (coop_title.h, hos_coop_host.h).
+    // The Multiplayer tab (patch 0004's Hookshot and later, or HOS_COOP_MENU=1): the module stays loaded with co-op idle
+    // until the player hosts or joins from the tab (coop_pause.h, hos_coop_host.h).
     const bool menu = EnvOn("HOS_COOP_MENU") || TitleMenuPossible(api, Env("LICHII_COOP_TITLE_MENU"));
     const bool server = CoopHook::LoadSettings(ini, errors).enabled() && errors.empty();
     for (const auto& e : errors) {
@@ -625,7 +655,7 @@ bool Start(const HosCoopApi* api) {
         return false;
     }
     if (!server) {
-        LOG_INFO(Core, "coop: no server in coop.ini: co-op idle until the title's Host or Join");
+        LOG_INFO(Core, "coop: no server in coop.ini: co-op idle until Host or Join on the menu's Multiplayer tab");
     }
     // The same switches that make the emulator put its cave in.
     if (EnvOn("LICHII_COOP_PUPPET") || EnvOn("LICHII_COOP_DEBUG_PUPPET")) {
@@ -634,16 +664,17 @@ bool Start(const HosCoopApi* api) {
     g_hold = EnvOn("LICHII_COOP_OBJECTS_AI_HOLD");
     CoopHook::Start();
     g_on = true;
-    CoopTitle::Init(api, server);
+    CoopTitle::Init(api);
+    CoopPause::Init(server);
     return true;
 }
 
 void Frame(void* ctx, int site) {
-    if (site == HOS_COOP_SITE_FRAME && ctx != nullptr && g_on) {
-        CoopTitle::OnFrame(ctx);
-    }
     if (!g_on) {
         return;
+    }
+    if (site == HOS_COOP_SITE_FRAME) {
+        CoopPause::Tick();   // the Multiplayer tab's follow-ups, also while the menu is closed
     }
     if (site == HOS_COOP_SITE_PRESENT && !g_present_seen.exchange(true)) {
         LOG_INFO(Core, "coop: Hookshot calls co-op at each present (loads and pause included)");
@@ -792,6 +823,22 @@ COOP_HOOKSHOT_EXPORT void hos_coop_title(void* ctx, uint64_t screen, int event) 
     if (g_on) {
         CoopTitle::OnTitle(ctx, screen, event);
     }
+}
+// The Multiplayer tab of Hookshot's menu (hos_coop_menu.h, patch 0012), from Hookshot's menu tick and present thread.
+COOP_HOOKSHOT_EXPORT int hos_coop_menu_tabs(void) {
+    return g_on ? CoopPause::Tabs() : 0;
+}
+COOP_HOOKSHOT_EXPORT const char* hos_coop_menu_tab_name(int tab) {
+    return g_on ? CoopPause::TabName(tab) : nullptr;
+}
+COOP_HOOKSHOT_EXPORT int hos_coop_menu_page(int tab, HosCoopMenuPage* out) {
+    return g_on && CoopPause::Page(tab, out) ? 1 : 0;
+}
+COOP_HOOKSHOT_EXPORT int hos_coop_menu_input(int tab, int event, int arg, int arg2) {
+    return g_on && CoopPause::Input(tab, event, arg, arg2) ? 1 : 0;
+}
+COOP_HOOKSHOT_EXPORT int hos_coop_menu_wanted(void) {
+    return g_on ? CoopPause::Wanted() : HOS_COOP_MENU_WANT_NOTHING;
 }
 COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) {
     return g_on && stick != nullptr ? CoopTitle::OnPad(buttons, stick) : buttons;

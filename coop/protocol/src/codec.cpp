@@ -1566,6 +1566,35 @@ Error encode_body(const OcarinaNote& m, Writer& w) {
   return Error::none;
 }
 
+Error check_voice_frame(const VoiceFrame& m) {
+  if (!valid_player_or_self(m.player_number) || (m.flags & ~voice::end) != 0) return Error::bad_value;
+  const bool end = (m.flags & voice::end) != 0;
+  if (end ? !m.opus.empty() : (m.opus.empty() || m.opus.size() > kMaxVoiceBytes)) {
+    return Error::bad_value;
+  }
+  return Error::none;
+}
+
+Error encode_body(const VoiceFrame& m, Writer& w) {
+  COOP_TRY(check_voice_frame(m));
+  w.u8(m.player_number);
+  w.u16(m.sequence);
+  w.u8(m.flags);
+  w.bytes(m.opus.data(), m.opus.size());
+  return Error::none;
+}
+
+Error decode_body(Reader& r, VoiceFrame& m) {
+  m = VoiceFrame{};
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u16(m.sequence));
+  COOP_READ(r.u8(m.flags));
+  std::span<const std::uint8_t> rest;
+  r.take(r.left(), rest);
+  m.opus.assign(rest.begin(), rest.end());
+  return check_voice_frame(m);
+}
+
 Error decode_body(Reader& r, OcarinaNote& m) {
   m = OcarinaNote{};
   COOP_READ(r.u8(m.player_number));
@@ -2251,6 +2280,7 @@ MessageType type_of(const Message& message) {
       MessageType::ocarina_note,
       MessageType::platform_clock,
       MessageType::platform_counter,
+      MessageType::voice_frame,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -2277,6 +2307,8 @@ std::uint8_t channel_of(MessageType type) {
     case MessageType::platform_clock:
     case MessageType::platform_counter:
       return kChannelObjectSamples;
+    case MessageType::voice_frame:
+      return kChannelVoice;
     case MessageType::object_present:
     case MessageType::object_owner:
     case MessageType::handover_ask:
@@ -2344,6 +2376,8 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::platform_clock:
     case MessageType::platform_counter:
       return channel == kChannelObjectSamples;
+    case MessageType::voice_frame:
+      return channel == kChannelVoice;
     case MessageType::object_present:
     case MessageType::object_owner:
     case MessageType::handover_ask:
@@ -2411,6 +2445,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::world_move:
     case MessageType::platform_clock:
     case MessageType::platform_counter:
+    case MessageType::voice_frame:
     case MessageType::world_place:
     case MessageType::world_hit:
     case MessageType::drop_spawn:
@@ -2461,7 +2496,8 @@ auto* player_field(M& message) {
                       std::is_same_v<T, PlayerRide> ||
                       std::is_same_v<T, OcarinaNote> ||
                       std::is_same_v<T, PlatformClock> ||
-                      std::is_same_v<T, PlatformCounter>) {
+                      std::is_same_v<T, PlatformCounter> ||
+                      std::is_same_v<T, VoiceFrame>) {
           field = &m.player_number;
         }
       },
@@ -2580,6 +2616,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::dungeon_event: return decode_as<DungeonEvent>(body, out);
     case MessageType::platform_clock: return decode_as<PlatformClock>(body, out);
     case MessageType::platform_counter: return decode_as<PlatformCounter>(body, out);
+    case MessageType::voice_frame: return decode_as<VoiceFrame>(body, out);
     case MessageType::drop_spawn: return decode_as<DropSpawn>(body, out);
     case MessageType::drop_take: return decode_as<DropTake>(body, out);
     case MessageType::drop_ask: return decode_as<DropAsk>(body, out);

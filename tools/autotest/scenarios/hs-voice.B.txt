@@ -1,0 +1,17 @@
+# hs-voice, B: listens to A's test tone beside A, 24.5 m away and back (see hs-voice.A.txt).
+mark start
+wait 120
+place -35.70 98.10 8.50   # the load spot, where A stands
+wait 30
+mark near
+wait 600                  # 10 s: at least two of A's 2 s beeps
+place -14.80 100.90 21.20 # 24.5 m from A: past the 10 m hearing range, inside the server's 35 m
+wait 60                   # the last heard frame is 250 ms old at most
+mark away
+wait 600
+mark far-end
+place -35.70 98.10 8.50
+wait 30
+mark back
+wait 600
+mark end

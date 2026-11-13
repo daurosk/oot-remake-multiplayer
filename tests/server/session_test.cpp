@@ -3913,6 +3913,125 @@ TEST_CASE("a platform clock goes to the others in the sender's scene only, never
   CHECK(messages_to<PlatformCounter>(h, 2).empty());      // not back to the sender
 }
 
+namespace {
+
+PlayerSample sample_at(const std::string& scene, Vec3 position) {
+  PlayerSample s = sample_in(scene);
+  s.position = position;
+  return s;
+}
+
+VoiceFrame voice_frame(std::uint16_t sequence, std::uint8_t flags = 0) {
+  VoiceFrame v;
+  v.player_number = 0;  // ours: the server writes the sender
+  v.sequence = sequence;
+  v.flags = flags;
+  if ((flags & voice::end) == 0) v.opus = {0xf8, 0x01, 0x02};
+  return v;
+}
+
+}  // namespace
+
+TEST_CASE("a voice frame goes to the players in the speaker's scene within the voice range (proximity-voip)") {
+  ObjectHarness h;  // voice_range_m 35 by default
+  h.receive(1, sample_at("KokiriForest", {0, 0, 0}), kChannelPlayerSamples);
+  h.receive(2, sample_at("KokiriForest", {20, 0, 0}), kChannelPlayerSamples);
+  h.receive(3, sample_at("KokiriForest", {0, 0, 50}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, voice_frame(7), kChannelVoice);
+  const auto got = messages_to<VoiceFrame>(h, 2);
+  REQUIRE(got.size() == 1);
+  CHECK(got.front().player_number == 1);
+  CHECK(got.front().sequence == 7);
+  CHECK(got.front().opus == voice_frame(7).opus);
+  CHECK(messages_to<VoiceFrame>(h, 1).empty());  // never back to the speaker
+  CHECK(messages_to<VoiceFrame>(h, 3).empty());  // 50 m away
+  CHECK(h.session.stats().voice_relayed == 1);
+  CHECK(h.session.stats().voice_out_of_range == 1);
+  // The end of a talk spurt reaches the whole scene.
+  h.clear();
+  h.receive(1, voice_frame(8, voice::end), kChannelVoice);
+  CHECK(messages_to<VoiceFrame>(h, 2).size() == 1);
+  CHECK(messages_to<VoiceFrame>(h, 3).size() == 1);
+  // Another scene hears nothing, near or not.
+  h.clear();
+  h.receive(3, sample_at("Market", {0, 0, 0}), kChannelPlayerSamples);
+  h.receive(1, voice_frame(9), kChannelVoice);
+  CHECK(messages_to<VoiceFrame>(h, 3).empty());
+  CHECK(messages_to<VoiceFrame>(h, 2).size() == 1);
+}
+
+TEST_CASE("a voice frame with no known place goes to the whole scene, and range 0 is the whole scene") {
+  SessionConfig config;
+  config.voice_range_m = 0.0f;
+  Harness h(config);
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, sample_at("KokiriForest", {0, 0, 0}), kChannelPlayerSamples);
+  h.receive(2, sample_at("KokiriForest", {500, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, voice_frame(1), kChannelVoice);
+  CHECK(messages_to<VoiceFrame>(h, 2).size() == 1);
+
+  ObjectHarness r;
+  r.receive(1, sample_at("KokiriForest", {0, 0, 0}), kChannelPlayerSamples);
+  r.receive(2, sample_in("KokiriForest"), kChannelPlayerSamples);  // no position
+  r.clear();
+  r.receive(1, voice_frame(1), kChannelVoice);
+  CHECK(messages_to<VoiceFrame>(r, 2).size() == 1);
+  // A speaker whose scene is not known yet is not relayed at all.
+  r.clear();
+  r.receive(3, voice_frame(1), kChannelVoice);
+  CHECK(messages_to<VoiceFrame>(r, 1).empty());
+  CHECK(r.session.stats().voice_unplaced == 1);
+}
+
+TEST_CASE("one player hears at most voice_max_speakers voices at once") {
+  SessionConfig config;
+  config.voice_max_speakers = 2;
+  Harness h(config);
+  for (ConnectionId p = 1; p <= 4; ++p) {
+    h.join(p, "P" + std::to_string(p));
+    h.receive(p, sample_at("KokiriForest", {static_cast<float>(p), 0, 0}), kChannelPlayerSamples);
+  }
+  h.clear();
+  h.receive(1, voice_frame(1), kChannelVoice);
+  h.receive(2, voice_frame(1), kChannelVoice);
+  h.receive(3, voice_frame(1), kChannelVoice);  // a third voice for player 4: left out
+  auto heard = [&](ConnectionId to) {
+    std::vector<std::uint8_t> from;
+    for (const auto& v : messages_to<VoiceFrame>(h, to)) from.push_back(v.player_number);
+    return from;
+  };
+  CHECK(heard(4) == std::vector<std::uint8_t>{1, 2});
+  CHECK(h.session.stats().voice_capped >= 1);
+  // Player 1 stops: its end goes out, and player 3 gets the place.
+  h.clear();
+  h.receive(1, voice_frame(2, voice::end), kChannelVoice);
+  h.receive(3, voice_frame(2), kChannelVoice);
+  CHECK(heard(4) == std::vector<std::uint8_t>{1, 3});
+  // Player 2 goes quiet without an end (lost): after voice_quiet_us its place frees too.
+  h.clear();
+  h.now += 500'000;
+  h.receive(3, sample_at("KokiriForest", {3, 0, 0}), kChannelPlayerSamples);
+  h.receive(1, voice_frame(3), kChannelVoice);
+  CHECK(heard(4) == std::vector<std::uint8_t>{1});
+}
+
+TEST_CASE("voice frames have a budget of their own, apart from the samples'") {
+  ObjectHarness h;
+  h.receive(1, sample_at("KokiriForest", {0, 0, 0}), kChannelPlayerSamples);
+  h.receive(2, sample_at("KokiriForest", {1, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  const auto before = h.session.stats().rate_limited;
+  // A burst of twice voice_per_second frames goes through at once; more is limited.
+  for (std::uint16_t i = 0; i < 130; ++i) h.receive(1, voice_frame(i), kChannelVoice);
+  CHECK(h.session.stats().rate_limited - before == 10);
+  // The samples' budget is untouched.
+  h.receive(1, sample_at("KokiriForest", {0, 0, 0}), kChannelPlayerSamples);
+  CHECK(h.session.stats().rate_limited - before == 10);
+}
+
 // --- Encrypted traffic (docs/protocol.md "Encrypted traffic") ---
 
 TEST_CASE("encrypted traffic: a right proof switches the connection to its keys first") {

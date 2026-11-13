@@ -48,14 +48,14 @@ What Host.bat does for this, by itself:
 2. **The host** double-clicks `Host.bat`. The server window shows **Give your friends ONE of these**, with the **Over Radmin VPN** address (`26.x.x.x`) first, and has already copied it (the invite code replaces that copy a few seconds later; copy the address from the window then). Send it with the join password: the window shows it as `Join password for this session: ...` (only in the window, never in the log), or set your own `server_password`.
 3. **The others** double-click `Join.bat`, paste that address and press Enter. Join.bat says when you are connected.
 
-**Hosting from Hookshot's title screen on a VPN (or in the same house)?**
+**Hosting from Hookshot's Multiplayer tab on a VPN (or in the same house)?** Co-op on Hookshot is the first tab of its pause menu: press **F1** (or a pad's **Home**), and **Multiplayer** is the first tab. The title's Host and Join rows open it too. Its **Commands** page lists the chat commands and the key that opens the chat.
 
-1. **The host** opens **Host** on the title screen, then chooses **Same network or VPN**. The game shows one line, for example `192.168.1.20:27510 abcdefghijklmnopqrst` (this PC's address and port, a space, the session's join password), and has copied it. With a VPN program running, its address comes first (Radmin VPN `26.x.x.x`, Hamachi `25.x.x.x`, Tailscale `100.x.x.x`).
+1. **The host** chooses **Host a game** on the Multiplayer tab, then **Same network or VPN**. The game shows one line, for example `192.168.1.20:27510 abcdefghijklmnopqrst` (this PC's address and port, a space, the session's join password), and has copied it. With a VPN program running, its address comes first (Radmin VPN `26.x.x.x`, Hamachi `25.x.x.x`, Tailscale `100.x.x.x`).
 2. The host pastes that line into a chat with the friends (Ctrl+V). It holds the join password, so keep it among friends.
-3. **The others** open **Join** on the title screen and paste the line where the invite code goes (A on the field, or Ctrl+V), then **OK**. Nothing else to type.
+3. **The others** choose **Join a game** on the Multiplayer tab and paste the line where the invite code goes (A on **Friend's code**, or Ctrl+V), then **Join**. Nothing else to type.
 4. If Windows asks about the firewall on the host's PC, allow the game on private networks.
 
-The invite code is for friends over the internet: it holds the host's internet address, which often does not work from inside the same house. **Copy the code again** on the Host screen brings the invite code back.
+The invite code is for friends over the internet: it holds the host's internet address, which often does not work from inside the same house. **Copy the code again** on the Host page brings the invite code back.
 
 Nobody touches a router. Only people with the network password can reach the server. If the others cannot connect, the host runs `check-hosting.cmd` in the kit folder while the server window is open: it prints exactly what is wrong and the command that fixes it (usually one firewall line for Radmin addresses; it changes nothing by itself).
 
@@ -190,9 +190,11 @@ The tunics come in ten colours (green, red, orange, yellow, cyan, blue, purple, 
 
 [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexed and contributors, GPL-3.0) runs the game as a native PC program instead of in the emulator; the kit builds a co-op Hookshot game on your PC from your own game files. It needs a graphics card with mesh shaders (NVIDIA RTX 20 or newer, AMD RX 6000 or newer), 16 GB of RAM and about 60 GB free while it builds. The whole setup, step by step, is in [setup.md, "Play on Hookshot"](setup.md#play-on-hookshot-experimental).
 
-Online it works as the emulator kit does: the host double-clicks `Host-Hookshot.bat` and sends the invite code; the others paste it into `Join-Hookshot.bat` (Hookshot) or `Join.bat` (emulator). Hookshot and emulator players can join the same session (same game build, server and protocol) and see each other as Link in their colours (checked by hand). Invite codes are not yet tested on Hookshot; an address join (same network, VPN, port forward) works the same. `Join-Hookshot.bat` does not watch for the connection yet: the game's `hookshot_log.txt` (beside `hookshot.exe`) says `coop: module loaded`, then `coop: connected`.
+Online it works as the emulator kit does: the host double-clicks `Host-Hookshot.bat` and sends the invite code; the others paste it into the file for the game they play on themselves: `Join-Hookshot.bat` on Hookshot, `Join.bat` on the emulator (a Hookshot host takes both). Hookshot and emulator players can join the same session (same game build, server and protocol) and see each other as Link in their colours (checked by hand). Invite codes are not yet tested on Hookshot; an address join (same network, VPN, port forward) works the same. `Join-Hookshot.bat` does not watch for the connection yet: the game's `hookshot_log.txt` (beside `hookshot.exe`) says `coop: module loaded`, then `coop: connected`.
 
 On Hookshot you see the other players as Link once Build-Hookshot-Coop has built Hookshot with this release's co-op patches (an older build shows them as their fairy: run it again). Emulator players see Hookshot players as Link too. The co-op features are drawn over the game's picture: chat with **T**, the player list with **F6**, the panel with **F7**, the item cheats with **F8** (off unless the host's kit turns them on, `LICHII_COOP_CHEATS=1`); the HUD, your own tunic colour and your ocarina notes as on the emulator ([Co-op on Hookshot](setup.md#co-op-on-hookshot)). Name tags and edge arrows show over the other players there too. Hookshot's own problems (crashes outside Kokiri Forest on some PCs, AMD crashes) are listed on its page.
+
+**Voice chat** (Hookshot only) is off until you turn it on: the Voice chat row in the game's co-op settings, or the line `LICHII_COOP_VOICE=ptt` in `coop-options.ini`. Then hold **V** to talk; the others hear you from where your Link stands, up to about 30 m in the same scene, and only players who turned it on hear or talk. Your microphone is the one chosen in Hookshot's Insert menu (Gameplay: Microphone) and is opened only while you hold V. More in [voice.md](voice.md).
 
 ## When you are done
 

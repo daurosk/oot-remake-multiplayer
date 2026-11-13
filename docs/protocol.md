@@ -32,6 +32,7 @@ Each rule answers a way the TotK online sync was seen to break.
 | 2 | reliable, ordered | ownership and damage events |
 | 3 | unreliable, sequenced | player samples (position, rotation, animation) |
 | 4 | unreliable, sequenced | object and enemy samples from their owners |
+| 5 | unreliable, sequenced | proximity voice (`VOICE_FRAME`, protocol 11) |
 
 - Each message type has its channel, and each is sent by the client, the server or both (table below). A receiver refuses a message that came on the wrong channel or from a side that may not send it (`check_received` in the code).
 - The server relays and decides; it never runs the game. The host player's game is the source of truth for shared progress (stage 4).
@@ -142,6 +143,7 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 401 | `PLATFORM_COUNTER` | 4 | both | `u8` player field, scene (string, 1 to 64), `u64` server time (microseconds), `u8` count (1 to 32), then per looping pause counter `u64` key (not 0, no key twice), `u32` period (microseconds, at least 100,000), `u32` time since its last start (microseconds), `u32` starts seen (at least 1). Relayed to the others in the sender's scene, never kept (protocol 10, branch `platforms-b2`; [Moving platforms](#moving-platforms-platform_clock)) |
 | 400 | `PLATFORM_CLOCK` | 4 | both | `u8` player field, scene (string, 1 to 64), `u64` server time (microseconds) the words were read at, `u8` count (1 to 16), then per platform `u64` placement hash of its driver, `u64` key (region << 32 or byte offset: region 0 the actor, offset under 0x600; 2 + n the component in table entry n, under 0x200; 0xffff the AS slot 0 frame, offset 0; offsets a multiple of 4), `f32` value, `f32` rate a second (not 0, at most 10,000 either way), `f32` cycle (0 to 10^7, 0: not seen); finite floats, no hash twice. Relayed to the others in the sender's scene, never kept (protocol 10, branch `platforms-b`; 401 to 404 kept; [Moving platforms](#moving-platforms-platform_clock)) |
 | 16 | `HOST` | 1 | server | `u8` the hosting player's number (1 to 16) |
+| 420 | `VOICE_FRAME` | 5 | both | `u8` player field, `u16` sequence, `u8` flags (bit 0 end; others refused), then the rest: one Opus packet of 1 to 400 bytes, none with end. Relayed to the players in the sender's scene within the voice range, never kept (protocol 11, branch `proximity-voip`; 420 to 424 kept; [Voice](#voice-voice_frame-protocol-11)) |
 | 17 | `PLAYER_EQUIP` | 0 | both | `u8` player field, then the components below |
 | 251 | `PLAYER_LIFE` | 0 | both | `u8` player field, `u16` life, `u16` max life, quarter hearts (protocol 10; 251 to 255 are the co-op HUD's, [Hearts](#hearts-player_life)) |
 
@@ -422,6 +424,19 @@ Owner: the game that has sent a platform's clock the longest without a 3 s break
 Type 401 `PLATFORM_COUNTER` (branch `platforms-b2`, the method of Hot Onion): the looping platforms whose AI graph times each pause with a counter node. Every 3 s each game sends, per looping counter, its key, period, the time since its last start and how many starts it has seen. A game more than 0.3 s out of phase with another's start of the same key, that has seen fewer starts (a tie: the higher player number), shifts that one pause and is in phase from then on. Same channel, relay and refusal as type 400 below.
 
 Both: on channel 4 like `WORLD_MOVE`, not reliable: the next one comes a second later. The server writes the sender's number, relays it to the others in the sender's scene (dropped when the sender is not in that scene) and keeps nothing. A version 10 server refuses it as unknown.
+
+### Voice (`VOICE_FRAME`, protocol 11)
+
+Type 420 (420 to 424 kept; branch `proximity-voip`). Proximity voice chat: each game sends its microphone as Opus, 48 kHz mono, one 20 ms frame per message, while its player talks (push-to-talk or open mic). Both sides, on channel 5, unreliable. It comes with protocol 11 (not released yet; the 16 players of branch `native-host-b` bring the same number) and needs no bump of its own: a version 10 server would refuse the channel and the type.
+
+| Field | Type | |
+|---|---|---|
+| player | `u8` | 0 from a game; the server writes the speaker's number |
+| sequence | `u16` | +1 per 20 ms frame, wraps; the listener's jitter buffer orders and times by it |
+| flags | `u8` | bit 0 `end`: the talk spurt ends here (the gate closed); no audio. Other bits refused |
+| opus | the rest | 1 to 400 bytes of one Opus packet; none with `end` |
+
+The server relays a frame only to the players in the speaker's scene whose Link is within `voice_range_m` (35 m; 0 = the whole scene) of the speaker's, by the positions of their latest `PLAYER_SAMPLE`; a listener or speaker whose place is not known or is older than `position_stale_us` hears the whole scene. A frame with `end` goes to the whole scene. A speaker whose scene is not known yet is not relayed (stat `voice_unplaced`). One listener gets at most `voice_max_speakers` (4) voices at once: the first to start keep their place until their `end` or 400 ms of quiet (stat `voice_capped`). Nothing is kept. Voice has a message budget of its own (60 a second, bursts of twice), apart from channels 3 and 4. The games play each voice at the speaker's Link in their own game sound, fading to silence at their own range (30 m), so the server's range is a little larger and a voice never cuts off at the edge (docs/voice.md).
 
 ### Boss rooms (`BOSS_ROOM`)
 

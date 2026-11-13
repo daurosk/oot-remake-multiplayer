@@ -256,13 +256,39 @@ if ($Port -notmatch '^\d{1,5}$' -or [int]$Port -lt 1 -or [int]$Port -gt 65535) {
 # asked each time (the invite code holds it), Enter keeps the saved one.
 $optionsFile = Join-Path $kit 'coop-options.ini'
 $Password = $current.password
+$rejoin = $false
 if ($inviteJoin) {
     # The invite code holds the join password: nothing to type.
     $Password = $inviteJoin.Password
 }
 elseif ($Mode -eq 'host') {
     $Password = (Read-KitServerAccess $optionsFile).Password
-    if ($null -eq $Password) {
+    $serverExe = Join-Path $kit 'server\coop_server.exe'
+    $kitServers = @()
+    try {
+        $kitServers = @(Get-CimInstance Win32_Process -Filter "Name = 'coop_server.exe'" -OperationTimeoutSec 5 -ErrorAction Stop |
+            Where-Object { $_.ExecutablePath -eq $serverExe } |
+            ForEach-Object { [pscustomobject]@{ StartTime = $_.CreationDate; CommandLine = $_.CommandLine } })
+    } catch {
+        $kitServers = @(Get-Process coop_server -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $serverExe } |
+            ForEach-Object { [pscustomobject]@{ StartTime = $_.StartTime; CommandLine = '' } })
+    }
+    if ($null -eq $Password -and $kitServers.Count -gt 0) {
+        # The host closed the game and the server of the earlier Host start still runs, with
+        # that session's password: the game joins it again with the password start-server.ps1
+        # saved (kit-paths.ps1). The server is left alone, so the friends stay connected.
+        $session = Read-KitHostSession $kit $kitServers
+        if (-not $session) {
+            Write-Host 'A co-op window of this kit (a server or a join helper) is still open, and its join password is not known here.'
+            Write-Host "Close that window, then start $(if ($Hookshot) { 'Host-Hookshot.bat' } else { 'Host.bat' }) again (closing a server disconnects the friends on it)."
+            exit 1
+        }
+        $Password = $session.Password
+        $Port = "$($session.Port)"
+        $rejoin = $true
+        Write-Host "Your server is still running: joining that session again as the host (same join password and invite code, UDP port $Port). Your friends stay connected."
+    }
+    elseif ($null -eq $Password) {
         # No server_password line: a new random password for this session only, put in the
         # invite code by the server (start-server.ps1 gets it in OOT_COOP_SESSION_PASSWORD).
         $Password = New-JoinPassword
@@ -346,7 +372,8 @@ if ($Mode -eq 'host') {
         Write-Host 'The server from this kit is still running from an earlier Host.bat. Close its window, then start Host.bat again.'
         exit 1
     }
-    if ($serverUp) { Write-Host 'The server from this kit is already running.' }
+    if ($rejoin) { }  # said above: the running session is joined again
+    elseif ($serverUp) { Write-Host 'The server from this kit is already running.' }
     else {
         Write-Host "Starting the server in its own window (UDP port $Port). Keep that window open while you play."
         $serverArgs = @("$Port")

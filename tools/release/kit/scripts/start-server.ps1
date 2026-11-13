@@ -95,6 +95,10 @@ if (Test-Path -LiteralPath $versionFile) {
 }
 
 $args2 = @('--port', "$Port") + $access + @($Rest | Where-Object { $_ })
+# This session's port and password, for a host who closed the game: Host.bat then joins this
+# server again instead of making a new password (kit-paths.ps1). Removed when the server ends.
+$sessionText = ''
+try { $sessionText = Write-KitHostSession $kit $Port $password } catch { }
 & $exe @args2 2>&1 | ForEach-Object {
     $text = if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { "$_" }
     if ($release -and $text -match 'refused a connection, reason 1\b') {
@@ -116,5 +120,9 @@ $args2 = @('--port', "$Port") + $access + @($Rest | Where-Object { $_ })
     Add-Content -Path $log -Value ('{0:HH:mm:ss.fff} {1}' -f (Get-Date), $logged) -Encoding UTF8
 }
 $code = $LASTEXITCODE
+try {
+    $sessionFile = Get-KitHostSessionFile $kit
+    if ($sessionText -and (Test-Path -LiteralPath $sessionFile) -and [System.IO.File]::ReadAllText($sessionFile) -eq $sessionText) { Remove-Item -LiteralPath $sessionFile -Force }
+} catch { }
 Add-Content -Path $log -Value ('{0:HH:mm:ss.fff} (server exited with code {1})' -f (Get-Date), $code) -Encoding UTF8
 exit $code

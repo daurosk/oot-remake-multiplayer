@@ -19,6 +19,8 @@ What Host.bat does for this, by itself:
 
 **Keep the invite code among friends.** It contains your internet address and the join password: anyone who has it can join while your server runs. It stops working when the server window closes, and Host.bat makes a new one each time. It is never written to the server's log or into `collect-logs` output.
 
+**The host's game closed or crashed?** Leave the server window open and start `Host.bat` (or `Host-Hookshot.bat`) again: it says `Your server is still running: joining that session again as the host` and starts only the game, with the same join password and invite code. Your friends stay connected and you are player 1 again. Only closing the server window ends the session.
+
 **Privacy:** the STUN server sees your internet address (as every website you visit does), nothing of the game. To not use it, write `invite = no` in `coop-options.ini`; `stun_servers = name:port, ...` picks other ones. The friend's join helper asks the same servers.
 
 **Windows Firewall:** the first time the server runs, Windows may ask whether `coop_server.exe` may use the network. For the answer-code way nothing more is needed (Windows lets in the answers to what the server sent). If friends should connect directly through a UPnP forward, allow it for the network you are on, or run the rule `check-hosting.cmd` prints.

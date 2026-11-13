@@ -309,4 +309,12 @@ WriteResult write_coop_save(const fs::path& coop_dir, const SaveSlot& slot, cons
   return WriteResult::written;
 }
 
+FolderChoice folder_choice(std::optional<bool> env, bool can_switch, bool connected, bool is_host, bool in_game) {
+  if (env) return *env ? FolderChoice::coop : FolderChoice::own;
+  if (!can_switch) return FolderChoice::own;
+  if (!connected) return FolderChoice::wait;
+  if (is_host || in_game) return FolderChoice::own;
+  return FolderChoice::coop;
+}
+
 }  // namespace coop::host::save

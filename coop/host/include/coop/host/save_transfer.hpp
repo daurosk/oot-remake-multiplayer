@@ -176,4 +176,14 @@ enum class WriteResult {
 WriteResult write_coop_save(const std::filesystem::path& coop_dir, const SaveSlot& slot,
                             const std::filesystem::path& own_dir);
 
+// Which save folder a game plays from (issue 167). Never from coop.ini's address: an invite join is 127.0.0.1
+// (the join helper) and an old address may be a friend's while this player now hosts.
+// - `env`: LICHII_COOP_HOST_SAVE when set (play.ps1: 1 for a join, by address or invite; 0 for a host): it decides.
+// - Else, where the save folder can be switched while the game runs (Hookshot's patch 0008): the session decides at
+//   the first connection that has a host: a guest (not the host) plays from the co-op folder, the host from its own.
+//   A game that already has a save loaded (Link in the game) keeps its own: a switch then would mix two saves.
+// - Else (the emulator, its folder fixed when the game starts): its own.
+enum class FolderChoice { wait, own, coop };
+FolderChoice folder_choice(std::optional<bool> env, bool can_switch, bool connected, bool is_host, bool in_game);
+
 }  // namespace coop::host::save

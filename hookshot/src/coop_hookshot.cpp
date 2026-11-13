@@ -34,6 +34,7 @@
 #include "coop_chatbox.h"
 #include "coop_draw.h"
 #include "coop_game_build.h"
+#include "coop_save.h"
 #include "coop_hold.h"
 #include "coop_hook.h"
 #include "coop_hud.h"
@@ -58,6 +59,8 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#else
+#include <dlfcn.h>
 #endif
 
 namespace {
@@ -710,8 +713,39 @@ void DrawWithLook(const HosCoopDraw& d) {
 }  // namespace CoopHookshot
 
 extern "C" {
+// The host's save for a guest (issue 167): hookshot.exe's patch 0008 exports the account save's folder and a
+// re-mount of it; with them a guest switches to the co-op folder when it joins (CoopSave, save::folder_choice).
+// An exe without patch 0008: CoopSave as on a fixed folder (LICHII_COOP_HOST_SAVE, else the player's own).
+void UseSaveSwitch() {
+#ifdef _WIN32
+    const HMODULE exe = GetModuleHandleW(nullptr);
+    using RootFn = int (*)(char*, size_t);
+    using RemountFn = int (*)(const char*);
+    const auto root = reinterpret_cast<RootFn>(reinterpret_cast<void*>(GetProcAddress(exe, "hos_coop_fs_save_root")));
+    const auto remount = reinterpret_cast<RemountFn>(reinterpret_cast<void*>(GetProcAddress(exe, "hos_coop_fs_save_remount")));
+#else
+    using RootFn = int (*)(char*, size_t);
+    using RemountFn = int (*)(const char*);
+    const auto root = reinterpret_cast<RootFn>(dlsym(RTLD_DEFAULT, "hos_coop_fs_save_root"));
+    const auto remount = reinterpret_cast<RemountFn>(dlsym(RTLD_DEFAULT, "hos_coop_fs_save_remount"));
+#endif
+    if (!root || !remount) {
+        LOG_INFO(Core, "coop: save: this Hookshot has no save-folder switch (patch 0008): the host's save goes only to "
+                       "a game started with LICHII_COOP_HOST_SAVE=1");
+        return;
+    }
+    CoopSave::SetSwitch(
+        [root] {
+            char buf[1024];
+            return root(buf, sizeof buf) ? std::string(buf) : std::string();
+        },
+        [remount](const std::string& dir) { return remount(dir.c_str()) != 0; });
+}
+
 COOP_HOOKSHOT_EXPORT int hos_coop_start(const HosCoopApi* api) {
-    return CoopHookshot::Start(api) ? 1 : 0;
+    if (!CoopHookshot::Start(api)) return 0;
+    UseSaveSwitch();
+    return 1;
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_frame(void* ctx, int site) {
     CoopHookshot::Frame(ctx, site);

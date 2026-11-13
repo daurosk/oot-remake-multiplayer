@@ -437,6 +437,7 @@ public:
                 // Issue 138: grants wait for a loaded save, and the capacities
                 // of held items are mended for a while after each load.
                 const bool mend = load_mend_.frame(reading.has_value());
+                CoopSave::NoteInGame(reading.has_value());  // issue 167: no save-folder switch once a save is loaded
                 store.emplace(*game_store, &load_mend_);
                 if (mend) {
                     if (const auto raised = store->mend(); raised != 0) {

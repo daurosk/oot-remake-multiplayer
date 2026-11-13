@@ -257,3 +257,20 @@ TEST_CASE("save transfer: the host's slot goes only into the co-op folder, never
   CHECK(ReadFile(own / "account.sav") == Bytes{3});
   CHECK(fs::exists(own / "account.sav"));  // copied, not moved
 }
+
+TEST_CASE("save transfer: which save folder a game plays from (issue 167)") {
+  using coop::host::save::folder_choice;
+  using coop::host::save::FolderChoice;
+  // LICHII_COOP_HOST_SAVE (play.ps1: 1 for a join by address or invite code, 0 for a host) decides, everywhere
+  CHECK(folder_choice(true, false, false, false, false) == FolderChoice::coop);
+  CHECK(folder_choice(true, true, true, true, false) == FolderChoice::coop);
+  CHECK(folder_choice(false, true, true, false, false) == FolderChoice::own);
+  // a fixed folder (the emulator) without it: the player's own saves, whatever coop.ini says
+  CHECK(folder_choice(std::nullopt, false, true, false, false) == FolderChoice::own);
+  // switchable (Hookshot): the session decides, once connected to a host
+  CHECK(folder_choice(std::nullopt, true, false, false, false) == FolderChoice::wait);
+  CHECK(folder_choice(std::nullopt, true, true, false, false) == FolderChoice::coop);   // a title-menu Join or an invite
+  CHECK(folder_choice(std::nullopt, true, true, true, false) == FolderChoice::own);     // the host, even with an old
+                                                                                         // friend's address in coop.ini
+  CHECK(folder_choice(std::nullopt, true, true, false, true) == FolderChoice::own);     // joined with a save loaded
+}

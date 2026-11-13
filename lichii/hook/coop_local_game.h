@@ -23,6 +23,7 @@
 
 #include "coop_local.h"
 #include "coop_local_input.h"
+#include "coop_local_view.h"
 #include "coop_puppet.h"
 
 namespace CoopLocalGame {
@@ -72,6 +73,8 @@ struct Deps {
     std::function<std::uint64_t()> main_base;
     // Guest memory, any thread.
     std::function<bool(std::uint64_t address, void* out, std::size_t size)> read;
+    // Guest memory writes (the calc thread): the world layer's viewport (coop_local_view.h). Unset: no views.
+    std::function<bool(std::uint64_t address, const void* in, std::size_t size)> write;
     std::function<void(const std::string&)> log;
 };
 
@@ -84,7 +87,8 @@ struct Facts {
 
 class Game final : public CoopLocal::Game {
 public:
-    explicit Game(Deps deps) : deps_(std::move(deps)) {}
+    explicit Game(Deps deps)
+        : deps_(std::move(deps)), views_(CoopLocalView::Memory{deps_.main_base, deps_.read, deps_.write, deps_.log}) {}
 
     bool Supported() const override;
     std::vector<CoopLocal::Device> Devices() const override;
@@ -139,6 +143,8 @@ private:
     }
 
     Deps deps_;
+    CoopLocalView::Views views_;
+    CoopLocalView::Want want_;   // from the last Apply
     Facts facts_;
     std::array<Extra, CoopLocalInput::kMostExtra> extra_{};
     CoopLocalInput::Players players_;

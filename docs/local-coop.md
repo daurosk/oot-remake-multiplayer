@@ -2,7 +2,7 @@
 
 Status: in work, not in any release. What is in the code today: the layout maths, the switchboard
 the menu talks to, the second player's own Player and controller on Hookshot, and each local player
-as its own player online (below), with unit tests. Nothing here has run in the game yet. The views (one picture per player) come next.
+as its own player online (below), with unit tests. Nothing here has run in the game yet except the research run. Player 1's view goes into its part of the picture (step 3a); the other players' views come next.
 
 ## The goal
 
@@ -87,6 +87,11 @@ joining is the same connection, so a split-screen game can do either.
 Pass: the report gets the layer fields (camera, viewport, flags) and whether controllers 1 to 3
 exist; then the views (step 3) are code.
 
+What it found (Hookshot, 2026-11-13): controllers 0 to 4 are all there (one type), so the game's
+manager is built for five pads. The world layer is id 0 (`gsys::Layer3D`, its own `LookAtCamera`
+at +0x78); `UI_3D_0` (id 6) is made later the same way with its own camera. Every layer has the
+picture's rect, 0 0 1280 720, at +0x30 and +0x58, and 0 0 1 1 at +0x380. Ids 1 to 4 stay empty.
+
 ## The views
 
 `lichii/hook/coop_local_layout.h` (no game code; `tests/lichii/local_test.cpp`):
@@ -97,6 +102,34 @@ exist; then the views (step 3) are code.
   column or row is the pixel larger.
 - **View scale**, 50 to 100 percent: the size a view is rendered at, in steps of 8 pixels, never
   under 160 x 88. Two views at 100% render one full picture's pixels; at 70% about half.
+
+### Player 1's view (step 3a, `lichii/hook/coop_local_view.h`)
+
+The game sets a layer's viewport itself, with its AI node `OneShotLayerViewport`
+(main+0x28e70e0). It finds the layer by its tag, then writes min x and min y at +0x30 and max x and
+max y at +0x38. On the layer's projection (+0x80) it writes the ratio w / h at +0xb0 and 1 at +0x8,
+which makes the projection again. The module does the same write each frame for the world layer
+while local co-op is on, so player 1's view is its rect of the split. It writes only when the rect
+is not the one wanted, and gives the whole picture back once when local co-op stops. Tests:
+`tests/lichii/local_view_test.cpp`.
+
+### The other players' views (step 3b, not built yet)
+
+Static facts for the next step:
+
+- The game makes its 3D layers in one place (main+0xe35a50, once): the creator main+0x1174420
+  (kind, scene) finds a layer by its name first and makes one only when the name is new. Its name
+  table (main+0x3f085b0) has only `Main_3D_0`, `UI_2D`, `UI_3D_0`, `UI_2D_Overlay`, `Tool_2D` and
+  `Tool_2D_Super`, so a second world layer needs its own name and a direct call of the maker
+  main+0x1174640. Its descriptor is 0x28 bytes (heap, a 0x100-byte part with the scene name `Main`,
+  1, the layer name, the id). Then main+0x11745c0 (layer, 0) and main+0x336f5a0, which ties the layer
+  to the render pipeline `GameScene` with the setup `Master_Field` through a 0x180-byte descriptor.
+- `gsys::SystemTask::DrawMainScreen` (main+0x36ae750) calls the renderer's draw (its object's +0xe0,
+  vtable slot 5) once a frame; each layer is drawn from there.
+- Two ways remain open: a second `Main_3D_1` layer made at that same set-up (a wrap of main+0xe35a50
+  that runs the maker again, in a game patch), or the one world layer drawn a second time in the
+  renderer's draw with player 2's camera and rect. Both need a run to see whether the `GameScene`
+  pipeline takes a second layer.
 
 ## The switchboard
 

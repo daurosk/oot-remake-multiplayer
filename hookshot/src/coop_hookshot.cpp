@@ -971,6 +971,9 @@ void UseLocalPads() {
     deps.main_base = [] { return CoopRuntime::MainBase(); };
     deps.slots = [] { return CoopPuppet::TheDirector().Slots(); };
     deps.read = [](std::uint64_t address, void* out, std::size_t size) { return CoopRuntime::Read(address, out, size); };
+    deps.write = [](std::uint64_t address, const void* in, std::size_t size) {
+        return CoopRuntime::Write(address, in, size);
+    };
     deps.log = [](const std::string& line) { LOG_INFO(Core, "coop: {}", line); };
     LOG_INFO(Core, "coop: local co-op: {}", info && take ? "this Hookshot gives the module its pads (patch 0016)"
                                                           : "this Hookshot has no pads for local co-op (patch 0016)");

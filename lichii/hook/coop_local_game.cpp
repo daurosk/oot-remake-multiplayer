@@ -122,7 +122,9 @@ void Game::Apply(const CoopLocal::Status& status) {
             TakePad(k, seat.device);
         }
     }
-    // (step 3: the views follow status.split and status.scale)
+    // The views follow the players and the split (step 3a: player 1's view; status.scale is for the views' render size).
+    want_.players = status.state == CoopLocal::State::On ? status.players : 0;
+    want_.split = status.split;
 }
 
 std::vector<SeatNow> Game::Seats() const {
@@ -187,6 +189,7 @@ void Game::See(const Facts& facts) {
     facts_ = facts;
     const std::vector<Pad> pads = deps_.pads ? deps_.pads() : std::vector<Pad>{};
     for (int k = 1; k <= CoopLocalInput::kMostExtra; k++) Follow(k, pads);
+    if (deps_.write && facts.game) views_.Step(want_);
     // A scene change deletes and makes the Players again: the wraps follow the new actor.
     for (int k = 1; k <= CoopLocalInput::kMostExtra; k++)
         players_.Set(k, extra_[Index(k)].wanted ? ActorOf(k) : 0);

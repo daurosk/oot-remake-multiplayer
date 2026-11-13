@@ -12,7 +12,7 @@
 #   started the event InsideTheDekuTree_Gimmick_RoomD_PlatformUp in this scene" and "starting the event ... here"
 #   within about 1 s; shots up1/up2: the lifts up in both games at once.
 # deku-platforms's own notes follow.
-# deku-platforms (deku-dungeon-2, #176 and Caleb's 2026-11-12 test: the timed platforms came in
+# deku-platforms (deku-dungeon-2, #176 and dauro's 2026-11-12 test: the timed platforms came in
 # the other game only after the presser's cutscene, then went out of step). The compass room
 # (InsideTheDekuTree room D): plate Obj_StepSwitch_A_02 d22a395cb75bc832 at -17.5 119.6 -4.9
 # (timed), lifts Obj_InsideTheDekuTree_ElevatorLift_A_01/_02/_03 at -25.4 114.4 -1.6, -29.9 114.4

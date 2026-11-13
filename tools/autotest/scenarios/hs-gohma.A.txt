@@ -9,7 +9,7 @@
 # Check first (else the run is INCONCLUSIVE, not a FAIL of the sync):
 #  - A's log: "anim Enemy_DungeonBoss_Gohma ... '<anything but Pre_Battle_Ceiling_Wait/Turn>' (ours)"
 #    after "mark a-trigger", and B's log the same name without "(ours)" (B's copy follows).
-#  - If she still waits, the trigger is elsewhere: CALEB TEST with a pre-Gohma save (gohma-sync's header).
+#  - If she still waits, the trigger is elsewhere: DAURO TEST with a pre-Gohma save (gohma-sync's header).
 # Then gohma-sync's checks (its header): B "copy ... plays '...' on slot N"; B's sword on the stunned
 # copy -> "share damage" in B, A's "life Enemy_DungeonBoss_Gohma ... 21 -> " falls; b-seed: "stunned
 # here" + "share damage 0" and one hand-over to P2; eggs: "share hatched here" / "in its owner's game".

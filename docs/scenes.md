@@ -25,7 +25,7 @@ One line each for the callers:
 
 ## Shared story cutscenes (not yet run in a game)
 
-Caleb's choice (2026-11-12): a story cutscene plays together for every player in the same room. Small talks stay in the talker's game; the NPCs in them move for the others through npc-anim (issue 200, [objects.md](objects.md) "Cutscene NPCs"). Code: `lichii/hook/coop_shared_scenes.{h,cpp}` (rules, tested in `tests/lichii/shared_scenes_test.cpp`) and `SharedScenes` in `coop_hook.cpp`. On with the live events; off with `LICHII_COOP_SHARED_CUTSCENES=0` (or `LICHII_COOP_LIVE_EVENTS=0`, which also turns this off).
+dauro's choice (2026-11-12): a story cutscene plays together for every player in the same room. Small talks stay in the talker's game; the NPCs in them move for the others through npc-anim (issue 200, [objects.md](objects.md) "Cutscene NPCs"). Code: `lichii/hook/coop_shared_scenes.{h,cpp}` (rules, tested in `tests/lichii/shared_scenes_test.cpp`) and `SharedScenes` in `coop_hook.cpp`. On with the live events; off with `LICHII_COOP_SHARED_CUTSCENES=0` (or `LICHII_COOP_LIVE_EVENTS=0`, which also turns this off).
 
 - **Which events.** By event flow name (romfs `Event/EventFlow`, 211 names): every `Dm_` cutscene, plus `Meet_DekuTree`, `Meet_GreatFairy` and `Get_StoneOfFire/Forest/Water`. Left out: system flows (`Dm_SY_`, `Dm_MelodyGet`, `Dm_Title`, `Dm_StaffCredit`, `Dm_Ending`), the opening (`Dm_Kokiri_0000`, a new save in Link's house), parts played inside another cutscene (`_Effect`, `_Env`, `_Get`, `_move`), boss intros and outs ([dungeons-boss.md](dungeons-boss.md)), the Chamber of Sages (`Dm_Awake_`, `Dm_SageRoom_`), time travel (`Dm_TimeTemple_`, `DoorOfTime`, `Goto_`: threads-of-time, issue 193), every `Npc_` talk, and the room gimmick events ([dungeon.md](dungeon.md), "Live events"; no name is in both lists).
 - **Gimmick events stay gimmicks.** An event already on the gimmick list (`lichii/hook/coop_live_places.cpp`) is left off the story list, so `Dm_DodongoCave_0010`, `Dm_FireTemple_0029`, `Dm_ForestTemple_0014` and `Dm_InsideGanonCastle_0035` play by the live-event rules only.
@@ -37,7 +37,7 @@ Caleb's choice (2026-11-12): a story cutscene plays together for every player in
 
 ## Join-partner warp (dropped)
 
-**Dropped (Caleb, 2026-11-09): "we dont need warp to partner"; back as `/teleport <player>`** (docs/setup.md "Chat commands", `lichii/hook/coop_teleport*`). It uses `JOIN_PARTNER` as below and the boss rooms' two moves ([dungeons-boss.md](dungeons-boss.md)): the same scene moves Link in place; another scene asks Main's free-play scene change ("Free-play scene change" below), then moves Link next to the player.
+**Dropped (dauro, 2026-11-09): "we dont need warp to partner"; back as `/teleport <player>`** (docs/setup.md "Chat commands", `lichii/hook/coop_teleport*`). It uses `JOIN_PARTNER` as below and the boss rooms' two moves ([dungeons-boss.md](dungeons-boss.md)): the same scene moves Link in place; another scene asks Main's free-play scene change ("Free-play scene change" below), then moves Link next to the player.
 
 ### How the game changes scene
 
@@ -74,7 +74,7 @@ Probe: `LICHII_COOP_SCENE_PROBE=1` (`lichii/hook/coop_scene_probe.*`) logs a lin
 
 ### Ways to build it, best first
 
-1. **Same as a loading zone.** (Superseded: a loading zone is an event, and Main's own free-play switch is used instead; see above.) Find what a door or exit sets (the C++ request that makes step 1 pick BancChange, plus the reserved flags), and do the same from the emulator between frames. Next step: one run with a hook that logs, every frame, the String64 and Vector3 `Sequence_Reserved*` flags (table layout above) and the selector object's state, while Caleb walks through one loading zone. Then trace the writer of whatever changed (`QueryBancChangeEventRequestArg` 0x29bf380 and the strings `ChangeBancName`, `NextBancParamNameAdult/Child`, `game__MapChangeBancInfoParam` are the leads).
+1. **Same as a loading zone.** (Superseded: a loading zone is an event, and Main's own free-play switch is used instead; see above.) Find what a door or exit sets (the C++ request that makes step 1 pick BancChange, plus the reserved flags), and do the same from the emulator between frames. Next step: one run with a hook that logs, every frame, the String64 and Vector3 `Sequence_Reserved*` flags (table layout above) and the selector object's state, while dauro walks through one loading zone. Then trace the writer of whatever changed (`QueryBancChangeEventRequestArg` 0x29bf380 and the strings `ChangeBancName`, `NextBancParamNameAdult/Child`, `game__MapChangeBancInfoParam` are the leads).
 2. **Through the event path.** Set `Sequence_ReservedNextBanc`, `...NextPosition` (the partner's position) and `Sequence_ControlInEvent = ChangeBancOnEvent` while an event runs. Needs an event to be running, so not usable from free play without starting one.
 3. **Call 0x3af4d20** (takes the Banc module, a name and a position, claims load slot 0). No graph uses it, so the unload and the rest of `ChangeBanc.module` would not run; not safe.
 

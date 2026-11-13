@@ -2,7 +2,7 @@
 //
 // Looping platforms put in phase through their pause counters (docs/objects.md,
 // "Moving platforms: the pause counters"; issues 196 and 194). Method and the
-// game's addresses from Hot Onion (shared by Caleb, 2026-11-12), same build.
+// game's addresses from Hot Onion (shared by dauro, 2026-11-12), same build.
 //
 // A looping platform (Dodongo's Cavern's up/down lifts and pillars) is moved
 // by its AI graph: a move, a pause, a move, a pause. Each pause is an

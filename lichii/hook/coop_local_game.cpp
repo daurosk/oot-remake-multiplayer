@@ -318,6 +318,11 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x) {
 
 void AutoStart(int slot) { g_auto_slot = slot; }
 
+std::optional<CoopPuppet::Vec3> FirstLink() {
+    Game* game = Installed();
+    return game ? game->FirstLink() : std::nullopt;
+}
+
 void ForceViews(int players) {
     if (Game* game = Installed()) game->ForceViews(players);
 }

@@ -131,6 +131,15 @@ Static facts for the next step:
   that runs the maker again, in a game patch), or the one world layer drawn a second time in the
   renderer's draw with player 2's camera and rect. Both need a run to see whether the `GameScene`
   pipeline takes a second layer.
+- The probe saw `UI_3D_0` appear during play, so the engine makes layers while the game runs.
+
+Research switch `LICHII_COOP_LOCAL_LAYER=1` (`lichii/hook/coop_local_layer.h`, module only, needs
+patch 0004's call and scratch): 5 s into play it makes one more world layer, once, as the set-up
+does. It calls the maker main+0x1174620 (named `3D_0`, the tail of the game's `Main_3D_0` string, id
+1), then main+0x11745c0 and main+0x336f5a0 with the set-up's own descriptors. After that, each frame
+the layer gets the right half and its camera (+0x78) looks at the first Link from in front. Every
+step and pointer goes to the log as `local co-op: layer research: ...`. A pass is a second picture
+of the world in the right half.
 
 ## The switchboard
 

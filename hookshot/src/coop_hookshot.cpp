@@ -15,6 +15,8 @@
 #include "coop_hookshot.h"
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
 #include <atomic>
 #include <mutex>
 #include <chrono>
@@ -44,6 +46,7 @@
 #include "coop_hud_hearts.h"
 #include "coop_live_events.h"
 #include "coop_local_game.h"
+#include "coop_local_layer.h"
 #include "coop_local_probe.h"
 #include "coop_player_input.h"
 #include "coop_png.h"
@@ -738,6 +741,7 @@ bool Start(const HosCoopApi* api) {
 }
 
 void LocalProbe();   // (below)
+void LocalLayer(void* ctx);   // (below)
 
 void Frame(void* ctx, int site) {
     if (site == HOS_COOP_SITE_FRAME && ctx != nullptr && g_on) {
@@ -748,6 +752,7 @@ void Frame(void* ctx, int site) {
     }
     if (site == HOS_COOP_SITE_FRAME) {
         LocalProbe();
+        if (ctx != nullptr) LocalLayer(ctx);
     }
     if (site == HOS_COOP_SITE_PRESENT && !g_present_seen.exchange(true)) {
         LOG_INFO(Core, "coop: Hookshot calls co-op at each present (loads and pause included)");
@@ -934,6 +939,44 @@ void LocalProbe() {
     for (const auto* lines : {&CoopLocalProbe::Layers, &CoopLocalProbe::Controllers})
         for (const std::string& line : (*lines)(read, CoopRuntime::MainBase()))
             LOG_INFO(Core, "coop: local probe {}: {}", said, line);
+}
+
+// Split screen's second world layer, research (coop_local_layer.h): LICHII_COOP_LOCAL_LAYER=1 only, with an exe whose
+// call() and scratch() are there (patch 0004). The calc thread's every-frame site.
+void LocalLayer(void* ctx) {
+    static const bool wanted = [] {
+        const char* v = std::getenv("LICHII_COOP_LOCAL_LAYER");
+        return v != nullptr && std::string_view(v) == "1";
+    }();
+    if (!wanted || g_api == nullptr || g_api->size < offsetof(HosCoopApi, scratch) + sizeof(g_api->scratch) ||
+        g_api->scratch == nullptr || g_api->call == nullptr)
+        return;
+    static CoopLocalLayer::Second second{[] {
+        CoopLocalLayer::Game g;
+        g.main_base = [] { return CoopRuntime::MainBase(); };
+        g.read = [](std::uint64_t a, void* out, std::size_t n) { return CoopRuntime::Read(a, out, n); };
+        g.write = [](std::uint64_t a, const void* in, std::size_t n) { return CoopRuntime::Write(a, in, n); };
+        g.log = [](const std::string& line) { LOG_INFO(Core, "coop: {}", line); };
+        return g;
+    }()};
+    static void* frame_ctx = nullptr;   // (this call's: scratch() and call() take it)
+    frame_ctx = ctx;
+    static const bool set = [] {
+        second.Set([](const std::vector<std::uint8_t>& b) { return g_api->scratch(frame_ctx, b.data(), b.size()); },
+                   [](std::uint64_t f, const std::array<std::uint64_t, 8>& x) -> std::optional<std::uint64_t> {
+                       HosCoopCall k{};
+                       k.function = f;
+                       for (std::size_t i = 0; i < 8; i++) k.x[i] = x[i];
+                       std::uint64_t x0 = 0;
+                       if (!g_api->call(frame_ctx, &k, &x0)) return std::nullopt;
+                       return x0;
+                   });
+        return true;
+    }();
+    (void)set;
+    std::optional<std::array<float, 3>> first;
+    if (const auto p = CoopLocalGame::FirstLink()) first = std::array<float, 3>{(*p)[0], (*p)[1], (*p)[2]};
+    second.Step(first);
 }
 
 // Local co-op (coop_local_game.h): the exe's pads (patch 0016, hos_coop_pads.h) and the Player's wraps 16, 17 and 19.

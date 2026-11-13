@@ -116,6 +116,7 @@ public:
     void Note(const std::string& line) const { Say(line); }
     // Tests (LICHII_COOP_LOCAL_VIEWS=<2 to 4>): the views split for that many players with no second player.
     void ForceViews(int players) { forced_views_ = players; }
+    std::optional<CoopPuppet::Vec3> FirstLink() const { return facts_.game ? facts_.position : std::nullopt; }
 
 private:
     struct Extra {
@@ -171,5 +172,7 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x);
 void AutoStart(int slot);
 // Tests: the views split for 2 to 4 players with no second player (LICHII_COOP_LOCAL_VIEWS).
 void ForceViews(int players);
+// The first Link's place this frame when in play (calc thread).
+std::optional<CoopPuppet::Vec3> FirstLink();
 
 }  // namespace CoopLocalGame

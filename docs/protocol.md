@@ -447,6 +447,20 @@ Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hoo
 - **Hits go to their victim only, and only while PvP is on.** The server passes a `PVP_HIT` to the victim alone, with the attacker's number written in, and drops it while PvP is off (counted in `pvp_hits_dropped`), so a game with PvP off never gets one, whatever an attacker's game believes.
 - **The victim decides.** Its game takes the hit (or not, by the rules in play-online.md) and sends `PVP_HURT`, which the server relays to everyone else. A `PVP_HURT` naming its own sender as the attacker is dropped.
 
+### Difficulty (protocol 11, `DIFFICULTY`)
+
+How hard the enemies are in a session ([play-online.md](play-online.md), "Difficulty"; `coop/protocol/difficulty.hpp` has the rules, `lichii/hook/coop_difficulty.h` the games' side). Types 480 to 489 are kept for it.
+
+| Type | Name | Channel | Sent by | Body |
+|---|---|---|---|---|
+| 480 | `DIFFICULTY` | 0 | both | `u8` set by (0 nobody, 1 to 16 the host who chose), `u8` automatic (0 or 1; others refused), `u8` preset (0 easy, 1 normal, 2 hard, 3 custom; others refused), `u16` enemy life, `u16` enemy damage, `u16` enemy count, each in percent of the game's own and within its slider (life 25 to 500, damage 25 to 400, count 100 to 300; outside refused). No player field |
+
+- **Three values, the server's.** Enemy life, the damage enemies deal to players, and how many enemies there are, in percent. The server decides them and every game applies the ones it was last sent; a game starts every connection with 100, 100, 100 (the game as it is).
+- **Automatic until the host chooses.** While nobody has chosen, the values follow the number of players in the session (`auto_difficulty`): 100 for one player, and 40 life, 20 damage and 25 enemies more for each further one, up to 300, 200 and 200 (reached with 6 players).
+- **The host's choice is fixed.** The host sends its own `DIFFICULTY` (set by 0): automatic on or off, a preset, and the three sliders, which are read only with the custom preset (easy is 75, 50, 100; normal 100, 100, 100; hard 200, 150, 150). From then on the values stay as set, whoever joins or leaves, also when the host leaves and another player hosts. Turning automatic on again makes them follow the players again. A `DIFFICULTY` from anyone else is not taken (counted in `difficulty_refused`); the server answers that player alone with what is in force, as it answers a host whose choice changes nothing.
+- **Who is told, and when.** Every player at join, after `HOST` (and after `PVP_MODE` when that is sent); everyone when the host chooses; and everyone else when a join or a leave moved the automatic values. The values in the message are always the ones in force, so a late joiner needs nothing more. With automatic on, the preset reads normal.
+- **An empty session forgets it.** The next session starts automatic. The host's game keeps its player's last choice (`coop-difficulty.ini` beside `coop.ini`) and sends it again when it hosts a session nobody has chosen for.
+
 ## Later stages (outline only)
 
 - **Stage 3:** `PLAYER_STATUS` decides whether puppets show during cutscenes. `JOIN_PARTNER` (above) asks for a warp to another player's scene.
@@ -489,6 +503,7 @@ Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hoo
 - Version 10 also (branch `encrypt-always-b`, 2026-11-12): every session has a join password and is encrypted; the plain path is gone both ways (a server refuses a `HELLO` without a key share and every `HELLO` when it has no password, and `coop_server` does not start without one; a game refuses a `WELCOME` without keys). No new type, no format change.
 - Version 10 is this release's protocol: everything above marked version 10 ships in it. `main` before this release had an unreleased draft of version 10 (without keep-number, encrypt-always and the platform types); a build of that draft and one of this release both say 10 but do not work together (the draft's `HELLO` has no previous number and may have no key share, and its server lets a game in without a password). The draft was never released, so no player has it. These were briefly numbered 11 on the integration branch.
 - Version 11 (branch `native-host-b`, 2026-11-12): up to 16 players. Player numbers are 1 to 16 (`kMaxPlayers`), `WELCOME` lists up to 15 others, 12 more slot colours; a version 10 game refuses a `WELCOME` with 5 or more players, so the version goes up. The server takes `--max-players` (1 to 16, default 4 until the games' side takes 16) and sends `PLAYER_SAMPLE` and `PLAYER_POSE` by where the players are ("Who gets which stream"). No new type.
+- Version 11 also (branch `difficulty`): `DIFFICULTY` (480; 480 to 489 kept), sent by the server to every player at join. No earlier layout changed and no bump of its own: it ships with the first version 11 release. A version 11 build without it ignores the type and plays the game as it is.
 
 ## Who gets which stream
 

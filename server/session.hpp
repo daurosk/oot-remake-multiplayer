@@ -276,6 +276,7 @@ struct Stats {
   std::uint64_t pvp_hits_relayed = 0;   // PVP_HIT passed on to its victim
   std::uint64_t pvp_hits_dropped = 0;   // PVP_HIT while PvP is off, or to nobody
   std::uint64_t pvp_mode_refused = 0;   // PVP_MODE from a player who does not host
+  std::uint64_t difficulty_refused = 0;  // DIFFICULTY from a player who does not host
   // Connections refused at connect: their address already had
   // max_half_open_per_address waiting for HELLO. Not packets, so not in
   // dropped().
@@ -410,6 +411,8 @@ class Session {
   std::optional<std::uint8_t> host() const;
   // Whether players hurt each other now (config.pvp, then the host's PVP_MODE).
   bool pvp() const { return pvp_; }
+  // The difficulty in force now, as every player has been told (DIFFICULTY).
+  protocol::Difficulty difficulty() const;
   // Flags in the server's table.
   std::size_t flag_count() const { return flags_.size(); }
   // Connections from `address` still waiting for HELLO.
@@ -562,6 +565,11 @@ class Session {
                          protocol::Message& message, std::uint64_t now_us);
   void on_damage(ConnectionId id, Connection& c, protocol::Damage& d, std::uint64_t now_us);
   void on_pvp_mode(ConnectionId id, Connection& c, const protocol::PvpMode& m);
+  void on_difficulty(ConnectionId id, Connection& c, const protocol::Difficulty& m);
+  // After a join or a leave: the automatic scaler's new values, to everyone
+  // but `except` (the joiner, told already; the leaver). Nothing when the
+  // values in force are the ones told before, as with the host's own choice.
+  void tell_difficulty_change(ConnectionId except);
   void on_pvp_hit(ConnectionId id, Connection& c, protocol::Message& message);
   void on_object_group(ConnectionId id, Connection& c, const protocol::ObjectGroup& g);
   void on_fish_lure(Connection& c, const protocol::FishLure& m, std::uint64_t now_us);
@@ -678,6 +686,14 @@ class Session {
   // the session empties. `pvp_set_by_` is PVP_MODE's set_by (0: the server).
   bool pvp_ = false;
   std::uint8_t pvp_set_by_ = 0;
+  // Difficulty (protocol/difficulty.hpp): automatic, by the number of
+  // players, until the host chooses; the host's choice then stays whoever
+  // joins or leaves, a new host included. Automatic again when the session
+  // empties. `difficulty_set_by_` is DIFFICULTY's set_by; `difficulty_told_`
+  // the values the players in the session were last told.
+  protocol::DifficultyChoice difficulty_;
+  std::uint8_t difficulty_set_by_ = 0;
+  protocol::DifficultyValues difficulty_told_;
   // Every shared flag value the host has sent, by key. Kept when
   // the host leaves; forgotten when the session empties.
   std::map<protocol::FlagKey, protocol::FlagEntry> flags_;

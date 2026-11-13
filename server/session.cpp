@@ -371,6 +371,10 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   // PvP on: told at join, after HOST. Off is not told: every
   // game starts each connection with PvP off (docs/protocol.md, "PvP").
   if (pvp_) send(id, kChannelSession, PvpMode{pvp_set_by_, pvp_});
+  // The difficulty in force, always: with this player in, and the others
+  // are told when one more player moved the automatic scaler.
+  send(id, kChannelSession, difficulty());
+  tell_difficulty_change(id);
   send_snapshot(id);
   log("player " + std::to_string(c.number) + " joined: " + c.nickname);
 }
@@ -430,6 +434,10 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   }
   if (const auto* mode = std::get_if<PvpMode>(&message)) {
     on_pvp_mode(id, c, *mode);
+    return;
+  }
+  if (const auto* wish = std::get_if<Difficulty>(&message)) {
+    on_difficulty(id, c, *wish);
     return;
   }
   if (std::holds_alternative<PvpHit>(message)) {
@@ -529,6 +537,51 @@ void Session::on_pvp_mode(ConnectionId id, Connection& c, const PvpMode& m) {
   send_to_others(id, kChannelSession, now);
   log(std::string("PvP turned ") + (pvp_ ? "on" : "off") + " by player " +
       std::to_string(c.number));
+}
+
+Difficulty Session::difficulty() const {
+  Difficulty d;
+  d.set_by = difficulty_set_by_;
+  d.auto_scale = difficulty_.auto_scale;
+  d.preset = difficulty_.auto_scale ? DifficultyPreset::normal : difficulty_.preset;
+  d.values = difficulty_in_force(difficulty_, player_count());
+  return d;
+}
+
+// The host chooses the difficulty for everyone. Anyone else's is ignored
+// and answered with what is in force, as is a choice that changes nothing.
+// The host's sliders are kept through a preset or the automatic scaler, so
+// custom comes back as it was left.
+void Session::on_difficulty(ConnectionId id, Connection& c, const Difficulty& m) {
+  const bool hosts = host_ && *host_ == id;
+  DifficultyChoice wish = difficulty_;
+  wish.auto_scale = m.auto_scale;
+  if (!m.auto_scale) {
+    wish.preset = m.preset;
+    if (m.preset == DifficultyPreset::custom) wish.custom = clamp_difficulty(m.values);
+  }
+  if (!hosts || wish == difficulty_) {
+    if (!hosts) ++stats_.difficulty_refused;
+    send(id, kChannelSession, difficulty());
+    return;
+  }
+  difficulty_ = wish;
+  difficulty_set_by_ = c.number;
+  const Difficulty now = difficulty();
+  difficulty_told_ = now.values;
+  send(id, kChannelSession, now);
+  send_to_others(id, kChannelSession, now);
+  log("difficulty set by player " + std::to_string(c.number) + ": " +
+      (now.auto_scale ? "automatic" : "fixed") + ", life " + std::to_string(now.values.hp_pct) +
+      "%, damage " + std::to_string(now.values.damage_pct) + "%, enemies " +
+      std::to_string(now.values.count_pct) + "%");
+}
+
+void Session::tell_difficulty_change(ConnectionId except) {
+  const Difficulty now = difficulty();
+  if (now.values == difficulty_told_) return;
+  difficulty_told_ = now.values;
+  send_to_others(except, kChannelSession, now);
 }
 
 // To the victim only, and only while PvP is on: a game with PvP off never
@@ -1932,6 +1985,9 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     host_.reset();
     pvp_ = config_.pvp;
     pvp_set_by_ = 0;
+    difficulty_ = {};
+    difficulty_set_by_ = 0;
+    difficulty_told_ = {};
     flags_.clear();
     objects_.clear();
     grass_.clear();
@@ -1952,6 +2008,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     send_to_others(id, kChannelProgress, Host{number});
     log("player " + std::to_string(number) + " hosts now");
   }
+  if (player_count() > 0) tell_difficulty_change(id);
 }
 
 void Session::tick(std::uint64_t now_us) {

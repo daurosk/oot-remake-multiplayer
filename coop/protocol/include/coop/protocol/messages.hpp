@@ -13,6 +13,7 @@
 #include <variant>
 #include <vector>
 
+#include "coop/protocol/difficulty.hpp"
 #include "coop/protocol/join_password.hpp"
 #include "coop/protocol/traffic_crypto.hpp"
 
@@ -118,6 +119,7 @@ enum class MessageType : std::uint16_t {
   player_ride = 385,  // 385 to 389: riding Epona (docs/protocol.md, "Riding")
   platform_clock = 400,  // 400 to 404: moving platforms' clocks (docs/protocol.md, "Moving platforms")
   platform_counter = 401,  // looping platforms' pause counters (docs/protocol.md, "Moving platforms")
+  difficulty = 480,  // 480 to 489: difficulty (docs/protocol.md, "Difficulty")
 };
 
 // PLAYER_SAMPLE component ids.
@@ -1203,6 +1205,21 @@ struct PvpMode {
   bool operator==(const PvpMode&) const = default;
 };
 
+// DIFFICULTY (protocol 11): how hard the enemies are in this session
+// (difficulty.hpp). From the server to each player when it joins and to
+// everyone whenever the values in force change: `values` are in force, and
+// `set_by` is 0 while nobody has chosen (the automatic scaler), else the
+// host who chose. From a player: the host's choice (`set_by` 0; `values` are
+// the sliders, read only with the custom preset); the server ignores it from
+// anyone but the host and answers with what is in force.
+struct Difficulty {
+  std::uint8_t set_by = 0;  // 0 nobody, else a player
+  bool auto_scale = true;   // the values follow the number of players
+  DifficultyPreset preset = DifficultyPreset::normal;  // when not automatic
+  DifficultyValues values;  // each within its slider's ends
+  bool operator==(const Difficulty&) const = default;
+};
+
 // PVP_HIT: the sender's attack reached another player's Link on the sender's
 // screen. The server passes it to the victim only, and only while PvP is on;
 // the victim's game decides whether it hurts (PVP_HURT).
@@ -1322,7 +1339,8 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin,
                              JoinChallenge, JoinProof, SaveAsk, SavePart, PlayerLife,
                              PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim, DungeonEvent, PlayerRide,
-                             OcarinaNote, PlatformClock, PlatformCounter>;
+                             OcarinaNote, PlatformClock, PlatformCounter,
+                             Difficulty>;
 
 MessageType type_of(const Message& message);
 

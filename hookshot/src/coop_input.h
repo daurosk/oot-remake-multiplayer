@@ -8,8 +8,10 @@
 //   LICHII_COOP_PAD      = auto | none | 1 | 2 | ...   (default auto)
 //     auto: every controller, only while the window is in front (Hookshot's
 //     own way; its Insert menu's "Controller in background" still counts);
-//     n: only the n-th controller (the order Windows connected them in), also
-//     while the window is behind the other game; none: no controller.
+//     n: only controller n (numbered 1, 2, ... in the order they were
+//     connected; one that goes away gets its number back when it returns,
+//     the others keep theirs), also while the window is behind the other
+//     game; none: no controller.
 //   LICHII_COOP_KEYBOARD = focus | always | off        (default focus)
 //     focus: keyboard and mouse while the window is in front; always: the
 //     keys also behind other windows (no mouse); off: neither.

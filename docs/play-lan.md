@@ -75,7 +75,7 @@ netsh advfirewall firewall delete rule name="OoT co-op server UDP 27510"
 Two games side by side, each with its own controller, or one with a controller and one with the keyboard and mouse. Hookshot only (patch 0015); the emulator gives the keyboard and every pad to the window in front.
 
 1. **Two kits.** Unzip the kit twice, into two short folders (for example `C:\oot-coop-1` and `C:\oot-coop-2`), and do [setup.md, "Play on Hookshot"](setup.md#play-on-hookshot-experimental) in each. A Hookshot game takes about 10 GB of RAM, so two need about 20 GB free.
-2. **Plug in the controllers** before you start the games. They are numbered in the order Windows connected them: the first one plugged in is controller 1.
+2. **Plug in the controllers** before you start the games. They are numbered in the order they were connected: the first one plugged in is controller 1. A controller that turns off or is unplugged gets its number back when it returns, and the others keep theirs. Steam Controller / Steam Deck pads with Steam Input on show twice (the real pad and Steam's stand-in): choose the stand-in, and the game gets no motion controls from it.
 3. **Choose each game's controller.** In each kit's `coop-options.ini` add one line, or use the **Multiplayer** tab's **Settings > Controller** row in the game, which shows each controller's name and applies at once:
 
    | Setup | Kit 1 (`coop-options.ini`) | Kit 2 (`coop-options.ini`) |

@@ -112,9 +112,11 @@ std::vector<Outgoing> Sampler::frame(const std::optional<PlayerReading>& reading
   }
 
   std::optional<protocol::Equipment> read = reading->equipment;
-  if (settings_.color) {
+  std::optional<std::uint32_t> color = settings_.color;
+  if (!color && by_number_ && player_number_ != 0) color = protocol::slot_color(player_number_);
+  if (color) {
     if (!read) read = protocol::Equipment{};
-    read->color = settings_.color;
+    read->color = color;
   }
   if (read) {
     const protocol::Equipment now =

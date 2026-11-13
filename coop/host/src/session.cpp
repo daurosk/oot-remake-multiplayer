@@ -23,10 +23,12 @@ Session::Session(net::Client& client, SessionSettings settings)
 FrameReport Session::frame(const std::optional<PlayerReading>& reading, FlagStore* flags) {
   FrameReport report;
   std::vector<Inbound> inbox;
+  std::uint8_t number = 0;
   {
     std::lock_guard lock(net_mutex_);
     report.connected = client_.state() == net::State::connected;
     if (report.connected) report.server_now_us = client_.server_now_us();
+    number = client_.player_number();
     inbox.swap(inbox_);
   }
 
@@ -62,6 +64,7 @@ FrameReport Session::frame(const std::optional<PlayerReading>& reading, FlagStor
   std::vector<Outbound> out;
   if (report.connected) {
     if (std::exchange(reset_sampler_, false)) sampler_.reset();
+    sampler_.set_player_number(number);
     for (const Outgoing& m : sampler_.frame(reading, report.server_now_us)) {
       protocol::Message message;
       if (protocol::decode(m.bytes, message) == protocol::Error::none) {

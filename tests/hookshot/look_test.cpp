@@ -213,10 +213,10 @@ TEST_CASE("look tunic: your Link's textures are found and rewritten, a puppet's 
     CHECK(found.copies == 1);
     auto place = found.places[0];
     CHECK(place.address == kBase + 0x1000 + kOffset);
-    CHECK(place.colour == green);
+    CHECK((place.colour == green));
     CHECK(CoopLookTunic::Holds(m, place));
     REQUIRE(CoopLookTunic::Put(m, place, red));
-    CHECK(place.colour == red);
+    CHECK((place.colour == red));
     CHECK(Holding(m, place.address, 9));
     CHECK(Holding(m, kBase + 0x5000 + kOffset, 1));   // the puppet's copy
     // The game loaded it again (green): a Put that expects red writes nothing.

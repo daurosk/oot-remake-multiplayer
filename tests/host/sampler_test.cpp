@@ -431,3 +431,39 @@ TEST_CASE("host sampler: a colour changed in the game goes out at once, and agai
   REQUIRE(d.equips.size() == 1);
   CHECK(d.equips[0].equipment.color == 0x0000FFu);
 }
+
+TEST_CASE("host sampler: 'by player number' after a colour sends the slot colour") {
+  Sampler sampler;
+  sampler.set_player_number(3);
+  std::uint64_t now = kStart;
+  PlayerReading r = at(0.0f);
+  r.equipment.emplace();
+  // Unset from the start: nothing (the others use the slot colour already).
+  auto d = decode(sampler.frame(r, now));
+  REQUIRE(d.equips.size() == 1);
+  CHECK_FALSE(d.equips[0].equipment.color);
+  sampler.set_color(0xFF0000u);
+  now += kFrameUs;
+  d = decode(sampler.frame(r, now));
+  REQUIRE(d.equips.size() == 1);
+  CHECK(d.equips[0].equipment.color == 0xFF0000u);
+  // Back to "by player number": the slot colour goes out, not nothing.
+  sampler.set_color(std::nullopt);
+  now += kFrameUs;
+  d = decode(sampler.frame(r, now));
+  REQUIRE(d.equips.size() == 1);
+  CHECK(d.equips[0].equipment.color == coop::protocol::slot_color(3));
+  // A reconnect with another number: that number's slot colour.
+  sampler.reset();
+  sampler.set_player_number(1);
+  now += kFrameUs;
+  d = decode(sampler.frame(r, now));
+  REQUIRE(d.equips.size() == 1);
+  CHECK(d.equips[0].equipment.color == coop::protocol::slot_color(1));
+  // A colour again wins over the slot colour.
+  sampler.set_color(0x00FF00u);
+  now += kFrameUs;
+  d = decode(sampler.frame(r, now));
+  REQUIRE(d.equips.size() == 1);
+  CHECK(d.equips[0].equipment.color == 0x00FF00u);
+}

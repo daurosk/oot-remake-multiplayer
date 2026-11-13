@@ -68,9 +68,9 @@ def unpack_offsets(blob):
         raise TunicError(f"look file version {version}, not {VERSION}")
     out, at = [], 16
     for _ in range(count):
-        name = blob[at:at + NAME_BYTES].rstrip(b"\0").decode("ascii")
         if at + NAME_BYTES + 16 > len(blob):
             raise TunicError("the look file is cut short")
+        name = blob[at:at + NAME_BYTES].rstrip(b"\0").decode("ascii")
         off, size = struct.unpack_from("<QQ", blob, at + NAME_BYTES)
         at += NAME_BYTES + 16
         if at + size > len(blob):

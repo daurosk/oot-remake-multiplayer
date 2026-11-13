@@ -87,7 +87,7 @@ void Work() {
     }
 }
 
-void Apply(const Look& look) {
+void WearLook(const Look& look) {
     const auto& tunic = look[Part::tunic];
     CoopHook::SetColor(tunic);   // the others' puppet of you, and a session started later
     Wear(TunicName(tunic));      // your own Link
@@ -116,7 +116,7 @@ void StartModule() {
     // The game started in the settings' colour (the pack's own tiles): the
     // wardrobe looks for that colour's texels too.
     g_wardrobe->Wear(TunicName(worn[Part::tunic]));
-    Init(worn, Apply);
+    Init(worn, WearLook);
     g_stop = false;
     g_worker = std::thread(Work);
     LOG_INFO(Core, "coop: look: tunic {} (changed in the pause menu, worn on unpause)",
@@ -133,6 +133,7 @@ void StopModule() {
     }
     g_wake.notify_one();
     g_worker.join();
+    g_wardrobe.reset();   // a later StartModule starts a new worker
 }
 
 }  // namespace CoopLook

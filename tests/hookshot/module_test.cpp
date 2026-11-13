@@ -423,7 +423,7 @@ TEST_CASE("hookshot: the world hooks (patch 0005) hand the pause counter starts 
 TEST_CASE("hookshot: the sound wrap (patch 0014) is one row in 0005's table, its header hookshot/src's") {
     const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0014-coop-sound-wrap.patch");
     CHECK(NewFile(patch, "host/hos_coop_sound.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_sound.h"));
-    char row[64];
+    char row[128];
     std::snprintf(row, sizeof row, "+    (%u, 0x440630, (0xd503237f, 0xa9bb7bfd, 0xa90167fa, 0xa9025ff8)),",
                   HOS_COOP_WRAP_SOUND_EMIT);
     CHECK(patch.find(row) != std::string::npos);

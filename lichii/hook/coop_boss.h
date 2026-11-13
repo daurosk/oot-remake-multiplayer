@@ -116,9 +116,9 @@ const Room* RoomOfScene(std::string_view scene);
 bool Inside(const Room& room, const Vec& p);
 // The room `p` is in, in scene `scene`, or null.
 const Room* RoomAt(std::string_view scene, const Vec& p);
-// Where player `number` (1 to 4) is put in a room: the room's arrival point,
-// moved 1.5 units around it by player number so two moved players do not
-// stand in each other.
+// Where player `number` (1 to 16) is put in a room: the room's arrival point,
+// moved around it by player number (1-8 at 1.5 units, 9-16 at 3) so no two
+// moved players stand in each other.
 Vec ArrivalFor(const Room& room, std::uint8_t number);
 
 // What the game should do now.

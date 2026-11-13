@@ -118,11 +118,25 @@ const Room* RoomAt(std::string_view scene, const Vec& p) {
 
 Vec ArrivalFor(const Room& room, std::uint8_t number) {
     Vec v = room.arrive;
-    if (number >= 1 && number <= 4) {
-        const float angle = static_cast<float>(number) * 1.5707963f;  // a quarter turn each
-        v.x += kArrivalSpread * std::cos(angle);
-        v.z += kArrivalSpread * std::sin(angle);
+    if (number < 1 || number > coop::protocol::kMaxPlayers) {
+        return v;
     }
+    // Ring 1, players 1 to 8 at kArrivalSpread: 1-4 a quarter turn each (as
+    // with four players), 5-8 between them. Ring 2, players 9 to 16 at twice
+    // that, an eighth of a turn each, half an eighth past ring 1's.
+    constexpr float kEighth = 0.78539816f;
+    float angle = 0.0f;
+    float radius = kArrivalSpread;
+    if (number <= 4) {
+        angle = static_cast<float>(number) * 2.0f * kEighth;
+    } else if (number <= 8) {
+        angle = static_cast<float>(number - 4) * 2.0f * kEighth + kEighth;
+    } else {
+        angle = static_cast<float>(number - 8) * kEighth + kEighth / 2.0f;
+        radius = 2.0f * kArrivalSpread;
+    }
+    v.x += radius * std::cos(angle);
+    v.z += radius * std::sin(angle);
     return v;
 }
 

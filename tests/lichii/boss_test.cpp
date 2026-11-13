@@ -68,8 +68,16 @@ TEST_CASE("boss: the eight rooms") {
         CHECK(CoopBoss::RoomByIndex(r.index) == &r);
         // The arrival point and every player's spot around it are in the room.
         CHECK(CoopBoss::Inside(r, r.arrive));
-        for (std::uint8_t n = 1; n <= 4; ++n) {
+        for (std::uint8_t n = 1; n <= proto::kMaxPlayers; ++n) {
             CHECK(CoopBoss::Inside(r, CoopBoss::ArrivalFor(r, n)));
+        }
+        // All 16 spots differ, at least a unit apart.
+        for (std::uint8_t a = 1; a <= proto::kMaxPlayers; ++a) {
+            for (std::uint8_t b = a + 1; b <= proto::kMaxPlayers; ++b) {
+                const Vec pa = CoopBoss::ArrivalFor(r, a);
+                const Vec pb = CoopBoss::ArrivalFor(r, b);
+                CHECK(std::hypot(pa.x - pb.x, pa.z - pb.z) > 1.0f);
+            }
         }
         CHECK_FALSE(r.parts.empty());
         CHECK(r.parts[0] == r.boss);

@@ -256,6 +256,7 @@ TEST_CASE("difficulty: enemies are Enemy_ actors and their shots") {
 
 TEST_CASE("difficulty: the Life step scales enemies' hits, and enemies' hits on our Link only") {
   using CoopDifficulty::Kind;
+  constexpr std::uint64_t kNow = 1000;
   auto kinds = std::make_unique<CoopDifficulty::Kinds>();
   constexpr std::uint64_t kKeeseLife = 0x10'0000'1000, kKeese = 0x10'0000'2000;
   constexpr std::uint64_t kLinkLife = 0x10'0000'3000, kOctorokShot = 0x10'0000'4000;
@@ -277,46 +278,46 @@ TEST_CASE("difficulty: the Life step scales enemies' hits, and enemies' hits on 
     return attacker;
   };
   // An enemy: a third of each hit, the parts carried.
-  CHECK(kinds->Step(kKeeseLife, 1, hard, attacker_of) == 0);
-  CHECK(kinds->Step(kKeeseLife, 1, hard, attacker_of) == 0);
-  CHECK(kinds->Step(kKeeseLife, 1, hard, attacker_of) == 1);
-  CHECK(kinds->Step(kKeeseLife, -1, hard, attacker_of) == -1);
+  CHECK(kinds->Step(kKeeseLife, 1, hard, kNow, attacker_of) == 0);
+  CHECK(kinds->Step(kKeeseLife, 1, hard, kNow, attacker_of) == 0);
+  CHECK(kinds->Step(kKeeseLife, 1, hard, kNow, attacker_of) == 1);
+  CHECK(kinds->Step(kKeeseLife, -1, hard, kNow, attacker_of) == -1);
   CHECK(asked == 0);  // an enemy's attacker is never read
   CHECK(kinds->EnemyHits() == 3);
   // A component the walk did not mark (another player's copy not seen yet, a pot): as the game has it.
-  CHECK(kinds->Step(kCopyLife, 5, hard, attacker_of) == 5);
+  CHECK(kinds->Step(kCopyLife, 5, hard, kNow, attacker_of) == 5);
   // Our Link: double from an enemy and from an enemy's shot...
-  CHECK(kinds->Step(kLinkLife, 4, hard, attacker_of) == 8);
+  CHECK(kinds->Step(kLinkLife, 4, hard, kNow, attacker_of) == 8);
   attacker = kOctorokShot;
-  CHECK(kinds->Step(kLinkLife, 2, hard, attacker_of) == 4);
+  CHECK(kinds->Step(kLinkLife, 2, hard, kNow, attacker_of) == 4);
   CHECK(kinds->LinkHits() == 2);
   // ...but not from anything else: a fall, fire, a PvP hit (our own Link stands in as its attacker).
   attacker = 0;
-  CHECK(kinds->Step(kLinkLife, 4, hard, attacker_of) == 4);
+  CHECK(kinds->Step(kLinkLife, 4, hard, kNow, attacker_of) == 4);
   attacker = kLinkLife;
-  CHECK(kinds->Step(kLinkLife, 4, hard, attacker_of) == 4);
+  CHECK(kinds->Step(kLinkLife, 4, hard, kNow, attacker_of) == 4);
   attacker = kPot;
-  CHECK(kinds->Step(kLinkLife, 4, hard, attacker_of) == 4);
+  CHECK(kinds->Step(kLinkLife, 4, hard, kNow, attacker_of) == 4);
   CHECK(kinds->LinkHits() == 2);
   // At 100% nothing changes and nothing is counted.
   attacker = kKeese;
   const Values normal{};
-  CHECK(kinds->Step(kLinkLife, 3, normal, attacker_of) == 3);
-  CHECK(kinds->Step(kKeeseLife, 3, normal, attacker_of) == 3);
+  CHECK(kinds->Step(kLinkLife, 3, normal, kNow, attacker_of) == 3);
+  CHECK(kinds->Step(kKeeseLife, 3, normal, kNow, attacker_of) == 3);
   CHECK(kinds->EnemyHits() == 3);
   CHECK(kinds->LinkHits() == 2);
   // A carry made at other values is dropped: at 200% the Keese starts afresh.
-  CHECK(kinds->Step(kKeeseLife, 1, hard, attacker_of) == 0);  // carry 100 at 300
-  CHECK(kinds->Step(kKeeseLife, 1, Values{200, 100, 100}, attacker_of) == 0);  // 100 / 200, not 200 / 200
-  CHECK(kinds->Step(kKeeseLife, 1, Values{200, 100, 100}, attacker_of) == 1);
+  CHECK(kinds->Step(kKeeseLife, 1, hard, kNow, attacker_of) == 0);  // carry 100 at 300
+  CHECK(kinds->Step(kKeeseLife, 1, Values{200, 100, 100}, kNow, attacker_of) == 0);  // 100 / 200, not 200 / 200
+  CHECK(kinds->Step(kKeeseLife, 1, Values{200, 100, 100}, kNow, attacker_of) == 1);
   // Marked again as something else (the address is another actor's now): its carry goes.
-  CHECK(kinds->Step(kKeeseLife, 1, hard, attacker_of) == 0);
+  CHECK(kinds->Step(kKeeseLife, 1, hard, kNow, attacker_of) == 0);
   CHECK(kinds->Mark(kKeeseLife, Kind::our_link_life));
   CHECK(kinds->Of(kKeeseLife) == Kind::our_link_life);
   // A new scene forgets everything.
   kinds->Clear();
   CHECK(kinds->Of(kKeese) == Kind::none);
-  CHECK(kinds->Step(kKeeseLife, 3, hard, attacker_of) == 3);
+  CHECK(kinds->Step(kKeeseLife, 3, hard, kNow, attacker_of) == 3);
 }
 
 TEST_CASE("difficulty: a full kinds table marks nothing more and scales nothing it does not know") {
@@ -337,6 +338,78 @@ TEST_CASE("difficulty: a full kinds table marks nothing more and scales nothing 
   }
   CHECK(found == marked);
   CHECK(kinds->Of(0x7777'0000'0000) == Kind::none);
+  // The refused ones are counted (for the log), until a new scene.
+  CHECK(kinds->Unmarked() == 4 * CoopDifficulty::Kinds::kSlots - marked);
+  kinds->Clear();
+  CHECK(kinds->Unmarked() == 0);
+}
+
+TEST_CASE("difficulty: a reused address is no enemy any more once the walk sees another actor there") {
+  using CoopDifficulty::Kind;
+  auto kinds = std::make_unique<CoopDifficulty::Kinds>();
+  constexpr std::uint64_t kKeese = 0x20'0000'1000, kLinkLife = 0x20'0000'2000, kKeeseLife = 0x20'0000'3000;
+  constexpr std::uint64_t kNow = 1000;
+  CHECK(kinds->Mark(kKeese, Kind::enemy));
+  CHECK(kinds->Mark(kKeeseLife, Kind::enemy_life));
+  CHECK(kinds->Mark(kLinkLife, Kind::our_link_life));
+  const CoopDifficulty::Values hard{300, 200, 100};
+  std::uint64_t attacker = kKeese;
+  auto attacker_of = [&] { return attacker; };
+  CHECK(kinds->Step(kLinkLife, 2, hard, kNow, attacker_of) == 4);
+  // The Keese died; our own bomb is at its address now: its blast is not the enemies' damage.
+  kinds->Forget(kKeese);
+  CHECK(kinds->Of(kKeese) == Kind::none);
+  CHECK(kinds->Step(kLinkLife, 2, hard, kNow, attacker_of) == 2);
+  // A pot's Life component where the Keese's was: taken as the game has it.
+  kinds->Forget(kKeeseLife);
+  CHECK(kinds->Step(kKeeseLife, 3, hard, kNow, attacker_of) == 3);
+  // Forgetting what is no enemy (our Link, an address never marked) changes nothing and adds nothing.
+  kinds->Forget(kLinkLife);
+  kinds->Forget(0x20'0000'9000);
+  CHECK(kinds->Of(kLinkLife) == Kind::our_link_life);
+  CHECK(kinds->Of(0x20'0000'9000) == Kind::none);
+  // An enemy there again: marked again.
+  CHECK(kinds->Mark(kKeese, Kind::enemy));
+  CHECK(kinds->Step(kLinkLife, 2, hard, kNow, attacker_of) == 4);
+}
+
+TEST_CASE("difficulty: another player's replayed hit is not scaled a second time") {
+  using CoopDifficulty::Kind;
+  using CoopDifficulty::Kinds;
+  auto kinds = std::make_unique<Kinds>();
+  constexpr std::uint64_t kLife = 0x30'0000'1000, kUnknown = 0x30'0000'2000;
+  const CoopDifficulty::Values hard{200, 100, 100};
+  auto none = [] { return std::uint64_t{0}; };
+  CHECK(kinds->Mark(kLife, Kind::enemy_life));
+  // The dealer's game scaled it (4 of 8 at 200%); the replay of 4 here takes 4.
+  kinds->Pass(kLife, 4, 1000);
+  CHECK(kinds->Step(kLife, 4, hard, 1010, none) == 4);
+  CHECK(kinds->EnemyHits() == 0);
+  // Our own hit after it is scaled again.
+  CHECK(kinds->Step(kLife, 4, hard, 1020, none) == 2);
+  // A replay and our own hit in the same frame: the replay whole, ours halved.
+  kinds->Pass(kLife, 2, 2000);
+  CHECK(kinds->Step(kLife, 6, hard, 2010, none) == 2 + 2);
+  // Two replays before one step add up.
+  kinds->Pass(kLife, 1, 3000);
+  kinds->Pass(kLife, 2, 3005);
+  CHECK(kinds->Step(kLife, 3, hard, 3010, none) == 3);
+  // A replay the game never took as a hit (written as life after 400 ms) does not let a later hit through.
+  kinds->Pass(kLife, 4, 4000);
+  CHECK(kinds->Step(kLife, 4, hard, 4000 + Kinds::kPassMs, none) == 2);
+  CHECK(kinds->Step(kLife, 4, hard, 4000 + Kinds::kPassMs + 10, none) == 2);
+  // An old pass is not added to a new one.
+  kinds->Pass(kLife, 4, 5000);
+  kinds->Pass(kLife, 1, 5000 + Kinds::kPassMs);
+  CHECK(kinds->Step(kLife, 5, hard, 5000 + Kinds::kPassMs + 1, none) == 1 + 2);
+  // Nothing for an unmarked component or a non-positive amount; marked again, the pass goes.
+  kinds->Pass(kUnknown, 4, 6000);
+  CHECK(kinds->Step(kUnknown, 4, hard, 6001, none) == 4);
+  kinds->Pass(kLife, -3, 6000);
+  kinds->Pass(kLife, 4, 6000);
+  CHECK(kinds->Mark(kLife, Kind::our_link_life));
+  CHECK(kinds->Mark(kLife, Kind::enemy_life));
+  CHECK(kinds->Step(kLife, 4, hard, 6001, none) == 2);
 }
 
 TEST_CASE("difficulty: extra enemies are picked by the placement key alone") {
@@ -443,8 +516,8 @@ TEST_CASE("difficulty: a scene visit's extras are planned once, bound to their a
   live[999] = 0x9999;  // another copy of the director's
   x.Bind(live);
   CHECK_FALSE(x.Holds("Enemy_Keese", 2000));
-  CHECK(x.HashOf(0x7000 + x.All()[2].key * 0x10) == x.All()[2].hash);
-  CHECK_FALSE(x.HashOf(0x9999).has_value());
+  CHECK(x.HashOf(0x7000 + x.All()[2].key * 0x10, "Enemy_Keese") == x.All()[2].hash);
+  CHECK_FALSE(x.HashOf(0x9999, "Enemy_Keese").has_value());
   // At most kMost in a visit.
   std::vector<Original> many;
   for (std::uint64_t i = 0; i < 100; ++i) {
@@ -455,8 +528,56 @@ TEST_CASE("difficulty: a scene visit's extras are planned once, bound to their a
   // Another scene: the old ones are forgotten (gone with their scene).
   CHECK(x.Plan("Field", {}, 300, false, 4000) == 0);
   CHECK(x.All().empty());
-  CHECK_FALSE(x.HashOf(0x7000 + 1 * 0x10).has_value());
+  CHECK_FALSE(x.HashOf(0x7000 + 1 * 0x10, "Enemy_Keese").has_value());
   // Back in the first scene: its enemies get their extras again, with the same ids.
   CHECK(x.Plan("Dungeon", walk, 200, false, 5000) == 4);
   CHECK(x.All()[0].hash == CoopDifficulty::ExtraHash(walk[0].hash, 0));
+}
+
+TEST_CASE("difficulty: an extra's address is its own only while its actor is there") {
+  CoopDifficulty::Extras x;
+  using Original = CoopDifficulty::Extras::Original;
+  const std::vector<Original> walk{{"Enemy_Keese", 0x5a17'0000'0001ULL, {}}, {"Enemy_Keese", 0x5a17'0000'0002ULL, {}}};
+  REQUIRE(x.Plan("Dungeon", walk, 200, false, 0) == 2);
+  const auto first = x.All()[0];
+  const auto second = x.All()[1];
+  constexpr std::uint64_t kFirst = 0x8000, kSecond = 0x8100;
+  x.Bind({{first.key, kFirst}, {second.key, kSecond}});
+  x.Keep({kFirst, kSecond, 0x1234});
+  CHECK(x.HashOf(kFirst, "Enemy_Keese") == first.hash);
+  // Another actor at that address now (a drop, a shot): not the extra.
+  CHECK_FALSE(x.HashOf(kFirst, "Item_Heart").has_value());
+  // The first one died: a whole walk no longer has it. Its address is no extra's,
+  // even when the heap gives it to another Keese, and it is not bound again.
+  x.Keep({kSecond, 0x1234});
+  CHECK_FALSE(x.HashOf(kFirst, "Enemy_Keese").has_value());
+  CHECK(x.HashOf(kSecond, "Enemy_Keese") == second.hash);
+  x.Bind({{first.key, kFirst}, {second.key, kSecond}});
+  x.Keep({kFirst, kSecond});
+  CHECK_FALSE(x.HashOf(kFirst, "Enemy_Keese").has_value());
+  CHECK(x.All()[0].gone);
+  CHECK_FALSE(x.All()[1].gone);
+  CHECK_FALSE(x.Holds("Enemy_Keese", 10));  // a gone one is not waited for
+  // Not made yet: nothing to keep or forget.
+  CoopDifficulty::Extras y;
+  REQUIRE(y.Plan("Dungeon", walk, 200, false, 0) == 2);
+  y.Keep({});
+  CHECK_FALSE(y.All()[0].gone);
+}
+
+TEST_CASE("difficulty: every game plans the same extras whatever order its walk saw the enemies in") {
+  using Original = CoopDifficulty::Extras::Original;
+  std::vector<Original> walk;
+  for (std::uint64_t i = 0; i < 2 * CoopDifficulty::Extras::kMost; ++i) {
+    walk.push_back({"Enemy_Octorok", 0x0c70'0000'0000ULL + (i * 7919) % 1000, {}});
+  }
+  std::vector<Original> reversed(walk.rbegin(), walk.rend());
+  CoopDifficulty::Extras a, b;
+  a.Plan("Lake", walk, 200, false, 0);
+  b.Plan("Lake", reversed, 200, false, 0);
+  REQUIRE(a.All().size() == CoopDifficulty::Extras::kMost);
+  REQUIRE(b.All().size() == a.All().size());
+  for (std::size_t i = 0; i < a.All().size(); ++i) {
+    CHECK(a.All()[i].hash == b.All()[i].hash);
+  }
 }

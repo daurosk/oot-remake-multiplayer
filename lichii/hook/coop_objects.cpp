@@ -962,6 +962,8 @@ private:
         guest.Write(life + kHitRecord, rec.data(), sizeof(rec));
         const u32 present = 1;
         guest.Write(life + kHitRecord + 0xc, &present, 4);
+        // Difficulty: the player who dealt it had it scaled; the Life step takes it as it is.
+        CoopDifficulty::TheKinds().Pass(life, h.amount, CoopDifficulty::SteadyMs());
         ++replayed_;
         LOG_INFO(Core, "coop: objects: copy {:#x} replays a hit of {} (id {:#x})", h.actor,
                  h.amount, id);
@@ -2244,6 +2246,7 @@ private:
                     live[key & ~kExtraKey] = actor;
                 }
             }
+            extras_.Keep(actors);  // (a whole walk: List) one whose actor is gone frees its address
             extras_.Bind(live);
         }
         const u64 now_ms = SteadyNowMs();
@@ -2266,7 +2269,7 @@ private:
                              known.first, vt - main_, slot - main_);
                 }
             }
-            if (const auto extra = extras_.HashOf(a)) {
+            if (const auto extra = extras_.HashOf(a, known.first)) {
                 known.second = *extra;  // difficulty: an extra enemy is shared by its own placement id
             }
             // Difficulty: a made actor that may be an extra the director has not bound yet waits for it.
@@ -2274,6 +2277,8 @@ private:
                                        extras_.Holds(known.first, now_ms);
             if (CoopDifficulty::IsEnemy(known.first, CoopEnemyShots::IsEnemyShot(known.first))) {
                 CoopDifficulty::TheKinds().Mark(a, CoopDifficulty::Kind::enemy);  // difficulty: an attacker
+            } else {
+                CoopDifficulty::TheKinds().Forget(a);  // difficulty: a reused address (our bomb where a Keese was)
             }
             if (known.first.starts_with("Player_")) {  // our own Link, for coop_world
                 if (known.first == "Player_Child" || known.first == "Player_Adult") {
@@ -2388,6 +2393,8 @@ private:
                             life_components.emplace(*component, a);  // (whose Life step is whose: StepHits)
                             if (CoopDifficulty::IsEnemy(s.name, false)) {  // difficulty: its hits are scaled
                                 CoopDifficulty::TheKinds().Mark(*component, CoopDifficulty::Kind::enemy_life);
+                            } else {
+                                CoopDifficulty::TheKinds().Forget(*component);  // (a reused address)
                             }
                         }
                     }
@@ -2577,7 +2584,7 @@ private:
             boss = boss || IsBoss(s.name);
             const bool special = IsRolled(s.name) || IsHatchingEgg(s.name) || IsHatchling(s.name) ||
                                  IsAnnounced(s.name) || IsOwnPuzzle(s.name) || IsFish(s.name) ||
-                                 extras_.HashOf(s.address).has_value();  // an extra gets none of its own
+                                 extras_.HashOf(s.address, s.name).has_value();  // an extra gets none of its own
             if (CoopDifficulty::GetsExtras(s.name, s.hash, s.life && s.life->max > 0, special)) {
                 originals.push_back({s.name, s.hash, {s.position[0], s.position[1], s.position[2]}});
             }

@@ -196,6 +196,17 @@ static void LogHits() {
     if (!every.Due(CoopEvery::NowUs())) {
         return;
     }
+    // A full table (Kinds::kSlots in one scene): what it could not mark goes unscaled. Said once a scene.
+    static bool full_said = false;
+    const std::uint64_t unmarked = TheKinds().Unmarked();
+    if (unmarked == 0) {
+        full_said = false;
+    } else if (!full_said) {
+        full_said = true;
+        LOG_WARNING(Core, "coop: difficulty: the kinds table is full ({} slots): {} actors or Life components "
+                          "in this scene are not scaled",
+                    Kinds::kSlots, unmarked);
+    }
     const std::uint64_t enemy = TheKinds().EnemyHits();
     const std::uint64_t link = TheKinds().LinkHits();
     if (enemy == enemy_said && link == link_said) {

@@ -888,10 +888,12 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         }
         // Difficulty (coop_difficulty.h): what the game takes of the frame's own damage. What another
         // game's hit gives (the life table) was scaled where that hit was dealt.
-        const std::int32_t own = CoopDifficulty::TheKinds().Step(a, *sum, CoopDifficulty::Now(), [a] {
-            std::uint64_t attacker = 0;
-            return CoopRuntime::Read(a + CoopDifficulty::kHitAttacker, &attacker, sizeof attacker) ? attacker : 0;
-        });
+        const std::int32_t own = CoopDifficulty::TheKinds().Step(
+            a, *sum, CoopDifficulty::Now(), CoopDifficulty::SteadyMs(), [a] {
+                std::uint64_t attacker = 0;
+                return CoopRuntime::Read(a + CoopDifficulty::kHitAttacker, &attacker, sizeof attacker) ? attacker
+                                                                                                         : 0;
+            });
         *sum = CoopActorEvents::Step(CoopActorEvents::TheRing(), CoopActorEvents::TheLifeTable(), a, own);
         return 1;
     }

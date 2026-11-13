@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 
@@ -212,6 +213,7 @@ bool Kinds::Mark(std::uint64_t address, Kind kind) noexcept {
             // (only this writer inserts: no race on the key) The kind goes in
             // first, so a reader that finds the key reads its kind.
             s.carry.store(0, std::memory_order_relaxed);
+            s.pass.store(0, std::memory_order_relaxed);
             s.kind.store(k, std::memory_order_release);
             s.key.store(address, std::memory_order_release);
             return true;
@@ -219,12 +221,47 @@ bool Kinds::Mark(std::uint64_t address, Kind kind) noexcept {
         if (key == address) {
             if (s.kind.load(std::memory_order_relaxed) != k) {
                 s.carry.store(0, std::memory_order_relaxed);  // another actor at that address now
+                s.pass.store(0, std::memory_order_relaxed);
                 s.kind.store(k, std::memory_order_release);
             }
             return true;
         }
     }
+    unmarked_.fetch_add(1, std::memory_order_relaxed);
     return false;
+}
+
+void Kinds::Forget(std::uint64_t address) noexcept {
+    const Kind kind = Of(address);
+    if (kind == Kind::enemy || kind == Kind::enemy_life) {
+        Mark(address, Kind::none);  // (it has a slot: never refused)
+    }
+}
+
+void Kinds::Pass(std::uint64_t component, std::int32_t amount, std::uint64_t now_ms) noexcept {
+    Slot* s = Find(component);
+    if (s == nullptr || amount <= 0) {
+        return;
+    }
+    // A pass still waiting adds up (two replays before one step); an old one is gone.
+    const bool waiting = now_ms < s->pass_until.load(std::memory_order_relaxed);
+    const std::int32_t had = waiting ? s->pass.load(std::memory_order_relaxed) : 0;
+    s->pass_until.store(now_ms + kPassMs, std::memory_order_relaxed);
+    s->pass.store(had + amount, std::memory_order_relaxed);
+}
+
+std::int32_t Kinds::Passed(Slot& s, std::int32_t sum, std::uint64_t now_ms) noexcept {
+    const std::int32_t pass = s.pass.load(std::memory_order_relaxed);
+    if (pass <= 0) {
+        return 0;
+    }
+    if (now_ms >= s.pass_until.load(std::memory_order_relaxed)) {
+        s.pass.store(0, std::memory_order_relaxed);  // never taken as a hit (written as life instead)
+        return 0;
+    }
+    const std::int32_t passed = std::min(pass, sum);
+    s.pass.store(pass - passed, std::memory_order_relaxed);
+    return passed;
 }
 
 const Kinds::Slot* Kinds::Find(std::uint64_t address) const noexcept {
@@ -258,7 +295,9 @@ void Kinds::Clear() noexcept {
         s.key.store(0, std::memory_order_release);
         s.kind.store(0, std::memory_order_relaxed);
         s.carry.store(0, std::memory_order_relaxed);
+        s.pass.store(0, std::memory_order_relaxed);
     }
+    unmarked_.store(0, std::memory_order_relaxed);
 }
 
 std::int32_t Kinds::Scaled(Slot& s, std::int32_t sum, std::uint16_t pct, Rule rule,
@@ -275,6 +314,12 @@ std::int32_t Kinds::Scaled(Slot& s, std::int32_t sum, std::uint16_t pct, Rule ru
                   std::memory_order_relaxed);
     hits.fetch_add(1, std::memory_order_relaxed);
     return taken;
+}
+
+std::uint64_t SteadyMs() noexcept {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          std::chrono::steady_clock::now().time_since_epoch())
+                                          .count());
 }
 
 Kinds& TheKinds() {
@@ -358,8 +403,16 @@ std::size_t Extras::Plan(std::string_view scene, const std::vector<Original>& wa
     if (boss_here || count_pct <= 100) {
         return 0;
     }
-    std::size_t added = 0;
+    std::vector<const Original*> sorted;
+    sorted.reserve(walk.size());
     for (const Original& o : walk) {
+        sorted.push_back(&o);
+    }
+    std::stable_sort(sorted.begin(), sorted.end(),
+                     [](const Original* a, const Original* b) { return a->hash < b->hash; });
+    std::size_t added = 0;
+    for (const Original* original : sorted) {
+        const Original& o = *original;
         const unsigned want = ExtraCount(o.hash, count_pct);
         unsigned& have = planned_[o.hash];
         while (have < want && extras_.size() < kMost) {
@@ -380,22 +433,36 @@ std::size_t Extras::Plan(std::string_view scene, const std::vector<Original>& wa
 void Extras::Bind(const std::map<std::uint64_t, std::uint64_t>& live) {
     for (Extra& e : extras_) {
         const auto it = live.find(e.key);
-        if (it != live.end() && it->second != 0 && e.address != it->second) {
+        if (!e.gone && it != live.end() && it->second != 0 && e.address != it->second) {
             if (e.address != 0) {
                 by_address_.erase(e.address);
             }
             e.address = it->second;
-            by_address_[e.address] = e.hash;
+            by_address_[e.address] = Bound{e.hash, e.name};
         }
     }
 }
 
-std::optional<std::uint64_t> Extras::HashOf(std::uint64_t address) const {
+void Extras::Keep(const std::vector<std::uint64_t>& actors) {
+    if (by_address_.empty()) {
+        return;
+    }
+    std::vector<std::uint64_t> seen = actors;
+    std::sort(seen.begin(), seen.end());
+    for (Extra& e : extras_) {
+        if (e.address != 0 && !e.gone && !std::binary_search(seen.begin(), seen.end(), e.address)) {
+            e.gone = true;
+            by_address_.erase(e.address);
+        }
+    }
+}
+
+std::optional<std::uint64_t> Extras::HashOf(std::uint64_t address, std::string_view name) const {
     const auto it = by_address_.find(address);
-    if (it == by_address_.end()) {
+    if (it == by_address_.end() || it->second.name != name) {
         return std::nullopt;
     }
-    return it->second;
+    return it->second.hash;
 }
 
 bool Extras::Holds(std::string_view name, std::uint64_t now_ms) const {

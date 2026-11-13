@@ -117,15 +117,27 @@ inline constexpr std::uint64_t kHitAttacker = 0x240;
 
 // Addresses and their Kind, with each Life component's carry. One writer
 // (the object walk, present thread: Mark and Clear), any number of readers
-// (the game's threads: Step); no lock. A full table marks nothing more (its
-// hits then go through unscaled) until Clear (a new scene).
+// (the game's threads: Step and Pass); no lock. A full table marks nothing
+// more (its hits then go through unscaled, counted in Unmarked) until Clear
+// (a new scene). An address that holds another actor now is marked again
+// (Kind::none when it is no enemy).
 class Kinds {
 public:
     static constexpr std::size_t kSlots = 1024;
     static constexpr std::size_t kProbes = 32;
 
+    // A replayed hit (another player's, written into an enemy's Life
+    // component as a whole hit: coop_objects.cpp Replay) is scaled where it
+    // was dealt; this many of the next damage `component` takes within
+    // kPassMs go through unscaled.
+    static constexpr std::uint64_t kPassMs = 1000;
+
     // False when the table has no room for it.
     bool Mark(std::uint64_t address, Kind kind) noexcept;
+    // `address` holds no enemy (actor or Life component) now: marked none if
+    // it was marked an enemy one (a reused address), else nothing.
+    void Forget(std::uint64_t address) noexcept;
+    void Pass(std::uint64_t component, std::int32_t amount, std::uint64_t now_ms) noexcept;
     Kind Of(std::uint64_t address) const noexcept;
     void Clear() noexcept;
 
@@ -133,7 +145,7 @@ public:
     // game takes at `values`. `attacker()` reads the hit's attacker actor;
     // called only for our Link's component. Counts what it scaled.
     template <class AttackerOf>
-    std::int32_t Step(std::uint64_t component, std::int32_t sum, const Values& values,
+    std::int32_t Step(std::uint64_t component, std::int32_t sum, const Values& values, std::uint64_t now_ms,
                       AttackerOf&& attacker) noexcept {
         if (sum <= 0) {
             return sum;
@@ -144,7 +156,8 @@ public:
         }
         const Kind kind = static_cast<Kind>(s->kind.load(std::memory_order_acquire));
         if (kind == Kind::enemy_life) {
-            return Scaled(*s, sum, values.hp_pct, &EnemyTakes, enemy_hits_);
+            const std::int32_t passed = Passed(*s, sum, now_ms);
+            return passed == sum ? sum : passed + Scaled(*s, sum - passed, values.hp_pct, &EnemyTakes, enemy_hits_);
         }
         if (kind == Kind::our_link_life && values.damage_pct != 100 && Of(attacker()) == Kind::enemy) {
             return Scaled(*s, sum, values.damage_pct, &LinkTakes, link_hits_);
@@ -154,6 +167,8 @@ public:
     // How many hits Step changed: on enemies, on our Link (for the log).
     std::uint64_t EnemyHits() const noexcept { return enemy_hits_.load(std::memory_order_relaxed); }
     std::uint64_t LinkHits() const noexcept { return link_hits_.load(std::memory_order_relaxed); }
+    // Marks the full table refused since the last Clear.
+    std::uint64_t Unmarked() const noexcept { return unmarked_.load(std::memory_order_relaxed); }
 
 private:
     struct Slot {
@@ -162,10 +177,14 @@ private:
         // The carry and the percent it was made at (pct << 16 | carry): a
         // carry from other values is dropped.
         std::atomic<std::uint32_t> carry{0};
+        // A replayed hit's amount still to pass unscaled, until pass_until (ms).
+        std::atomic<std::int32_t> pass{0};
+        std::atomic<std::uint64_t> pass_until{0};
     };
     using Rule = std::int32_t (*)(std::int32_t, std::uint16_t, std::int32_t&);
     static std::int32_t Scaled(Slot& s, std::int32_t sum, std::uint16_t pct, Rule rule,
                                std::atomic<std::uint64_t>& hits) noexcept;
+    static std::int32_t Passed(Slot& s, std::int32_t sum, std::uint64_t now_ms) noexcept;
     static std::size_t Hash(std::uint64_t address) noexcept;
     Slot* Find(std::uint64_t address) noexcept;
     const Slot* Find(std::uint64_t address) const noexcept;
@@ -173,8 +192,11 @@ private:
     std::array<Slot, kSlots> slots_{};
     std::atomic<std::uint64_t> enemy_hits_{0};
     std::atomic<std::uint64_t> link_hits_{0};
+    std::atomic<std::uint64_t> unmarked_{0};
 };
 Kinds& TheKinds();
+// A steady clock in ms, for Kinds::Step and Pass.
+std::uint64_t SteadyMs() noexcept;
 
 // Enemy count. How many more of the enemy placed with `key` there are at
 // `count_pct`: every enemy gets count_pct / 100 - 1, and count_pct % 100 in
@@ -223,17 +245,26 @@ public:
         std::array<float, 3> position{};
         std::uint64_t asked_ms = 0;
         std::uint64_t address = 0;  // its actor, once the director made it
+        bool gone = false;          // that actor is no more (Keep): never bound again
     };
 
     // A walk's placed enemies that get extras (GetsExtras), in `scene`, at
     // `count_pct`. Nothing new while a boss is here. A new scene forgets the
-    // old one's extras first. Answers how many were added.
+    // old one's extras first. Taken in placement id order, so every game picks
+    // the same ones whatever order its walk saw them in. Answers how many were
+    // added.
     std::size_t Plan(std::string_view scene, const std::vector<Original>& walk, std::uint16_t count_pct,
                      bool boss_here, std::uint64_t now_ms);
     // The director's actors (key to actor) after it made some.
     void Bind(const std::map<std::uint64_t, std::uint64_t>& live);
-    // The placement id of the extra whose actor is at `address`.
-    std::optional<std::uint64_t> HashOf(std::uint64_t address) const;
+    // A whole walk's actors: an extra whose actor is not among them is gone,
+    // and its address (which the heap may give to another actor) is no
+    // extra's any more.
+    void Keep(const std::vector<std::uint64_t>& actors);
+    // The placement id of the extra whose actor is at `address`, when the
+    // actor there is still named `name` (else another actor has that
+    // address now).
+    std::optional<std::uint64_t> HashOf(std::uint64_t address, std::string_view name) const;
     // Whether a made actor named `name` with no actor bound to it yet may be
     // one of ours: it is not shared until bound (or kBindWaitMs after the ask).
     bool Holds(std::string_view name, std::uint64_t now_ms) const;
@@ -246,7 +277,11 @@ private:
     std::string scene_;
     std::vector<Extra> extras_;
     std::map<std::uint64_t, unsigned> planned_;  // original's hash -> extras asked for it
-    std::map<std::uint64_t, std::uint64_t> by_address_;  // actor -> placement id
+    struct Bound {
+        std::uint64_t hash = 0;
+        std::string name;
+    };
+    std::map<std::uint64_t, Bound> by_address_;  // actor -> its extra
     std::uint64_t next_key_ = 1;
 };
 

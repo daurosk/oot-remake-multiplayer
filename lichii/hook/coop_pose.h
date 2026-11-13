@@ -17,6 +17,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <map>
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
@@ -55,7 +56,23 @@ inline constexpr std::uint32_t kFlagMask = 0xffu << kFlagShift;
 }  // namespace addr
 
 inline constexpr std::size_t kMaxBones = 512;
-inline constexpr int kSendHz = 30;
+// Link's pose goes 15 times a second (30 before the 16-player work); the
+// receiver's Track blends the last two, so it still plays smooth.
+inline constexpr int kSendHz = 15;
+// At most this many of Link's bones go in one pose (about 300 move). First up
+// to kRefreshBones of those unsent for kBoneRefreshMs or longer, oldest first
+// (a lost or thinned pose, a late joiner: every bone goes again within about
+// kBoneRefreshMs + 300 / kRefreshBones sends, ~3 s), then the ones changed most
+// since they were last sent. The receiver keeps the rest from its newest pose
+// (Track::Fill).
+// About 48 x 18 bytes x 15/s = 13 KB/s per player, where every moving bone at
+// 30/s was about 160 KB/s.
+inline constexpr std::size_t kMaxSendBones = 48;
+inline constexpr std::uint64_t kBoneRefreshMs = 500;
+inline constexpr std::size_t kRefreshBones = 8;
+// A bone is changed once a packed part moved more than this (in the packed
+// units: 1/32767 of a quaternion part, 1/kPoseUnit of a translation or scale).
+inline constexpr int kBoneStep = 8;
 // A part counts as moving once it differs from the first read by more than this.
 inline constexpr float kMoved = 1e-4f;
 
@@ -114,12 +131,36 @@ public:
     // blended, so a 30 Hz stream plays smooth at 60 frames a second.
     std::optional<Pose> At(std::uint64_t now_ms) const;
     std::uint64_t last_ms() const { return newest_ms_; }
+    // `pose` (some bones of this track's skeleton: the sender sends only those
+    // that changed most) with the bones it lacks taken from the newest pose.
+    Pose Fill(Pose pose) const;
 
 private:
     std::optional<Pose> older_;
     std::optional<Pose> newest_;
     std::uint64_t older_ms_ = 0;
     std::uint64_t newest_ms_ = 0;
+};
+
+// The sender's side of kMaxSendBones: which of a full pose's bones to send now.
+class BonePicker {
+public:
+    // `full`: every moving bone, increasing order. Returns at most `budget`
+    // of them, increasing order, and remembers them as sent at now_ms.
+    std::vector<coop::protocol::PoseBone> Pick(std::uint32_t skeleton,
+                                               const std::vector<coop::protocol::PoseBone>& full,
+                                               std::uint64_t now_ms,
+                                               std::size_t budget = kMaxSendBones);
+    // How far `now` is from `then`, in packed units; a part come or gone is far.
+    static int Change(const coop::protocol::PoseBone& then, const coop::protocol::PoseBone& now);
+
+private:
+    struct Sent {
+        coop::protocol::PoseBone bone;
+        std::uint64_t ms = 0;
+    };
+    std::uint32_t skeleton_ = 0;
+    std::map<std::uint16_t, Sent> sent_;
 };
 
 // The local player's actor, as coop::host::PlayerReader finds it; 0 none.

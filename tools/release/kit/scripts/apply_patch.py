@@ -1,12 +1,20 @@
 """Applies a git patch (git format-patch or git diff output) to a folder, without git.
 
     python -I apply_patch.py <source folder> <file.patch> [<file.patch> ...]
+    python -I apply_patch.py --refresh <keep folder> <source folder> <file.patch> [...]
 
 Build-Hookshot-Coop.ps1 runs it with Hookshot's own Python on the Hookshot source it
 downloaded (a source archive, not a git checkout). Strict: every hunk's context and
 removed lines must match the file exactly, at the line the hunk names; a file the patch
 adds must not exist yet. Nothing is written unless every patch applies (all files are
 patched in memory first). Line ends are kept as the file has them.
+
+With --refresh, the source folder may hold an earlier set of patches: the keep folder has the
+original of every file a patch changed (and the list of the files a patch added), so the new set
+is applied to the originals; a file the new set no longer changes gets its original back, one it
+no longer adds goes. A file whose content comes out the same is not written (its time stays, so
+Hookshot's build sees it unchanged). hs-build-speed: a patch change no longer unpacks the whole
+source again.
 
 Exit code 0: applied. 1: a patch does not apply (the message says which file and hunk).
 """
@@ -83,12 +91,36 @@ def parse(text):
     return [f for f in files if f["old"] or f["new"]]
 
 
-def apply_file(root, entry, staged):
+def read_disk(root, name):
+    """(lines, eol, final newline) of the file, None when there is none."""
+    target = os.path.join(root, *name.split("/"))
+    if not os.path.isfile(target):
+        return None
+    with open(target, "rb") as f:
+        return split(f.read().decode("utf-8"))
+
+
+def split(raw):
+    eol = "\r\n" if "\r\n" in raw else "\n"
+    final_newline = raw.endswith(eol) or raw == ""
+    content = raw.split(eol)
+    if final_newline:
+        content.pop()
+    return content, eol, final_newline
+
+
+def joined(value):
+    lines, eol, final_newline = value
+    return (eol.join(lines) + (eol if final_newline and lines else "")).encode("utf-8")
+
+
+def apply_file(root, entry, staged, base=None):
     old, new = entry["old"], entry["new"]
     name = new or old
     target = os.path.join(root, *name.split("/"))
+    base = base or (lambda n: read_disk(root, n))
     if old is None:
-        if os.path.exists(target) or staged.get(name) is not None:
+        if (name not in staged and base(name) is not None) or staged.get(name) is not None:
             raise PatchError("%s: the patch adds it, and it is already there" % name)
         content, eol, final_newline = [], "\n", True
     elif name in staged:
@@ -96,15 +128,10 @@ def apply_file(root, entry, staged):
             raise PatchError("%s: removed by an earlier patch" % name)
         content, eol, final_newline = staged[name]
     else:
-        if not os.path.isfile(target):
+        have = base(name)
+        if have is None:
             raise PatchError("%s: not found" % name)
-        with open(target, "rb") as f:
-            raw = f.read().decode("utf-8")
-        eol = "\r\n" if "\r\n" in raw else "\n"
-        final_newline = raw.endswith(eol) or raw == ""
-        content = raw.split(eol)
-        if final_newline:
-            content.pop()
+        content, eol, final_newline = have
     out = list(content)
     shift = 0
     for start, body in entry["hunks"]:
@@ -120,7 +147,130 @@ def apply_file(root, entry, staged):
     staged[name] = (out, eol, final_newline) if new is not None else None
 
 
+MANIFEST = "manifest.txt"   # in the keep folder: "M <path>" (its original is in orig/<path>) or "A <path>" (a patch added it)
+
+
+def read_manifest(keep):
+    out = {}
+    try:
+        with open(os.path.join(keep, MANIFEST), encoding="utf-8") as f:
+            for line in f:
+                kind, _, name = line.rstrip("\n").partition(" ")
+                if kind in ("M", "A") and name:
+                    path_of(name)   # (the same path check as a patch's)
+                    out[name] = kind
+    except OSError:
+        pass
+    return out
+
+
+def write_if_changed(target, data):
+    """True when written: a file whose bytes are already these keeps its time."""
+    try:
+        with open(target, "rb") as f:
+            if f.read() == data:
+                return False
+    except OSError:
+        pass
+    os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
+    with open(target, "wb") as f:
+        f.write(data)
+    return True
+
+
+def refresh(root, keep, patch_texts):
+    """Applies the patches to the originals of an earlier set (see the module's doc). Returns files written."""
+    old = read_manifest(keep)
+    orig = os.path.join(keep, "orig")
+
+    def base(name):
+        kind = old.get(name)
+        if kind == "A":
+            return None
+        if kind == "M":
+            return read_disk(orig, name)
+        return read_disk(root, name)
+
+    staged = {}
+    for patch, text in patch_texts:
+        entries = parse(text)
+        if not entries:
+            raise PatchError("%s holds no changes" % patch)
+        for entry in entries:
+            apply_file(root, entry, staged, base)
+    new = {}
+    for name in staged:
+        if name in old:
+            new[name] = old[name]
+        else:
+            have = read_disk(root, name)
+            new[name] = "A" if have is None else "M"
+            if have is not None:   # the source's own file: kept before it changes
+                write_if_changed(os.path.join(orig, *name.split("/")), joined(have))
+    # Before any file of the source changes: the list of every file this run may change, old and new, so a run
+    # stopped half way leaves a list that still names each changed file with its original (the next run applies
+    # to those originals again).
+    write_manifest(keep, dict(old, **new))
+    written = 0
+    for name, value in staged.items():
+        target = os.path.join(root, *name.split("/"))
+        if value is None:
+            if os.path.exists(target):
+                os.remove(target)
+                written += 1
+        elif write_if_changed(target, joined(value)):
+            written += 1
+    for name, kind in old.items():   # no longer patched: the original back, or an added file gone
+        if name in staged:
+            continue
+        target = os.path.join(root, *name.split("/"))
+        if kind == "A":
+            if os.path.exists(target):
+                os.remove(target)
+                written += 1
+        else:
+            have = read_disk(orig, name)
+            if have is not None and write_if_changed(target, joined(have)):
+                written += 1
+    write_manifest(keep, new)
+    for name, kind in old.items():   # originals no longer needed: only once the list no longer names them
+        if name not in staged and kind == "M":
+            try:
+                os.remove(os.path.join(orig, *name.split("/")))
+            except OSError:
+                pass
+    return written
+
+
+def write_manifest(keep, kinds):
+    os.makedirs(keep, exist_ok=True)
+    tmp = os.path.join(keep, MANIFEST + ".new")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        for name in sorted(kinds):
+            f.write("%s %s\n" % (kinds[name], name))
+    os.replace(tmp, os.path.join(keep, MANIFEST))
+
+
 def main(argv):
+    if len(argv) >= 2 and argv[1] == "--refresh":
+        if len(argv) < 5:
+            print(__doc__.strip())
+            return 2
+        keep, root = argv[2], argv[3]
+        if not os.path.isdir(root):
+            print("apply_patch: %s is not a folder" % root)
+            return 1
+        try:
+            texts = []
+            for patch in argv[4:]:
+                with open(patch, "rb") as f:
+                    texts.append((patch, f.read().decode("utf-8").replace("\r\n", "\n")))
+            n = refresh(root, keep, texts)
+        except (PatchError, UnicodeDecodeError, OSError) as e:
+            print("apply_patch: %s" % e)
+            return 1
+        print("apply_patch: %d file(s) written (refresh)" % n)
+        return 0
     if len(argv) < 3:
         print(__doc__.strip())
         return 2
@@ -146,11 +296,9 @@ def main(argv):
         if value is None:
             os.remove(target)
             continue
-        lines, eol, final_newline = value
         os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
-        text = eol.join(lines) + (eol if final_newline and lines else "")
         with open(target, "wb") as f:
-            f.write(text.encode("utf-8"))
+            f.write(joined(value))
     print("apply_patch: %d file(s) changed" % len(staged))
     return 0
 

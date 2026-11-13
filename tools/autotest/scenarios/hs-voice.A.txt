@@ -1,0 +1,25 @@
+#! switches LICHII_COOP_VOICE=ptt,LICHII_COOP_VOICE_RANGE=10,A:LICHII_COOP_VOICE_TEST=tone,B:LICHII_COOP_VOICE_TEST=log
+# hs-voice (Hookshot only; docs/voice.md, "Testing"): proximity voice with nobody at a microphone.
+# Voice is on in both games (push to talk; hearing range 10 m so that a known spot is out of range).
+# A sends the test tone, 2 s on and 2 s off, and stands at the load spot. B listens: beside A (heard),
+# put 24.5 m away (not heard, though the server still sends: its range is 35 m), and back (heard again).
+# Needs a Hookshot game built with patch 0009; without it neither log has a "coop: voice:" line.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-voice
+# Grading lines (tools\autotest\groups.py expect=):
+#   expect="A:coop: voice: test: a tone instead of the microphone"
+#   expect="A:coop: voice: on \(ptt"
+#   expect="A:coop: voice: test: ptt: sent [1-9]"
+#   expect="B:(?s)test mark near.*voice: test: P\d+ heard at [0-4]\.\d m.*test mark away"
+#   expect="B:(?s)test mark away(?:(?!voice: test: P\d+ heard).)*test mark far-end"       nobody heard while away
+#   expect="B:(?s)test mark back.*voice: test: P\d+ heard at [0-4]\.\d m"
+#   expect="B:(?s)\A(?:(?!microphone opened).)*\Z"   expect="A:(?s)\A(?:(?!microphone opened).)*\Z"
+#                                                      B never talks, A's tone is not the microphone
+# By ear (optional, a person at B's PC): a 440 Hz beep from where A's Link stands, gone when away.
+# INCONCLUSIVE: no "coop: voice:" line at all (the game was built without patch 0009), or B's
+# "test place ... failed".
+mark start
+wait 120
+place -35.70 98.10 8.50  # the load spot
+mark near
+wait 2400                # stands there and beeps through B's whole walk
+mark end

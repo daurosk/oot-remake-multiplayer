@@ -1,11 +1,12 @@
-# Hookshot's own build tools for Build-Hookshot-Coop (scripts\hookshot-build.ps1): the parts listed in
-# hookshot-setup.txt of this Hookshot release (its Python, llvm-mingw, headers, wgpu-native, prebuilt
-# third-party files). The SHA-256 is of that hookshot-setup.txt (also in the release's SHA256SUMS);
-# each part is checked against the SHA-256 the file lists. The source built is hookshot\PIN's commit.
-# Move release= when a newer release's tools are needed.
-release=v2.2.0-rc.1
-setup_sha256=b3c1ba29084b3f43e5d94c971981f2e11b73dbde32ad00e7740e16ef9666930b
-# Hookshot's source: GitHub's zip archive of hookshot\PIN's commit
-# (https://codeload.github.com/NotRexed/Hookshot/zip/<commit>) and its SHA-256. Moves with the pin.
-source_commit=4aee23659b9436dab2cd7be1ac07333c06246b7c
-source_sha256=0f5de3866f6458b4d9c63e31dbfe826a93a0e470d9bdaaa239f87bc23324e79a
+# Longshot's own build tools for Build-Hookshot-Coop (scripts\hookshot-build.ps1): the windows-x64 lines of
+# tools.lock of this Longshot release (its Python, llvm-mingw, headers, wgpu-native, prebuilt third-party
+# files). lock_sha256 is of that tools.lock (also in the release's SHA256SUMS); each tool is checked against
+# the SHA-256 the file lists. The source built is hookshot\PIN's commit.
+# Move release= (and lock_sha256=) when a newer release's tools are needed.
+release=v3.0.0-rc.3
+lock_sha256=ec162218fa808e8e3cf82cdbbf867166d1c748defaba9443b3ecb643337d6560
+# Longshot's source: Forgejo's zip archive of hookshot\PIN's commit
+# (https://git.magicbean.dev/api/v1/repos/MagicBeanDev/Longshot/archive/<commit>.zip; the web /archive/ path
+# answers 404 since 2026-11-13, same bytes) and its SHA-256. Moves with the pin.
+source_commit=0c74253d4c6ed08d57e4f3aa8ce8634c4c017085
+source_sha256=f8be930d45f9b48c72f184859274c8f67e97462285ea0eb8e337fe6d7cced573

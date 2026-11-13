@@ -1,0 +1,55 @@
+# epona-own, A: every adult rides their own Epona, and each sees the other's.
+# Both games load into Hyrule Field as adults; each game has its own Epona at -100.47 150.60 264.55
+# (she is never a shared object). B (epona-own.B.txt) is the first rider; A watches from 10 m, then
+# gets on its own Epona while B rides again.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario epona-own   (Hookshot only)
+# after make-puppet-pack in both kits (CoopRide_Epona). Pass lines (count them in the logs):
+#   B min=1  coop: ride: we ride Animal_Epona_Adult                  (B got on)
+#   A min=1  coop: ride: P\d+ rides Animal_Epona_Adult               (A draws B's horse)
+#   A min=1  coop: spawn: CoopRide_Epona: create copy
+#   A min=1  coop: quests: .*Get_Epona.*Complete                     (B's "Epona won" reached A)
+#   A min=1  coop: ride: we ride Animal_Epona_Adult                  (A rides too, own horse)
+#   B min=1  coop: ride: P\d+ rides Animal_Epona_Adult               (B draws A's horse while riding)
+#   both max=0  coop: ride: we ride \('.*but no Animal_Epona_Adult   (a horse we ride is always found)
+# The ride's length is in "we got off, riding off sent (..., after N s)": a ride of under 2 s before
+# the "owned" mark is the unowned Epona throwing Link off (the save has not won her yet); after B's
+# setenum both games' quest Get_Epona is Complete.
+# Shots: "mounted", "riding": B on a horse in A's window. "both-mounted", "both-riding": in each
+# window the other player on a horse beside our own. "end": both on foot, no copy horse left.
+# Hookshot run 2026-11-13 (shots-hookshot/epona-own/20261113-012957): both adult at Epona with the
+# 'Mount' prompt shown, but 'press A' (6 ticks) did not mount; after setenum Complete the field Epona
+# is gone in both games (placed only while Get_Epona is not complete): the owned ride needs Epona's Song.
+#! switches LICHII_COOP_DEBUG_ANIM=1
+#! timeout 420
+mark start
+setflag Sequence_IsChildhood 0  # adult (Hookshot: run.ps1 loads the save first)
+warp HyruleField_Adult HyruleField_FrontOfMarket
+wait 1200               # the warp's load
+mark field
+place -100.5 151.0 254.5 # 10 m south of Epona
+wait 240
+toward -100.47 264.55 6  # face her (and B)
+press ZL                 # camera behind A
+wait 60
+mark mounted             # B is on
+wait 200
+mark riding
+wait 490                 # B rides, stops, gets off
+mark dismounted
+wait 320                 # B waits by its horse
+mark owned
+place -102.0 151.0 264.5 # beside our own (unowned field) Epona (1.5 m west of her)
+wait 240
+toward -100.47 264.55 6
+wait 30
+press A 12               # get on, as B does
+wait 220
+mark both-mounted
+stick 0 0.8 230          # ride forward, both
+mark both-riding
+wait 120
+press A 12               # get off
+wait 240
+mark end
+wait 300                 # B's game says Epona is won; ours follows
+mark won                 # the field Epona is gone in both games

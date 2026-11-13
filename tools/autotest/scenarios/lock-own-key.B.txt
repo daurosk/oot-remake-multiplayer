@@ -1,0 +1,44 @@
+# lock-own-key: B. See lock-own-key.A.txt.
+mark start
+warp WaterTemple WaterTemple_FromLakeHylia
+wait 1200
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark in
+wait 800
+chat /teleport A
+wait 300
+mark b-teleported
+wait 2000                  # A opens the lock and walks through
+mark b-open
+toward -21.5 -4.5 8
+wait 20
+press A 12
+wait 60
+toward -21.5 -4.5 8
+wait 20
+press A 12
+wait 60
+toward -21.5 -4.5 8
+wait 20
+press A 12
+wait 60
+toward -21.5 -4.5 8
+wait 20
+press A 12
+wait 360
+mark b-opened
+goto -26.0 -4.5 1.5 300
+wait 60
+mark b-through
+chat /teleport A            # the way past a door that stayed shut
+wait 300
+mark b-with-a
+wait 120
+mark end

@@ -212,7 +212,9 @@ TEST_CASE("a second player sees the first, and the first is told of the second")
 }
 
 TEST_CASE("a fifth player is refused as server full and dropped") {
-  Harness h;
+  SessionConfig four;
+  four.max_players = 4;  // the old cap; the default is 16 (below)
+  Harness h(four);
   for (ConnectionId id = 1; id <= 4; ++id) h.join(id, "p" + std::to_string(id));
   h.clear();
 
@@ -1285,7 +1287,9 @@ TEST_CASE("a rejoining host hands over as on any leave, alone it hosts again wit
 }
 
 TEST_CASE("a rejoin into a full session takes the old place instead of being refused as full") {
-  Harness h;
+  SessionConfig four;
+  four.max_players = 4;
+  Harness h(four);
   h.join(1, "Link", kHomePc);
   h.join(2, "Zelda", kOtherPc);
   h.join(3, "Saria", kOtherPc);
@@ -3909,6 +3913,125 @@ TEST_CASE("a platform clock goes to the others in the sender's scene only, never
   CHECK(messages_to<PlatformCounter>(h, 2).empty());      // not back to the sender
 }
 
+namespace {
+
+PlayerSample sample_at(const std::string& scene, Vec3 position) {
+  PlayerSample s = sample_in(scene);
+  s.position = position;
+  return s;
+}
+
+VoiceFrame voice_frame(std::uint16_t sequence, std::uint8_t flags = 0) {
+  VoiceFrame v;
+  v.player_number = 0;  // ours: the server writes the sender
+  v.sequence = sequence;
+  v.flags = flags;
+  if ((flags & voice::end) == 0) v.opus = {0xf8, 0x01, 0x02};
+  return v;
+}
+
+}  // namespace
+
+TEST_CASE("a voice frame goes to the players in the speaker's scene within the voice range (proximity-voip)") {
+  ObjectHarness h;  // voice_range_m 35 by default
+  h.receive(1, sample_at("KokiriForest", {0, 0, 0}), kChannelPlayerSamples);
+  h.receive(2, sample_at("KokiriForest", {20, 0, 0}), kChannelPlayerSamples);
+  h.receive(3, sample_at("KokiriForest", {0, 0, 50}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, voice_frame(7), kChannelVoice);
+  const auto got = messages_to<VoiceFrame>(h, 2);
+  REQUIRE(got.size() == 1);
+  CHECK(got.front().player_number == 1);
+  CHECK(got.front().sequence == 7);
+  CHECK(got.front().opus == voice_frame(7).opus);
+  CHECK(messages_to<VoiceFrame>(h, 1).empty());  // never back to the speaker
+  CHECK(messages_to<VoiceFrame>(h, 3).empty());  // 50 m away
+  CHECK(h.session.stats().voice_relayed == 1);
+  CHECK(h.session.stats().voice_out_of_range == 1);
+  // The end of a talk spurt reaches the whole scene.
+  h.clear();
+  h.receive(1, voice_frame(8, voice::end), kChannelVoice);
+  CHECK(messages_to<VoiceFrame>(h, 2).size() == 1);
+  CHECK(messages_to<VoiceFrame>(h, 3).size() == 1);
+  // Another scene hears nothing, near or not.
+  h.clear();
+  h.receive(3, sample_at("Market", {0, 0, 0}), kChannelPlayerSamples);
+  h.receive(1, voice_frame(9), kChannelVoice);
+  CHECK(messages_to<VoiceFrame>(h, 3).empty());
+  CHECK(messages_to<VoiceFrame>(h, 2).size() == 1);
+}
+
+TEST_CASE("a voice frame with no known place goes to the whole scene, and range 0 is the whole scene") {
+  SessionConfig config;
+  config.voice_range_m = 0.0f;
+  Harness h(config);
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, sample_at("KokiriForest", {0, 0, 0}), kChannelPlayerSamples);
+  h.receive(2, sample_at("KokiriForest", {500, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, voice_frame(1), kChannelVoice);
+  CHECK(messages_to<VoiceFrame>(h, 2).size() == 1);
+
+  ObjectHarness r;
+  r.receive(1, sample_at("KokiriForest", {0, 0, 0}), kChannelPlayerSamples);
+  r.receive(2, sample_in("KokiriForest"), kChannelPlayerSamples);  // no position
+  r.clear();
+  r.receive(1, voice_frame(1), kChannelVoice);
+  CHECK(messages_to<VoiceFrame>(r, 2).size() == 1);
+  // A speaker whose scene is not known yet is not relayed at all.
+  r.clear();
+  r.receive(3, voice_frame(1), kChannelVoice);
+  CHECK(messages_to<VoiceFrame>(r, 1).empty());
+  CHECK(r.session.stats().voice_unplaced == 1);
+}
+
+TEST_CASE("one player hears at most voice_max_speakers voices at once") {
+  SessionConfig config;
+  config.voice_max_speakers = 2;
+  Harness h(config);
+  for (ConnectionId p = 1; p <= 4; ++p) {
+    h.join(p, "P" + std::to_string(p));
+    h.receive(p, sample_at("KokiriForest", {static_cast<float>(p), 0, 0}), kChannelPlayerSamples);
+  }
+  h.clear();
+  h.receive(1, voice_frame(1), kChannelVoice);
+  h.receive(2, voice_frame(1), kChannelVoice);
+  h.receive(3, voice_frame(1), kChannelVoice);  // a third voice for player 4: left out
+  auto heard = [&](ConnectionId to) {
+    std::vector<std::uint8_t> from;
+    for (const auto& v : messages_to<VoiceFrame>(h, to)) from.push_back(v.player_number);
+    return from;
+  };
+  CHECK(heard(4) == std::vector<std::uint8_t>{1, 2});
+  CHECK(h.session.stats().voice_capped >= 1);
+  // Player 1 stops: its end goes out, and player 3 gets the place.
+  h.clear();
+  h.receive(1, voice_frame(2, voice::end), kChannelVoice);
+  h.receive(3, voice_frame(2), kChannelVoice);
+  CHECK(heard(4) == std::vector<std::uint8_t>{1, 3});
+  // Player 2 goes quiet without an end (lost): after voice_quiet_us its place frees too.
+  h.clear();
+  h.now += 500'000;
+  h.receive(3, sample_at("KokiriForest", {3, 0, 0}), kChannelPlayerSamples);
+  h.receive(1, voice_frame(3), kChannelVoice);
+  CHECK(heard(4) == std::vector<std::uint8_t>{1});
+}
+
+TEST_CASE("voice frames have a budget of their own, apart from the samples'") {
+  ObjectHarness h;
+  h.receive(1, sample_at("KokiriForest", {0, 0, 0}), kChannelPlayerSamples);
+  h.receive(2, sample_at("KokiriForest", {1, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  const auto before = h.session.stats().rate_limited;
+  // A burst of twice voice_per_second frames goes through at once; more is limited.
+  for (std::uint16_t i = 0; i < 130; ++i) h.receive(1, voice_frame(i), kChannelVoice);
+  CHECK(h.session.stats().rate_limited - before == 10);
+  // The samples' budget is untouched.
+  h.receive(1, sample_at("KokiriForest", {0, 0, 0}), kChannelPlayerSamples);
+  CHECK(h.session.stats().rate_limited - before == 10);
+}
+
 // --- Encrypted traffic (docs/protocol.md "Encrypted traffic") ---
 
 TEST_CASE("encrypted traffic: a right proof switches the connection to its keys first") {
@@ -4031,4 +4154,144 @@ TEST_CASE("encrypted traffic: a proof for other key shares (a relay in the middl
   h.clear();
   h.receive(2, JoinProof{join_proof("hunter2", again)}, kChannelSession);
   CHECK(only_message_to<Refused>(h, 2)->reason == RefuseReason::bad_password);
+}
+
+// 16 players (protocol 11): the cap, and who gets which stream
+// (docs/protocol.md "Who gets which stream").
+namespace {
+
+PlayerSample sample_at(const std::string& scene, float x) {
+  PlayerSample s;
+  s.time = {1, 1};
+  s.scene = scene;
+  s.position = Vec3{x, 0.0f, 0.0f};
+  return s;
+}
+
+PlayerPose a_pose() {
+  PlayerPose p;
+  p.skeleton = 7;
+  PoseBone b;
+  b.bone = 3;
+  b.rotation = std::array<std::int16_t, 4>{0, 0, 0, 32767};
+  p.bones.push_back(b);
+  return p;
+}
+
+template <typename T>
+std::size_t count_to(const Harness& h, ConnectionId id) {
+  std::size_t n = 0;
+  for (const auto& m : h.to(id)) n += std::holds_alternative<T>(m.message) ? 1 : 0;
+  return n;
+}
+
+}  // namespace
+
+TEST_CASE("16 players: all take numbers 1 to 16, the 17th is told the server is full") {
+  // 16 by default, now that the games' side takes 16 too (sixteen-hook-b).
+  CHECK(SessionConfig{}.max_players == 16);
+  SessionConfig sixteen;
+  sixteen.max_players = 16;
+  Harness h(sixteen);
+  for (ConnectionId id = 1; id <= 16; ++id) h.join(id, "p" + std::to_string(id));
+  CHECK(h.session.player_count() == 16);
+  h.clear();
+  h.connect(17);
+  h.receive(17, hello_from("p17"), kChannelSession);
+  const auto refused = only_message_to<Refused>(h, 17);
+  REQUIRE(refused.has_value());
+  CHECK(refused->reason == RefuseReason::server_full);
+  CHECK(h.session.player_count() == 16);
+}
+
+TEST_CASE("16 players: the 16th's WELCOME lists the 15 others") {
+  SessionConfig sixteen;
+  sixteen.max_players = 16;
+  Harness h(sixteen);
+  for (ConnectionId id = 1; id <= 15; ++id) h.join(id, "p" + std::to_string(id));
+  h.clear();
+  h.join(16, "p16");
+  std::optional<Welcome> w;
+  for (const auto& m : h.to(16)) {
+    if (const auto* got = std::get_if<Welcome>(&m.message)) w = *got;
+  }
+  REQUIRE(w.has_value());
+  CHECK(w->player_number == 16);
+  CHECK(w->players.size() == 15);
+}
+
+TEST_CASE("max_players (coop_server --max-players) caps the session below the default") {
+  SessionConfig two;
+  two.max_players = 2;
+  Harness h(two);
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.connect(3);
+  h.receive(3, hello_from("Saria"), kChannelSession);
+  const auto refused = only_message_to<Refused>(h, 3);
+  REQUIRE(refused.has_value());
+  CHECK(refused->reason == RefuseReason::server_full);
+}
+
+TEST_CASE("interest: poses go to the same scene only, every one near, every 3rd far") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Near");
+  h.join(3, "Far");
+  h.join(4, "Elsewhere");
+  h.receive(1, sample_at("Field", 0.0f), kChannelPlayerSamples);
+  h.receive(2, sample_at("Field", 500.0f), kChannelPlayerSamples);
+  h.receive(3, sample_at("Field", 9000.0f), kChannelPlayerSamples);
+  h.receive(4, sample_at("Village", 0.0f), kChannelPlayerSamples);
+  h.clear();
+  const std::uint8_t channel = channel_of(Message{a_pose()});
+  for (int i = 0; i < 30; ++i) {
+    h.now += 33'000;
+    h.receive(1, a_pose(), channel);
+  }
+  CHECK(count_to<PlayerPose>(h, 2) == 30);
+  CHECK(count_to<PlayerPose>(h, 3) == 10);
+  CHECK(count_to<PlayerPose>(h, 4) == 0);
+  CHECK(h.session.stats().interest_skipped == 20 + 30);
+}
+
+TEST_CASE("interest: samples go everywhere, every 6th to another scene") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Here");
+  h.join(3, "Elsewhere");
+  h.receive(2, sample_at("Field", 100.0f), kChannelPlayerSamples);
+  h.receive(3, sample_at("Village", 0.0f), kChannelPlayerSamples);
+  h.clear();
+  for (int i = 0; i < 60; ++i) {
+    h.now += 16'000;
+    h.receive(1, sample_at("Field", 0.0f), kChannelPlayerSamples);
+  }
+  CHECK(count_to<PlayerSample>(h, 2) == 60);
+  CHECK(count_to<PlayerSample>(h, 3) == 10);
+}
+
+TEST_CASE("interest: the pose upload cap holds poses back, shared by the players") {
+  SessionConfig capped;
+  capped.pose_upload_bytes_per_second = 600;  // two receivers: 300 B/s each
+  Harness h(capped);
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  const std::uint8_t channel = channel_of(Message{a_pose()});
+  std::vector<std::uint8_t> bytes;
+  REQUIRE(encode(Message{a_pose()}, bytes) == Error::none);
+  for (int i = 0; i < 60; ++i) {  // 2 s at 30 a second
+    h.now += 33'333;
+    h.receive(1, a_pose(), channel);
+  }
+  // About 300 B/s for 2 s each, plus the first one.
+  const std::size_t most = 600 / bytes.size() + 2;
+  REQUIRE(most < 60);  // the cap has to bite for this test to mean anything
+  CHECK(count_to<PlayerPose>(h, 2) <= most);
+  CHECK(count_to<PlayerPose>(h, 2) >= most / 2);
+  CHECK(count_to<PlayerPose>(h, 3) == count_to<PlayerPose>(h, 2));
+  CHECK(h.session.stats().upload_capped > 0);
 }

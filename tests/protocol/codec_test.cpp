@@ -183,14 +183,16 @@ TEST_CASE("truncated buffers are refused at every length") {
         const Error e = decode(fixed, back);
         // A TEST_PAYLOAD filler or an optional sample component can be cut
         // off cleanly, and so can any PLAYER_EQUIP component; anything else must
-        // be refused.
+        // be refused. A VOICE_FRAME's Opus packet is the rest of the body, so
+        // a shorter one is still a packet (Opus refuses it when decoding).
         if (e == Error::none) {
           const bool may_shrink = std::holds_alternative<TestPayload>(m) ||
                                   std::holds_alternative<PlayerSample>(m) ||
                                   std::holds_alternative<PlayerEquip>(m) ||
                                   std::holds_alternative<HandoverState>(m) ||
                                   std::holds_alternative<ObjectSpawn>(m) ||
-                                  std::holds_alternative<ObjectSample>(m);
+                                  std::holds_alternative<ObjectSample>(m) ||
+                                  std::holds_alternative<VoiceFrame>(m);
           CHECK(may_shrink);
         }
       }
@@ -200,9 +202,9 @@ TEST_CASE("truncated buffers are refused at every length") {
 
 TEST_CASE("values out of range are refused") {
   CHECK(encode(Message{Welcome{0, 0, 60, {}}}) == std::nullopt);
-  CHECK(encode(Message{Welcome{5, 0, 60, {}}}) == std::nullopt);
+  CHECK(encode(Message{Welcome{17, 0, 60, {}}}) == std::nullopt);
   CHECK(encode(Message{PlayerJoined{1, ""}}) == std::nullopt);
-  CHECK(encode(Message{Chat{5, "x"}}) == std::nullopt);
+  CHECK(encode(Message{Chat{17, "x"}}) == std::nullopt);
   CHECK(encode(Message{Chat{0, std::string(201, 'a')}}) == std::nullopt);
   CHECK(encode(Message{Chat{0, std::string(200, 'a')}}) != std::nullopt);
   CHECK(encode(Message{Hello{0, "b", "g", "v", std::string(17, 'n')}}) == std::nullopt);
@@ -234,9 +236,9 @@ TEST_CASE("values out of range are refused") {
     b.back() = 2;
     CHECK(decode_bytes(b) == Error::bad_value);
   }
-  SUBCASE("player 5 on the wire") {
+  SUBCASE("player 17 on the wire") {
     Bytes b = must_encode(PlayerLeft{1, LeaveReason::left});
-    b[kHeaderSize] = 5;
+    b[kHeaderSize] = 17;
     CHECK(decode_bytes(b) == Error::bad_value);
   }
   SUBCASE("bad UTF-8 on the wire") {
@@ -364,7 +366,7 @@ TEST_CASE("the protocol version check") {
 
 TEST_CASE("encode leaves the buffer alone on an error") {
   Bytes out{9, 9};
-  CHECK(encode(Message{Chat{9, "x"}}, out) == Error::bad_value);
+  CHECK(encode(Message{Chat{17, "x"}}, out) == Error::bad_value);
   CHECK(out == Bytes{9, 9});
 
   TestPayload big;
@@ -446,7 +448,7 @@ TEST_CASE("the server stamps the sender on a relayed message") {
   CHECK(std::get<Chat>(m).player_number == 3);
   CHECK(sender_of(m) == std::optional<std::uint8_t>{3});
   CHECK_FALSE(set_sender(m, 0));
-  CHECK_FALSE(set_sender(m, 5));
+  CHECK_FALSE(set_sender(m, 17));
   CHECK(std::get<Chat>(m).player_number == 3);
 
   Message s = PlayerSample{};
@@ -498,7 +500,7 @@ TEST_CASE("bad join partner messages are refused") {
   JoinPartner j = test::join_messages()[0];
   j.other_player = 0;
   CHECK(refused(j));
-  j.other_player = 5;
+  j.other_player = 17;
   CHECK(refused(j));
   j = test::join_messages()[0];
   j.player_number = 2;  // relayed: asks to join itself
@@ -693,7 +695,7 @@ TEST_CASE("bad flag messages are refused") {
   auto refused = [](const Message& m) { return encode(m) == std::nullopt; };
   CHECK(refused(FlagSet{0, {}}));  // a change of nothing
   CHECK(refused(FlagState{0, {}}));
-  CHECK(refused(FlagSet{5, {test::flag_entries()[0]}}));
+  CHECK(refused(FlagSet{17, {test::flag_entries()[0]}}));
   CHECK(refused(FlagSet{0, {{1, 0, FlagKind::boolean, 2}}}));
   CHECK(refused(FlagSet{0, {{1, 0, static_cast<FlagKind>(5), 0}}}));
   CHECK(refused(FlagSet{0, {{1, 0, FlagKind::float32, 0x7F800000u}}}));  // infinity
@@ -888,7 +890,7 @@ TEST_CASE("host names the hosting player, from the server on the progress channe
   CHECK(sender_of(back) == std::nullopt);
   Bytes out;
   CHECK(encode(Host{0}, out) == Error::bad_value);
-  CHECK(encode(Host{5}, out) == Error::bad_value);
+  CHECK(encode(Host{17}, out) == Error::bad_value);
   CHECK(decode_bytes(Bytes{16, 0, 1, 0, 0}) == Error::bad_value);
   CHECK(decode_bytes(Bytes{16, 0, 2, 0, 1, 0}) == Error::trailing_bytes);
   // A stage 0 reader skips it like the other new types.
@@ -969,7 +971,7 @@ TEST_CASE("player equip: unknown components are skipped, bad ones refused") {
   // A component longer than the body.
   CHECK(decode_bytes(Bytes{17, 0, 6, 0, 0, 1, 0, 9, 0, 0}) == Error::bad_length);
   // Player 5, a control character, a name over 64 characters.
-  CHECK(decode_bytes(Bytes{17, 0, 1, 0, 5}) == Error::bad_value);
+  CHECK(decode_bytes(Bytes{17, 0, 1, 0, 17}) == Error::bad_value);
   CHECK(decode_bytes(Bytes{17, 0, 8, 0, 0, 1, 0, 3, 0, 1, 0, 0x01}) == Error::bad_value);
   Bytes out;
   PlayerEquip big;
@@ -977,7 +979,7 @@ TEST_CASE("player equip: unknown components are skipped, bad ones refused") {
   CHECK(encode(big, out) == Error::string_too_long);
   big.equipment.ocarina = std::string(kMaxEquipNameChars, 'o');
   CHECK(encode(big, out) == Error::none);
-  CHECK(encode(PlayerEquip{5, {}}, out) == Error::bad_value);
+  CHECK(encode(PlayerEquip{17, {}}, out) == Error::bad_value);
   PlayerEquip colored;
   colored.equipment.color = 0x1000000u;  // more than 24 bits
   CHECK(encode(colored, out) == Error::bad_value);
@@ -1014,7 +1016,12 @@ TEST_CASE("slot_color gives each player number its own colour") {
   CHECK(slot_color(3) != slot_color(4));
   CHECK(slot_color(1) != slot_color(4));
   CHECK(slot_color(0) == 0xFFFFFFu);
-  CHECK(slot_color(5) == 0xFFFFFFu);
+  CHECK(slot_color(17) == 0xFFFFFFu);
+  // All 16 different, and none the white of "no player".
+  for (std::uint8_t a = 1; a <= kMaxPlayers; ++a) {
+    CHECK(slot_color(a) != 0xFFFFFFu);
+    for (std::uint8_t b = static_cast<std::uint8_t>(a + 1); b <= kMaxPlayers; ++b) CHECK(slot_color(a) != slot_color(b));
+  }
   for (std::uint8_t n = 1; n <= kMaxPlayers; ++n) CHECK(slot_color(n) <= 0xFFFFFFu);
 }
 
@@ -1052,8 +1059,8 @@ TEST_CASE("bad object messages are refused") {
   // A placed id names no maker; a made id names one.
   CHECK(encode(ObjectOwner{{ObjectKind::placed, 1, 5}, 1, 0, 0}, out) == Error::bad_value);
   CHECK(encode(ObjectOwner{{ObjectKind::made, 0, 5}, 1, 0, 0}, out) == Error::bad_value);
-  CHECK(encode(ObjectOwner{{ObjectKind::made, 5, 5}, 1, 0, 0}, out) == Error::bad_value);
-  CHECK(encode(ObjectOwner{test::kPlacedId, 5, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(ObjectOwner{{ObjectKind::made, 17, 5}, 1, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(ObjectOwner{test::kPlacedId, 17, 0, 0}, out) == Error::bad_value);
   CHECK(encode(HandoverAsk{test::kPlacedId, 0, 0}, out) == Error::bad_value);
   // A spawn names its actor; a placed id names no maker (version 2).
   Bytes placed_spawn;
@@ -1218,18 +1225,50 @@ TEST_CASE("an ocarina note has its number, channel and layout") {
   CHECK(std::get<OcarinaNote>(back).note == kOcarinaNotes);
   Bytes out;
   CHECK(encode(OcarinaNote{0, kOcarinaNotes + 1}, out) == Error::bad_value);
-  CHECK(encode(OcarinaNote{5, 1}, out) == Error::bad_value);
+  CHECK(encode(OcarinaNote{17, 1}, out) == Error::bad_value);
   Bytes bad = must_encode(OcarinaNote{0, 1});
   bad[kHeaderSize + 1] = 20;  // past the last note
   Message m;
   CHECK(decode(bad, m) == Error::bad_value);
 }
 
+TEST_CASE("a voice frame has its number, channel and layout") {
+  CHECK(static_cast<int>(MessageType::voice_frame) == 420);
+  CHECK(channel_of(MessageType::voice_frame) == kChannelVoice);
+  CHECK(kChannelVoice < kChannelCount);
+  CHECK_FALSE(allowed_on_channel(MessageType::voice_frame, kChannelPlayerSamples));
+  CHECK(allowed_on_channel(MessageType::voice_frame, kChannelVoice));
+  CHECK(may_send(Sender::client, MessageType::voice_frame));
+  CHECK(may_send(Sender::server, MessageType::voice_frame));
+  Message v = VoiceFrame{0, 9, 0, {1, 2, 3}};
+  CHECK(check_received(v, Sender::client, kChannelVoice) == Error::none);
+  CHECK(check_received(v, Sender::client, kChannelSession) == Error::wrong_channel);
+  CHECK(set_sender(v, 2));
+  CHECK(sender_of(v) == 2);
+  const VoiceFrame full{0, 0xBEEF, 0, std::vector<std::uint8_t>(kMaxVoiceBytes, 0x5a)};
+  const Bytes b = must_encode(full);
+  REQUIRE(b.size() == kHeaderSize + 1 + 2 + 1 + kMaxVoiceBytes);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<VoiceFrame>(back) == full);
+  const Bytes e = must_encode(VoiceFrame{0, 3, voice::end, {}});
+  REQUIRE(e.size() == kHeaderSize + 1 + 2 + 1);
+  REQUIRE(decode(e, back) == Error::none);
+  CHECK(std::get<VoiceFrame>(back).flags == voice::end);
+  Bytes out;
+  CHECK(encode(VoiceFrame{0, 1, 0, {}}, out) == Error::bad_value);  // audio with no bytes
+  CHECK(encode(VoiceFrame{0, 1, voice::end, {1}}, out) == Error::bad_value);  // end with audio
+  CHECK(encode(VoiceFrame{0, 1, 0x80, {1}}, out) == Error::bad_value);  // unknown flag
+  CHECK(encode(VoiceFrame{0, 1, 0, std::vector<std::uint8_t>(kMaxVoiceBytes + 1, 0)}, out) ==
+        Error::bad_value);
+  CHECK(encode(VoiceFrame{200, 1, 0, {1}}, out) == Error::bad_value);
+}
+
 TEST_CASE("bad times of day are refused") {
   Bytes out;
   CHECK(encode(TimeOfDay{0, kSecondsPerDay, 0}, out) == Error::bad_value);
   CHECK(encode(TimeOfDay{0, 10, 2}, out) == Error::bad_value);
-  CHECK(encode(TimeOfDay{5, 10, 0}, out) == Error::bad_value);
+  CHECK(encode(TimeOfDay{17, 10, 0}, out) == Error::bad_value);
   Bytes b = must_encode(TimeOfDay{0, 10, 0});
   b[kHeaderSize + 5] = 0x80;  // an unknown flag
   Message m;
@@ -1271,7 +1310,7 @@ TEST_CASE("bad object groups are refused") {
   CHECK(encode(ObjectGroup{0, {}}, out) == Error::bad_value);                    // empty
   CHECK(encode(ObjectGroup{0, {{a, c, 0}, {a, a, 0}}}, out) == Error::bad_value);  // a member twice
   CHECK(encode(ObjectGroup{0, {{a, c, 2}}}, out) == Error::bad_value);           // an unknown flag
-  CHECK(encode(ObjectGroup{5, {{a, c, 0}}}, out) == Error::bad_value);
+  CHECK(encode(ObjectGroup{17, {{a, c, 0}}}, out) == Error::bad_value);
   CHECK(encode(ObjectGroup{0, {{a, ObjectId{ObjectKind::placed, 1, 2}, 0}}}, out) ==
         Error::bad_value);  // a placed id with a maker
   std::vector<ObjectGroupEntry> many;
@@ -1344,7 +1383,7 @@ TEST_CASE("bad grass cuts are refused") {
   c.sweep[0][0] = std::numeric_limits<float>::infinity();
   CHECK(encode(c, out) == Error::bad_value);
   c = Cut();
-  c.player_number = 5;
+  c.player_number = 17;
   CHECK(encode(c, out) == Error::bad_value);
 }
 
@@ -1425,7 +1464,7 @@ TEST_CASE("bad world messages are refused") {
   b.position[2] = std::numeric_limits<float>::infinity();
   CHECK(encode(b, out) == Error::bad_value);
   b = Broke();
-  b.player_number = 5;
+  b.player_number = 17;
   CHECK(encode(b, out) == Error::bad_value);
   WorldMove v = Moved();
   v.rotation = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -1505,7 +1544,7 @@ TEST_CASE("bad drop messages are refused") {
   CHECK(encode(DropSpawn{0, made, "s", "Obj_Heart", {}, 0, 4}, out) == Error::bad_value);
   CHECK(encode(DropSpawn{0, made, "s", "Obj_Heart", {std::numeric_limits<float>::infinity(), 0, 0}, 0, 0},
                out) == Error::bad_value);
-  CHECK(encode(DropSpawn{5, made, "s", "Obj_Heart", {}, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(DropSpawn{17, made, "s", "Obj_Heart", {}, 0, 0}, out) == Error::bad_value);
   CHECK(encode(DropTake{0, ObjectId{ObjectKind::placed, 1, 7}, DropTakeReason::gone}, out) ==
         Error::bad_value);
   CHECK(encode(DropTake{0, made, static_cast<DropTakeReason>(2)}, out) == Error::bad_value);
@@ -1545,7 +1584,7 @@ TEST_CASE("bad boss room messages are refused") {
   CHECK(encode(BossRoom{0, "s", kMaxBossRoom + 1, BossState::in_room}, out) == Error::bad_value);
   CHECK(encode(BossRoom{0, "s", 0, static_cast<BossState>(0)}, out) == Error::bad_value);
   CHECK(encode(BossRoom{0, "s", 0, static_cast<BossState>(6)}, out) == Error::bad_value);
-  CHECK(encode(BossRoom{5, "s", 0, BossState::left}, out) == Error::bad_value);
+  CHECK(encode(BossRoom{17, "s", 0, BossState::left}, out) == Error::bad_value);
   Message m;
   Bytes b = must_encode(BossRoom{0, "s", 0, BossState::defeated});
   b.back() = 6;  // an unknown state
@@ -1655,7 +1694,7 @@ TEST_CASE("player life: type 251, session channel, quarter hearts, both ways") {
 
   Bytes out;
   CHECK(encode(PlayerLife{0, 0, kMaxLifeQuarters + 1}, out) == Error::bad_value);
-  CHECK(encode(PlayerLife{5, 4, 12}, out) == Error::bad_value);
+  CHECK(encode(PlayerLife{17, 4, 12}, out) == Error::bad_value);
   Bytes short_one = b;
   short_one.pop_back();
   CHECK(decode(short_one, back) != Error::none);
@@ -1762,7 +1801,7 @@ TEST_CASE("bad fish lures are refused (issue 151)") {
   CHECK(encode(FishLure{0, {{a, 10, 4}}}, out) == Error::bad_value);  // an unknown flag
   CHECK(encode(FishLure{0, {{a, kFishLureNone, fish_lure::drawn}}}, out) ==
         Error::bad_value);  // drawn to no lure
-  CHECK(encode(FishLure{5, {{a, 10, 0}}}, out) == Error::bad_value);
+  CHECK(encode(FishLure{17, {{a, 10, 0}}}, out) == Error::bad_value);
   std::vector<FishLureEntry> many;
   for (std::uint64_t i = 0; i <= kMaxFishLures; ++i) {
     many.push_back({ObjectId{ObjectKind::placed, 0, i}, 10, 0});
@@ -1882,7 +1921,7 @@ TEST_CASE("platform clock: type 400, object samples channel, checked keys and fl
   CHECK(bad([](PlatformClock& c) { c.ticks[0].rate = kMaxPlatformRate * 2; }));
   CHECK(bad([](PlatformClock& c) { c.ticks[0].value = std::numeric_limits<float>::quiet_NaN(); }));
   CHECK(bad([](PlatformClock& c) { c.ticks[0].cycle = -1.0f; }));
-  CHECK(bad([](PlatformClock& c) { c.player_number = 9; }));
+  CHECK(bad([](PlatformClock& c) { c.player_number = 17; }));
 
   // A count larger than the ticks sent is cut short.
   Bytes cut = must_encode(Message{m});

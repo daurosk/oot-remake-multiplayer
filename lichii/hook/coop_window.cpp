@@ -34,7 +34,14 @@
 #include "coop_hud_layout.h"
 #if __has_include("coop_colors.h")
 #include "coop_colors.h"  // each player's colour (branch puppet-colors)
+// Qt defines slots (and signals, emit) as macros; the protocol headers have enum values named slots and emit.
+#pragma push_macro("slots")
+#pragma push_macro("emit")
+#undef slots
+#undef emit
 #include "coop_puppet.h"  // NameColor
+#pragma pop_macro("emit")
+#pragma pop_macro("slots")
 #define COOP_WINDOW_HAS_COLORS 1
 #endif
 

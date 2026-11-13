@@ -1,0 +1,297 @@
+From f6ad497c65d32292b77f51adf02ff5434ad6a326 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Thu, 12 Nov 2026 13:32:10 -0900
+Subject: [PATCH] Co-op voice: the module's voices in the game's final mix
+
+Proximity voice chat (oot-remake-multiplayer, docs/voice.md). The game's
+mixer (nn_audio.c render_frame) hands the final mix's buffers, before its
+effects and volume, to host/coop_voice.c every 5 ms: once the co-op module
+is loaded and exports hos_coop_voice_attach and hos_coop_voice_render, it
+gets host/hos_coop_voice.h's table (the microphone and libopus) and adds
+the other players' voices, placed at their Links, as the game's own sounds
+come in (2 or 6 speakers, as the sink maps them).
+
+nn_audio_in.c: hos_voice_mic_start/read/stop, a stream of the module's own
+on the source the game's input streams use, so the voice and the Ocarina's
+microphone mode are the one microphone the Insert menu chooses.
+
+HOS_COOP_VOICE=0 keeps the module unattached. Linux: not yet.
+---
+ host/coop_voice.c     | 117 ++++++++++++++++++++++++++++++++++++++++++
+ host/hos_coop_voice.h |  49 ++++++++++++++++++
+ host/nn_audio.c       |  12 +++++
+ host/nn_audio_in.c    |  61 ++++++++++++++++++++++
+ 4 files changed, 239 insertions(+)
+ create mode 100644 host/coop_voice.c
+ create mode 100644 host/hos_coop_voice.h
+
+diff --git a/host/coop_voice.c b/host/coop_voice.c
+new file mode 100644
+index 00000000..4996f2e8
+--- /dev/null
++++ b/host/coop_voice.c
+@@ -0,0 +1,117 @@
++/* (oot-remake-multiplayer, patch 0009) Proximity voice chat: the co-op module's voices in the game's own mix.
++
++   The co-op module (host/coop_bridge.c loads it) may export hos_coop_voice_attach and hos_coop_voice_render
++   (host/hos_coop_voice.h). The game's mixer (nn_audio.c render_frame) calls hos_coop_voice_mix every 5 ms with the final
++   mix's buffers, before the final mix's effects and volume: the first calls look for the loaded module (once a second
++   until it is there, then never again), hand it the table below, and from then on the module adds the other players'
++   voices, placed at their Links, as the game's own sounds are. The table gives it the microphone the game's input
++   streams use (nn_audio_in.c: the Insert menu's choice) and this build's libopus (third_party/opus, as nn_codec.c).
++   HOS_COOP_VOICE=0: none of it (the module is never attached). */
++#include "hos.h"
++#include "hos_coop_voice.h"
++#include <stdlib.h>
++#include <string.h>
++#include <opus.h>
++#define WIN32_LEAN_AND_MEAN
++#include <windows.h>
++#ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
++#include "../gpu/vk/compat/longshot_env.h"
++#endif
++
++int hos_voice_mic_start(void);   /* nn_audio_in.c */
++int hos_voice_mic_read(int16_t *out, int max);
++void hos_voice_mic_stop(void);
++
++static void *voice_encoder_new(int bitrate, int loss_percent) {
++    int err = 0;
++    OpusEncoder *e = opus_encoder_create(HOS_COOP_VOICE_RATE, 1, OPUS_APPLICATION_VOIP, &err);
++    if (!e || err != OPUS_OK) {
++        hos_log("coop voice: Opus encoder not made (%d)", err);
++        return NULL;
++    }
++    opus_encoder_ctl(e, OPUS_SET_BITRATE(bitrate > 0 ? bitrate : 24000));
++    opus_encoder_ctl(e, OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
++    opus_encoder_ctl(e, OPUS_SET_INBAND_FEC(loss_percent > 0));
++    opus_encoder_ctl(e, OPUS_SET_PACKET_LOSS_PERC(loss_percent > 0 ? loss_percent : 0));
++    opus_encoder_ctl(e, OPUS_SET_COMPLEXITY(8));
++    return e;
++}
++static int voice_encode(void *e, const int16_t *pcm, uint8_t *out, int max) {
++    if (!e || !pcm || !out || max <= 0) return 0;
++    const opus_int32 n = opus_encode((OpusEncoder *)e, pcm, HOS_COOP_VOICE_FRAME, out, max);
++    return n > 0 ? (int)n : 0;
++}
++static void voice_encoder_free(void *e) {
++    if (e) opus_encoder_destroy((OpusEncoder *)e);
++}
++static void *voice_decoder_new(void) {
++    int err = 0;
++    OpusDecoder *d = opus_decoder_create(HOS_COOP_VOICE_RATE, 1, &err);
++    if (!d || err != OPUS_OK) {
++        hos_log("coop voice: Opus decoder not made (%d)", err);
++        return NULL;
++    }
++    return d;
++}
++static int voice_decode(void *d, const uint8_t *data, int size, int fec, int16_t *pcm) {
++    if (!d || !pcm) return 0;
++    const int n = opus_decode((OpusDecoder *)d, data && size > 0 ? data : NULL, data && size > 0 ? size : 0, pcm,
++                              HOS_COOP_VOICE_FRAME, data && size > 0 && fec ? 1 : 0);
++    if (n <= 0) return 0;
++    if (n < HOS_COOP_VOICE_FRAME) memset(pcm + n, 0, (size_t)(HOS_COOP_VOICE_FRAME - n) * sizeof *pcm);
++    return n;
++}
++static void voice_decoder_free(void *d) {
++    if (d) opus_decoder_destroy((OpusDecoder *)d);
++}
++static uint64_t voice_now_us(void) { return (uint64_t)hos_now_ns() / 1000u; }
++
++static int tried;           /* (the mixer's thread only) 0 looking, 1 attached, 2 never */
++static int64_t next_look_ns;
++static hos_coop_voice_render_fn render;
++
++static void look(void) {
++    const char *e = getenv("HOS_COOP_VOICE");   /* (on unless set to an off word: env_on's rule the other way) */
++    if (e && *e && !env_on("HOS_COOP_VOICE")) {
++        tried = 2;
++        return;
++    }
++#ifdef _WIN32
++    HMODULE m = GetModuleHandleW(L"hookshot_coop.dll");   /* (loaded by coop_bridge.c at the first frame hook, or not) */
++    if (!m) return;
++    hos_coop_voice_attach_fn attach = (hos_coop_voice_attach_fn)(void *)GetProcAddress(m, "hos_coop_voice_attach");
++    hos_coop_voice_render_fn r = (hos_coop_voice_render_fn)(void *)GetProcAddress(m, "hos_coop_voice_render");
++    if (!attach || !r) {   /* (an older module, without voice) */
++        tried = 2;
++        return;
++    }
++    static HosCoopVoiceApi api;
++    api.version = HOS_COOP_VOICE_VERSION;
++    api.size = sizeof api;
++    api.mic_start = hos_voice_mic_start, api.mic_read = hos_voice_mic_read, api.mic_stop = hos_voice_mic_stop;
++    api.opus_encoder_new = voice_encoder_new, api.opus_encode = voice_encode, api.opus_encoder_free = voice_encoder_free;
++    api.opus_decoder_new = voice_decoder_new, api.opus_decode = voice_decode, api.opus_decoder_free = voice_decoder_free;
++    api.now_us = voice_now_us;
++    if (!attach(&api)) {
++        hos_log("coop voice: the module does not take voice");
++        tried = 2;
++        return;
++    }
++    render = r;
++    tried = 1;
++    hos_log("coop voice: on (the voices in the game's final mix)");
++#else
++    tried = 2;   /* (Linux: not yet; the module is a .so found another way) */
++#endif
++}
++
++/* nn_audio.c render_frame, the mixer's thread: the final mix's buffers before its effects and volume. */
++void hos_coop_voice_mix(float *const *out, int channels, int frames) {
++    if (tried == 0) {
++        const int64_t now = hos_now_ns();
++        if (now < next_look_ns) return;
++        next_look_ns = now + 1000000000LL;
++        look();
++    }
++    if (tried == 1 && render) render(out, channels, frames);
++}
+diff --git a/host/hos_coop_voice.h b/host/hos_coop_voice.h
+new file mode 100644
+index 00000000..7fc2aa9d
+--- /dev/null
++++ b/host/hos_coop_voice.h
+@@ -0,0 +1,49 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later
++   Proximity voice chat between the co-op module and Hookshot (oot-remake-multiplayer, docs/voice.md).
++
++   Hookshot's host/coop_voice.c (our patch 0009) finds the co-op module once it is loaded and, when the module exports
++   hos_coop_voice_attach, hands it this table: the game's microphone (the one chosen in the Insert menu, shared with the
++   game's own input streams in host/nn_audio_in.c) and Hookshot's libopus. While attach said 1, the game's mixer
++   (host/nn_audio.c) calls the module's hos_coop_voice_render every 5 ms with the final mix's buffers, so the voices are
++   mixed in under the game's own volume, effects and speaker layout. The same file is in Hookshot's host/ through our
++   patch and in our repository (hookshot/src): keep them equal. Plain C. */
++#ifndef HOS_COOP_VOICE_H
++#define HOS_COOP_VOICE_H
++#include <stddef.h>
++#include <stdint.h>
++
++#define HOS_COOP_VOICE_VERSION 1u
++#define HOS_COOP_VOICE_RATE 48000     /* every sample here: 48 kHz, mono, 16-bit */
++#define HOS_COOP_VOICE_FRAME 960      /* one Opus frame: 20 ms */
++
++typedef struct HosCoopVoiceApi {
++    uint32_t version;   /* HOS_COOP_VOICE_VERSION */
++    uint32_t size;      /* sizeof(HosCoopVoiceApi) */
++    /* The microphone, any one thread: a stream of its own on the source the game's streams use (opened once, the Insert
++       menu's choice, silence when that is off or there is none). start: 1 when started; read: up to max samples, the
++       number read (what came since the last read, at most a quarter second: older is dropped). */
++    int (*mic_start)(void);
++    int (*mic_read)(int16_t *out, int max);
++    void (*mic_stop)(void);
++    /* Opus, 48 kHz mono. An encoder for speech (VOIP, in-band FEC for `loss_percent` loss) at `bitrate` bits a second;
++       encode: one HOS_COOP_VOICE_FRAME frame into at most max bytes, the bytes made or 0. A decoder; decode: one frame
++       into pcm (HOS_COOP_VOICE_FRAME samples), from data, from data's FEC when fec is 1, or concealed when data is
++       NULL; the samples made or 0. Each object is used by one thread at a time. */
++    void *(*opus_encoder_new)(int bitrate, int loss_percent);
++    int (*opus_encode)(void *encoder, const int16_t *pcm, uint8_t *out, int max);
++    void (*opus_encoder_free)(void *encoder);
++    void *(*opus_decoder_new)(void);
++    int (*opus_decode)(void *decoder, const uint8_t *data, int size, int fec, int16_t *pcm);
++    void (*opus_decoder_free)(void *decoder);
++    /* Microseconds on the mixer's clock (the one hos_coop_voice_render's frames follow), any thread. */
++    uint64_t (*now_us)(void);
++} HosCoopVoiceApi;
++
++/* The module's optional exports (extern "C"). attach: any thread, once; 1 = render me. */
++typedef int (*hos_coop_voice_attach_fn)(const HosCoopVoiceApi *api);
++/* The game's mixer thread, every 5 ms: add `frames` samples of the voices into out[0..channels-1], which are the final
++   mix's buffers for 2 (left, right) or 6 (front left, front right, centre, LFE, rear left, rear right) speakers, full
++   scale 1.0. Quick: the game's sound waits on it. */
++typedef void (*hos_coop_voice_render_fn)(float *const *out, int channels, int frames);
++
++#endif
+diff --git a/host/nn_audio.c b/host/nn_audio.c
+index af1ee013..62827c54 100644
+--- a/host/nn_audio.c
++++ b/host/nn_audio.c
+@@ -620,6 +620,18 @@ static void render_frame(int16_t *pcm, int channels) {   /* 240 frames of the de
+     float out[6][FRAME];
+     memset(out, 0, sizeof out);
+     if (sink_mix >= 0 && mixes[sink_mix].used) {
++        {   /* (oot-remake-multiplayer, patch 0009) the co-op voices, placed at the other players' Links, into the final mix
++               before its effects and volume, as the game's own sounds come in: host/coop_voice.c */
++            void hos_coop_voice_mix(float *const *out, int channels, int frames);
++            static float spare[6][FRAME];   /* (a speaker the sink does not map: heard nowhere) */
++            float *ch[6];
++            const int vn = sink_n >= 6 ? 6 : 2;
++            for (int k = 0; k < vn; k++) {
++                const int b = k < sink_n ? sink_in[k] : -1;
++                ch[k] = b >= 0 && b < mixes[sink_mix].buffers ? mixes[sink_mix].buf[b] : spare[k];
++            }
++            hos_coop_voice_mix(ch, vn, FRAME);
++        }
+         effects_frame(sink_mix);
+         Mix *f = &mixes[sink_mix];
+         const float g = f->volume;
+diff --git a/host/nn_audio_in.c b/host/nn_audio_in.c
+index afd07b14..1c80f30e 100644
+--- a/host/nn_audio_in.c
++++ b/host/nn_audio_in.c
+@@ -506,3 +506,64 @@ HLE(_ZN2nn5audio18GetInputStreamGainEPKNS0_15InputStreamTypeE) {
+     c->vreg[0][0] = c->vreg[0][1] = 0;
+     memcpy(&c->vreg[0][0], &one, 4);
+ }
++
++/* ---- (oot-remake-multiplayer, patch 0009) co-op voice chat's stream (host/coop_voice.c, hos_coop_voice.h) ----
++   A stream of its own, not the game's (no handle of the game's names it), on the source the game's streams of the same
++   format use: the one microphone, the Insert menu's choice, silence when that is off. 48 kHz mono 16-bit, a quarter
++   second held (older is dropped while nobody reads). Started and read from the module's one thread. */
++static int voice_at = -1;   /* (under lock) its place in streams, -1: none */
++int hos_voice_mic_start(void) {
++    AcquireSRWLockExclusive(&lock);
++    int i = voice_at;
++    if (i < 0) {
++        i = 0;
++        while (i < MAX_STREAMS && streams[i].used) i++;
++        if (i < MAX_STREAMS) {
++            InStream *s = &streams[i];
++            memset(s, 0, sizeof *s);
++            s->format = FMT_PCM16, s->channels = 1, s->rate = 48000, s->frame_bytes = 2, s->capacity = 48000 / 4;
++            s->ring = (uint8_t *)malloc((size_t)s->capacity * s->frame_bytes);
++            if (s->ring) {
++                s->used = 1, s->started = 1, s->source = -1;
++                attach(s);
++                voice_at = i;
++            } else {
++                memset(s, 0, sizeof *s);
++                i = -1;
++            }
++        } else {
++            i = -1;
++        }
++    }
++    ReleaseSRWLockExclusive(&lock);
++    hos_log(i >= 0 ? "audio in: co-op voice stream %d started" : "audio in: co-op voice stream not started (%d)", i);
++    return i >= 0;
++}
++int hos_voice_mic_read(int16_t *out, int max) {
++    AcquireSRWLockExclusive(&lock);
++    int frames = 0;
++    if (voice_at >= 0 && out && max > 0) {
++        InStream *s = &streams[voice_at];
++        const int have = filled(s);
++        frames = max < have ? max : have;
++        const int cap = s->capacity * s->frame_bytes, n = frames * s->frame_bytes;
++        const int first = n < cap - s->ring_start ? n : cap - s->ring_start;
++        memcpy(out, s->ring + s->ring_start, (size_t)first);
++        memcpy((uint8_t *)out + first, s->ring, (size_t)(n - first));
++        s->ring_start = (s->ring_start + n) % cap, s->ring_len -= n;
++    }
++    ReleaseSRWLockExclusive(&lock);
++    return frames;
++}
++void hos_voice_mic_stop(void) {
++    AcquireSRWLockExclusive(&lock);
++    if (voice_at >= 0) {
++        InStream *s = &streams[voice_at];
++        s->started = 0;
++        detach(s);
++        free(s->ring);
++        memset(s, 0, sizeof *s);
++        voice_at = -1;
++    }
++    ReleaseSRWLockExclusive(&lock);
++}

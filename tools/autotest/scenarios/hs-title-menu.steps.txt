@@ -1,0 +1,27 @@
+# hs-title-menu (Hookshot only): the title screen's own co-op rows (patch 0004 + the puppet pack's
+# title_menu step, docs/hookshot.md "The title menu"). A starts as the harness starts it (co-op on, coop.ini
+# names the test server) and stays at the title: Continue, New Game, Options, then Host, Join, Co-op
+# Settings in the same list. A moves down four rows, presses A, then B twice.
+# Needs the puppet pack built again with this branch WITH --title-rows (Build-Hookshot-Coop passes it; its log says
+# "title menu: Host, Join and Co-op Settings on the title"), installed in A's game.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-title-menu
+# Pass: the lines below, and the shots (player-A.txt names them):
+#   rows          six rows in the game's own look: Continue, New Game, Options, Host, Join, Co-op Settings
+#                 (only three: the new parts do not show; three more but empty: the texts were not set)
+#   third-down / fourth-down   the game's own highlight bar and ornaments on the row reached (the log's
+#                 "focus is on button N" lines give the order)
+#   pressed       if the row was one of ours: the game's own press look, then the co-op page (Host's status,
+#                 Join's field or the settings) over the title; else whatever the game's row does
+#   closed        the title again, its rows all there, the cursor usable (the game is not stuck)
+# Sounds (heard only): the game's own move and press sounds.
+#! switches LICHII_COOP_PUPPET=1
+#! timeout 240
+start A
+sleep 15
+play A hs-title-menu.A.txt
+lines menu-on A min=1 coop: title menu: on \(Minus at the title\)
+lines title-seen A min=1 coop: title menu: the title screen 0x[0-9a-f]+, \d+ buttons
+lines rows-set A min=1 coop: title menu: the title's own rows Host, Join, Co-op Settings \(buttons 4 to 6\)$
+lines rows-no-text A max=0 their texts could not be set
+lines focus-moves A min=3 coop: title menu: the title's focus is on button \d
+lines no-sound-trouble A max=0 coop: title menu: the game's sound name

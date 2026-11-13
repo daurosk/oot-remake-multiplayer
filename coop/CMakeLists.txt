@@ -63,3 +63,16 @@ target_include_directories(coop_overlay PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/over
 # same places as a puppet.
 target_include_directories(coop_overlay PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/host/include")
 target_link_libraries(coop_overlay PUBLIC coop_presence PRIVATE coop_warnings)
+
+# Proximity voice chat (docs/voice.md): jitter buffer, talk gate, 3D
+# placement and the mixer of the others' voices. No sockets, no audio device,
+# no codec of its own (the game hands Opus in): Hookshot's module and the
+# tests both use it.
+add_library(coop_voice STATIC
+  voice/src/engine.cpp
+  voice/src/gate.cpp
+  voice/src/jitter.cpp
+  voice/src/spatial.cpp
+)
+target_include_directories(coop_voice PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/voice/include")
+target_link_libraries(coop_voice PUBLIC coop_protocol PRIVATE coop_warnings)

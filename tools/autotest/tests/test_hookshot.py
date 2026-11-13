@@ -460,6 +460,30 @@ class LoadTest(unittest.TestCase):
         game.close()
 
 
+class RendererWaitTest(unittest.TestCase):
+    READY = "[hos host] vk: precompile: 18170 programs, 25346 graphics and 1132 compute pipelines, 0 mesh fallback programs in 172544 ms (8092 ms of it the caches opened)\n"
+
+    def test_waits_for_the_precompile_line(self):
+        c, reads = Clock(), []
+
+        def log():
+            reads.append(c())
+            return "start\n" + (self.READY if len(reads) > 4 else "[hos host] vk: precompile: compute programs: those listed\n")
+        waited = hs.wait_renderer(log, lambda: True, 60, clock=c, sleep=c.sleep)
+        self.assertEqual(len(reads), 5)
+        self.assertAlmostEqual(waited, 2.0, places=2)
+
+    def test_times_out_and_notices_a_closed_game(self):
+        c = Clock()
+        with self.assertRaises(TimeoutError):
+            hs.wait_renderer(lambda: "", lambda: True, 30, clock=c, sleep=c.sleep)
+        with self.assertRaises(RuntimeError):
+            hs.wait_renderer(lambda: "", lambda: False, 30, clock=c, sleep=c.sleep)
+
+    def test_zero_is_no_wait(self):
+        self.assertEqual(hs.wait_renderer(lambda: "", lambda: False, 0), 0.0)
+
+
 class SaveTest(unittest.TestCase):
     def test_both_baseline_layouts(self):
         import tempfile
@@ -488,6 +512,8 @@ class RunTest(unittest.TestCase):
 
             def __init__(self, args, **kw):
                 self.env = kw["env"]
+                if "stdout" in kw:   # the game's log: its renderer is ready (run waits for this line)
+                    kw["stdout"].write(RendererWaitTest.READY.encode())
                 started.append(self)
 
             def poll(self):
@@ -500,7 +526,7 @@ class RunTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             for x in "AB":
                 os.makedirs(os.path.join(tmp, x, "autotest-save", "u"))
-                open(os.path.join(tmp, x, "hookshot.exe" if hs.WINDOWS else "hookshot"), "w").close()
+                open(os.path.join(tmp, x, "longshot.exe" if hs.WINDOWS else "longshot"), "w").close()
                 fakes["coop-auto-" + x if hs.WINDOWS else os.path.join(tmp, "out", "control-%s.sock" % x)] = \
                     FakeGame(clock=Clock())
                 fakes[list(fakes)[-1]].presses_to_play = 1
@@ -525,6 +551,7 @@ class RunTest(unittest.TestCase):
             self.assertEqual([p.env["HOS_CONTROL_MEM"] for p in started], ["ro", "ro"])
             self.assertEqual([p.env.get("ONLY_B") for p in started], [None, "1"])
             self.assertEqual([p.env["BOTH"] for p in started], ["1", "1"])
+            self.assertEqual([p.env["LICHII_COOP_TEST_OWN_SAVE"] for p in started], ["1", "1"])   # each game its own save
             ga, gb = fakes.values()
             for g in (ga, gb):
                 shots = [os.path.basename(r["path"]) for r in g.cmds("shot")]

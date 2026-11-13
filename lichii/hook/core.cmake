@@ -35,6 +35,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_hud.cpp"
     "${_coop_hook}/coop_objects.cpp"
     "${_coop_hook}/coop_objects_sync.cpp"
+    "${_coop_hook}/coop_npc_anim.cpp"
     "${_coop_hook}/coop_pose.cpp"
     "${_coop_hook}/coop_save.cpp"
     "${_coop_hook}/coop_enemy_shots.cpp"
@@ -48,6 +49,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_world.cpp"
     "${_coop_hook}/coop_ocarina.cpp"
     "${_coop_hook}/coop_ocarina_sound.cpp"
+    "${_coop_hook}/coop_voice.cpp"
     "${_coop_hook}/coop_puppet_sound.cpp"
     "${_coop_hook}/coop_testinput.cpp"
     "${_coop_hook}/coop_time.cpp"
@@ -57,7 +59,7 @@ target_sources(core PRIVATE
 # vk_rasterizer.cpp includes coop_camera_track.h under LICHII_COOP.
 target_include_directories(core PUBLIC "${_coop_hook}")
 target_compile_definitions(core PUBLIC LICHII_COOP)
-target_link_libraries(core PRIVATE coop coop_net coop_host coop_presence coop_overlay)
+target_link_libraries(core PRIVATE coop coop_net coop_host coop_presence coop_overlay coop_voice)
 # Which co-op commit is built in, for the log ("coop: build ..."). Read when
 # CMake configures, so reconfigure after a pull to keep it current.
 execute_process(COMMAND git -C "${LICHII_COOP_DIR}" describe --tags --always --dirty

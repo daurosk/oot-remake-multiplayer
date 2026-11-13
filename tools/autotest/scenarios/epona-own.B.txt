@@ -13,7 +13,7 @@ wait 240
 toward -100.47 264.55 6 # face her
 wait 30
 mark by-horse
-press A                 # get on
+press A 12              # get on
 wait 240
 mark mounted
 stick 0 0.8 120         # ride forward
@@ -21,22 +21,21 @@ mark riding
 stick 0 0.8 120
 mark riding2
 wait 240                # let her stop
-press A                 # get off
+press A 12              # get off
 wait 240
 mark dismounted
-setenum 0x92431c55 Complete   # Epona won (Get_Epona)
 wait 300
-mark owned
-place -99.0 151.0 264.5 # beside her again (she is here if the first ride was thrown off)
-wait 240
-toward -100.47 264.55 6
-wait 30
-press A                 # get on again
+mark owned              # (name kept: same time as A's)
+wait 270                # she stands where we got off
+press A 12              # get on again
 wait 240
 mark both-mounted
 stick 0 0.8 240         # ride forward while A rides too
 mark both-riding
 wait 120
-press A                 # get off
+press A 12              # get off
 wait 240
 mark end
+setenum 0x92431c55 Complete   # Epona won (Get_Epona): only now, the field Epona leaves both games
+wait 300
+mark won

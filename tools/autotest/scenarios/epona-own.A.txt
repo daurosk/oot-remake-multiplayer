@@ -36,18 +36,20 @@ wait 200
 mark riding
 wait 490                 # B rides, stops, gets off
 mark dismounted
-wait 320                 # B's game says Epona is won; ours follows
+wait 320                 # B waits by its horse
 mark owned
-place -102.0 151.0 264.5 # beside our own Epona (1.5 m west of her)
+place -102.0 151.0 264.5 # beside our own (unowned field) Epona (1.5 m west of her)
 wait 240
 toward -100.47 264.55 6
 wait 30
-press A                  # get on, as B does
+press A 12               # get on, as B does
 wait 220
 mark both-mounted
 stick 0 0.8 230          # ride forward, both
 mark both-riding
 wait 120
-press A                  # get off
+press A 12               # get off
 wait 240
 mark end
+wait 300                 # B's game says Epona is won; ours follows
+mark won                 # the field Epona is gone in both games

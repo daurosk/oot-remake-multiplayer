@@ -56,6 +56,7 @@ private:
 
 constexpr std::uint64_t kOffset = 0x100;   // the texels' place in the texture's file
 constexpr std::size_t kTexels = 256;
+constexpr std::uint64_t kBase = 0x10000;   // where the fake heap starts
 
 std::vector<std::uint8_t> TexelsOf(std::uint8_t seed) {
     std::vector<std::uint8_t> t(kTexels);
@@ -200,7 +201,6 @@ TEST_CASE("look tunic: the mapped end of the heap") {
 }
 
 TEST_CASE("look tunic: your Link's textures are found and rewritten, a puppet's copy is left alone") {
-    constexpr std::uint64_t kBase = 0x10000;
     FakeMemory m(kBase, 0x10000);
     const auto green = Colour({{"Tile_A", TexelsOf(1)}, {"Vest", TexelsOf(2)}});
     const auto red = Colour({{"Tile_A", TexelsOf(9)}, {"Vest", TexelsOf(8)}});
@@ -228,7 +228,6 @@ TEST_CASE("look tunic: your Link's textures are found and rewritten, a puppet's 
 }
 
 TEST_CASE("look tunic: the wardrobe keeps your Link in the colour worn") {
-    constexpr std::uint64_t kBase = 0x10000;
     FakeMemory m(kBase, 0x10000);
     PutFile(m, kBase + 0x1000, "Tile_A", TexelsOf(1));
     const std::map<std::string, std::vector<std::uint8_t>> pack = {

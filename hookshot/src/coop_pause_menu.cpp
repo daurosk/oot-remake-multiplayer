@@ -143,7 +143,7 @@ std::vector<Menu::Line> Menu::Lines() const {
                                  "are not touched."});
         out.push_back({Action("Local co-op"), Act::kOpenLocal, "Two players on this PC."});
         out.push_back({Action("Settings"), Act::kOpenSettings,
-                       "Your name, Link's look, how many players can join your game, and voice chat."});
+                       "Your name, Link's look, how many players can join your game, voice chat, and players on the map."});
         out.push_back({Action("Commands"), Act::kOpenCommands, "The chat's commands, and the key that opens the chat."});
         break;
     case Page::kHost:
@@ -221,6 +221,11 @@ std::vector<Menu::Line> Menu::Lines() const {
         out.push_back({Toggle("Proximity voice chat", options_.voice), Act::kVoice,
                        "Talk with players near your Link through your microphone; they sound quieter the farther away "
                        "they are. Off: you neither send nor hear voices."});
+        out.push_back({Toggle("Show players on map", options_.map_players), Act::kMapPlayers,
+                       "The other players as arrows in their colours on the minimap and on the pause menu's map. "
+                       "Off: neither shows them."});
+        out.push_back({Toggle("Names on map", options_.map_names), Act::kMapNames,
+                       "Each player's name beside their arrow on the maps. Off: the arrows only."});
         break;
     }
     return out;
@@ -550,6 +555,8 @@ void Menu::Decide(Act act) {
         Change(act, 1);
         break;
     case Act::kVoice:
+    case Act::kMapPlayers:
+    case Act::kMapNames:
         Change(act, 0);   // (a toggle: A flips it)
         break;
     case Act::kNone:
@@ -577,6 +584,14 @@ void Menu::Change(Act act, int step) {
     }
     case Act::kVoice:
         options_.voice = step > 0 ? true : step < 0 ? false : !options_.voice;
+        request_ = Request{Request::Kind::kSave, {}};
+        break;
+    case Act::kMapPlayers:
+        options_.map_players = step > 0 ? true : step < 0 ? false : !options_.map_players;
+        request_ = Request{Request::Kind::kSave, {}};
+        break;
+    case Act::kMapNames:
+        options_.map_names = step > 0 ? true : step < 0 ? false : !options_.map_names;
         request_ = Request{Request::Kind::kSave, {}};
         break;
     default:

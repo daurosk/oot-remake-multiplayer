@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 
+#include "coop/overlay/map_icons.hpp"
 #include "coop_dbno_game.h"
 #include "coop_hook.h"
 #include "hos_coop_draw.h"
@@ -119,6 +120,31 @@ struct TitleView {
     std::string prompt;   // "Multiplayer" (or what co-op is doing); "" for none
 };
 
+// The other players on the HUD minimap (docs/overlay.md, "Players on the
+// map"; coop/overlay/map_icons.hpp): our Link's place, the minimap's span
+// and the others with their colours (Lifted) and names.
+struct MapShown {
+    std::string scene;
+    std::array<float, 3> self{};
+    float metres_across = 0.0f;  // the minimap's span (MinimapMetres)
+    std::vector<coop::overlay::map::Player> players;
+    std::vector<std::string> names;  // players[i]'s; empty: no names (the setting)
+};
+
+// The game's minimap in its HUD layout (MapMenu_00, N_MiniMap_00 under
+// N_Common_00: its centre 1470 right of and 544 below the middle of the
+// 3840 x 2160 layout; the map window N_Dungeon_01 552 across), on a picture
+// of `width` x `height`: the layout fits the picture keeping its aspect, as
+// the game's picture does (DrawMarkers).
+inline constexpr float kLayoutW = 3840.0f, kLayoutH = 2160.0f;
+inline constexpr float kMinimapX = 1470.0f, kMinimapY = 544.0f, kMinimapSize = 552.0f;
+coop::overlay::map::Box MinimapBox(float width, float height);
+// The metres the minimap spans, from its map's capture: the share of the map
+// picture the window shows (552 of the 960 the picture pane N_FadeMiniMap is
+// across), over `zoom` (LICHII_COOP_MINIMAP_ZOOM, 1 by default).
+inline constexpr float kMinimapShare = 552.0f / 960.0f;
+float MinimapMetres(const coop::overlay::map::Capture& capture, float zoom = 1.0f);
+
 // What to draw this present.
 struct Scene {
     std::optional<TitleView> title;
@@ -130,6 +156,7 @@ struct Scene {
     std::optional<std::vector<CoopHook::PlayerRow>> players;  // the player list key is held
     std::optional<std::vector<CoopHook::OverlayLine>> panel;  // the panel is on
     std::optional<CoopDbno::View> dbno;  // down but not out: we are down, or beside someone who is
+    std::optional<MapShown> map;          // players on the minimap
     // The game look: players' colours (Lifted, alpha 255) by what tags and
     // chat lines call them: their names, "P1".."P4", "you". Nobody here: white.
     std::map<std::string, std::uint32_t, std::less<>> colours;

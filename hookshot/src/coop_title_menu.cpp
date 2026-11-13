@@ -281,6 +281,8 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     o.cheats = On(IniGet(options_ini, "LICHII_COOP_CHEATS"));
     o.voice_in_file = IniGet(options_ini, "LICHII_COOP_VOICE").value_or("");
     o.voice = On(o.voice_in_file);
+    o.map_players = !Off(IniGet(options_ini, "LICHII_COOP_MAP"));
+    o.map_names = !Off(IniGet(options_ini, "LICHII_COOP_MAP_NAMES"));
     if (const auto v = IniGet(options_ini, "max_players"); v && !v->empty() && v->size() <= 2 &&
         std::all_of(v->begin(), v->end(), [](char c) { return c >= '0' && c <= '9'; })) {
         o.max_players = std::clamp(std::stoi(*v), kMinPlayers, kMaxPlayers);
@@ -310,6 +312,8 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
         o = IniSet(o, "LICHII_COOP_VOICE", VoiceMode(), false);
     }
     o = IniSet(o, "max_players", std::to_string(std::clamp(max_players, kMinPlayers, kMaxPlayers)), true);
+    o = map_players ? IniUnset(o, "LICHII_COOP_MAP") : IniSet(o, "LICHII_COOP_MAP", "0", false);
+    o = map_names ? IniUnset(o, "LICHII_COOP_MAP_NAMES") : IniSet(o, "LICHII_COOP_MAP_NAMES", "0", false);
     options_ini = std::move(o);
 }
 
@@ -323,6 +327,8 @@ std::vector<std::pair<std::string, std::string>> Options::Environment() const {
         {"LICHII_COOP_DEBUG_PANEL", debug_panel ? "1" : ""},
         {"LICHII_COOP_CHEATS", cheats ? "1" : ""},
         {"LICHII_COOP_VOICE", voice ? VoiceMode() : ""},
+        {"LICHII_COOP_MAP", map_players ? "" : "0"},
+        {"LICHII_COOP_MAP_NAMES", map_names ? "" : "0"},
     };
 }
 

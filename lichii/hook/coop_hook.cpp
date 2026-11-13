@@ -226,6 +226,7 @@ struct FrameView {
     std::vector<std::uint8_t> hidden;  // others with no marker (scene.hpp: hide)
     std::optional<Markers> markers;  // none: no camera
     std::string camera_note;         // for the panel, when the game runs
+    bool event = false;              // our own event hides the others (and the game its HUD)
 };
 
 // What the network thread knows, for the window.
@@ -837,6 +838,7 @@ public:
                            reading->event_running.value_or(false),
                            reading->animation ? std::optional<std::string_view>(reading->animation->name)
                                               : std::nullopt);
+        view.event = event;  // (the map icons, CurrentMapView)
         if (report.connected) {
             view.others = session_->with_presence([&](coop::presence::Presence& p) {
                 auto shown = coop::overlay::collect(p, report.server_now_us);
@@ -959,6 +961,23 @@ public:
             return std::nullopt;
         }
         return frame_.markers;
+    }
+
+    // CurrentMapView (coop_hook.h): from the last frame, as the markers.
+    std::optional<MapView> CurrentMapView() {
+        std::lock_guard lock(view_mutex_);
+        if (Clock::now() - frame_.at >= kFrameStale || !frame_.game || !frame_.scene || !frame_.position) {
+            return std::nullopt;
+        }
+        MapView v;
+        v.scene = *frame_.scene;
+        v.self = *frame_.position;
+        v.event = frame_.event;
+        v.others.reserve(frame_.others.size());
+        for (const auto& s : frame_.others) {
+            v.others.push_back({s.number, s.name, s.position, s.rotation, s.scene, s.fade});
+        }
+        return v;
     }
 
     std::vector<OverlayLine> Lines() {
@@ -2128,6 +2147,16 @@ std::optional<Markers> CurrentMarkers() {
     }
     if (auto* coop = Get()) {
         return coop->CurrentMarkers();
+    }
+    return std::nullopt;
+}
+
+std::optional<MapView> CurrentMapView() {
+    if (g_mod_refused) {
+        return std::nullopt;
+    }
+    if (auto* coop = Get()) {
+        return coop->CurrentMapView();
     }
     return std::nullopt;
 }

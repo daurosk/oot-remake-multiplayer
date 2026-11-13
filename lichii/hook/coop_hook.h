@@ -2,6 +2,7 @@
 // emulator's core library only when LICHII_COOP is on.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -75,6 +76,26 @@ struct Markers {
 // The markers for the last frame, or nothing when the game's camera is not
 // known (the panel is then all there is). Any thread.
 std::optional<Markers> CurrentMarkers();
+
+// The players on the game's maps (coop/overlay/map_icons.hpp, docs/overlay.md
+// "Players on the map"): our Link and the others as the last frame had them.
+// Nothing when the game is not running, our place is not known, or the frame
+// is old. `event`: our own cutscene or talk runs (the game hides its HUD).
+struct MapPlayer {
+    std::uint8_t number = 0;
+    std::string name;
+    std::array<float, 3> position{};
+    std::optional<std::array<float, 4>> rotation;  // x, y, z, w
+    std::optional<std::string> scene;
+    float fade = 1.0f;
+};
+struct MapView {
+    std::string scene;
+    std::array<float, 3> self{};
+    bool event = false;
+    std::vector<MapPlayer> others;
+};
+std::optional<MapView> CurrentMapView();
 
 // Chat and the player list, for the co-op window. Any thread.
 //

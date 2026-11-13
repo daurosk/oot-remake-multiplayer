@@ -112,6 +112,11 @@ inline FrameWork WorkAt(int site, bool present_seen) {
 // is held, the panel after F7 or with LICHII_COOP_DEBUG_PANEL=1).
 CoopDraw::Scene DrawScene();
 
+// The players on the map (Multiplayer > Settings: "Show players on map",
+// "Names on map"; LICHII_COOP_MAP, LICHII_COOP_MAP_NAMES at start): count
+// from the next present. Any thread.
+void SetMapOptions(bool players, bool names);
+
 // hos_coop_draw2: the scene drawn, in the game look when the HUD pack's font
 // and heart pictures load through the table's calls (the first call loads
 // them; coop_draw.h, "The game look"). NoGameLook: hos_coop_draw was called

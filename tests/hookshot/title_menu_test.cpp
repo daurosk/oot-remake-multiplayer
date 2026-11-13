@@ -402,6 +402,34 @@ TEST_CASE("Same network or VPN: the addresses a friend can use, and the line Joi
     CHECK(none[1].find("VPN program") != std::string::npos);
 }
 
+TEST_CASE("title menu: players on the map are on unless turned off: off writes 0, on takes the line away") {
+    Options o;
+    CHECK(o.map_players);
+    CHECK(o.map_names);
+    std::string c, opt;
+    o.map_players = false;
+    o.map_names = false;
+    o.Write(c, opt);
+    CHECK(IniGet(opt, "LICHII_COOP_MAP") == "0");
+    CHECK(IniGet(opt, "LICHII_COOP_MAP_NAMES") == "0");
+    const Options back = Options::Read("", opt);
+    CHECK_FALSE(back.map_players);
+    CHECK_FALSE(back.map_names);
+    int seen = 0;
+    for (const auto& [k, v] : o.Environment()) {
+        if (k == "LICHII_COOP_MAP" || k == "LICHII_COOP_MAP_NAMES") {
+            CHECK(v == "0");
+            ++seen;
+        }
+    }
+    CHECK(seen == 2);
+    o.map_players = o.map_names = true;
+    o.Write(c, opt);
+    CHECK_FALSE(IniGet(opt, "LICHII_COOP_MAP").has_value());
+    CHECK_FALSE(IniGet(opt, "LICHII_COOP_MAP_NAMES").has_value());
+    CHECK(Options::Read("", "LICHII_COOP_MAP=1\r\n").map_players);
+}
+
 TEST_CASE("title menu: voice chat is off unless turned on: on writes ptt, off takes the line away") {
     Options o;
     CHECK_FALSE(o.voice);

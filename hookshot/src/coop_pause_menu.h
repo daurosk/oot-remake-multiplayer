@@ -145,7 +145,7 @@ private:
         kOpenHost, kOpenJoin, kOpenLocal, kOpenSettings, kOpenCommands, kCommand,
         kStartHost, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan, kLeave,
         kRejoin, kCode, kJoinNow,
-        kName, kLook, kPlayers, kVoice
+        kName, kLook, kPlayers, kVoice, kMapPlayers, kMapNames
     };
     struct Line;   // a row, what it does and its help
     std::vector<Line> Lines() const;

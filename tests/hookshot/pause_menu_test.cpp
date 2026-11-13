@@ -324,7 +324,7 @@ TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off u
     m.Show(o);
     m.Open(Page::kSettings);
     CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
-                                               "Proximity voice chat"});
+                                               "Proximity voice chat", "Show players on map", "Names on map"});
     View v = m.view();
     CHECK(v.rows[0].value == "Saria");
     CHECK(v.rows[1].value == "By player number");
@@ -364,6 +364,30 @@ TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off u
     CHECK_FALSE(m.options().voice);
     m.Press(Input::kDecide);   // A flips it
     CHECK(m.options().voice);
+}
+
+TEST_CASE("pause tab: Settings: players on the map and their names, on unless turned off, each saved") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kSettings);
+    View v = m.view();
+    REQUIRE(v.rows.size() == 6);
+    CHECK(v.rows[4].kind == RowKind::kToggle);
+    CHECK(v.rows[4].on);
+    CHECK(v.rows[5].on);
+    SelectRow(m, "Show players on map");
+    m.Press(Input::kLeft);
+    CHECK_FALSE(m.options().map_players);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    m.Press(Input::kDecide);
+    CHECK(m.options().map_players);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    SelectRow(m, "Names on map");
+    m.Press(Input::kDecide);
+    CHECK_FALSE(m.options().map_names);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    m.Press(Input::kRight);
+    CHECK(m.options().map_names);
 }
 
 TEST_CASE("pause tab: a name the server would refuse is not kept") {

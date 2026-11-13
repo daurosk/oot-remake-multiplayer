@@ -441,7 +441,76 @@ void DrawCheats(const HosCoopDraw& d, const CheatsView& c) {
     }
 }
 
+// The others on the HUD minimap (MapShown): an arrow each in their colour,
+// turned the way they face (a dot when that is not known), on a dark rim;
+// a player off the minimap is held at its edge, a little paler. Their name
+// under the icon when the names are on. Our own Link is the game's arrow.
+void DrawMap(const HosCoopDraw& d, const MapShown& m, const Look* look) {
+    namespace map = coop::overlay::map;
+    map::Minimap mini;
+    mini.box = MinimapBox(d.width, d.height);
+    mini.metres_across = m.metres_across;
+    const float r = std::max(5.0f, mini.box.w * 0.035f);
+    mini.edge_inset = r;
+    static thread_local std::vector<map::Icon> icons;  // (the present's thread: kept between frames)
+    map::minimap_icons(mini, m.scene, m.self, m.players, icons);
+    const float px = std::clamp(mini.box.h * 0.06f, 11.0f, 24.0f);
+    if (look) {
+        Font(d, look->medium);
+    }
+    for (const auto& icon : icons) {
+        const int a = Alpha(icon.alpha * (icon.clamped ? 0.75f : 1.0f));
+        if (a == 0) {
+            continue;
+        }
+        const std::uint32_t rgb = icon.rgb;
+        const std::uint32_t fill = Rgba(static_cast<int>(rgb >> 16), static_cast<int>(rgb >> 8), static_cast<int>(rgb), a);
+        const std::uint32_t dark = Rgba(0, 0, 0, a * 3 / 4);
+        if (icon.angle) {
+            const float ca = std::cos(*icon.angle), sa = std::sin(*icon.angle);
+            const auto arrow = [&](float k, std::uint32_t c) {
+                d.triangle(d.user, icon.x + ca * r * k, icon.y + sa * r * k,                                       //
+                           icon.x - ca * r * 0.7f * k - sa * r * 0.75f * k, icon.y - sa * r * 0.7f * k + ca * r * 0.75f * k,  //
+                           icon.x - ca * r * 0.7f * k + sa * r * 0.75f * k, icon.y - sa * r * 0.7f * k - ca * r * 0.75f * k, c);
+            };
+            arrow(1.35f, dark);
+            arrow(1.0f, fill);
+        } else {
+            d.circle(d.user, icon.x, icon.y, r * 0.6f + 1.5f, dark, 0.0f);
+            d.circle(d.user, icon.x, icon.y, r * 0.6f, fill, 0.0f);
+        }
+        std::size_t at = 0;
+        while (at < m.players.size() && m.players[at].number != icon.number) {
+            ++at;
+        }
+        if (at >= m.names.size() || m.names[at].empty()) {
+            continue;
+        }
+        const char* name = m.names[at].c_str();
+        const float tw = d.text_width(d.user, px, name);
+        const float x = std::clamp(icon.x - tw / 2, 2.0f, std::max(2.0f, d.width - tw - 2.0f));
+        const float y = icon.y + r * 1.2f;
+        if (look) {
+            GameText(d, x, y, px, fill, name);
+        } else {
+            Outlined(d, x, y, px, fill, a, name);
+        }
+    }
+}
+
 }  // namespace
+
+coop::overlay::map::Box MinimapBox(float width, float height) {
+    const float s = std::min(width / kLayoutW, height / kLayoutH);
+    const float ox = (width - kLayoutW * s) / 2, oy = (height - kLayoutH * s) / 2;
+    const float size = kMinimapSize * s;
+    const float cx = ox + (kLayoutW / 2 + kMinimapX) * s, cy = oy + (kLayoutH / 2 + kMinimapY) * s;
+    return {cx - size / 2, cy - size / 2, size, size};
+}
+
+float MinimapMetres(const coop::overlay::map::Capture& capture, float zoom) {
+    return zoom > 0 ? capture.height * kMinimapShare / zoom : 0.0f;
+}
 
 CheatsBox CheatsAt(float width, float height, const CheatsView& c) {
     CheatsBox b;
@@ -530,7 +599,7 @@ bool Wanted(const Scene& s) {
         return true;
     }
     return !s.chat.empty() || !s.hud.empty() || s.box.has_value() || s.cheats.has_value() || (s.markers && !s.markers->items.empty()) || s.players.has_value() ||
-           (s.panel && !s.panel->empty()) || s.dbno.has_value();
+           (s.panel && !s.panel->empty()) || s.dbno.has_value() || (s.map && !s.map->players.empty());
 }
 
 bool GameLook(const HosCoopDraw& d, const Look& look) {
@@ -544,6 +613,9 @@ void Draw(const HosCoopDraw& d, const Scene& s, const Look& look) {
     const Look* game = GameLook(d, look) ? &look : nullptr;
     if (s.markers) {
         DrawMarkers(d, *s.markers, s, game);
+    }
+    if (s.map) {
+        DrawMap(d, *s.map, game);
     }
     if (game) {
         DrawHud(d, s.hud, *game);

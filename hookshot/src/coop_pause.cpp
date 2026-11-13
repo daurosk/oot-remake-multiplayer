@@ -297,6 +297,7 @@ void Save() {
         CoopFiles::SetCoopEnvironment(g_menu.options());   // co-op has not started: they count for this run
     }
     CoopVoice::SetEnabled(g_menu.options().voice);   // voice chat on/off counts at once (ptt when on)
+    CoopHookshot::SetMapOptions(g_menu.options().map_players, g_menu.options().map_names);   // at once too
     LOG_INFO(Core, "coop: multiplayer tab: settings saved{}{}", ok ? "" : " (a file could not be written)",
              kit ? "" : " (no kit found: coop.ini only)");
     std::vector<std::string> note;

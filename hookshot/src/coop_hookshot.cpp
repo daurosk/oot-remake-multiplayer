@@ -15,6 +15,7 @@
 #include "coop_hookshot.h"
 
 #include <algorithm>
+#include <cctype>
 #include <array>
 #include <cstddef>
 #include <atomic>
@@ -51,6 +52,7 @@
 #include "coop_hook.h"
 #include "coop_hud.h"
 #include "coop_hud_hearts.h"
+#include "coop_maps.h"
 #include "coop_live_events.h"
 #include "coop_objects_sync.h"
 #include "coop_input.h"
@@ -558,7 +560,67 @@ std::uint32_t FromCodePage(unsigned byte) {
 #endif
 }
 
+// The players on the map (SetMapOptions): on unless the settings say off
+// (0, no, off, false: as coop-options.ini is read, CoopTitleMenu::Options).
+bool EnvOff(const char* name) {
+    std::string v = Env(name);
+    std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return v == "0" || v == "no" || v == "off" || v == "false";
+}
+std::atomic<bool> g_map_players{!EnvOff("LICHII_COOP_MAP")};
+std::atomic<bool> g_map_names{!EnvOff("LICHII_COOP_MAP_NAMES")};
+
+// The minimap's players (CoopDraw::MapShown), or none: the setting is off,
+// the game's camera is not known (not playing), our own cutscene runs (the
+// game hides its HUD), or our place has no map (coop_maps.txt).
+std::optional<CoopDraw::MapShown> MapScene(bool camera, std::uint8_t self) {
+    if (!g_map_players.load() || !camera) {
+        return std::nullopt;
+    }
+    auto view = CoopHook::CurrentMapView();
+    if (!view || view->event || view->others.empty()) {
+        return std::nullopt;
+    }
+    const auto* capture = CoopMaps::Maps().find(view->scene);
+    if (capture == nullptr) {
+        return std::nullopt;
+    }
+    static const float zoom = [] {
+        const auto z = coop::overlay::map::parse_zoom(Env("LICHII_COOP_MINIMAP_ZOOM"));
+        if (z) {
+            LOG_INFO(Core, "coop: map: the minimap's zoom {} (LICHII_COOP_MINIMAP_ZOOM)", *z);
+        }
+        return z.value_or(1.0f);
+    }();
+    CoopDraw::MapShown m;
+    m.scene = std::move(view->scene);
+    m.self = view->self;
+    m.metres_across = CoopDraw::MinimapMetres(*capture, zoom);
+    const bool names = g_map_names.load();
+    m.players.reserve(view->others.size());
+    for (auto& o : view->others) {
+        coop::overlay::map::Player p;
+        p.number = o.number;
+        p.position = o.position;
+        p.rotation = o.rotation;
+        p.scene = std::move(o.scene);
+        p.fade = o.fade;
+        const std::uint32_t c = CoopDraw::Lifted(CoopPuppet::NameColor(o.number, self));
+        p.rgb = (c & 0xFF) << 16 | (c & 0xFF00) | (c >> 16 & 0xFF);  // (IM_COL32 to 0xRRGGBB)
+        m.players.push_back(std::move(p));
+        if (names) {
+            m.names.push_back(o.name.empty() ? "P" + std::to_string(o.number) : std::move(o.name));
+        }
+    }
+    return m;
+}
+
 }  // namespace
+
+void SetMapOptions(bool players, bool names) {
+    g_map_players.store(players);
+    g_map_names.store(names);
+}
 
 CoopDraw::Scene DrawScene() {
     CoopDraw::Scene s;
@@ -645,6 +707,13 @@ CoopDraw::Scene DrawScene() {
     }
     if (panel) {
         s.panel = CoopHook::OverlayLines();
+    }
+    {
+        std::uint8_t self = 0;
+        for (const auto& row : rows) {
+            self = row.self ? row.number : self;
+        }
+        s.map = MapScene(s.markers.has_value(), self);
     }
     return s;
 }

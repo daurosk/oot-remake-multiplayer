@@ -226,9 +226,41 @@ std::string Utf8Path(const fs::path& p) {
     return std::string(u.begin(), u.end());
 }
 
+#ifdef _WIN32
+std::string Narrow(const wchar_t* w);
+#endif
+
+// The player's Windows name, for a first-time player with no name in coop.ini ("" when it will not do).
+std::string WindowsName() {
+#ifdef _WIN32
+    wchar_t w[257] = {};
+    DWORD n = 257;
+    if (!GetUserNameW(w, &n)) {
+        return {};
+    }
+    std::string name = Narrow(w);
+    while (!name.empty() && !CoopTitleMenu::NameOk(name)) {   // too long: cut to 16 characters
+        do {
+            name.pop_back();
+        } while (!name.empty() && (static_cast<unsigned char>(name.back()) & 0xC0) == 0x80);
+    }
+    return name;
+#else
+    const char* u = std::getenv("USER");
+    return u != nullptr && CoopTitleMenu::NameOk(u) ? std::string(u) : std::string();
+#endif
+}
+
 CoopTitleMenu::Options ReadOptions() {
     const auto kit = FindKit();
-    return CoopTitleMenu::Options::Read(ReadText(CoopIni()), kit ? ReadText(*kit / "coop-options.ini") : std::string());
+    const std::string coop = ReadText(CoopIni());
+    auto o = CoopTitleMenu::Options::Read(coop, kit ? ReadText(*kit / "coop-options.ini") : std::string());
+    if (!CoopTitleMenu::IniGet(coop, "name")) {
+        if (const std::string w = WindowsName(); !w.empty()) {
+            o.name = w;
+        }
+    }
+    return o;
 }
 
 #ifdef _WIN32
@@ -305,45 +337,35 @@ void SetCoopEnvironment(const CoopTitleMenu::Options& o) {
     }
 }
 
-// What the module's host is doing, in lines for the Hosting / Joining page (the game's own dialog is next).
+bool g_copied = false;   // this session's invite code was put on the clipboard
+
+// What the module's host is doing, in plain words (CoopTitleMenu::PlainStatus). The invite code goes on the
+// clipboard by itself, once, as soon as there is one: the host has nothing to copy or type.
 std::vector<std::string> HostStatusLines() {
     HosCoopStatus st{};
     st.size = sizeof st;
     CoopHookshot::HostMenu().Status(&st);
-    std::vector<std::string> out;
-    switch (st.state) {
-    case HOS_COOP_STARTING:
-        out.push_back(g_doing == "joined" ? "Finding the host..." : "Starting the server...");
-        break;
-    case HOS_COOP_HOSTING:
-        out.push_back(fmt::format("Hosting on port {}: {} player(s).", st.port, st.players));
-        if (st.invite[0] != 0) {
-            out.push_back("Invite code (Copy the invite code puts it on the clipboard):");
-            out.push_back(st.invite);
-        } else if (!st.invite_done) {
-            out.push_back("Making the invite code...");
-        }
-        break;
-    case HOS_COOP_JOINING:
-        out.push_back("Joining the host...");
-        break;
-    case HOS_COOP_WAIT_HOST:
-        out.push_back("The host could not be reached directly. Send the host this ANSWER CODE:");
-        out.push_back(st.answer);
-        break;
-    case HOS_COOP_CONNECTED:
-        out.push_back("Connected. Choose your file and play.");
-        break;
-    case HOS_COOP_FAILED:
-        out.push_back("It did not start.");
-        break;
-    default:
-        break;
+    CoopTitleMenu::HostView v;
+    v.host = g_doing == "hosting";
+    v.state = st.state;
+    v.problem = st.problem;
+    v.players = st.players;
+    v.invite_done = st.invite_done != 0;
+    v.invite = st.invite;
+    v.answer = st.answer;
+    if (v.host && !v.invite.empty() && !g_copied) {
+        g_copied = SetClipboardText(v.invite);
+        LOG_INFO(Core, "coop: title menu: host: the invite code is on the clipboard{}", g_copied ? "" : " (it could not be)");
     }
+    v.copied = g_copied;
     if (st.message[0] != 0) {
-        out.push_back(st.message);
+        static std::string said;
+        if (said != st.message) {
+            said = st.message;
+            LOG_INFO(Core, "coop: title menu: {}", said);   // (the English detail, for the log)
+        }
     }
-    return out;
+    return CoopTitleMenu::PlainStatus(v);
 }
 
 // The Hosting / Joining page follows the host's status.
@@ -386,9 +408,9 @@ void Host() {
     HosCoopHostOptions h{};
     h.size = sizeof h;
     h.name = o.name.c_str();
-    h.password = o.password.empty() ? nullptr : o.password.c_str();   // none: a new random one, in the invite
+    h.password = nullptr;   // a new random one, inside the invite code: nobody types it
     h.port = 0;
-    h.upnp = o.upnp ? 1 : 0;
+    h.upnp = 1;             // the router forward (Caleb: nothing to set up)
     h.invite = 1;
     h.pvp = o.pvp ? 1 : 0;
     h.max_players = static_cast<std::uint8_t>(o.max_players);
@@ -399,7 +421,9 @@ void Host() {
     }
     LOG_INFO(Core, "coop: title menu: host: started (up to {} players)", o.max_players);
     g_doing = "hosting";
+    g_copied = false;
     g_menu.ShowPage(Page::kHosting);
+    g_menu.SetStatus(HostStatusLines());
 }
 
 void Join(const std::string& text) {
@@ -444,6 +468,7 @@ void Join(const std::string& text) {
     LOG_INFO(Core, "coop: title menu: join: {}", invite ? std::string("an invite code") : "the address " + where);
     g_doing = "joined";
     g_menu.ShowPage(Page::kJoining);
+    g_menu.SetStatus(HostStatusLines());
 }
 
 void Save() {
@@ -823,10 +848,16 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
                      kRowLabels[static_cast<std::size_t>(f - kFirstRow)]);
             const auto options = ReadOptions();
             if (f == kFirstRow) {
-                g_menu.Open(options, Page::kMain);
+                g_menu.Open(options, Page::kHosting);
                 Host();
+            } else if (f == kFirstRow + 1) {
+                g_menu.Open(options, Page::kJoin);
+                const std::string clip = ClipboardText();   // a friend's code copied already: ready to press OK
+                if (coop::server::nat::looks_like_code(clip)) {
+                    g_menu.Paste(clip);
+                }
             } else {
-                g_menu.Open(options, f == kFirstRow + 1 ? Page::kJoin : Page::kSettings);
+                g_menu.Open(options, Page::kSettings);
             }
             g_pad_eat = true;
         }

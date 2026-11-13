@@ -6,6 +6,7 @@
 #include <variant>
 
 #include "coop_title_menu.h"
+#include "hos_coop_host.h"
 
 using namespace CoopTitleMenu;
 
@@ -183,20 +184,20 @@ TEST_CASE("title menu: the main page moves round, Back closes it") {
     CHECK_FALSE(m.open());
 }
 
-TEST_CASE("title menu: it opens on another page for the title's own rows") {
+TEST_CASE("title menu: it opens on another page for the title's own rows, and Back closes it") {
     Menu m;
     m.Open(Options{}, Page::kSettings);
     CHECK(m.page() == Page::kSettings);
-    CHECK(m.view().title == "Multiplayer settings");
+    CHECK(m.view().title == "Co-op Settings");
     CHECK(m.Press(Input::kBack) == Sound::kBack);
-    CHECK(m.page() == Page::kMain);
+    CHECK_FALSE(m.open());   // (opened by the title's row: back to the title)
     m.Open(Options{}, Page::kJoin);
-    CHECK(m.view().title == "Join a game");
+    CHECK(m.view().title == "Join");
     m.Open(Options{}, Page::kClosed);
     CHECK(m.page() == Page::kMain);
 }
 
-TEST_CASE("title menu: Host asks the module to host") {
+TEST_CASE("title menu: Host asks the module to host, OK closes the dialog") {
     Menu m;
     m.Open(Options{});
     CHECK(m.Press(Input::kDecide) == Sound::kStart);
@@ -205,98 +206,90 @@ TEST_CASE("title menu: Host asks the module to host") {
     CHECK(r->kind == Request::Kind::kHost);
     CHECK_FALSE(m.TakeRequest().has_value());
     m.ShowPage(Page::kHosting);
-    m.SetStatus({"Invite code: ABCDE-..."});
-    CHECK(m.view().title == "Hosting");
-    CHECK(m.view().status.size() == 1);
+    m.SetStatus({"Send this code to your friends:", "ABCDE-FGHJK"});
+    CHECK(m.view().title == "Host");
+    CHECK(m.view().rows[0].label == "OK");
+    m.Press(Input::kDown);
     CHECK(m.Press(Input::kDecide) == Sound::kDecide);
     CHECK(m.TakeRequest()->kind == Request::Kind::kCopyInvite);
-    CHECK(m.Press(Input::kBack) == Sound::kBack);
+    m.Press(Input::kUp);
+    CHECK(m.Press(Input::kDecide) == Sound::kBack);
     CHECK_FALSE(m.open());
 }
 
-TEST_CASE("title menu: Join takes typed or pasted text and asks to join it") {
+TEST_CASE("title menu: Join: A on the code pastes, OK joins, Cancel closes") {
     Menu m;
-    m.Open(Options{});
-    m.Press(Input::kDown);
-    CHECK(m.Press(Input::kDecide) == Sound::kOpen);
-    CHECK(m.page() == Page::kJoin);
-    m.Press(Input::kDown);
-    m.Press(Input::kDown);   // on Join, the field empty
-    CHECK(m.Press(Input::kDecide) == Sound::kRefuse);
-    CHECK_FALSE(m.TakeRequest().has_value());
-    CHECK(m.Char('a'));
-    CHECK(m.Char('b'));
-    CHECK(m.Press(Input::kErase) == Sound::kMove);
-    CHECK(m.join_text() == "a");
-    CHECK(m.Press(Input::kPaste) == Sound::kDecide);
+    m.Open(Options{}, Page::kJoin);
+    CHECK(m.view().rows[0].value == "(press A to paste it)");
+    CHECK(m.Press(Input::kDecide) == Sound::kDecide);   // A on the code
     CHECK(m.TakeRequest()->kind == Request::Kind::kPaste);
     CHECK(m.Paste("  ABCDE-FGHJK\r\n"));
     CHECK(m.join_text() == "ABCDE-FGHJK");
-    CHECK(m.view().rows[0].value == "ABCDE-FGHJK");
-    CHECK(m.Press(Input::kDecide) == Sound::kStart);   // the paste put the cursor on Join
+    CHECK(m.view().rows[m.selected()].label == "OK");   // the paste put the cursor on OK
+    CHECK(m.Press(Input::kDecide) == Sound::kStart);
     const auto r = m.TakeRequest();
     REQUIRE(r.has_value());
     CHECK(r->kind == Request::Kind::kJoin);
     CHECK(r->text == "ABCDE-FGHJK");
-    CHECK(m.Press(Input::kBack) == Sound::kBack);
-    CHECK(m.page() == Page::kMain);
-    CHECK(m.selected() == 1);
+    m.Open(Options{}, Page::kJoin);
+    m.Press(Input::kDown);
+    CHECK(m.Press(Input::kDecide) == Sound::kRefuse);   // OK with nothing pasted
+    CHECK_FALSE(m.TakeRequest().has_value());
+    CHECK(m.Char('a'));
+    CHECK(m.Press(Input::kErase) == Sound::kMove);
+    CHECK(m.join_text().empty());
+    m.Press(Input::kDown);
+    CHECK(m.Press(Input::kDecide) == Sound::kBack);   // Cancel
+    CHECK_FALSE(m.open());
 }
 
-TEST_CASE("title menu: Settings change with Left and Right, Save asks to write them, Back forgets") {
+TEST_CASE("title menu: Co-op Settings shows name, colour, players and voice; Save writes, Back forgets") {
     Options start;
     start.name = "Saria";
     Menu m;
-    m.Open(start);
+    m.Open(start, Page::kSettings);
+    const auto v = m.view();
+    REQUIRE(v.rows.size() == 6);
+    CHECK(v.rows[0].label == "Your name");
+    CHECK(v.rows[0].value == "Saria");
+    CHECK(v.rows[1].label == "Your colour");
+    CHECK(v.rows[2].label == "Players when you host");
+    CHECK(v.rows[3].label == "Voice chat");
+    CHECK(v.rows[4].label == "Save");
     m.Press(Input::kDown);
-    m.Press(Input::kDown);
-    CHECK(m.Press(Input::kDecide) == Sound::kOpen);
-    REQUIRE(m.page() == Page::kSettings);
-    CHECK(m.view().rows[0].value == "Saria");
-    m.Press(Input::kDown);   // colour
     CHECK(m.Press(Input::kRight) == Sound::kMove);
     CHECK(m.options().colour == "red");
-    CHECK(m.Press(Input::kLeft) == Sound::kMove);
-    CHECK(m.Press(Input::kLeft) == Sound::kMove);
-    CHECK(m.options().colour == "gray");   // round the list
-    m.Press(Input::kDown);   // tunics
-    CHECK(m.Press(Input::kDecide) == Sound::kMove);
-    CHECK_FALSE(m.options().tunics);
+    m.Press(Input::kDown);
+    m.Press(Input::kDown);
+    CHECK(m.Press(Input::kDecide) == Sound::kMove);   // voice off
+    CHECK_FALSE(m.options().voice);
     CHECK(m.Press(Input::kBack) == Sound::kBack);   // not saved
-    CHECK(m.page() == Page::kMain);
-    CHECK(m.options().tunics);
-    CHECK(m.options().colour.empty());
+    CHECK_FALSE(m.open());
 
-    m.Press(Input::kDecide);   // Settings again (the cursor came back to it)
-    REQUIRE(m.page() == Page::kSettings);
+    m.Open(start, Page::kSettings);
+    CHECK(m.options().voice);
     CHECK(m.Press(Input::kDecide) == Sound::kDecide);   // edit the name
     CHECK(m.editing());
-    CHECK(m.view().rows[0].editing);
     m.Press(Input::kErase);
     CHECK(m.Char('!'));
-    CHECK(m.Press(Input::kDecide) == Sound::kDecide);   // done
-    CHECK_FALSE(m.editing());
+    CHECK(m.Press(Input::kDecide) == Sound::kDecide);
     CHECK(m.options().name == "Sari!");
-    for (int i = 0; i < 12; ++i) {
+    for (int i = 0; i < 4; ++i) {
         m.Press(Input::kDown);
     }
-    CHECK(m.view().rows[m.selected()].label == "Save");
+    REQUIRE(m.view().rows[m.selected()].label == "Save");
     CHECK(m.Press(Input::kDecide) == Sound::kDecide);
     CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
-    CHECK(m.page() == Page::kMain);
     CHECK(m.options().name == "Sari!");
-    CHECK(m.view().status[0] == "Settings saved.");
+    CHECK_FALSE(m.open());
 }
 
-TEST_CASE("title menu: Save refuses a bad name or password") {
+TEST_CASE("title menu: Save refuses an empty name") {
     Options start;
     start.name = "";
     Menu m;
-    m.Open(start);
-    m.Press(Input::kDown);
-    m.Press(Input::kDown);
-    m.Press(Input::kDecide);
-    for (int i = 0; i < 12; ++i) {
+    m.Open(start, Page::kSettings);
+    for (int i = 0; i < 4; ++i) {
         m.Press(Input::kDown);
     }
     CHECK(m.Press(Input::kDecide) == Sound::kRefuse);
@@ -304,29 +297,17 @@ TEST_CASE("title menu: Save refuses a bad name or password") {
     CHECK(m.page() == Page::kSettings);
 }
 
-TEST_CASE("title menu: the name stops at 16 characters, the password takes no spaces") {
+TEST_CASE("title menu: the name stops at 16 characters") {
     Options start;
     start.name = "abcdefghijklmno";
     Menu m;
-    m.Open(start);
-    m.Press(Input::kDown);
-    m.Press(Input::kDown);
+    m.Open(start, Page::kSettings);
     m.Press(Input::kDecide);
-    m.Press(Input::kDecide);   // edit the name
     m.Char('p');
     m.Char('q');
     CHECK(m.options().name == "abcdefghijklmnop");
-    m.Press(Input::kDecide);
-    for (int i = 0; i < 9; ++i) {
-        m.Press(Input::kDown);
-    }
-    CHECK(m.view().rows[m.selected()].value == "New each session");
-    m.Press(Input::kDecide);
-    CHECK(m.Paste("my pass"));
-    CHECK(m.options().password == "my");
-    m.Char(' ');
-    m.Char('x');
-    CHECK(m.options().password == "myx");
+    CHECK(m.Paste("xyz"));
+    CHECK(m.options().name == "abcdefghijklmnop");
 }
 
 TEST_CASE("title menu: Up or Down while editing ends the edit, and keys only type into a field") {
@@ -334,15 +315,74 @@ TEST_CASE("title menu: Up or Down while editing ends the edit, and keys only typ
     m.Open(Options{});
     CHECK_FALSE(m.Char('a'));   // the main page has no field
     CHECK_FALSE(m.Paste("x"));
-    m.Press(Input::kDown);
-    m.Press(Input::kDown);
-    m.Press(Input::kDecide);
+    m.Open(Options{}, Page::kSettings);
     m.Press(Input::kDecide);
     CHECK(m.editing());
     CHECK(m.Press(Input::kRight) == Sound::kNone);
     m.Press(Input::kDown);
     CHECK_FALSE(m.editing());
     CHECK_FALSE(m.Char('a'));
+}
+
+TEST_CASE("title menu: voice off is LICHII_COOP_VOICE=off, on is the default") {
+    Options o;
+    o.voice = false;
+    std::string c, opt;
+    o.Write(c, opt);
+    CHECK(IniGet(opt, "LICHII_COOP_VOICE") == "off");
+    CHECK_FALSE(Options::Read("", opt).voice);
+    o.voice = true;
+    o.Write(c, opt);
+    CHECK_FALSE(IniGet(opt, "LICHII_COOP_VOICE").has_value());
+    CHECK(Options::Read("", opt).voice);
+}
+
+TEST_CASE("title menu: Host and Join in plain words, nothing about ports or passwords") {
+    HostView h;
+    h.host = true;
+    h.state = HOS_COOP_HOSTING;
+    h.invite = "ABCDE-FGHJK";
+    h.copied = true;
+    h.players = 1;
+    auto s = PlainStatus(h);
+    REQUIRE(s.size() >= 3);
+    CHECK(s[0] == "Send this code to your friends:");
+    CHECK(s[1] == "ABCDE-FGHJK");
+    CHECK(s[2].find("copied") != std::string::npos);
+    h.players = 3;
+    CHECK(PlainStatus(h).back() == "2 friend(s) joined.");
+    h.invite.clear();
+    CHECK(PlainStatus(h)[0] == "Making your code...");
+    h.problem = HOS_COOP_PROBLEM_PORT_TAKEN;
+    CHECK(PlainStatus(h)[0] == "Another co-op window is already open on this PC.");
+
+    HostView j;
+    j.state = HOS_COOP_CONNECTED;
+    CHECK(PlainStatus(j)[0] == "Connected! Choose your file and play.");
+    j.state = HOS_COOP_FAILED;
+    j.problem = HOS_COOP_PROBLEM_BAD_CODE;
+    CHECK(PlainStatus(j)[0] == "That code is not right.");
+    j.problem = HOS_COOP_PROBLEM_NONE;
+    CHECK(PlainStatus(j)[0] == "Your friend could not be reached.");
+    j.state = HOS_COOP_WAIT_HOST;
+    j.answer = "QWERT-YUPAS";
+    s = PlainStatus(j);
+    CHECK(s[0] == "Your friend's router blocks the way in.");
+    CHECK(s[2] == "QWERT-YUPAS");
+    for (const auto& st : {HOS_COOP_STARTING, HOS_COOP_HOSTING, HOS_COOP_JOINING, HOS_COOP_WAIT_HOST, HOS_COOP_CONNECTED,
+                           HOS_COOP_FAILED}) {
+        for (const bool host : {true, false}) {
+            HostView v;
+            v.state = st;
+            v.host = host;
+            v.invite = "ABCDE";
+            for (const auto& line : PlainStatus(v)) {
+                CHECK(line.find("port") == std::string::npos);
+                CHECK(line.find("password") == std::string::npos);
+                CHECK(line.find("address") == std::string::npos);
+            }
+        }
+    }
 }
 
 TEST_CASE("title menu: the kit's options as the launcher's variables") {
@@ -361,7 +401,7 @@ TEST_CASE("title menu: the kit's options as the launcher's variables") {
 TEST_CASE("title menu: the host's player count, 2 to 16, round the ends, read and written") {
     Menu m;
     m.Open(Options{}, Page::kSettings);
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < 2; ++i) {
         m.Press(Input::kDown);
     }
     REQUIRE(m.view().rows[m.selected()].label == "Players when you host");

@@ -73,6 +73,7 @@ struct Options {
     bool debug_panel = false;      // LICHII_COOP_DEBUG_PANEL
     bool cheats = false;           // LICHII_COOP_CHEATS
     int max_players = 4;           // max_players (the host's: 2 to kMaxPlayers)
+    bool voice = true;             // LICHII_COOP_VOICE (off: no voice chat)
 
     // From the two files' texts (a missing file: "").
     static Options Read(std::string_view coop_ini, std::string_view options_ini);
@@ -121,6 +122,21 @@ JoinTarget ReadJoin(std::string_view typed, const CodeResult& code);
 // Whether `typed` is shaped as a server address ("host" or "host:port", as
 // coop-ini.ps1 Test-CoopServer).
 bool AddressOk(std::string_view typed);
+
+// What Host or Join is doing, in plain words for the dialog (hos_coop_host.h's
+// HOS_COOP_* state and HOS_COOP_PROBLEM_* problem): nothing about ports,
+// addresses or passwords; what to do when it did not work.
+struct HostView {
+    bool host = false;      // hosting (else joining)
+    int state = 0;          // HOS_COOP_*
+    int problem = 0;        // HOS_COOP_PROBLEM_*
+    int players = 0;
+    bool invite_done = false;
+    std::string invite;     // the code (host)
+    std::string answer;     // the ANSWER CODE (guest, when the host could not be reached)
+    bool copied = false;    // the code is on the clipboard
+};
+std::vector<std::string> PlainStatus(const HostView& v);
 
 // ---------------------------------------------------------------------------
 // The menu.
@@ -187,12 +203,14 @@ private:
     std::size_t RowCount() const;
     Sound Decide();
     Sound Change(int step);
+    Sound Leave(std::size_t main_row);
     void Go(Page page);
     std::string* EditedText();
 
     Page page_ = Page::kClosed;
     std::size_t selected_ = 0;
     bool editing_ = false;
+    bool direct_ = false;   // opened on a page by the title's own row: Back and Cancel close it
     Options options_;
     Options saved_;   // what the files hold: Back on Settings goes back to it
     std::string join_;

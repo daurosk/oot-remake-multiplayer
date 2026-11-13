@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_title_menu.h"
 
+#include "hos_coop_host.h"
+
 #include <algorithm>
 #include <cctype>
 #include <utility>
@@ -142,25 +144,11 @@ bool On(const std::optional<std::string>& v) {
 }
 
 // The Settings page's rows, in order.
-enum SettingsRow : std::size_t {
-    kName,
-    kColour,
-    kTunics,
-    kHud,
-    kChatKey,
-    kShowPlayers,
-    kPvp,
-    kMaxPlayersRow,
-    kUpnp,
-    kPassword,
-    kDebugPanel,
-    kCheats,
-    kSave,
-    kSettingsBack,
-    kSettingsRows
-};
+// Co-op Settings shows only what a player needs (Caleb: hosting as simple as a child can do it); the other
+// settings stay in the files as they are.
+enum SettingsRow : std::size_t { kName, kColour, kMaxPlayersRow, kVoice, kSave, kSettingsBack, kSettingsRows };
 enum MainRow : std::size_t { kHost, kJoin, kSettings, kMainBack, kMainRows };
-enum JoinRow : std::size_t { kField, kPasteRow, kJoinNow, kJoinBack, kJoinRows };
+enum JoinRow : std::size_t { kField, kJoinNow, kJoinBack, kJoinRows };
 
 const char* OnOff(bool on) {
     return on ? "On" : "Off";
@@ -305,6 +293,7 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     }
     o.debug_panel = On(IniGet(options_ini, "LICHII_COOP_DEBUG_PANEL"));
     o.cheats = On(IniGet(options_ini, "LICHII_COOP_CHEATS"));
+    o.voice = !Off(IniGet(options_ini, "LICHII_COOP_VOICE"));
     if (const auto v = IniGet(options_ini, "max_players"); v && !v->empty() && v->size() <= 2 &&
         std::all_of(v->begin(), v->end(), [](char c) { return c >= '0' && c <= '9'; })) {
         o.max_players = std::clamp(std::stoi(*v), kMinPlayers, kMaxPlayers);
@@ -325,6 +314,7 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     o = password.empty() ? IniUnset(o, "server_password") : IniSet(o, "server_password", password, true);
     o = debug_panel ? IniSet(o, "LICHII_COOP_DEBUG_PANEL", "1", false) : IniUnset(o, "LICHII_COOP_DEBUG_PANEL");
     o = cheats ? IniSet(o, "LICHII_COOP_CHEATS", "1", false) : IniUnset(o, "LICHII_COOP_CHEATS");
+    o = voice ? IniUnset(o, "LICHII_COOP_VOICE") : IniSet(o, "LICHII_COOP_VOICE", "off", false);
     o = IniSet(o, "max_players", std::to_string(std::clamp(max_players, kMinPlayers, kMaxPlayers)), true);
     options_ini = std::move(o);
 }
@@ -338,6 +328,7 @@ std::vector<std::pair<std::string, std::string>> Options::Environment() const {
         {"LICHII_COOP_SHOW_PLAYERS", show_players ? "1" : ""},
         {"LICHII_COOP_DEBUG_PANEL", debug_panel ? "1" : ""},
         {"LICHII_COOP_CHEATS", cheats ? "1" : ""},
+        {"LICHII_COOP_VOICE", voice ? "" : "off"},
     };
 }
 
@@ -426,12 +417,78 @@ JoinTarget ReadJoin(std::string_view typed, const CodeResult& code) {
     return std::string("That is not an invite code or a server address.");
 }
 
+std::vector<std::string> PlainStatus(const HostView& v) {
+    std::vector<std::string> out;
+    switch (v.problem) {
+    case HOS_COOP_PROBLEM_BAD_CODE:
+    case HOS_COOP_PROBLEM_NO_TARGET:
+        return {"That code is not right.", "Ask your friend to copy their code again and send it to you."};
+    case HOS_COOP_PROBLEM_PORT_TAKEN:
+    case HOS_COOP_PROBLEM_ALREADY_RUNNING:
+        return {"Another co-op window is already open on this PC.", "Close it (or restart the PC), then press Host again."};
+    case HOS_COOP_PROBLEM_HELPER_PORT_TAKEN:
+        return {"Another co-op window is already open on this PC.", "Close it (or restart the PC), then press Join again."};
+    case HOS_COOP_PROBLEM_NETWORK:
+    case HOS_COOP_PROBLEM_CLIENT_FAILED:
+    case HOS_COOP_PROBLEM_INTERNAL:
+        return {"Co-op could not start.", "Check that this PC is online, then try again. If it keeps failing, restart the game."};
+    case HOS_COOP_PROBLEM_BAD_NAME:
+        return {"Your name is too long.", "Pick a shorter one in Co-op Settings."};
+    default:
+        break;
+    }
+    if (v.host) {
+        switch (v.state) {
+        case HOS_COOP_STARTING:
+            return {"Starting..."};
+        case HOS_COOP_HOSTING:
+            if (!v.invite.empty()) {
+                out = {"Send this code to your friends:", v.invite};
+                out.push_back(v.copied ? "It is copied: paste it into your chat with them (Ctrl+V)."
+                                       : "Press \"Copy the code again\", then paste it into your chat with them.");
+                out.push_back(v.players <= 1 ? "Waiting for your friends to join..."
+                                             : std::to_string(v.players - 1) + " friend(s) joined.");
+            } else if (!v.invite_done) {
+                out = {"Making your code..."};
+            } else {
+                out = {"No code could be made: your internet connection blocks it.",
+                       "Friends on the same home network or VPN can still join."};
+            }
+            if (v.problem == HOS_COOP_PROBLEM_UPNP_REFUSED || v.problem == HOS_COOP_PROBLEM_SYMMETRIC_NAT) {
+                out.push_back("Your router may block friends: if they cannot join, turn on UPnP in the router's settings.");
+            }
+            return out;
+        case HOS_COOP_FAILED:
+            return {"Hosting did not start.", "Check that this PC is online, then press Host again."};
+        default:
+            return {};
+        }
+    }
+    switch (v.state) {
+    case HOS_COOP_STARTING:
+    case HOS_COOP_JOINING:
+        return {"Joining your friend..."};
+    case HOS_COOP_WAIT_HOST:
+        return {"Your friend's router blocks the way in.", "Send your friend this answer code; they paste it into their game:",
+                v.answer, "Or ask them to turn on UPnP in their router's settings and host again."};
+    case HOS_COOP_CONNECTED:
+        return {"Connected! Choose your file and play."};
+    case HOS_COOP_FAILED:
+        return {"Your friend could not be reached.",
+                "Check that they are hosting right now and that the code is their newest one."};
+    default:
+        return {};
+    }
+}
+
 // ---------------------------------------------------------------------------
 
 void Menu::Open(const Options& options, Page page) {
     options_ = saved_ = options;
     status_.clear();
     request_.reset();
+    direct_ = page != Page::kMain && page != Page::kClosed;
+    join_.clear();   // (a code from an earlier try: the player pastes the newest)
     Go(page == Page::kClosed ? Page::kMain : page);
 }
 
@@ -469,9 +526,9 @@ std::size_t Menu::RowCount() const {
     case Page::kSettings:
         return kSettingsRows;
     case Page::kHosting:
-        return 2;   // Copy the invite code, Close
+        return 2;   // OK, Copy the code again
     case Page::kJoining:
-        return 1;   // Close
+        return 1;   // OK
     case Page::kClosed:
         break;
     }
@@ -483,7 +540,7 @@ std::string* Menu::EditedText() {
         return &join_;
     }
     if (page_ == Page::kSettings && editing_) {
-        return selected_ == kName ? &options_.name : selected_ == kPassword ? &options_.password : nullptr;
+        return selected_ == kName ? &options_.name : nullptr;
     }
     return nullptr;
 }
@@ -519,18 +576,8 @@ Sound Menu::Press(Input input) {
             editing_ = false;
             return Sound::kBack;
         }
-        if (page_ == Page::kSettings) {
-            options_ = saved_;
-            status_.clear();
-            Go(Page::kMain);
-            selected_ = kSettings;
-            return Sound::kBack;
-        }
-        if (page_ == Page::kJoin) {
-            status_.clear();
-            Go(Page::kMain);
-            selected_ = kJoin;
-            return Sound::kBack;
+        if (page_ == Page::kSettings || page_ == Page::kJoin) {
+            return Leave(page_ == Page::kSettings ? kSettings : kJoin);
         }
         Close();
         return Sound::kBack;
@@ -573,58 +620,43 @@ Sound Menu::Decide() {
         }
     case Page::kJoin:
         switch (selected_) {
-        case kField:
-            selected_ = kJoinNow;   // typing goes into the field from anywhere on this page
-            return Sound::kMove;
-        case kPasteRow:
+        case kField:   // A on the code: paste it
             request_ = Request{Request::Kind::kPaste, {}};
             return Sound::kDecide;
         case kJoinNow:
             if (Trim(join_).empty()) {
-                status_ = {"Paste or type the invite code your host sent you first."};
+                status_ = {"Paste your friend's code first: copy it from their message, then press A on it."};
                 return Sound::kRefuse;
             }
             status_ = {"Joining..."};
             request_ = Request{Request::Kind::kJoin, join_};
             return Sound::kStart;
         default:
-            status_.clear();
-            Go(Page::kMain);
-            selected_ = kJoin;
-            return Sound::kBack;
+            return Leave(kJoin);
         }
     case Page::kSettings:
         switch (selected_) {
         case kName:
-        case kPassword:
             editing_ = true;
             return Sound::kDecide;
-        case kSave:
+        case kSave: {
             if (!NameOk(options_.name)) {
                 status_ = {"Your name: 1 to 16 characters."};
                 return Sound::kRefuse;
             }
-            if (!options_.password.empty() && !PasswordOk(options_.password)) {
-                status_ = {"The join password: no spaces, at most 128 characters (or none: a new one each session)."};
-                return Sound::kRefuse;
-            }
             saved_ = options_;
             request_ = Request{Request::Kind::kSave, {}};
-            Go(Page::kMain);
-            selected_ = kSettings;
+            const Sound s = Leave(kSettings);
             status_ = {"Settings saved."};
-            return Sound::kDecide;
+            return s == Sound::kBack ? Sound::kDecide : s;
+        }
         case kSettingsBack:
-            options_ = saved_;
-            status_.clear();
-            Go(Page::kMain);
-            selected_ = kSettings;
-            return Sound::kBack;
+            return Leave(kSettings);
         default:
             return Change(1);
         }
     case Page::kHosting:
-        if (selected_ == 0) {
+        if (selected_ == 1) {
             request_ = Request{Request::Kind::kCopyInvite, {}};
             return Sound::kDecide;
         }
@@ -637,6 +669,19 @@ Sound Menu::Decide() {
         break;
     }
     return Sound::kNone;
+}
+
+// Back from Join or Settings: closed when the title's own row opened it, else the main page on that row.
+Sound Menu::Leave(std::size_t main_row) {
+    options_ = saved_;
+    status_.clear();
+    if (direct_) {
+        Close();
+        return Sound::kBack;
+    }
+    Go(Page::kMain);
+    selected_ = main_row;
+    return Sound::kBack;
 }
 
 Sound Menu::Change(int step) {
@@ -652,35 +697,14 @@ Sound Menu::Change(int step) {
     case kColour:
         cycle(Colours(), options_.colour);
         return Sound::kMove;
-    case kChatKey:
-        cycle(ChatKeys(), options_.chat_key);
-        return Sound::kMove;
-    case kTunics:
-        options_.tunics = !options_.tunics;
-        return Sound::kMove;
-    case kHud:
-        options_.hud = !options_.hud;
-        return Sound::kMove;
-    case kShowPlayers:
-        options_.show_players = !options_.show_players;
-        return Sound::kMove;
-    case kPvp:
-        options_.pvp = !options_.pvp;
+    case kVoice:
+        options_.voice = !options_.voice;
         return Sound::kMove;
     case kMaxPlayersRow: {
         const int span = kMaxPlayers - kMinPlayers + 1;
         options_.max_players = kMinPlayers + (options_.max_players - kMinPlayers + step % span + span) % span;
         return Sound::kMove;
     }
-    case kUpnp:
-        options_.upnp = !options_.upnp;
-        return Sound::kMove;
-    case kDebugPanel:
-        options_.debug_panel = !options_.debug_panel;
-        return Sound::kMove;
-    case kCheats:
-        options_.cheats = !options_.cheats;
-        return Sound::kMove;
     default:
         return Sound::kNone;
     }
@@ -696,9 +720,6 @@ bool Menu::Char(std::uint32_t cp) {
         return true;
     }
     if (t == &options_.name && CodePoints(*t) >= kMaxNameChars) {
-        return true;
-    }
-    if (t == &options_.password && (cp == ' ' || t->size() + add.size() > kMaxPasswordBytes)) {
         return true;
     }
     if (t == &join_ && t->size() >= 300) {
@@ -728,9 +749,6 @@ bool Menu::Paste(std::string_view text) {
         if (t == &options_.name && CodePoints(*t) >= kMaxNameChars) {
             break;
         }
-        if (t == &options_.password && (piece == " " || t->size() + n > kMaxPasswordBytes)) {
-            break;
-        }
         *t += piece;
         i += n;
     }
@@ -758,30 +776,19 @@ View Menu::view() const {
         v.hint = "A: choose    B: back";
         break;
     case Page::kJoin:
-        v.title = "Join a game";
-        add("Invite code", join_.empty() ? std::string("(paste it here)") : join_);
+        v.title = "Join";
+        add("Your friend's code", join_.empty() ? std::string("(press A to paste it)") : join_);
         v.rows.back().editing = true;
-        add("Paste from the clipboard");
-        add("Join");
-        add("Back");
-        v.hint = "X or Ctrl+V: paste    Y or Backspace: erase    B: back";
+        add("OK");
+        add("Cancel");
+        v.hint = "A on the code or Ctrl+V: paste    B: cancel";
         break;
     case Page::kSettings: {
-        v.title = "Multiplayer settings";
+        v.title = "Co-op Settings";
         add("Your name", options_.name);
         add("Your colour", options_.colour.empty() ? std::string("By player number") : options_.colour, true);
-        add("Other players' tunics", OnOff(options_.tunics), true);
-        add("Game-look HUD", OnOff(options_.hud), true);
-        add("Chat key", options_.chat_key, true);
-        add("Always show the players", OnOff(options_.show_players), true);
-        add("PvP when you host", OnOff(options_.pvp), true);
         add("Players when you host", std::to_string(options_.max_players), true);
-        add("Router port forward (UPnP)", OnOff(options_.upnp), true);
-        add("Join password when you host",
-            options_.password.empty() && !(editing_ && selected_ == kPassword) ? std::string("New each session")
-                                                                                 : options_.password);
-        add("Debug panel (F7)", OnOff(options_.debug_panel), true);
-        add("Item cheats (F8, debug)", OnOff(options_.cheats), true);
+        add("Voice chat", OnOff(options_.voice), true);
         add("Save");
         add("Back");
         if (editing_ && selected_ < v.rows.size()) {
@@ -791,14 +798,14 @@ View Menu::view() const {
         break;
     }
     case Page::kHosting:
-        v.title = "Hosting";
-        add("Copy the invite code");
-        add("Close");
+        v.title = "Host";
+        add("OK");
+        add("Copy the code again");
         v.hint = "A: choose    B: close";
         break;
     case Page::kJoining:
-        v.title = "Joining";
-        add("Close");
+        v.title = "Join";
+        add("OK");
         v.hint = "A or B: close";
         break;
     case Page::kClosed:

@@ -82,18 +82,16 @@ function Get-Download([string[]]$Urls, [string]$To, [string]$Sha256, [string]$Wh
     }
     Fail $why
 }
-function Expand-Zip([string]$Zip, [string]$To, [int]$Strip = 0) {
+# -Member: only that folder of the zip, its path left out; -Keep: files already there are not overwritten.
+function Expand-Zip([string]$Zip, [string]$To, [int]$Strip = 0, [string]$Member = '', [switch]$Keep) {
     New-Item -ItemType Directory -Force -Path $To | Out-Null
     $tarArgs = @('-x', '-f', $Zip, '-C', $To)
+    if ($Keep) { $tarArgs += '-k' }
+    if ($Member) { $Strip = @($Member -split '/').Count }
     if ($Strip) { $tarArgs += "--strip-components=$Strip" }
+    if ($Member) { $tarArgs += "$Member/" }
     & "$env:SystemRoot\System32\tar.exe" @tarArgs
     if ($LASTEXITCODE -ne 0) { Fail "Unpacking $(Split-Path -Leaf $Zip) failed (tar $LASTEXITCODE). Is the disk full?" }
-}
-# robocopy: /XC /XN /XO copies only the files the destination does not have yet.
-function Copy-Tree([string]$From, [string]$To, [switch]$OnlyNew) {
-    $extra = if ($OnlyNew) { @('/XC', '/XN', '/XO') } else { @() }
-    & robocopy $From $To /E /R:2 /W:1 /NFL /NDL /NJH /NJS /NP @extra | Out-Null
-    if ($LASTEXITCODE -ge 8) { Fail "Copying $From failed (robocopy $LASTEXITCODE)." }
 }
 
 # --- What this kit has ---------------------------------------------------------------------
@@ -180,31 +178,30 @@ if ($toolsReady) {
 
     Write-Host '  unpacking ...'
     $staging = "$tools.new"
-    $parts_root = "$tools.parts"
-    foreach ($d in $staging, $parts_root) { if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force } }
+    if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
     # The source: the archive's one top folder (longshot/) left out.
     Expand-Zip $sourceZip $staging 1
     if (-not (Test-Path -LiteralPath (Join-Path $staging 'nx2\make_game.py'))) { Fail "Longshot's source archive has no nx2\make_game.py." }
-    # Each tool as the builder's setup lays it out: <prefix> in the zip (or the whole zip) becomes tools\<folder>.
+    # Each tool as the builder's setup lays it out: <prefix> in the zip (or the whole zip) becomes tools\<folder>,
+    # unpacked straight there (no copy of the deep HookshotBuilder\tools\... paths, which pass 260 characters).
+    # Of third_party only the files the source lacks (the prebuilt .dll/.exe/.lib/.sha1), as Longshot's readme
+    # says: tar -k keeps the source's own. (No play profile: it is optional.)
     foreach ($p in $parts) {
-        $unz = Join-Path $parts_root $p.Name
-        Expand-Zip $p.File $unz
-        $from = if ($p.Prefix -eq '-') { $unz } else { Join-Path $unz ($p.Prefix -replace '/', '\') }
-        if (-not (Test-Path -LiteralPath $from)) { Fail "The $($p.Name) archive of $($toolsPin.release) has no $($p.Prefix) folder." }
-        # Whole folders a source archive does not have; of third_party only the files the source lacks
-        # (the prebuilt .dll/.exe/.lib/.sha1), as Longshot's readme says. (No play profile: it is optional.)
-        if ($p.Folder -eq 'third_party') { Copy-Tree $from (Join-Path $staging $p.Folder) -OnlyNew }
-        else { Copy-Tree $from (Join-Path $staging $p.Folder) }
+        $member = if ($p.Prefix -eq '-') { '' } else { $p.Prefix.TrimEnd('/') }
+        Expand-Zip $p.File (Join-Path $staging $p.Folder) -Member $member -Keep:($p.Folder -eq 'third_party')
+        if (-not (Get-ChildItem -LiteralPath (Join-Path $staging $p.Folder) -Force | Select-Object -First 1)) {
+            Fail "The $($p.Name) archive of $($toolsPin.release) has no $($p.Prefix) folder."
+        }
     }
-    Remove-Item -LiteralPath $parts_root -Recurse -Force
 
     Write-Host "  applying $($patches.Count) co-op patch(es) ..."
     # (--refresh keeps the originals of what the patches change: a later patch change refreshes only those)
     & (Join-Path $staging 'python\python.exe') -I -B (Join-Path $PSScriptRoot 'apply_patch.py') --refresh (Join-Path $staging '.coop-orig') $staging @($patches | ForEach-Object FullName)
     if ($LASTEXITCODE -ne 0) { Fail "The co-op patches do not apply to Longshot $($pin.commit). This kit is broken: tell the co-op testers." }
-    [System.IO.File]::WriteAllText((Join-Path $staging 'coop-tools.txt'), $stamp)
     if (Test-Path -LiteralPath $tools) { Remove-Item -LiteralPath $tools -Recurse -Force }
     Move-Item -LiteralPath $staging -Destination $tools
+    # (the stamp last: a move that stopped half way, a long path or a full disk, leaves no folder that looks ready)
+    [System.IO.File]::WriteAllText($toolsStamp, $stamp)
     Write-Host '  ready.'
 }
 

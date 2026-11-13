@@ -380,6 +380,13 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   // are told when one more player moved the automatic scaler.
   send(id, kChannelSession, difficulty());
   tell_difficulty_change(id);
+  // Mods: everyone else's list and the host's shared mod settings.
+  for (const auto& entry : connections_) {
+    if (entry.first != id && entry.second.state == State::joined && entry.second.mods) {
+      send(id, kChannelSession, *entry.second.mods);
+    }
+  }
+  if (mod_settings_) send(id, kChannelSession, *mod_settings_);
   send_snapshot(id);
   log("player " + std::to_string(c.number) + " joined: " + c.nickname);
 }
@@ -443,6 +450,10 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   }
   if (const auto* wish = std::get_if<Difficulty>(&message)) {
     on_difficulty(id, c, *wish);
+    return;
+  }
+  if (std::holds_alternative<ModList>(message) || std::holds_alternative<ModSettings>(message)) {
+    on_mods(id, c, message);
     return;
   }
   if (std::holds_alternative<PvpHit>(message)) {
@@ -604,6 +615,24 @@ void Session::tell_difficulty_change(ConnectionId except) {
   if (now.values == difficulty_told_) return;
   difficulty_told_ = now.values;
   send_to_others(except, kChannelSession, now);
+}
+
+// Mods (docs/protocol.md, "Mods"). A MOD_LIST is kept per player and passed
+// on; MOD_SETTINGS only from the host, kept for the joiners.
+void Session::on_mods(ConnectionId id, Connection& c, Message& message) {
+  if (std::holds_alternative<ModSettings>(message) && (!host_ || *host_ != id)) {
+    ++stats_.mod_settings_refused;
+    return;
+  }
+  set_sender(message, c.number);
+  if (const auto* list = std::get_if<ModList>(&message)) {
+    c.mods = *list;
+    log("player " + std::to_string(c.number) + " runs " + std::to_string(list->mods.size()) + " shared mods");
+  } else {
+    mod_settings_ = std::get<ModSettings>(message);
+  }
+  send_to_others(id, kChannelSession, message);
+  ++stats_.relayed;
 }
 
 // To the victim only, and only while PvP is on: a game with PvP off never
@@ -2105,6 +2134,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     difficulty_ = {};
     difficulty_set_by_ = 0;
     difficulty_told_ = {};
+    mod_settings_.reset();
     flags_.clear();
     objects_.clear();
     grass_.clear();

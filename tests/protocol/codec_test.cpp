@@ -2158,3 +2158,65 @@ TEST_CASE("platform counter: type 401, object samples channel, checked ticks (pl
   cut[kHeaderSize + 1 + 15 + 8] = 3;
   CHECK(decode(cut, back) == Error::truncated);
 }
+
+TEST_CASE("mod list: type 490, session channel, ids checked, relayed with the sender (modloader)") {
+  CHECK(static_cast<int>(MessageType::mod_list) == 490);
+  CHECK(channel_of(MessageType::mod_list) == kChannelSession);
+  CHECK(allowed_on_channel(MessageType::mod_list, kChannelSession));
+  CHECK_FALSE(allowed_on_channel(MessageType::mod_list, kChannelProgress));
+  CHECK(may_send(Sender::client, MessageType::mod_list));
+  CHECK(may_send(Sender::server, MessageType::mod_list));
+  ModList m;
+  m.player_number = 5;
+  m.mods.push_back({"oot-remake-rando", "1.2", {}});
+  m.mods[0].hash[15] = 0xEE;
+  const Bytes b = must_encode(Message{m});
+  // type, length; u8 player, u8 count, id (2 + 16), version (2 + 3), hash 16
+  CHECK(b.size() == 4 + 1 + 1 + 18 + 5 + 16);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == Message{m});
+  CHECK(sender_of(back) == std::optional<std::uint8_t>{5});
+  Bytes out;
+  const auto bad = [&](auto change) {
+    ModList c = m;
+    change(c);
+    return encode(c, out) == Error::bad_value;
+  };
+  CHECK(bad([](ModList& c) { c.mods[0].id.clear(); }));
+  CHECK(bad([](ModList& c) { c.mods[0].id = "Upper"; }));
+  CHECK(bad([](ModList& c) { c.mods[0].id = "-dash-first"; }));
+  CHECK(bad([](ModList& c) { c.mods[0].id = std::string(kMaxModIdChars + 1, 'a'); }));
+  CHECK(bad([](ModList& c) { c.mods.push_back(c.mods[0]); }));
+  CHECK(bad([](ModList& c) { c.mods.resize(kMaxModEntries + 1); }));
+  CHECK(bad([](ModList& c) { c.player_number = kMaxPlayers + 1; }));
+  CHECK(encode(ModList{0, {{"a.b_c-9", "", {}}}}, out) == Error::none);
+  Bytes cut = must_encode(Message{m});
+  cut[kHeaderSize + 1] = 2;  // two mods said, one there
+  CHECK(decode(cut, back) == Error::truncated);
+}
+
+TEST_CASE("mod settings: type 491, session channel, unique keys (modloader)") {
+  CHECK(static_cast<int>(MessageType::mod_settings) == 491);
+  CHECK(channel_of(MessageType::mod_settings) == kChannelSession);
+  CHECK(may_send(Sender::client, MessageType::mod_settings));
+  ModSettings m{1, {{"rando", "seed", "Z9"}, {"rando", "shuffle_chests", "1"}}};
+  const Bytes b = must_encode(Message{m});
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == Message{m});
+  Bytes out;
+  const auto bad = [&](auto change) {
+    ModSettings c = m;
+    change(c);
+    return encode(c, out) == Error::bad_value;
+  };
+  CHECK(bad([](ModSettings& c) { c.settings[1].key = "seed"; }));
+  CHECK(bad([](ModSettings& c) { c.settings[0].key = "Seed"; }));
+  CHECK(bad([](ModSettings& c) { c.settings[0].key.clear(); }));
+  CHECK(bad([](ModSettings& c) { c.settings[0].mod_id = "x y"; }));
+  CHECK(bad([](ModSettings& c) { c.settings.resize(kMaxModSettingEntries + 1, c.settings[0]); }));
+  ModSettings longer = m;
+  longer.settings[0].value = std::string(kMaxModSettingValueChars + 1, 'v');
+  CHECK(encode(longer, out) == Error::string_too_long);
+}

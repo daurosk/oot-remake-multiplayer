@@ -12,6 +12,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_dbno.cpp"
     "${_coop_hook}/coop_dbno_game.cpp"
     "${_coop_hook}/coop_pvp_game.cpp"
+    "${_coop_hook}/coop_mod_share.cpp"
     "${_coop_hook}/coop_scene_probe.cpp"
     "${_coop_hook}/coop_callers.cpp"
     "${_coop_hook}/coop_camera.cpp"

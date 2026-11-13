@@ -304,6 +304,7 @@ struct Stats {
   std::uint64_t dbno_revives_relayed = 0;
   std::uint64_t dbno_revives_dropped = 0;  // mode off, to nobody, or to themselves
   std::uint64_t difficulty_refused = 0;  // DIFFICULTY from a player who does not host
+  std::uint64_t mod_settings_refused = 0;  // MOD_SETTINGS from a player who does not host
   // Connections refused at connect: their address already had
   // max_half_open_per_address waiting for HELLO. Not packets, so not in
   // dropped().
@@ -492,6 +493,8 @@ class Session {
     std::optional<protocol::RejoinTokenBytes> rejoin_claim;
     std::uint8_t number = 0;  // 1 to max_players once joined
     std::string nickname;
+    // Its last MOD_LIST, with its number (docs/protocol.md, "Mods").
+    std::optional<protocol::ModList> mods;
     // The scene the player is in, from its latest OBJECT_PRESENT or
     // PLAYER_SAMPLE scene; empty while not known.
     std::string scene;
@@ -605,6 +608,7 @@ class Session {
   // but `except` (the joiner, told already; the leaver). Nothing when the
   // values in force are the ones told before, as with the host's own choice.
   void tell_difficulty_change(ConnectionId except);
+  void on_mods(ConnectionId id, Connection& c, protocol::Message& message);
   void on_pvp_hit(ConnectionId id, Connection& c, protocol::Message& message);
   void on_dbno_mode(ConnectionId id, Connection& c, const protocol::DbnoMode& m);
   void on_dbno_revive(ConnectionId id, Connection& c, protocol::Message& message);
@@ -738,6 +742,10 @@ class Session {
   protocol::DifficultyChoice difficulty_;
   std::uint8_t difficulty_set_by_ = 0;
   protocol::DifficultyValues difficulty_told_;
+  // The host's last MOD_SETTINGS (docs/protocol.md, "Mods"): kept when the
+  // host leaves until the new host sends its own; forgotten when the session
+  // empties.
+  std::optional<protocol::ModSettings> mod_settings_;
   // Every shared flag value the host has sent, by key. Kept when
   // the host leaves; forgotten when the session empties.
   std::map<protocol::FlagKey, protocol::FlagEntry> flags_;

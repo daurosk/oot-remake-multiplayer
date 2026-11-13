@@ -1,7 +1,7 @@
 #pragma once
 
 // The player's items as flags in the game's flag store, and how co-op merges
-// them (docs/items.md). Caleb's rule: key items are given to everyone,
+// them (docs/items.md). Alex's rule: key items are given to everyone,
 // rupees and other non-key items stay with each player, bottles are given to
 // everyone but what is in them stays with each player.
 //

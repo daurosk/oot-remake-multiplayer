@@ -520,7 +520,7 @@ void Host() {
     h.name = o.name.c_str();
     h.password = nullptr;   // a new random one, inside the invite code: nobody types it
     h.port = 0;
-    h.upnp = 1;             // the router forward (Caleb: nothing to set up)
+    h.upnp = 1;             // the router forward (Alex: nothing to set up)
     h.invite = 1;
     h.pvp = o.pvp ? 1 : 0;
     h.max_players = static_cast<std::uint8_t>(o.max_players);

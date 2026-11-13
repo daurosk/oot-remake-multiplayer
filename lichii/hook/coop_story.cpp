@@ -46,7 +46,7 @@ namespace {
 //   Gerudo carpenters, the light prelude, the owl at Lake Hylia.
 //   Left out: minigames, the scarecrow, Gossip Stone fairies, where one
 //   player is (IsEntered, ArriveFrom), weather and age (Sequence_IsChildhood).
-// talk: a talk Caleb's play-test asked to be shared (2026-11-12): the Kokiri
+// talk: a talk Alex's play-test asked to be shared (2026-11-12): the Kokiri
 //   Shop keeper's first talk and her Deku Shield talk. Other talks stay each
 //   player's own.
 constexpr std::array kFlags = std::to_array<Flag>({
@@ -76,7 +76,7 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x19898d14u, Kind::world, "Npc_Hylia_Soldier_003_GateOpen"},
     {0x1c3ca514u, Kind::scene, "HavePlayedEvent.Dm_LakeHrl_0010"},
     {0x1db3a87eu, Kind::scene, "HavePlayedEvent.Dm_DeathMtTrail_0040"},
-    {0x22d6ff6fu, Kind::talk, "HaveTalked.Npc_Kokiri_001_Shop_Child"},  // Caleb's play-test 2026-11-12 (issue 173)
+    {0x22d6ff6fu, Kind::talk, "HaveTalked.Npc_Kokiri_001_Shop_Child"},  // Alex's play-test 2026-11-12 (issue 173)
     {0x249e026eu, Kind::scene, "HavePlayedEvent.Dm_GerudoValley_0000"},
     {0x26d2802cu, Kind::scene, "HavePlayedEvent.Dm_HrlCastle_0035"},
     {0x273a73e9u, Kind::scene, "HavePlayedEvent.Dm_DeathMtTrail_0010"},
@@ -141,7 +141,7 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x712fffd5u, Kind::scene, "HavePlayedEvent.Goto_SacredForest"},
     {0x71fb94e3u, Kind::scene, "HavePlayedEvent.Goto_ZoraDomain"},
     {0x7275f781u, Kind::scene, "HavePlayedEvent.Dm_DeathMtTrail_0027"},
-    {0x72984c4fu, Kind::scene, "HavePlayedEvent.Dm_Kokiri_0050"},  // Caleb's play-test 2026-11-12 (issue 173)
+    {0x72984c4fu, Kind::scene, "HavePlayedEvent.Dm_Kokiri_0050"},  // Alex's play-test 2026-11-12 (issue 173)
     {0x754f6228u, Kind::scene, "HavePlayedEvent.Meet_FourCarpenter_ClearEvent"},
     {0x75b6f007u, Kind::scene, "HavePlayedEvent.Dm_FairyFountain_Nayru"},
     {0x7607c748u, Kind::scene, "HavePlayedEvent.Dm_DesertColossus_0000"},
@@ -163,7 +163,7 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x89fc39f9u, Kind::scene, "HavePlayedEvent.Dm_MelodyGet_Sun_07"},
     {0x8ab78984u, Kind::scene, "HavePlayedEvent.Dm_Goron_0000"},
     {0x8b591e04u, Kind::scene, "HavePlayedEvent.Goto_KakarikoWells"},
-    {0x8bb76427u, Kind::scene, "HavePlayedEvent.Dm_Kokiri_0045"},  // Caleb's play-test 2026-11-12 (issue 173)
+    {0x8bb76427u, Kind::scene, "HavePlayedEvent.Dm_Kokiri_0045"},  // Alex's play-test 2026-11-12 (issue 173)
     {0x8c9a392fu, Kind::scene, "HavePlayedEvent.Dm_HrlField_0080"},
     {0x8e15ffd6u, Kind::scene, "HavePlayedEvent.Dm_HrlCastle_0060"},
     {0x8f02a43bu, Kind::scene, "HavePlayedEvent.Dm_Kokiri_0162"},
@@ -173,8 +173,8 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x98bf10c1u, Kind::scene, "HavePlayedEvent.HyruleField_Goto_HyruleCastle_Kaepora"},
     {0x992fb436u, Kind::owl, "HaveTalked_Special.Npc_Kaepora_DeathMountainTrail_Talk_Event2"},
     {0x9a400d41u, Kind::scene, "HavePlayedEvent.Dm_ZoraRiver_0005"},
-    {0x9a60a460u, Kind::world, "KokiriForest_Meet_DekuTree_OpenDekuTreeMouth"},  // Caleb's play-test 2026-11-12 (issue 173)
-    {0x9b1b27d2u, Kind::world, "KokiriForest_LinkHouseDoor_Open"},  // Caleb's play-test 2026-11-12 (issue 173)
+    {0x9a60a460u, Kind::world, "KokiriForest_Meet_DekuTree_OpenDekuTreeMouth"},  // Alex's play-test 2026-11-12 (issue 173)
+    {0x9b1b27d2u, Kind::world, "KokiriForest_LinkHouseDoor_Open"},  // Alex's play-test 2026-11-12 (issue 173)
     {0x9cc98b79u, Kind::scene, "HavePlayedEvent.Dm_HrlField_0050"},
     {0x9dae4eb7u, Kind::scene, "HavePlayedEvent.SageOfFire_CityIn"},
     {0x9dfb0473u, Kind::scene, "HavePlayedEvent.Dm_HrlCastle_0045"},
@@ -211,7 +211,7 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xbd081d54u, Kind::scene, "HavePlayedEvent.Dm_LostWood_0030"},
     {0xbee7359bu, Kind::scene, "HavePlayedEvent.Dm_HrlField_0030"},
     {0xbf9dfc7eu, Kind::scene, "HavePlayedEvent.Dm_Zora_0010"},
-    {0xbfc69399u, Kind::talk, "HaveTalked_Npc_Kokiri_001_Shop_Child_PresentDekuShield"},  // Caleb's play-test 2026-11-12 (issue 173)
+    {0xbfc69399u, Kind::talk, "HaveTalked_Npc_Kokiri_001_Shop_Child_PresentDekuShield"},  // Alex's play-test 2026-11-12 (issue 173)
     {0xc06dceb8u, Kind::scene, "HavePlayedEvent.Dm_Zora_0000"},
     {0xc2f17358u, Kind::scene, "HavePlayedEvent.Get_StoneOfWater_Complete"},
     {0xc3cc0e0eu, Kind::scene, "HavePlayedEvent.Dm_Gerudo_0020"},

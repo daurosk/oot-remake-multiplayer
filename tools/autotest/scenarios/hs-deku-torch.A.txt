@@ -11,7 +11,7 @@
 #   started the event ...CandleAndSpiderWeb in this scene", "starting the event ... here"; shot lit: the torch
 #   lit in both; shot web: the web burning or gone in both.
 # deku-torch's own notes follow.
-# deku-torch (deku-dungeon-2, #176 #177; Caleb 2026-11-12: "The torch that burns cobwebs not synced").
+# deku-torch (deku-dungeon-2, #176 #177; dauro 2026-11-12: "The torch that burns cobwebs not synced").
 # InsideTheDekuTree room E: plate Obj_StepSwitch_A_05 ee4b6c88b0990d60 at -10.2 79.4 -9.0, switch torch
 # Obj_SwitchCandleStick_A_02 0c29e0a5d05f4426 at -12.9 79.4 -10.5, web Obj_InsideTheDekuTree_SpiderWeb_A_02
 # 0181f8a8ef2fd1d3 at -11.4 79.4 -11.0, the event's asker (…_Gimmick_CandleAndSpiderWeb) at -10.0 82.5 -9.5.

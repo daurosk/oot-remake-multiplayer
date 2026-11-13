@@ -365,7 +365,7 @@ TEST_CASE("live events: the start watch looks for a while after an event starts,
 }
 
 TEST_CASE("live events: another player's start is offered at once near its place, our own never again") {
-    // Issue 176 / Caleb's play-test: the timed platforms came in B only after A's
+    // Issue 176 / dauro's play-test: the timed platforms came in B only after A's
     // cutscene ended (the played flag comes then). The start now comes first.
     CoopLiveEvents::Decider d;
     d.Started(kPlatform, kDeku);

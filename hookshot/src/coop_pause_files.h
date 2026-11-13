@@ -30,7 +30,8 @@ bool WriteText(const std::filesystem::path& p, const std::string& text);
 
 // The kit this game belongs to: OOT_COOP_KIT, the first line of coop-kit.txt
 // beside hookshot.exe, or the nearest folder above the game that has
-// server\coop_server.exe and start-server.cmd (the kit's hookshot\game\).
+// server\coop_server.exe and start-server.cmd (the kit's hookshot\game\). On Linux:
+// server/coop_server and coop-options.ini (the Linux kit's data/, its game in data/game/).
 std::optional<std::filesystem::path> FindKit();
 // coop.ini beside hookshot.exe.
 std::filesystem::path CoopIni();

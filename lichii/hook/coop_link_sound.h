@@ -54,7 +54,8 @@ inline constexpr std::uint64_t kResourceAccessor = 0x18;
 // Room in the puppet's block (CoopPuppet::block). The Ocarina notes' asset and
 // text cells (coop_puppet_sound.h) are shared: the two never run at once.
 namespace block {
-inline constexpr std::uint64_t kHandle = 0x6f8;  // 8 bytes, after the notes' text
+inline constexpr std::uint64_t kHandle = 0x6f8;  // kHandleSlots handles of 8 bytes, after the notes' text
+inline constexpr std::size_t kHandleSlots = 8;   // sounds that may still play per puppet
 }  // namespace block
 
 // Limits (one place, so the tests and docs/puppet.md say the same).
@@ -65,6 +66,7 @@ inline constexpr std::uint32_t kSendPerSecond = 20;    // per player sent
 inline constexpr float kHearDistance = 30.0f;          // game units (about metres)
 inline constexpr std::size_t kHeardMax = 6;            // waiting per player; the oldest goes
 inline constexpr std::uint64_t kHeardStaleMs = 400;    // older than this when it could play: dropped
+inline constexpr std::uint64_t kLongestMs = 3000;      // a started sound is stopped after this (loops)
 inline constexpr std::uint32_t kPlayPerSecond = 24;    // started per second, all puppets together
 
 // --- Sending ------------------------------------------------------------------
@@ -144,7 +146,15 @@ private:
 
 // One puppet's player: the search/emit steps and the assets found so far.
 struct Player {
-    enum class Step : std::uint8_t { none, search, emit };
+    enum class Step : std::uint8_t { none, search, emit, kill };
+    // A sound started on the puppet: its handle cell is block::kHandle + 8 * slot.
+    // The sender's loop end is not sent, so a looped asset (spin charge, swim)
+    // is stopped by the game's own handle kill after kLongestMs, or when the
+    // same name starts again; a one-shot has ended by then (the kill does nothing).
+    struct Started {
+        std::string name;  // empty: the slot is free
+        std::uint64_t at_ms = 0;
+    };
     std::uint64_t actor = 0;   // the puppet; a new one forgets the assets
     std::uint64_t user = 0;    // its sound user the assets belong to
     Step pending = Step::none;
@@ -153,6 +163,8 @@ struct Player {
     std::map<std::string, std::uint64_t, std::less<>> assets;  // 0: not in its user
     Heard heard;
     bool missing_said = false;
+    std::array<Started, block::kHandleSlots> started{};
+    std::size_t killing = 0;   // the slot of the kill call made
 };
 
 using Say = std::function<void(const std::string&)>;
@@ -165,6 +177,8 @@ std::optional<CoopPuppet::Call> Next(Player& player, Budget& budget, CoopPuppet:
                                      std::uint64_t user, std::uint64_t block, std::uint64_t now_ms,
                                      const std::function<std::string()>& playing,
                                      const std::string& who, const Say& say, bool debug);
+// The call Next gave was not made (the cave's limit): the sound is lost, the next one goes.
+void Dropped(Player& player);
 // The result (x0) of the call Next gave.
 void Finish(Player& player, std::uint64_t result, CoopPuppet::Guest& guest, std::uint64_t block,
             const std::string& who, const Say& say, bool debug);

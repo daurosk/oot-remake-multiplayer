@@ -262,12 +262,19 @@ TEST_CASE("link sound: a puppet looks the asset up once, then starts it with the
     CHECK(g.Get<std::uint32_t>(kBlock + block::kHandle) == 0xffff00ffu);
     Finish(p, 1, g, kBlock, "P2", say, true);
     CHECK_FALSE(Next(p, b, g, kMain, kActor, kUser, kBlock, 1002, none, "P2", say, true));
-    // 3. the same name again: no search, the asset kept
+    // 3. the same name again: no search, the asset kept; the one still in its
+    // handle is stopped first with the game's kill (a loop never stacks)
     g.Put<std::uint64_t>(kBlock + CoopPuppetSound::block::kAsset, 0);
     p.heard.Push("Pl_Voice_Attack_00", 2000);
     c = Next(p, b, g, kMain, kActor, kUser, kBlock, 2000, none, "P2", say, true);
     REQUIRE(c);
+    CHECK(c->function == kMain + CoopPuppetSound::addr::kKill);
+    CHECK(c->x[0] == kBlock + block::kHandle);
+    Finish(p, 0, g, kBlock, "P2", say, true);
+    c = Next(p, b, g, kMain, kActor, kUser, kBlock, 2000, none, "P2", say, true);
+    REQUIRE(c);
     CHECK(c->function == kMain + addr::kEmit);
+    CHECK(c->x[2] == kBlock + block::kHandle);
     CHECK(g.Get<std::uint64_t>(kBlock + CoopPuppetSound::block::kAsset) == 0xa55e7);
     Finish(p, 1, g, kBlock, "P2", say, true);
     CHECK(said == std::vector<std::string>{"P2 sound 'Pl_Voice_Attack_00'", "P2 sound 'Pl_Voice_Attack_00'"});
@@ -327,4 +334,84 @@ TEST_CASE("link sound: past the budget a sound waits for a later frame, its age 
     CHECK(p.heard.Size() == 1);
     CHECK(Next(p, b, g, kMain, kActor, kUser, kBlock, 2000, none, "P2", say, false) == std::nullopt);  // stale by then
     CHECK(p.heard.Empty());
+}
+
+TEST_CASE("link sound: a short name at the end of a mapped page is read") {
+    Clean clean;
+    FakeGuest g;
+    constexpr std::uint64_t kEnd = 0x23000 + 0x1000 - 7;  // "Pl_Run" + 0 fills the page's last 7 bytes
+    g.Put<std::uint64_t>(kCell, kAsset);
+    g.Put<std::uint64_t>(kAsset, kEnd);
+    g.PutText(kEnd, "Pl_Run");
+    SetOurUser(kOurUser);
+    CHECK(OnEmit(kOurUser, kCell, g.AsRead()));
+    CHECK(TakeCaught() == std::vector<std::string>{"Pl_Run"});
+}
+
+TEST_CASE("link sound: each started sound has its own handle; full, the oldest is stopped first") {
+    FakeGuest g = Puppet();
+    Player p;
+    Budget b;
+    const auto say = [](const std::string&) {};
+    const auto none = [] { return std::string(); };
+    p.actor = kActor;
+    p.user = kUser;
+    for (std::size_t i = 0; i < block::kHandleSlots; ++i) {
+        const std::string name = "Pl_S" + std::to_string(i);
+        p.assets[name] = 0x100 + i;
+        p.heard.Push(name, 1000 + i);
+        auto c = Next(p, b, g, kMain, kActor, kUser, kBlock, 1000 + i, none, "P2", say, false);
+        REQUIRE(c);
+        CHECK(c->function == kMain + addr::kEmit);
+        CHECK(c->x[2] == kBlock + block::kHandle + 8 * i);
+        Finish(p, 1, g, kBlock, "P2", say, false);
+    }
+    p.assets["Pl_New"] = 0x200;
+    p.heard.Push("Pl_New", 1100);
+    auto c = Next(p, b, g, kMain, kActor, kUser, kBlock, 1100, none, "P2", say, false);
+    REQUIRE(c);
+    CHECK(c->function == kMain + CoopPuppetSound::addr::kKill);
+    CHECK(c->x[0] == kBlock + block::kHandle);  // Pl_S0, the oldest
+    Finish(p, 0, g, kBlock, "P2", say, false);
+    c = Next(p, b, g, kMain, kActor, kUser, kBlock, 1100, none, "P2", say, false);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kEmit);
+    CHECK(c->x[2] == kBlock + block::kHandle);
+    Finish(p, 1, g, kBlock, "P2", say, false);
+    // kLongestMs after Pl_S1 started, it is stopped with nothing heard
+    c = Next(p, b, g, kMain, kActor, kUser, kBlock, 1001 + kLongestMs, none, "P2", say, false);
+    REQUIRE(c);
+    CHECK(c->function == kMain + CoopPuppetSound::addr::kKill);
+    CHECK(c->x[0] == kBlock + block::kHandle + 8);
+    Finish(p, 0, g, kBlock, "P2", say, false);
+    CHECK(p.started[1].name.empty());
+}
+
+TEST_CASE("link sound: a call not made is never left waiting") {
+    FakeGuest g = Puppet();
+    Player p;
+    Budget b;
+    const auto say = [](const std::string&) {};
+    const auto none = [] { return std::string(); };
+    p.actor = kActor;
+    p.user = kUser;
+    p.heard.Push("Pl_Voice_Attack_00", 1000);
+    REQUIRE(Next(p, b, g, kMain, kActor, kUser, kBlock, 1000, none, "P2", say, false));  // the search
+    Dropped(p);  // the cave did not make it: that sound is lost
+    CHECK(p.pending == Player::Step::none);
+    CHECK_FALSE(p.found);
+    p.heard.Push("Pl_Voice_Damage_00", 1010);
+    auto c = Next(p, b, g, kMain, kActor, kUser, kBlock, 1010, none, "P2", say, false);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kSearchAsset);
+    // A kill not made is asked again: its slot stays taken until the kill runs.
+    p.pending = Player::Step::none;
+    p.started[0] = {"Pl_Loop", 0};
+    c = Next(p, b, g, kMain, kActor, kUser, kBlock, kLongestMs, none, "P2", say, false);
+    REQUIRE(c);
+    CHECK(c->function == kMain + CoopPuppetSound::addr::kKill);
+    Dropped(p);
+    c = Next(p, b, g, kMain, kActor, kUser, kBlock, kLongestMs + 10, none, "P2", say, false);
+    REQUIRE(c);
+    CHECK(c->function == kMain + CoopPuppetSound::addr::kKill);
 }

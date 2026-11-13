@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_link_sound.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <mutex>
@@ -15,7 +16,7 @@ namespace CoopLinkSound {
 static_assert(kNameMax == coop::protocol::kMaxLinkSoundChars);
 static_assert(CoopPuppetSound::block::kText + CoopPuppetSound::block::kTextCapacity == block::kHandle);
 static_assert(kNameMax + 1 == CoopPuppetSound::block::kTextCapacity);
-static_assert(block::kHandle + 8 <= CoopPuppet::block::kSize);
+static_assert(block::kHandle + 8 * block::kHandleSlots <= CoopPuppet::block::kSize);
 
 namespace {
 
@@ -62,20 +63,68 @@ void Drop(std::deque<std::uint64_t>& times, std::uint64_t now_ms) {
 }
 
 // The emit call for player.name with its asset.
+std::uint64_t HandleCell(std::uint64_t block, std::size_t slot) {
+    return block + block::kHandle + 8 * slot;
+}
+
+// The game's own handle kill on one started sound; its slot is free once it ran (Finish).
+CoopPuppet::Call Kill(Player& player, std::uint64_t main_base, std::uint64_t block, std::size_t slot) {
+    player.killing = slot;
+    CoopPuppet::Call c;
+    c.function = main_base + CoopPuppetSound::addr::kKill;
+    c.x[0] = HandleCell(block, slot);
+    player.pending = Player::Step::kill;
+    return c;
+}
+
+// A started sound older than kLongestMs, if any.
+std::optional<std::size_t> Expired(const Player& player, std::uint64_t now_ms) {
+    for (std::size_t i = 0; i < player.started.size(); ++i) {
+        const auto& s = player.started[i];
+        if (!s.name.empty() && now_ms >= s.at_ms && now_ms - s.at_ms >= kLongestMs) {
+            return i;
+        }
+    }
+    return std::nullopt;
+}
+
+// Where `name` starts: the slot that still plays it (stopped first), else a free
+// slot, else the oldest (stopped first). `kill` is set when the slot must be stopped.
+std::size_t SlotFor(const Player& player, std::string_view name, bool& kill) {
+    std::size_t free = player.started.size();
+    std::size_t oldest = 0;
+    for (std::size_t i = 0; i < player.started.size(); ++i) {
+        const auto& s = player.started[i];
+        if (s.name == name) {
+            kill = true;
+            return i;
+        }
+        if (s.name.empty()) {
+            free = std::min(free, i);
+        } else if (s.at_ms < player.started[oldest].at_ms || player.started[oldest].name.empty()) {
+            oldest = i;
+        }
+    }
+    kill = free == player.started.size();
+    return kill ? oldest : free;
+}
+
 std::optional<CoopPuppet::Call> Emit(Player& player, CoopPuppet::Guest& guest, std::uint64_t main_base,
                                      std::uint64_t user, std::uint64_t block, std::uint64_t asset,
+                                     std::size_t slot, std::uint64_t now_ms,
                                      const std::string& who, const Say& say, bool debug) {
     // The handle as the game's own node starts one: u8 0xff, u16 0xffff, u32 0.
     const std::array<std::uint8_t, 8> handle{0xff, 0, 0xff, 0xff, 0, 0, 0, 0};
     if (asset == 0 || !guest.Write(block + CoopPuppetSound::block::kAsset, &asset, sizeof asset) ||
-        !guest.Write(block + block::kHandle, handle.data(), handle.size())) {
+        !guest.Write(HandleCell(block, slot), handle.data(), handle.size())) {
         return std::nullopt;
     }
+    player.started[slot] = {player.name, now_ms};
     CoopPuppet::Call c;
     c.function = main_base + addr::kEmit;
     c.x[0] = user;
     c.x[1] = block + CoopPuppetSound::block::kAsset;
-    c.x[2] = block + block::kHandle;
+    c.x[2] = HandleCell(block, slot);
     c.x[3] = 0;
     player.pending = Player::Step::emit;
     if (debug) {
@@ -101,16 +150,23 @@ std::string NameAt(std::uint64_t asset_cell, const Read& read) {
         !read(asset, &text, sizeof text) || text == 0) {
         return {};
     }
-    std::array<char, kNameMax + 1> buffer{};
-    if (!read(text, buffer.data(), buffer.size())) {
-        return {};
-    }
+    // Up to each 8-byte boundary at a time, so no read passes a page end the
+    // name itself does not reach: a short name at the end of a mapped page is read.
     std::string name;
-    for (const char ch : buffer) {
-        if (ch == '\0') {
-            return coop::protocol::valid_link_sound_name(name) ? name : std::string();
+    std::uint64_t at = text;
+    while (name.size() <= kNameMax) {
+        std::array<char, 8> step{};
+        const std::size_t count = 8 - static_cast<std::size_t>(at % 8);
+        if (!read(at, step.data(), count)) {
+            return {};
         }
-        name += ch;
+        for (std::size_t i = 0; i < count; ++i) {
+            if (step[i] == '\0') {
+                return coop::protocol::valid_link_sound_name(name) ? name : std::string();
+            }
+            name += step[i];
+        }
+        at += count;
     }
     return {};  // longer than the protocol takes
 }
@@ -250,8 +306,15 @@ std::optional<CoopPuppet::Call> Next(Player& player, Budget& budget, CoopPuppet:
         player.assets.clear();
         player.missing_said = false;
         player.found = false;
+        player.started = {};  // the old puppet's sounds went with it
     }
-    if (main_base == 0 || actor == 0 || block == 0 || (player.heard.Empty() && !player.found)) {
+    if (main_base == 0 || actor == 0 || block == 0) {
+        return std::nullopt;
+    }
+    if (const auto old = Expired(player, now_ms)) {
+        return Kill(player, main_base, block, *old);  // not counted in the budget: it starts nothing
+    }
+    if (player.heard.Empty() && !player.found) {
         return std::nullopt;
     }
     if (user == 0) {
@@ -262,8 +325,15 @@ std::optional<CoopPuppet::Call> Next(Player& player, Budget& budget, CoopPuppet:
         }
         return std::nullopt;
     }
-    if (std::exchange(player.found, false)) {
-        return Emit(player, guest, main_base, user, block, player.assets[player.name], who, say, debug);
+    if (player.found) {
+        bool kill = false;
+        const std::size_t slot = SlotFor(player, player.name, kill);
+        if (kill) {
+            return Kill(player, main_base, block, slot);  // found stays: it emits next
+        }
+        player.found = false;
+        return Emit(player, guest, main_base, user, block, player.assets[player.name], slot, now_ms,
+                    who, say, debug);
     }
     std::optional<Sound> sound;
     while ((sound = player.heard.Pop(now_ms))) {
@@ -306,12 +376,29 @@ std::optional<CoopPuppet::Call> Next(Player& player, Budget& budget, CoopPuppet:
         player.pending = Player::Step::search;
         return c;
     }
-    return Emit(player, guest, main_base, user, block, known->second, who, say, debug);
+    bool kill = false;
+    const std::size_t slot = SlotFor(player, player.name, kill);
+    if (kill) {
+        player.found = true;  // the asset is known: it emits as the next call
+        return Kill(player, main_base, block, slot);
+    }
+    return Emit(player, guest, main_base, user, block, known->second, slot, now_ms, who, say, debug);
+}
+
+void Dropped(Player& player) {
+    // A kill not made is asked again (its slot is still taken); a search or emit
+    // not made loses that sound.
+    if (std::exchange(player.pending, Player::Step::none) != Player::Step::kill) {
+        player.found = false;
+    }
 }
 
 void Finish(Player& player, std::uint64_t result, CoopPuppet::Guest& guest, std::uint64_t block,
             const std::string& who, const Say& say, bool debug) {
     const auto done = std::exchange(player.pending, Player::Step::none);
+    if (done == Player::Step::kill && player.killing < player.started.size()) {
+        player.started[player.killing] = {};
+    }
     if (done != Player::Step::search) {
         return;
     }

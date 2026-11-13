@@ -1797,3 +1797,33 @@ TEST_CASE("puppet: up to 15 puppets (16 players) all get made, within the frame'
     }
     CHECK(coop::protocol::kMaxPlayers < 32);  // LiveMask: one bit per player number
 }
+
+TEST_CASE("puppet link sound: a sound call the cave did not make does not silence the puppet") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kXLink = kParts + 0x400;
+    constexpr std::uint64_t kUser = kParts + 0x800;
+    constexpr std::uint64_t kResource = kParts + 0xa00;
+    g.guest.Map(kParts, 0x1000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + CoopPuppetSound::addr::kPartsXLink, kXLink);
+    g.guest.Set(kXLink + CoopPuppetSound::addr::kXLinkSoundUser, kUser);
+    g.guest.Set(kUser + CoopLinkSound::addr::kUserResource, kResource);
+    g.guest.Set(kResource + CoopLinkSound::addr::kResourceAccessor, kParts + 0xc00);
+    Target t = At(1, 4, 5, 6);
+    t.sounds.push_back({"Pl_Voice_Attack_00", 100});
+    d.SetInput(Wants({t}));
+    auto first = d.Step(g.guest, false, 0, 100);
+    REQUIRE(first);
+    CHECK(first->function == kBase + CoopLinkSound::addr::kSearchAsset);
+    // The cave never made it (no result): the next frame undoes it, and the
+    // next sound is still looked up (the first is lost).
+    t.sounds = {{"Pl_Voice_Damage_00", 120}};
+    d.SetInput(Wants({t}));
+    auto again = d.Step(g.guest, false, 0, 120);
+    REQUIRE(again);
+    CHECK(again->function == kBase + CoopLinkSound::addr::kSearchAsset);
+    CHECK(d.Slots()[0].phase == Phase::live);
+}

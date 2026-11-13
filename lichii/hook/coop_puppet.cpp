@@ -210,6 +210,13 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
         } else {
             slot.phase = Phase::live;
         }
+        // A sound call not made: its step is asked again (note) or the sound is lost
+        // (link sound), never left waiting for a Finish that cannot come.
+        if (pending_ == Pending::sound) {
+            slot.sound.pending = CoopPuppetSound::State::Step::none;
+        } else if (pending_ == Pending::link_sound) {
+            CoopLinkSound::Dropped(slot.link_sound);
+        }
         pending_ = Pending::none;
     }
     {
@@ -223,6 +230,9 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
         for (auto& slot : slots_) {
             if (slot.number == t.number && !t.sounds.empty()) {
                 for (auto& s : t.sounds) {
+                    if (OcarinaSoundOn() && s.name.starts_with("Ocarina_")) {
+                        continue;  // the OCARINA_NOTE path plays the notes: not twice
+                    }
                     slot.link_sound.heard.Push(std::move(s.name), s.at_ms);
                 }
             }

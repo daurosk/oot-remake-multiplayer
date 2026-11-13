@@ -58,6 +58,7 @@ add_executable(coop_tests
   lichii/story_test.cpp
   lichii/quests_test.cpp
   lichii/pose_test.cpp
+  lichii/local_test.cpp
   lichii/world_test.cpp
   lichii/ocarina_test.cpp
   lichii/ocarina_sound_test.cpp

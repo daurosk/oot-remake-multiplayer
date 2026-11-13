@@ -447,6 +447,10 @@ Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hoo
 - **Hits go to their victim only, and only while PvP is on.** The server passes a `PVP_HIT` to the victim alone, with the attacker's number written in, and drops it while PvP is off (counted in `pvp_hits_dropped`), so a game with PvP off never gets one, whatever an attacker's game believes.
 - **The victim decides.** Its game takes the hit (or not, by the rules in play-online.md) and sends `PVP_HURT`, which the server relays to everyone else. A `PVP_HURT` naming its own sender as the attacker is dropped.
 
+### Local players (protocol 11)
+
+Types 460 to 469 are kept for split screen ([local-coop.md](local-coop.md)): several players of one game on one connection, each with a player number of their own. None is sent or accepted yet; the layouts are written here when the code is. The outline: the game asks for a number for each extra local player (seat, nickname, colour), the server answers with the number or a refusal (full, name taken) and tells the others with the usual `PLAYER_JOINED` and `PLAYER_LEFT`, and a message of an extra local player travels in an envelope naming its seat, so the server writes that player's number in the player field. The other games need nothing new.
+
 ## Later stages (outline only)
 
 - **Stage 3:** `PLAYER_STATUS` decides whether puppets show during cutscenes. `JOIN_PARTNER` (above) asks for a warp to another player's scene.

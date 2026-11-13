@@ -79,7 +79,9 @@ std::uint64_t Stats::dropped() const {
   return total;
 }
 
-Session::Session(SessionConfig config) : config_(std::move(config)), pvp_(config_.pvp) {}
+Session::Session(SessionConfig config) : config_(std::move(config)), pvp_(config_.pvp), dbno_(config_.dbno) {
+  dbno_.set_by = 0;
+}
 
 bool Session::connected(ConnectionId id, std::uint64_t now_us,
                         std::optional<std::uint32_t> address) {
@@ -371,6 +373,8 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   // PvP on: told at join, after HOST. Off is not told: every
   // game starts each connection with PvP off (docs/protocol.md, "PvP").
   if (pvp_) send(id, kChannelSession, PvpMode{pvp_set_by_, pvp_});
+  // Down but not out: told at join, on or off (a game starts with it off).
+  send(id, kChannelSession, dbno_);
   send_snapshot(id);
   log("player " + std::to_string(c.number) + " joined: " + c.nickname);
 }
@@ -435,6 +439,19 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   if (std::holds_alternative<PvpHit>(message)) {
     on_pvp_hit(id, c, message);
     return;
+  }
+  // Down but not out (docs/protocol.md): the host's rules, a revive to its
+  // downed player only, and each player's state kept for the owner rules.
+  if (const auto* mode = std::get_if<DbnoMode>(&message)) {
+    on_dbno_mode(id, c, *mode);
+    return;
+  }
+  if (std::holds_alternative<DbnoRevive>(message)) {
+    on_dbno_revive(id, c, message);
+    return;
+  }
+  if (const auto* st = std::get_if<DbnoStatus>(&message)) {
+    c.dbno = st->state;  // then relayed to everyone, below
   }
   // A PVP_HURT naming its own sender as the attacker is nobody's.
   if (std::holds_alternative<PvpHurt>(message) && !set_sender(message, c.number)) {
@@ -542,6 +559,43 @@ void Session::on_pvp_hit(ConnectionId id, Connection& c, Message& message) {
   }
   send(*target, kChannelOwnership, message);
   ++stats_.pvp_hits_relayed;
+  ++stats_.relayed;
+}
+
+// The host changes down but not out for everyone, as PVP_MODE.
+void Session::on_dbno_mode(ConnectionId id, Connection& c, const DbnoMode& m) {
+  if (!host_ || *host_ != id) {
+    ++stats_.dbno_mode_refused;
+    send(id, kChannelSession, dbno_);
+    return;
+  }
+  DbnoMode want = m;
+  want.set_by = dbno_.set_by;
+  if (want == dbno_) {
+    send(id, kChannelSession, dbno_);
+    return;
+  }
+  dbno_ = m;
+  dbno_.set_by = c.number;
+  send(id, kChannelSession, dbno_);
+  send_to_others(id, kChannelSession, dbno_);
+  log(std::string("down but not out ") + (dbno_.on ? "on" : "off") + " (bleed " +
+      std::to_string(dbno_.bleed_s) + " s, hold " + std::to_string(dbno_.revive_tenths) +
+      " tenths, " + std::to_string(dbno_.revive_life) + " quarter hearts) by player " +
+      std::to_string(c.number));
+}
+
+// To the downed player only, and only while the mode is on: that game
+// counts the hold and decides.
+void Session::on_dbno_revive(ConnectionId id, Connection& c, Message& message) {
+  const std::uint8_t target = std::get<DbnoRevive>(message).target;
+  const auto to = dbno_.on ? connection_of(target) : std::nullopt;
+  if (!to || *to == id || !set_sender(message, c.number)) {
+    ++stats_.dbno_revives_dropped;
+    return;
+  }
+  send(*to, kChannelOwnership, message);
+  ++stats_.dbno_revives_relayed;
   ++stats_.relayed;
 }
 
@@ -738,6 +792,12 @@ double metres(const Vec3& a, const Vec3& b) {
 std::uint64_t stamp(std::uint64_t now_us) { return std::max<std::uint64_t>(now_us, 1); }
 
 }  // namespace
+
+// Not to be given an object now: loading, paused, dead, or downed (down but
+// not out: an enemy chases only its owner's Link, so it goes to one still up).
+bool Session::busy(const Connection& c) {
+  return (c.status & kBusy) != 0 || c.dbno != DbnoState::up;
+}
 
 void Session::on_status(Connection& c, std::uint8_t flags, std::uint64_t now_us) {
   auto since = [&](std::uint8_t bit, std::uint64_t& when) {
@@ -1086,7 +1146,7 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
   if ((o.boss || root->boss) && config_.boss_hitter_cooldown_us != 0) {
     // A hit that takes life stays with the owner (gohma-sync): only a stun.
     if ((d.amount == 0 || config_.boss_hit_handover) && root->owner && *root->owner != id &&
-        !root->ask && !(c.status & kBusy) &&
+        !root->ask && !busy(c) &&
         has_loaded(id, *root) &&
         (root->changed_at == 0 || now_us - root->changed_at >= config_.boss_hitter_cooldown_us) &&
         !owner_hit_lately(*root, now_us) && !owner_hit_lately(o, now_us)) {
@@ -1096,7 +1156,7 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
     return;  // a boss is not moved by the distance rule below
   }
 
-  if (o.ask || o.root || o.projectile || o.fish || (c.status & kBusy) || !has_loaded(id, o)) return;
+  if (o.ask || o.root || o.projectile || o.fish || busy(c) || !has_loaded(id, o)) return;
   if (o.changed_at != 0 && now_us - o.changed_at < config_.handover_cooldown_us) return;
   auto owner = connections_.find(*o.owner);
   if (owner == connections_.end()) return;
@@ -1346,6 +1406,9 @@ std::optional<double> Session::distance_to(const Connection& c, const Object& o,
 
 bool Session::unfit_owner(const Connection& c, std::uint64_t now_us) const {
   if (c.status & status::loading) return true;
+  // Downed (or out): its enemies go to a player still up, whose game's AI
+  // then chases that player's Link (an enemy chases only its owner's Link).
+  if (c.dbno != DbnoState::up) return true;
   if (c.paused_since != 0 && now_us - c.paused_since >= config_.owner_paused_us) return true;
   return c.dead_since != 0 && now_us - c.dead_since >= config_.owner_dead_us;
 }
@@ -1359,7 +1422,7 @@ std::optional<ConnectionId> Session::best_other(const Object& o,
   for (ConnectionId other : o.present) {
     if (other == except || !has_loaded(other, o)) continue;
     const Connection& oc = connections_.at(other);
-    if (fit_only && (oc.status & kBusy)) continue;
+    if (fit_only && busy(oc)) continue;
     const auto d = distance_to(oc, o, now_us);
     bool better = !best;
     if (best) {
@@ -1520,7 +1583,7 @@ void Session::fish_owner(const ObjectId& oid, Object& o, ConnectionId owner, boo
   for (ConnectionId other : o.present) {
     if (other == owner || !has_loaded(other, o)) continue;
     const Connection& pc = connections_.at(other);
-    if (pc.status & kBusy) continue;
+    if (busy(pc)) continue;
     const auto theirs = claim(other);
     if (!theirs) continue;
     if (mine) {
@@ -1632,7 +1695,7 @@ void Session::run_ownership(std::uint64_t now_us) {
         for (ConnectionId other : o.present) {
           if (other == owner || !has_loaded(other, o)) continue;
           const Connection& pc = connections_.at(other);
-          if (pc.status & kBusy) continue;
+          if (busy(pc)) continue;
           const auto mine = distance_to(pc, o, now_us);
           if (!mine || *mine > config_.boss_near_m ||
               *mine + config_.boss_near_margin_m > *theirs) {
@@ -1684,7 +1747,7 @@ void Session::run_ownership(std::uint64_t now_us) {
       for (ConnectionId other : o.present) {
         if (other == owner || !has_loaded(other, o)) continue;
         const Connection& pc = connections_.at(other);
-        if (pc.status & kBusy) continue;
+        if (busy(pc)) continue;
         const auto mine = distance_to(pc, o, now_us);
         if (!mine || *mine > config_.handover_near_m ||
             *mine + config_.handover_margin_m > *theirs) {
@@ -1723,7 +1786,7 @@ std::optional<ConnectionId> Session::chased_by(const Object& o, ConnectionId own
       if (other == owner || !has_loaded(other, o)) continue;
       if (now_us < since || now_us - since < config_.handover_chased_us) continue;
       const Connection& pc = connections_.at(other);
-      if (pc.status & kBusy) continue;
+      if (busy(pc)) continue;
       // The longest chase first, then the lower player number.
       if (!best || since < best_since || (since == best_since && pc.number < best_number)) {
         best = other;
@@ -1932,6 +1995,8 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     host_.reset();
     pvp_ = config_.pvp;
     pvp_set_by_ = 0;
+    dbno_ = config_.dbno;
+    dbno_.set_by = 0;
     flags_.clear();
     objects_.clear();
     grass_.clear();

@@ -42,6 +42,7 @@
 #include "coop_counters.h"
 #include "coop_actor_events.h"
 #include "coop_boss_native.h"
+#include "coop_dbno_game.h"
 #include "coop_enemy_shots.h"
 #include "coop_hook.h"
 #include "coop_hud.h"
@@ -568,6 +569,7 @@ CoopDraw::Scene DrawScene() {
     }
     s.chat = CoopDraw::ShownChat(CoopHook::ChatLines(), s.box.has_value());
     s.markers = CoopHook::CurrentMarkers();
+    s.dbno = CoopDbno::Shown();  // down but not out: the ring
     bool list = false, panel = false;
     {
         std::lock_guard lock(g_keys_mutex);
@@ -934,6 +936,16 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
             LOG_INFO(Core, "coop: actors: the game's Life step calls the module (patch 0007): hits go in through it");
         }
         *sum = CoopActorEvents::Step(CoopActorEvents::TheRing(), CoopActorEvents::TheLifeTable(), a, *sum);
+        // Down but not out (coop_dbno_game.h): our Link's last life is held back, after every other
+        // change to the sum (difficulty, PvP), so the guard sees what would really be taken.
+        if (a != 0 && a == CoopDbno::OurLifeComponent()) {
+            std::uint64_t value = 0;
+            std::int32_t life = 0;
+            if (CoopRuntime::Read(a + CoopDbno::kLifeValueEntry, &value, sizeof value) && value != 0 &&
+                CoopRuntime::Read(value + 8, &life, sizeof life)) {
+                *sum = CoopDbno::LifeStep(a, life, *sum);
+            }
+        }
         return 1;
     }
     default:
@@ -1155,7 +1167,17 @@ COOP_HOOKSHOT_EXPORT void hos_coop_title(void* ctx, uint64_t screen, int event) 
     }
 }
 COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) {
-    return g_on && stick != nullptr ? CoopTitle::OnPad(buttons, stick) : buttons;
+    if (!g_on || stick == nullptr) {
+        return buttons;
+    }
+    buttons = CoopTitle::OnPad(buttons, stick);
+    // Down but not out (coop_dbno_game.h): a downed Link crawls and uses nothing; beside one, A revives.
+    CoopDbno::Pad pad{buttons, {stick[0], stick[1], stick[2], stick[3]}};
+    pad = CoopDbno::OnPad(pad);
+    for (int i = 0; i < 4; ++i) {
+        stick[i] = pad.stick[i];
+    }
+    return pad.buttons;
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void) {
     return g_on && CoopDraw::Wanted(CoopHookshot::DrawScene()) ? 1 : 0;

@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "coop_dbno_draw.h"
 #include "coop_draw.h"
 #include "coop_hud_layout.h"
 
@@ -486,4 +487,41 @@ TEST_CASE("hookshot draw: the title's Multiplayer prompt, and the menu with the 
     CHECK(title);
     CHECK(hint);
     CHECK(c.Of("triangle").size() == 4);   // the diamonds at the chosen row's ends
+}
+
+// Down but not out (hookshot/src/coop_dbno_draw.h).
+TEST_CASE("dbno ring: the dots lit follow the revive, the caption says who") {
+    using CoopDbnoDraw::Lit;
+    CHECK(Lit(0.0f) == 0);
+    CHECK(Lit(-1.0f) == 0);
+    CHECK(Lit(0.5f) == CoopDbnoDraw::kDots / 2);
+    CHECK(Lit(0.99f) == CoopDbnoDraw::kDots - 1);
+    CHECK(Lit(1.0f) == CoopDbnoDraw::kDots);
+    CHECK(Lit(7.0f) == CoopDbnoDraw::kDots);
+    using View = CoopDbno::View;
+    CHECK(CoopDbnoDraw::Caption(View{View::Kind::downed, "", 0, 0, false}) == "You are down");
+    CHECK(CoopDbnoDraw::Caption(View{View::Kind::downed, "Saria", 0, 0, false}) == "Saria is reviving you");
+    CHECK(CoopDbnoDraw::Caption(View{View::Kind::reviving, "Saria", 0, 0, false}) == "Hold A to revive Saria");
+    CHECK(CoopDbnoDraw::Caption(View{View::Kind::reviving, "Saria", 0, 0, true}) == "Reviving Saria");
+}
+
+TEST_CASE("dbno ring: drawn with the clock when the scene has it, and wanted for it alone") {
+    CoopDraw::Scene s;
+    CHECK_FALSE(CoopDraw::Wanted(s));
+    s.dbno = CoopDbno::View{CoopDbno::View::Kind::downed, "", 32'000'000, 0.25f, false};
+    CHECK(CoopDraw::Wanted(s));
+    Canvas c(1280, 720);
+    CoopDraw::Draw(c.d, s);
+    // The backing disc and the ring's dots, a quarter of them lit.
+    CHECK(c.Of("circle").size() == 1 + CoopDbnoDraw::kDots);
+    std::size_t lit = 0;
+    for (const auto& call : c.Of("circle")) {
+        lit += call.rgba == CoopDraw::Rgba(120, 230, 120, 255) ? 1 : 0;
+    }
+    CHECK(lit == CoopDbnoDraw::kDots / 4);
+    std::vector<std::string> texts;
+    for (const auto& call : c.Of("text")) {
+        texts.push_back(call.text);
+    }
+    CHECK(texts == std::vector<std::string>{"0:32", "You are down"});
 }

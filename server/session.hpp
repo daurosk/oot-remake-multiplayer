@@ -80,6 +80,10 @@ struct SessionConfig {
   // PvP (coop_server --pvp): players hurt each other. The host may change it
   // in the session (PVP_MODE); every player gets the server's value.
   bool pvp = false;
+  // Down but not out (coop_server --dbno; docs/protocol.md "Down but not
+  // out"): a player at no hearts is downed and can be revived. On unless the
+  // server or the host turns it off; every player gets the value at join.
+  protocol::DbnoMode dbno{};
   // Guessing the join password: an address that sends max_wrong_passwords
   // wrong proofs within wrong_password_window_us is closed at connect for
   // wrong_password_block_us (counted in password_blocked). 0: no limit.
@@ -276,6 +280,10 @@ struct Stats {
   std::uint64_t pvp_hits_relayed = 0;   // PVP_HIT passed on to its victim
   std::uint64_t pvp_hits_dropped = 0;   // PVP_HIT while PvP is off, or to nobody
   std::uint64_t pvp_mode_refused = 0;   // PVP_MODE from a player who does not host
+  // Down but not out (docs/protocol.md, "Down but not out").
+  std::uint64_t dbno_mode_refused = 0;  // DBNO_MODE from a player who does not host
+  std::uint64_t dbno_revives_relayed = 0;
+  std::uint64_t dbno_revives_dropped = 0;  // mode off, to nobody, or to themselves
   // Connections refused at connect: their address already had
   // max_half_open_per_address waiting for HELLO. Not packets, so not in
   // dropped().
@@ -410,6 +418,8 @@ class Session {
   std::optional<std::uint8_t> host() const;
   // Whether players hurt each other now (config.pvp, then the host's PVP_MODE).
   bool pvp() const { return pvp_; }
+  // Down but not out now (config.dbno, then the host's DBNO_MODE).
+  const protocol::DbnoMode& dbno() const { return dbno_; }
   // Flags in the server's table.
   std::size_t flag_count() const { return flags_.size(); }
   // Connections from `address` still waiting for HELLO.
@@ -478,6 +488,8 @@ class Session {
     std::uint8_t status = 0;
     std::uint64_t paused_since = 0;
     std::uint64_t dead_since = 0;
+    // DBNO_STATE as the player last said it: a downed player owns no enemy.
+    protocol::DbnoState dbno = protocol::DbnoState::up;
     // It entered a scene and has not been sent that scene's spawns yet.
     bool replay_due = false;
     std::uint64_t owners_told_at = 0;
@@ -563,6 +575,10 @@ class Session {
   void on_damage(ConnectionId id, Connection& c, protocol::Damage& d, std::uint64_t now_us);
   void on_pvp_mode(ConnectionId id, Connection& c, const protocol::PvpMode& m);
   void on_pvp_hit(ConnectionId id, Connection& c, protocol::Message& message);
+  void on_dbno_mode(ConnectionId id, Connection& c, const protocol::DbnoMode& m);
+  void on_dbno_revive(ConnectionId id, Connection& c, protocol::Message& message);
+  // A player who can be given an object: not loading, paused, dead or downed.
+  static bool busy(const Connection& c);
   void on_object_group(ConnectionId id, Connection& c, const protocol::ObjectGroup& g);
   void on_fish_lure(Connection& c, const protocol::FishLure& m, std::uint64_t now_us);
   // A fish's owner by the lures (issue 151): asks it over when another game's
@@ -678,6 +694,9 @@ class Session {
   // the session empties. `pvp_set_by_` is PVP_MODE's set_by (0: the server).
   bool pvp_ = false;
   std::uint8_t pvp_set_by_ = 0;
+  // Down but not out now: config_.dbno until the host changes it; back to
+  // it when the session empties.
+  protocol::DbnoMode dbno_;
   // Every shared flag value the host has sent, by key. Kept when
   // the host leaves; forgotten when the session empties.
   std::map<protocol::FlagKey, protocol::FlagEntry> flags_;

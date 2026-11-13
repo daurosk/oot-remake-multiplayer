@@ -294,6 +294,7 @@ int main(int argc, char** argv) {
     }
     config.session.join_password = line->password;
     config.session.pvp = line->pvp;
+    config.session.dbno.on = line->dbno;
     if (line->owner_hold_ms) config.session.owner_hold_us = std::uint64_t{*line->owner_hold_ms} * 1000;
     config.upnp = line->upnp;
     config.invite = line->invite;

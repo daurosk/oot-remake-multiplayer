@@ -53,6 +53,7 @@
 #include "coop_boss.h"
 #include "coop_teleport_game.h"
 #include "coop_pvp_game.h"
+#include "coop_dbno_game.h"
 #include "coop_scene_probe.h"
 #include "coop_camera.h"
 #include "coop_colors.h"
@@ -297,6 +298,7 @@ public:
             CoopBoss::OnEvent(event);  // docs/dungeons-boss.md
             CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
             CoopPvp::OnEvent(event, client);  // PvP (docs/play-online.md "PvP")
+            CoopDbno::OnEvent(event, client);  // down but not out (docs/play-online.md)
             CoopSave::OnEvent(event, client);  // the host's save for the guests (issue 167)
             CoopHud::OnEvent(event);  // the others' hearts for the HUD (PLAYER_LIFE)
             if (event.kind == coop::net::EventKind::message) {  // deku-dungeon-2
@@ -888,6 +890,13 @@ public:
         for (auto& line : CoopPvp::TakeLines()) {
             chat_.Add(std::move(line), true);
         }
+        // Down but not out (docs/play-online.md), after the walk read our
+        // Link's life and after PvP's hurts.
+        CoopDbno::Frame(view.scene, reading, report.connected ? session_.get() : nullptr,
+                        report.server_now_us);
+        for (auto& line : CoopDbno::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
         Place(view);
 
         std::lock_guard lock(view_mutex_);
@@ -920,6 +929,9 @@ public:
         }
         if (CoopPvp::OnChat(text, *session_)) {
             return true;  // /pvp: the same
+        }
+        if (CoopDbno::OnChat(text, *session_)) {
+            return true;  // /dbno: the same
         }
         const bool sent =
             session_->with_client([&](coop::net::Client& c) { return c.send_chat(text); });

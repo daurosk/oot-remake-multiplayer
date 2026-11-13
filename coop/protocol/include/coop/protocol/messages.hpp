@@ -118,6 +118,9 @@ enum class MessageType : std::uint16_t {
   player_ride = 385,  // 385 to 389: riding Epona (docs/protocol.md, "Riding")
   platform_clock = 400,  // 400 to 404: moving platforms' clocks (docs/protocol.md, "Moving platforms")
   platform_counter = 401,  // looping platforms' pause counters (docs/protocol.md, "Moving platforms")
+  dbno_mode = 470,  // 470 to 479: down but not out (docs/protocol.md, "Down but not out")
+  dbno_state = 471,
+  dbno_revive = 472,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -1357,6 +1360,64 @@ struct DungeonEvent {
   bool operator==(const DungeonEvent&) const = default;
 };
 
+// Down but not out (protocol 11; docs/protocol.md, "Down but not out"): a
+// player whose hearts run out is downed, not dead, and a teammate can revive
+// them. On unless the host turns it off.
+
+// The host's rules, as DBNO_MODE carries them. The limits are the codec's.
+inline constexpr std::uint8_t kDbnoMinBleedS = 10;       // bleed-out time, seconds
+inline constexpr std::uint8_t kDbnoMaxBleedS = 240;
+inline constexpr std::uint8_t kDbnoMinReviveTenths = 5;  // how long a revive is held, tenths of a second
+inline constexpr std::uint8_t kDbnoMaxReviveTenths = 100;
+inline constexpr std::uint8_t kDbnoMinReviveLife = 1;    // life a revived player gets, quarter hearts
+inline constexpr std::uint8_t kDbnoMaxReviveLife = 80;
+
+// DBNO_MODE: the session's rules. From the server to each player when it
+// joins and to everyone on a change: `set_by` is 0 when the server's start
+// decided them, else the player (the host) who changed them. From a player:
+// the host asks for a change (`set_by` 0; the server takes it from nobody
+// but the host).
+struct DbnoMode {
+  std::uint8_t set_by = 0;         // 0 the server, 1 to kMaxPlayers a player
+  bool on = true;
+  std::uint8_t bleed_s = 45;       // kDbnoMinBleedS to kDbnoMaxBleedS
+  std::uint8_t revive_tenths = 30; // kDbnoMinReviveTenths to kDbnoMaxReviveTenths
+  std::uint8_t revive_life = 12;   // kDbnoMinReviveLife to kDbnoMaxReviveLife
+  bool operator==(const DbnoMode&) const = default;
+};
+
+// DBNO_STATE states.
+enum class DbnoState : std::uint8_t {
+  up = 0,
+  downed = 1,  // crawling, bleeding out, can be revived
+  out = 2,     // bled out, or nobody was left standing: the game's own death runs
+};
+
+// Most bleed-out time a DBNO_STATE may carry, tenths of a second.
+inline constexpr std::uint16_t kDbnoMaxLeftTenths = 10 * kDbnoMaxBleedS;
+
+// DBNO_STATE: the sender's own state, as its game decided it. Relayed to
+// everyone else; the server keeps the state for its own rules (a downed
+// player's enemies go to a player still up) and nothing else.
+struct DbnoStatus {
+  std::uint8_t player_number = kPlayerSelf;
+  DbnoState state = DbnoState::up;
+  std::uint16_t left_tenths = 0;  // downed: bleed-out time left; else 0
+  std::uint8_t reviver = 0;       // downed: who is reviving (1 to kMaxPlayers, not the player); 0 nobody
+  std::uint8_t progress = 0;      // downed with a reviver: 0 to 255 of the revive; else 0
+  bool operator==(const DbnoStatus&) const = default;
+};
+
+// DBNO_REVIVE: the sender holds (or let go of) the revive button beside a
+// downed player on the sender's screen. The server passes it to that player
+// only, and only while the mode is on; the downed player's game decides.
+struct DbnoRevive {
+  std::uint8_t player_number = kPlayerSelf;  // the reviver
+  std::uint8_t target = 0;                   // 1 to kMaxPlayers, not the reviver
+  bool holding = false;
+  bool operator==(const DbnoRevive&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
@@ -1368,7 +1429,8 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin,
                              JoinChallenge, JoinProof, SaveAsk, SavePart, PlayerLife,
                              PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim, DungeonEvent, PlayerRide,
-                             OcarinaNote, PlatformClock, PlatformCounter>;
+                             OcarinaNote, PlatformClock, PlatformCounter,
+                             DbnoMode, DbnoStatus, DbnoRevive>;
 
 MessageType type_of(const Message& message);
 

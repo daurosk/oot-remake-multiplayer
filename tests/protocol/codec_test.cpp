@@ -1763,6 +1763,101 @@ TEST_CASE("pvp messages: types 241 to 243, mode on the session channel, hits and
   CHECK(back == hurt);
 }
 
+TEST_CASE("down but not out: types 470 to 472, mode and state on the session channel, revive on ownership") {
+  CHECK(static_cast<int>(MessageType::dbno_mode) == 470);
+  CHECK(static_cast<int>(MessageType::dbno_state) == 471);
+  CHECK(static_cast<int>(MessageType::dbno_revive) == 472);
+  CHECK(channel_of(MessageType::dbno_mode) == kChannelSession);
+  CHECK(channel_of(MessageType::dbno_state) == kChannelSession);
+  CHECK(channel_of(MessageType::dbno_revive) == kChannelOwnership);
+  CHECK_FALSE(allowed_on_channel(MessageType::dbno_revive, kChannelSession));
+  CHECK_FALSE(allowed_on_channel(MessageType::dbno_state, kChannelOwnership));
+  CHECK_FALSE(allowed_on_channel(MessageType::dbno_mode, kChannelPlayerSamples));
+  for (const auto t : {MessageType::dbno_mode, MessageType::dbno_state, MessageType::dbno_revive}) {
+    CHECK(may_send(Sender::client, t));
+    CHECK(may_send(Sender::server, t));
+  }
+
+  // The defaults are the ones a server starts with: on, 45 s, 3 s, three hearts.
+  Message mode = DbnoMode{};
+  CHECK(std::get<DbnoMode>(mode) == DbnoMode{0, true, 45, 30, 12});
+  CHECK_FALSE(sender_of(mode));  // no player field: the server says who set it
+  Bytes b = must_encode(mode);
+  REQUIRE(b.size() == kHeaderSize + 5);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == mode);
+
+  Message state = DbnoStatus{0, DbnoState::downed, 123, 2, 200};
+  CHECK(check_received(state, Sender::client, kChannelSession) == Error::none);
+  CHECK_FALSE(set_sender(state, 2));  // nobody revives themselves
+  CHECK(set_sender(state, 1));
+  CHECK(sender_of(state) == 1);
+  CHECK(check_received(state, Sender::client, kChannelSession) == Error::wrong_sender);
+  CHECK(check_received(state, Sender::server, kChannelSession) == Error::none);
+  b = must_encode(state);
+  REQUIRE(b.size() == kHeaderSize + 6);
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == state);
+
+  Message revive = DbnoRevive{0, 2, true};
+  CHECK(check_received(revive, Sender::client, kChannelOwnership) == Error::none);
+  CHECK_FALSE(set_sender(revive, 2));
+  CHECK(set_sender(revive, 3));
+  b = must_encode(revive);
+  REQUIRE(b.size() == kHeaderSize + 3);
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == revive);
+}
+
+TEST_CASE("bad down but not out messages are refused") {
+  Bytes out;
+  CHECK(encode(DbnoMode{kMaxPlayers + 1, true, 45, 30, 12}, out) == Error::bad_value);
+  CHECK(encode(DbnoMode{0, true, kDbnoMinBleedS - 1, 30, 12}, out) == Error::bad_value);
+  CHECK(encode(DbnoMode{0, true, kDbnoMaxBleedS + 1, 30, 12}, out) == Error::bad_value);
+  CHECK(encode(DbnoMode{0, true, 45, kDbnoMinReviveTenths - 1, 12}, out) == Error::bad_value);
+  CHECK(encode(DbnoMode{0, true, 45, kDbnoMaxReviveTenths + 1, 12}, out) == Error::bad_value);
+  CHECK(encode(DbnoMode{0, true, 45, 30, 0}, out) == Error::bad_value);
+  CHECK(encode(DbnoMode{0, true, 45, 30, kDbnoMaxReviveLife + 1}, out) == Error::bad_value);
+  // Off still carries rules within the limits, so turning it on again needs no second message.
+  CHECK(encode(DbnoMode{0, false, 0, 30, 12}, out) == Error::bad_value);
+
+  CHECK(encode(DbnoStatus{kMaxPlayers + 1, DbnoState::up, 0, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(DbnoStatus{0, static_cast<DbnoState>(3), 0, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(DbnoStatus{0, DbnoState::downed, kDbnoMaxLeftTenths + 1, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(DbnoStatus{0, DbnoState::up, 1, 0, 0}, out) == Error::bad_value);      // time left while up
+  CHECK(encode(DbnoStatus{0, DbnoState::out, 0, 2, 0}, out) == Error::bad_value);     // a reviver while out
+  CHECK(encode(DbnoStatus{0, DbnoState::downed, 10, 0, 9}, out) == Error::bad_value); // progress, nobody reviving
+  CHECK(encode(DbnoStatus{2, DbnoState::downed, 10, 2, 9}, out) == Error::bad_value); // itself
+  CHECK(encode(DbnoStatus{0, DbnoState::downed, 10, kMaxPlayers + 1, 9}, out) == Error::bad_value);
+
+  CHECK(encode(DbnoRevive{0, 0, true}, out) == Error::bad_value);                // nobody
+  CHECK(encode(DbnoRevive{2, 2, true}, out) == Error::bad_value);                // itself
+  CHECK(encode(DbnoRevive{0, kMaxPlayers + 1, true}, out) == Error::bad_value);
+  CHECK(out.empty());
+
+  // The same from the wire.
+  Message back;
+  Bytes b = must_encode(DbnoMode{});
+  b[kHeaderSize + 1] = 2;  // mode
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(DbnoMode{});
+  b[kHeaderSize + 2] = 0;  // bleed-out seconds
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(DbnoStatus{0, DbnoState::downed, 10, 0, 0});
+  b[kHeaderSize + 1] = 3;  // state
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(DbnoStatus{0, DbnoState::downed, 10, 0, 0});
+  b[kHeaderSize + 1] = 0;  // up, with time left
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(DbnoRevive{0, 2, true});
+  b[kHeaderSize + 2] = 2;  // holding
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(DbnoRevive{0, 2, true});
+  b[kHeaderSize + 1] = 0;  // target
+  CHECK(decode(b, back) == Error::bad_value);
+}
+
 TEST_CASE("bad pvp messages are refused") {
   Bytes out;
   CHECK(encode(PvpMode{kMaxPlayers + 1, true}, out) == Error::bad_value);

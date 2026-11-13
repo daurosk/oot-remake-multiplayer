@@ -52,7 +52,7 @@ $kit = Split-Path -Parent $PSScriptRoot
 $hs = Join-Path $kit 'hookshot'
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
 
-function Fail([string]$Text) { Write-Host ''; Write-Host "Hookshot build: $Text" -ForegroundColor Red; exit 1 }
+function Fail([string]$Text) { Write-Host ''; Write-Host "Longshot build: $Text" -ForegroundColor Red; exit 1 }
 function Step([string]$Text) { Write-Host ''; Write-Host "== $Text" -ForegroundColor Cyan }
 function Read-KeyFile([string]$Path) {
     $map = @{}
@@ -407,7 +407,7 @@ if (-not $PSBoundParameters.ContainsKey('Out') -and -not $Tools -and (Test-Path 
 Write-Host ''
 if (Test-Path -LiteralPath (Join-Path $kit 'Start OoT Co-op.bat')) {
     Write-Host 'Done. The game is ready: "Start OoT Co-op.bat" (or the desktop shortcut) starts it; Host and Join are in the game.' -ForegroundColor Green
-    Write-Host "  The game: $exe. Its hookshot_log.txt says 'coop: module loaded'."
+    Write-Host "  The game: $exe. Its longshot_log.txt says 'coop: module loaded'."
     exit 0
 }
 Write-Host 'Done. To play co-op on Hookshot: Play-OoT-Coop.bat (or the desktop shortcut) starts the game, Host and Join are on its title screen; Host-Hookshot.bat hosts, Join-Hookshot.bat joins (as Host.bat and' -ForegroundColor Green

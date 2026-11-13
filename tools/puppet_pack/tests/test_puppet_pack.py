@@ -753,6 +753,25 @@ def bc1_block(c0, c1, idx=0xE4E4E4E4):
 class TunicExtraTest(unittest.TestCase):
     """The adult's other tunic textures (#202): only green parts change, in place."""
 
+    def test_look_file_round_trip(self):
+        from puppet_pack import look_live, tunic
+        a, b = fake_bntx("Angin_Tile_A_Alb"), fake_bntx("Mt_Vest_Player_Adult_Alb", [bc1_block(1, 2)], fmt=0x1A)
+        blob = look_live.pack([("Angin_Tile_A_Alb", a), ("Mt_Vest_Player_Adult_Alb", b)])
+        self.assertEqual(blob[:16], b"COOPLOOK" + struct.pack("<II", 1, 2))
+        self.assertEqual(look_live.unpack(blob), [("Angin_Tile_A_Alb", look_live.texels(a)),
+                                                  ("Mt_Vest_Player_Adult_Alb", bc1_block(1, 2))])
+        self.assertEqual(len(look_live.texels(a)), 9 * 16)
+        # each texture's texels with where they start in its file: the data block's header in front
+        offs = [o for _, o, _ in look_live.unpack_offsets(blob)]
+        self.assertEqual(offs, [look_live.offset(a), look_live.offset(b)])
+        self.assertEqual(a[offs[0] - 16:offs[0] - 12], b"BRTD")
+        with self.assertRaises(tunic.TunicError):
+            look_live.unpack(blob[:-1])
+        with self.assertRaises(tunic.TunicError):
+            look_live.unpack(b"COOPLOOX" + blob[8:])
+        with self.assertRaises(tunic.TunicError):
+            look_live.pack([("n" * 64, a)])
+
     def test_names(self):
         from puppet_pack import tunic_extra as te
         for n in te.EXTRA:
@@ -1343,6 +1362,34 @@ class FullBuildTest(unittest.TestCase):
         self.assertNotEqual(vest, game_vest)
         # the game's dark tile's entry holds the BC3 copy the kit puts in its place
         self.assertGreaterEqual(t.get("Tex/Angin_Tile_A_Dark_Alb.bntx"), len(game_tile))
+        # your colour changed while the game runs (look_live): per colour, green too, the texels of
+        # every tunic texture your Link wears, each as long as the game's own (written over them)
+        from puppet_pack import look_live, tunic_extra
+        self.assertEqual(m["look_files"], {c: f"coop_look/{c}.bin" for c in ("red", "blue", "green")})
+        names = ["Angin_Tile_A_Alb", "Angin_Tile_A_Dark_Alb"] + list(tunic_extra.EXTRA)
+        game = {n: look_live.texels(d.decompress(build.read(os.path.join(self.romfs, f"Tex/{n}.bntx.zs"))))
+                for n in names}
+        looks = {c: look_live.unpack(build.read(os.path.join(mod, m["look_files"][c]))) for c in m["look_files"]}
+        self.assertEqual(looks["green"], [(n, game[n]) for n in names])
+        for c in ("red", "blue"):
+            self.assertEqual([n for n, _ in looks[c]], names)
+            for n, data in looks[c]:
+                self.assertEqual(len(data), len(game[n]), n)
+            self.assertNotEqual(looks[c][0][1], game[names[0]])
+        # the tile is your own tile's; the dark tile keeps the game's format (not the BC3 copy)
+        self.assertEqual(looks["red"][0][1], look_live.texels(d.decompress(build.read(
+            os.path.join(mod, m["self_tiles"]["red"])))))
+        self.assertEqual(looks["red"][1][1], look_live.texels(tunic_extra.recolor(game_dark, "red",
+                                                                                  tunic.average_luma(game_tile))))
+
+    def test_build_look_files_without_green(self):
+        from puppet_pack import look_live
+        mod = os.path.join(self.dir, "mod_l")
+        m = build.build(self.romfs, mod, log=lambda *_: None, tunics=["red"])
+        # green is always there: the module finds the textures by the game's own texels
+        self.assertEqual(sorted(m["look_files"]), ["green", "red"])
+        green = look_live.unpack(build.read(os.path.join(mod, "coop_look", "green.bin")))
+        self.assertEqual(green[0][0], "Angin_Tile_A_Alb")
 
     def test_build_no_tile_no_tunics(self):
         os.remove(os.path.join(self.romfs, "Tex", "Angin_Tile_A_Alb.bntx.zs"))

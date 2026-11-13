@@ -10,8 +10,11 @@
 #include <vector>
 
 #include "common/logging.h"
+#include "coop_colors.h"
 #include "coop_hook.h"
 #include "coop_hookshot.h"
+#include "coop_lobby_tab.h"
+#include "coop_look.h"
 #include "coop_mods_tab.h"
 #include "coop_pause_files.h"
 #include "coop_title.h"
@@ -74,14 +77,18 @@ HosCoopStatus Status() {
     return st;
 }
 
-// Link's look: customizer-live-b's coop_look.h (CoopLook::SetPending when the player picks, ApplyOnUnpause when the
-// menu closes). These two are the only places it is wired. Until coop_look.h is under this branch: the colour is
-// saved (coop-options.ini color, by Save) and Link wears it at the next start.
+// Link's look (coop_look.h): CoopLook::SetPending when the player picks, ApplyOnUnpause when the menu closes; the
+// look is worn on the game's next frame (CoopLook::Frame). These two are the only places it is wired.
 std::vector<std::string> ChooseLook(const std::string& colour) {
     LOG_INFO(Core, "coop: multiplayer tab: Link's look: {}", colour.empty() ? std::string("by player number") : colour);
-    return {"Link wears it the next time the game starts."};
+    CoopLook::Look look = CoopLook::Shown();
+    look[CoopLook::Part::tunic] = CoopColors::Parse(colour);   // ("" or an unknown name: by player number)
+    CoopLook::SetPending(look);
+    return {"Link wears it when this menu closes."};
 }
-void WearChosenLook() {}
+void WearChosenLook() {
+    CoopLook::ApplyOnUnpause();
+}
 
 
 // What the module's host is doing, in plain words (CoopTitleMenu::PlainStatus). Only reads: what follows from
@@ -419,16 +426,21 @@ void Tick() {
     Follow(Status());
 }
 
-// Tab 1: Mods (coop_mods_tab.h), once the mod loader runs.
-constexpr int kModsTab = 1;
+// Tab 1: the Lobby (coop_lobby_tab.h), always: who is in the game, the host's controls.
+// Tab 2: Mods (coop_mods_tab.h), once the mod loader runs.
+constexpr int kLobbyTab = 1;
+constexpr int kModsTab = 2;
 
 int Tabs() {
-    return CoopModsTab::Available() ? 2 : 1;
+    return CoopModsTab::Available() ? 3 : 2;
 }
 
 const char* TabName(int tab) {
     if (tab == kModsTab && CoopModsTab::Available()) {
         return CoopModsTab::TabName();
+    }
+    if (tab == kLobbyTab) {
+        return CoopLobbyTab::TabName();
     }
     return tab == kMultiplayerTab ? "Multiplayer" : nullptr;
 }
@@ -436,6 +448,9 @@ const char* TabName(int tab) {
 bool Page(int tab, HosCoopMenuPage* out) {
     if (tab == kModsTab) {
         return CoopModsTab::Page(out);
+    }
+    if (tab == kLobbyTab) {
+        return CoopLobbyTab::Page(out);
     }
     if (tab != kMultiplayerTab || out == nullptr || out->size < sizeof(HosCoopMenuPage)) {
         return false;
@@ -477,6 +492,9 @@ bool Page(int tab, HosCoopMenuPage* out) {
 bool Input(int tab, int event, int arg, int arg2) {
     if (tab == kModsTab) {
         return CoopModsTab::MenuInput(event, arg, arg2);
+    }
+    if (tab == kLobbyTab) {
+        return CoopLobbyTab::MenuInput(event, arg, arg2);
     }
     if (tab != kMultiplayerTab) {
         return false;

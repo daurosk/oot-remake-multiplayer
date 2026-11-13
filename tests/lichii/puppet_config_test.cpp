@@ -78,6 +78,14 @@ TEST_CASE("puppet config: actor, test puppet and animation log switches") {
     CHECK_FALSE(From({{"LICHII_COOP_TEST_PUPPET", "0"}}, false).debug);
 }
 
+TEST_CASE("puppet config: the native player test is off unless asked for") {
+    CHECK_FALSE(From({}, false).native_player);
+    CHECK_FALSE(From({{"LICHII_COOP_NATIVE_PLAYER", "0"}}, false).native_player);
+    std::vector<std::string> log;
+    CHECK(From({{"LICHII_COOP_NATIVE_PLAYER", "1"}}, false, &log).native_player);
+    CHECK(log.back().find("NATIVE PLAYER TEST") != std::string::npos);
+}
+
 TEST_CASE("puppet config: a pack without tunic puppets turns the tunics off (Hookshot proof 3)") {
     const auto with = [](std::optional<bool> has, std::vector<std::string>* log = nullptr, int* asked = nullptr,
                          std::map<std::string, std::string> vars = {}) {

@@ -3,6 +3,7 @@
 #include "coop_colors.h"
 
 #include <cstdlib>
+#include <random>
 #include <fstream>
 #include <sstream>
 
@@ -183,6 +184,68 @@ void ApplyEnvironment(const std::function<std::optional<std::string>(const char*
             Set(v.key, Trim(*value), v.variable, settings, errors);
         }
     }
+}
+
+std::optional<std::array<std::uint8_t, 16>> ParsePlayerKey(std::string_view text) {
+    text = Trim(text);
+    while (!text.empty() && (text.back() == '\r' || text.back() == '\n' || text.back() == ' ')) {
+        text.remove_suffix(1);
+    }
+    if (text.size() != 32) {
+        return std::nullopt;
+    }
+    const auto digit = [](char ch) -> int {
+        if (ch >= '0' && ch <= '9') return ch - '0';
+        if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+        if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+        return -1;
+    };
+    std::array<std::uint8_t, 16> key{};
+    for (std::size_t i = 0; i < key.size(); ++i) {
+        const int hi = digit(text[2 * i]);
+        const int lo = digit(text[2 * i + 1]);
+        if (hi < 0 || lo < 0) {
+            return std::nullopt;
+        }
+        key[i] = static_cast<std::uint8_t>(hi * 16 + lo);
+    }
+    return key;
+}
+
+std::string PlayerKeyText(const std::array<std::uint8_t, 16>& key) {
+    static constexpr char kHex[] = "0123456789abcdef";
+    std::string out;
+    for (const std::uint8_t b : key) {
+        out += kHex[b >> 4];
+        out += kHex[b & 15];
+    }
+    return out;
+}
+
+std::array<std::uint8_t, 16> LoadPlayerKey(const std::filesystem::path& file, std::string& note) {
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(file, ec)) {
+        std::ifstream in(file, std::ios::binary);
+        std::ostringstream text;
+        text << in.rdbuf();
+        if (const auto key = ParsePlayerKey(text.str())) {
+            return *key;
+        }
+    }
+    std::random_device random;
+    std::array<std::uint8_t, 16> key{};
+    for (std::size_t i = 0; i < key.size(); i += 4) {
+        const std::uint32_t r = random();
+        for (std::size_t j = 0; j < 4; ++j) {
+            key[i + j] = static_cast<std::uint8_t>(r >> (8 * j));
+        }
+    }
+    std::filesystem::create_directories(file.parent_path(), ec);
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out << PlayerKeyText(key) << "\n";
+    note = out.good() ? "a new player key was made in " + file.string()
+                      : "the player key could not be written to " + file.string() + ": it holds for this run only";
+    return key;
 }
 
 Settings LoadSettings(const std::filesystem::path& ini, std::vector<std::string>& errors) {

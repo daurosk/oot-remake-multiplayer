@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <string_view>
 
 namespace coop::net {
 class Client;
@@ -34,8 +35,20 @@ void SetSwitch(std::function<std::string()> root, std::function<bool(const std::
 // Each frame: whether Link is in the game (a loaded save): no switch then.
 void NoteInGame(bool in_game);
 
-// The host's save has been written into this game's co-op folder (a title menu may load it now).
+// The host's save has been written whole into this game's co-op folder and (Hookshot) the game plays from it now:
+// a title menu may load it. Before that a guest's game stays on its own folder.
 bool HostSaveReady();
+
+// The host said it has no save yet (a new game): nothing to wait for.
+bool HostHasNoSave();
+
+// Hookshot's title module, each pad poll: whether the title's menu is up. A guest switches to the host's save only
+// then (never while a file loads).
+void NoteTitle(bool title_up);
+
+// A guest's switch to the host's save that has not happened yet is dropped for this session (the player picked a
+// file on the title while waiting, or the title said the save did not come): the game stays on its own saves.
+void CancelPendingSwitch(std::string_view why);
 
 // The emulator's save folder path for a user's account save (relative to the
 // NAND, "/user/save/0000000000000000/<user>/<title>"): with the co-op folder

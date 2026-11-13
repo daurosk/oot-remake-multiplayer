@@ -195,7 +195,7 @@ if ($Hookshot) {
 }
 if ($Mode -eq 'title') {
     if (-not $Hookshot) { Write-Host 'play.ps1 title is for Hookshot (Play-OoT-Coop.bat).'; exit 1 }
-    $running = Get-Process hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
+    $running = Get-Process longshot, hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
     if ($running) { Write-Host 'This Hookshot game is already running: Host and Join are on its title screen.'; exit 1 }
     # No session from this start: no server and no join password in coop.ini (the name, the colour and the
     # last invite code stay), and none in the variables an earlier start in this window may have left.
@@ -366,7 +366,7 @@ Write-Host "Co-op: server $Server, port $Port, name $Name, join password $(if ($
 
 $user = Join-Path $emu 'user'
 if ($Hookshot) {
-    $running = Get-Process hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
+    $running = Get-Process longshot, hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
     if ($running) { Write-Host 'This Hookshot game is already running; close it first to use new settings.'; exit 1 }
 }
 elseif (-not (Get-ChildItem (Join-Path $user 'keys') -Filter '*.keys' -ErrorAction SilentlyContinue)) {

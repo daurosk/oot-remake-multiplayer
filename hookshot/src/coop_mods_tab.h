@@ -4,7 +4,7 @@
 // the co-op host's, and the randomizer's status. The tab's logic (Tab) works
 // on a Loader and two lines of text, so the tests drive it in a temporary
 // mods folder; the module's part (Page, Input, Key, Char) hands it to
-// Hookshot through hos_coop_menu.h as tab 1.
+// Hookshot through hos_coop_menu.h as tab 2 (after Multiplayer and the Lobby).
 #pragma once
 
 #include <cstddef>
@@ -68,7 +68,7 @@ private:
     std::string note_;  // the answer to the last press ("In this co-op game the host sets this.")
 };
 
-// The module's part: tab 1 of hos_coop_menu.h. Before CoopModsRuntime::Start (or with no loader): no tab.
+// The module's part: tab 2 of hos_coop_menu.h. Before CoopModsRuntime::Start (or with no loader): no tab.
 bool Available();
 const char* TabName();
 bool Page(HosCoopMenuPage* out);

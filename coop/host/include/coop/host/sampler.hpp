@@ -60,6 +60,21 @@ class Sampler {
   // velocity afresh. The sequence keeps counting.
   void reset();
 
+  // The player changed their colour while the game runs (docs/puppet.md,
+  // "Changing your colour in the game"): the next frame() sends it in
+  // PLAYER_EQUIP. Unset after a colour ("by player number" in the menu):
+  // from then on it sends this player's slot colour (protocol::slot_color
+  // of set_player_number's number), because an unset colour in PLAYER_EQUIP
+  // leaves the others on the old one (protocol::merge_equipment).
+  void set_color(std::optional<std::uint32_t> color) {
+    if (!color && settings_.color) by_number_ = true;
+    if (color) by_number_ = false;
+    settings_.color = color;
+  }
+  // This player's number from the last WELCOME (0 before): the slot colour
+  // sent after set_color went back to unset.
+  void set_player_number(std::uint8_t number) { player_number_ = number; }
+
   // The last messages built, for tests and the debug overlay.
   const std::optional<protocol::PlayerSample>& last_sample() const { return last_sent_; }
   std::uint8_t status_flags() const { return flags_; }
@@ -71,6 +86,8 @@ class Sampler {
   std::optional<Vec3> velocity(const PlayerReading& reading, std::uint64_t now) const;
 
   SamplerSettings settings_;
+  bool by_number_ = false;           // set_color went back to unset after a colour
+  std::uint8_t player_number_ = 0;   // set_player_number's
   std::uint32_t sequence_ = 0;
   std::uint8_t flags_ = 0;
   bool status_sent_ = false;

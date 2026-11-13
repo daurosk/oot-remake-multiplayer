@@ -189,6 +189,16 @@ std::optional<coop::protocol::FlagEntry> Store::read(coop::host::FlagKey key) {
                                      static_cast<std::uint32_t>(shown)};
 }
 
+namespace {
+
+// A complete_only quest our game is finishing itself (its last two steps
+// before the end: GambleRacePlaying, AfterWonGambleRace for Get_Epona).
+bool Racing(const Quest& quest, std::optional<std::int32_t> now) {
+    return quest.complete_only && now && *now != Last(quest) && *now >= Last(quest) - 2;
+}
+
+} // namespace
+
 bool Store::put(const Quest& quest, const coop::protocol::FlagEntry& entry, bool exact) {
     if (entry.kind != coop::protocol::FlagKind::int32) {
         ++refused_;
@@ -206,8 +216,10 @@ bool Store::put(const Quest& quest, const coop::protocol::FlagEntry& entry, bool
         if (want != Last(quest)) {
             return true;  // only the end is shared: a save load or a lower value leaves ours
         }
-        if (now && *now != want && *now >= Last(quest) - 2) {
-            return true;  // in the race, or riding out after winning it: left to finish
+        if (Racing(quest, now)) {
+            // In the race, or riding out after winning it: left to finish, and
+            // held (busy) so it is tried again: a lost race goes back below.
+            return false;
         }
         exact = false;  // never written blind, never over a value not in the list
     }
@@ -247,6 +259,15 @@ bool Store::write(const coop::protocol::FlagEntry& entry) {
 bool Store::write_exact(const coop::protocol::FlagEntry& entry) {
     const Quest* quest = Plain(entry.key) ? Find(entry.key.hash) : nullptr;
     return quest != nullptr ? put(*quest, entry, true) : inner_.write_exact(entry);
+}
+
+bool Store::busy(coop::host::FlagKey key) {
+    const Quest* quest = Plain(key) ? Find(key.hash) : nullptr;
+    if (quest != nullptr && quest->complete_only) {
+        const auto value = get_(quest->hash);
+        if (Racing(*quest, value ? Rank(*quest, *value) : std::nullopt)) return true;
+    }
+    return inner_.busy(key);
 }
 
 bool Store::is_max(coop::host::FlagKey key) {

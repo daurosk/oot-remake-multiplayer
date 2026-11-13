@@ -536,7 +536,7 @@ try {
     Check ((Read-File "$hk\Start OoT Co-op.bat") -eq 'new launcher') 'emulator kit -> Hookshot kit: the new launcher is there'
     Test-PlayerKept $hk 'emulator kit -> Hookshot kit'
     Check ((Read-File "$hk\emulator\user\cache\shader\0100F2C0115B6000\vulkan.bin") -eq 'old shaders') 'emulator kit -> Hookshot kit: the shader cache is the player''s, left alone'
-    Check ($text -match 'Hookshot only' -and $text -match 'emulator.user' -and $text -match 'Start OoT Co-op\.bat') "emulator kit -> Hookshot kit: says what went and what stayed [$text]"
+    Check ($text -match 'Longshot only' -and $text -match 'emulator.user' -and $text -match 'Start OoT Co-op\.bat') "emulator kit -> Longshot kit: says what went and what stayed [$text]"
     Check ($sh.CreateShortcut((Join-Path $desk 'Play OoT Co-op.lnk')).TargetPath -ieq "$hk\Start OoT Co-op.bat") 'emulator kit -> Hookshot kit: the desktop shortcut starts the new launcher'
     $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $hk -Check -Api $hsList 2>&1
     Check ($LASTEXITCODE -eq 0 -and ($out -join ' ') -notmatch 'not a co-op kit') "a Hookshot-only kit can be updated again [$($out -join ' ')]"

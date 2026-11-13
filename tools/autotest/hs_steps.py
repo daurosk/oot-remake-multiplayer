@@ -450,6 +450,9 @@ class HookshotGames:
             if time.monotonic() - t0 > self.timeout:
                 raise TimeoutError("game %s did not reach '%s' in %d s" % (x, JOINED, self.timeout))
             time.sleep(0.5)
+        # and drawing: a game whose shaders still compile reads no controller (a cold cache: minutes)
+        waited = self.hk.wait_renderer(lambda: self.log(x), lambda: self.alive(x), self.timeout)
+        self.say("%s: renderer ready (%.0f s waited)" % (x, waited))
 
     def load(self, xs):
         hk, res, errs = self.hk, [], {}

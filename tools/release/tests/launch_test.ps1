@@ -746,8 +746,8 @@ try {
     # A built game an antivirus took files from: said, not built again.
     $qg = Join-Path $sk 'qgame'
     Write-File "$qg\coop-built-from.txt" 'stamp'
-    Check ((Get-KitGameQuarantined $qg) -eq 'hookshot.exe') 'quarantine: the game exe gone'
-    Write-File "$qg\bin\hookshot.exe" 'x'
+    Check ((Get-KitGameQuarantined $qg) -eq 'longshot.exe') 'quarantine: the game exe gone'
+    Write-File "$qg\bin\longshot.exe" 'x'
     Check ((Get-KitGameQuarantined $qg) -eq 'hookshot_coop.dll') 'quarantine: the module gone'
     Write-File "$qg\bin\hookshot_coop.dll" 'x'
     Check ((Get-KitGameQuarantined $qg) -eq '') 'quarantine: all there'
@@ -823,7 +823,7 @@ try {
     # The game an antivirus emptied: said, not built again.
     Write-File "$k\hookshot\game\coop-built-from.txt" 'stamp'
     $r = Start-Kit $k
-    Check ($r[0] -ne 0 -and $r[1] -match 'antivirus' -and $r[1] -match 'hookshot\.exe' -and $r[1] -match 'not built again') "start: the game's exe quarantined: says so [$($r[1])]"
+    Check ($r[0] -ne 0 -and $r[1] -match 'antivirus' -and $r[1] -match 'longshot\.exe' -and $r[1] -match 'not built again') "start: the game's exe quarantined: says so [$($r[1])]"
     Remove-Item -LiteralPath "$k\hookshot\game" -Recurse
     # A second double-click while the first start is busy.
     Remove-Item -LiteralPath "$k\played.txt" -ErrorAction SilentlyContinue
@@ -844,7 +844,7 @@ try {
     $r = Start-Kit $uk 'n'
     Check ($r[0] -ne 0 -and $r[1] -match 'letters the game build cannot handle' -and $r[1] -match 'yourself' -and -not (Test-Path "$uk\played.txt")) "start: a unicode path, answer no: says where to move it [$($r[1])]"
     # A game built there already: no question (it works there).
-    Write-File "$uk\hookshot\game\bin\hookshot.exe" 'x'; Write-File "$uk\hookshot\game\bin\hookshot_coop.dll" 'x'
+    Write-File "$uk\hookshot\game\bin\longshot.exe" 'x'; Write-File "$uk\hookshot\game\bin\hookshot_coop.dll" 'x'
     $r = Start-Kit $uk
     Check ($r[0] -eq 0 -and (Test-Path "$uk\played.txt")) "start: a unicode path with the game built: starts [$($r[1])]"
 } finally {

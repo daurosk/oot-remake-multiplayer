@@ -117,7 +117,7 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 2 | `WELCOME` | 0 | server | above |
 | 3 | `REFUSED` | 0 | server | above |
 | 4 | `PLAYER_JOINED` | 0 | server | `u8` player number, nickname |
-| 5 | `PLAYER_LEFT` | 0 | server | `u8` player number, `u8` reason: 0 left, 1 timed out, 2 kicked (an unknown reason is kept) |
+| 5 | `PLAYER_LEFT` | 0 | server | `u8` player number, `u8` reason: 0 left, 1 timed out, 2 kicked by the host (an unknown reason is kept) |
 | 6 | `PING` | 0 | both | above |
 | 7 | `PONG` | 0 | both | above |
 | 8 | `PLAYER_STATUS` | 0 | both | `u8` player field, `u8` flags: bit 0 paused, 1 loading, 2 in cutscene, 3 in menu, 4 dead (unknown bits are kept); sent on every change |
@@ -201,7 +201,8 @@ Issue 167: a guest plays from the host's save file, not its own. The data is one
 
 - A guest's game (one that uses the co-op save folder, [flags.md](flags.md), "The host's save file") sends `SAVE_ASK` once a run, when it is connected and knows the host. The server passes it to the host only, with the asker's number; an ask from the host itself or with no host is dropped.
 - The host takes one ask per player while it stays (a repeated ask is ignored and logged; a player who left may ask again with its number), and keeps at most four slots' worth of parts waiting (a send past that is dropped and logged).
-- The host answers with its newest slot (by `progress.sav`'s write time) as `SAVE_PART`s to the asker (`to player` = the asker, reason 1). After its own save load the host waits until the game writes a save after it (the game saves at every door), then sends that slot to every guest (`to player` 0, reason 2); an ask that came meanwhile gets that one.
+- The host answers at once (within half a second) with its newest slot (by `progress.sav`'s write time) as `SAVE_PART`s to the asker (`to player` = the asker, reason 1), also right after its own save load: a guest never waits on the host's next door for a save. A host with no slot on disk (a new game) answers at once with "no save": the packed form with a file count of 0 (`OOTSAVE1`, then `00`, 9 bytes), as an ordinary one-part transfer (no new type; an older guest refuses it as "not a save slot" and waits on). After its own save load the host also waits until the game writes a save after it (the game saves at every door), then sends that slot to every guest (`to player` 0, reason 2).
+- A guest's game on Hookshot stays on its own save folder while it waits: it writes the host's slot whole into the co-op folder (each slot into `slot_NN.part`, then renamed) and only then moves the game to that folder, so the title never loads an empty or half-written co-op folder. With "no save", or nothing within a minute, the title says so and its own Continue / New Game play the player's own save or a new one.
 - Parts: the packed slot cut into 16384-byte parts (the last one the rest), `count` = ceil(total / 16384), at most 64 parts for 1 MiB. Every part carries the whole header, so each is checked alone: the codec refuses a wrong count, index, part size, reason, a size over 1 MiB, and reason 1 to player 0. The host sends a part a frame; the server takes `SAVE_PART` from the host only (outside the host's byte and message budgets: a dropped part would leave the transfer unfinished) and passes it to the named player, or to every other player for 0; a part for a player who is not there is dropped.
 - A guest keeps the parts of one transfer id (a newer id starts again), takes them out of order or twice, refuses a part not from the host or whose header differs from the transfer's, and checks the CRC-32 (zlib's) when all are in: a damaged save is dropped and the next one waited for.
 - A build without these messages refuses them as unknown types, so the server and every game must be protocol 9.
@@ -499,6 +500,51 @@ Types 490 to 499 (modloader-b; 490 and 491 used). Both on the session channel, f
 
 A build without protocol 11 does not know 490 and 491; all players need the same release.
 
+### Lobby (protocol 11, `LOBBY_ACTION`, `LOBBY_MUTES`, `LOBBY_RESULT`)
+
+Types 510 to 519 (lobby-b; 510 to 512 used). All three on the session channel. The host's moderation from the Lobby tab and the chat commands (play-online.md, "Lobby"); the server carries out every one of them and takes them from the host only, so no game can moderate by itself. A player's own mutes never reach the wire.
+
+- `LOBBY_ACTION` (510, client only): `u8` action (1 kick, 2 ban, 3 mute voice, 4 unmute voice, 5 mute chat, 6 unmute chat), `u8` target player (1 to 16). From anyone but the host it is refused (`lobby_refused`) and answered `not_host`; the host itself, or a number nobody has, is answered too and nothing happens.
+  - **Kick**: the server sends the target `REFUSED` 7 (kicked), closes it, and tells the others `PLAYER_LEFT` with reason 2 (kicked). The game stops and does not join again by itself (its client takes a `REFUSED` 7 or 8 after `WELCOME` too); the player may join again by hand.
+  - **Who a player is**: the **player key** sealed in its `JOIN_PROOF` (16 random bytes, below), so a mute or ban follows the player whatever name it takes, also over the relay. A split-screen seat is its game's key and its seat number. Only a `HELLO` without a key (an older build) falls back to the name (any ASCII case).
+  - **Ban**: as a kick with `REFUSED` 8 (banned); the server keeps the player's key, and refuses a `HELLO` with that key with `REFUSED` 8 (`lobby_banned`), under any name and from any address; a banned seat's game gets `LOCAL_JOINED` reason 8 for that seat. Only for a player without a key the server keeps the name and, as a last resort, the address too, which keeps out everyone joining directly from behind that router (a household, a carrier's shared address); this PC's own address (127.x, every relayed player's) is never kept. Forgotten when the session empties (on the game's own server: when the host stops hosting).
+  - **Kick or ban of a split-screen seat**: only that seat leaves (the others get `PLAYER_LEFT` kicked, and so does its own game); its game stays in. The host's own seats cannot be targeted (`is_host`).
+  - **Mute**: the server drops the player's `CHAT` (`chat_muted`) or `VOICE_FRAME` (`voice_muted`) and relays them to nobody. Kept by the player's key (the name without one), so a muted player who leaves and comes back, renamed or not, stays muted; kept when the host changes; forgotten when the session empties.
+- **The player key** (protocol 11): 16 random bytes the game makes once and keeps in `player-key.txt` beside `coop.ini` (32 hex digits; not in `coop.ini`, which the launcher writes anew from its template). It never goes in the plain `HELLO`: `JOIN_PROOF` carries it after the proof, 32 more bytes, sealed (`seal_player_key`: XChaCha20-Poly1305 with a key of its own made from this connection's client-to-server traffic key, which is new each connection and seals only this, so its nonce is fixed), so nobody on the way (a relay) reads it. A seal that does not open (`lobby_bad_key`) lets the player in, known by name. The server never relays the key. Two players in at once with one key (a kit copied to a friend): the one who came later is known by name (`lobby_shared_key`, a log line), so a mute or ban of one never takes both. From the same address as the key's holder (or both relayed) it is most likely that player's own game, restarted under a new name while the old connection is still in: it keeps what the host muted of the holder (`lobby_mutes_kept`). A ban of a player known by name keeps that name out whatever key comes with it. A player who deletes that file gets a new key: a ban then holds only by what the host sees next (a new player to ban again). A kit copied to a friend shares its key: delete `player-key.txt` in the copy.
+- `LOBBY_MUTES` (511, server only): `u8` player, `u8` bits (bit 0 voice, bit 1 chat; unknown bits kept): what the host muted of that player now. Sent to everyone on each change, and after `WELCOME` to a joiner for each muted player (the others learn it of a muted player who comes back).
+- `LOBBY_RESULT` (512, server only): `u8` action, `u8` target (as `LOBBY_ACTION`'s), `u8` result (0 done, 1 not host, 2 no such player, 3 the host itself, 4 already so; an unknown result is kept), to the player who sent the `LOBBY_ACTION`.
+- `REFUSED` reasons 7 (kicked) and 8 (banned) are protocol 11's.
+- **Host changes**: when the host leaves, the new host (the lowest number, "Who hosts") has the controls from the server's next `LOBBY_ACTION` on; the bans and mutes stay. There is no "make host": the server runs inside the host's game (hos_coop_host.h), so handing the host role to another game would move the flags' and save's truth there while the server and its controls stay on the first PC, and the session would still end when that game closes.
+### Local players (protocol 11)
+
+Split screen ([local-coop.md](local-coop.md)): the extra players of one game (seats 1 to 3; seat 0
+is the connection's own player) are players of the session on that game's one connection, each
+with a number and name of its own. The other games need nothing new: they meet each through the
+usual `PLAYER_JOINED`, samples and `PLAYER_LEFT`. Types 460 to 469 are kept; 465 to 469 are free.
+
+| Type | Name | From | Channel | Body |
+|---|---|---|---|---|
+| 460 | `LOCAL_JOIN` | game | session | u8 seat (1 to 3), str nickname (1 to 16, as HELLO's) |
+| 461 | `LOCAL_JOINED` | server | session | u8 seat, u8 player number (0: refused), u8 reason (`REFUSED`'s: 3 full, 4 name taken, 5 bad name; 0 when joined) |
+| 462 | `LOCAL_LEAVE` | game | session | u8 seat |
+| 463 | `LOCAL_SAMPLE` | game | player samples | u8 seat, then one whole message (header and body) to the end: `PLAYER_SAMPLE`, `PLAYER_POSE` or `PLAYER_RIDE` |
+| 464 | `LOCAL_MESSAGE` | game | session | u8 seat, then one whole message: `PLAYER_STATUS`, `PLAYER_EQUIP`, `PLAYER_LIFE` or `OCARINA_NOTE` |
+
+- An envelope whose inner message does not decode, is of another type (chat, flags and the world
+  stay the connection's own) or is itself an envelope does not decode.
+- The server answers every `LOCAL_JOIN` (the same answer again for a seat already in); a joined
+  seat gets a free number, and the others get `PLAYER_JOINED`. Its own game gets nothing but
+  `LOCAL_JOINED`.
+- An envelope's inner message is taken as the seat's own message, with the seat's own rate limits
+  and the seat's number written in its player field. Nothing of one game is sent back to it (not its
+  own player's, not its seats'), and the server never sends anything addressed to a seat: its game
+  gets everything through its connection.
+- A seat lives while its connection does (the connection's traffic keeps it from timing out); it
+  leaves by `LOCAL_LEAVE` or with its connection (the others get `PLAYER_LEFT` for each seat first).
+  A seat never hosts, and its name is never taken over by a rejoin.
+- After a reconnect the game asks again for every seat in play; until a seat has a number its
+  player plays on this PC only.
+
 ## Later stages (outline only)
 
 - **Stage 3:** `PLAYER_STATUS` decides whether puppets show during cutscenes. `JOIN_PARTNER` (above) asks for a warp to another player's scene.
@@ -543,6 +589,7 @@ A build without protocol 11 does not know 490 and 491; all players need the same
 - Version 11 (branch `native-host-b`, 2026-11-12): up to 16 players. Player numbers are 1 to 16 (`kMaxPlayers`), `WELCOME` lists up to 15 others, 12 more slot colours; a version 10 game refuses a `WELCOME` with 5 or more players, so the version goes up. The server takes `--max-players` (1 to 16, default 4 until the games' side takes 16) and sends `PLAYER_SAMPLE` and `PLAYER_POSE` by where the players are ("Who gets which stream"). No new type.
 - Protocol 11 also (branch `dbno`): `DBNO_MODE` (470), `DBNO_STATE` (471), `DBNO_REVIVE` (472); 470 to 479 kept. No bump of its own: a build without them never downs anyone (it gets no `DBNO_MODE`, so it plays with the game's own death), and a server without them does not relay them.
 - Version 11 also (branch `difficulty`): `DIFFICULTY` (480; 480 to 489 kept), sent by the server to every player at join. No earlier layout changed and no bump of its own: it ships with the first version 11 release. A version 11 build without it ignores the type and plays the game as it is.
+- Version 11 also (branch `look-live`): types 430 to 434 are kept for a look of several parts (shield, sword, boots, gauntlets). A colour changed in the pause menu needs none: it goes out in `PLAYER_EQUIP` `color` as at the start (docs/puppet.md, "Changing your colour in the game").
 
 ## Who gets which stream
 

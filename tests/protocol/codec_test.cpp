@@ -1169,15 +1169,16 @@ TEST_CASE("native boss sync: an object sample carries a boss's brain and action 
   s.state.bsa->recent = {BossChange{5, BossBrain{3, true}}, BossChange{6, a}, BossChange{7, BossBrain{2, false}}};
   REQUIRE(decode(must_encode(s), m) == Error::none);
   CHECK(std::get<ObjectSample>(m) == s);
+  const std::vector<BossChange> kept_recent = s.state.bsa->recent;
   for (const auto& recent : {std::vector<BossChange>{BossChange{6, BossBrain{}}, BossChange{6, BossBrain{}}},
                              std::vector<BossChange>{BossChange{8, BossBrain{}}},
                              std::vector<BossChange>{BossChange{0, BossBrain{}}},
                              std::vector<BossChange>(kMaxBossChanges + 1, BossChange{1, BossBrain{}})}) {
     Bytes refused;
-    ObjectSample bad_recent = s;
-    bad_recent.state.bsa->recent = recent;
-    CHECK(encode(bad_recent, refused) == Error::bad_value);
+    s.state.bsa->recent = recent;  // (in place: a copy of s made gcc 15 see the copy's vector as maybe uninitialized)
+    CHECK(encode(s, refused) == Error::bad_value);
   }
+  s.state.bsa->recent = kept_recent;
   // No bsa component: none after decoding (older senders).
   Message plain;
   REQUIRE(decode(must_encode(ObjectSample{0, test::kPlacedId, 3, {}}), plain) == Error::none);
@@ -1957,6 +1958,81 @@ TEST_CASE("bad pvp messages are refused") {
   CHECK(decode(b, m) == Error::bad_value);
 }
 
+TEST_CASE("lobby messages have their numbers, channel, senders and layout") {
+  CHECK(static_cast<std::uint16_t>(MessageType::lobby_action) == 510);
+  CHECK(static_cast<std::uint16_t>(MessageType::lobby_mutes) == 511);
+  CHECK(static_cast<std::uint16_t>(MessageType::lobby_result) == 512);
+  CHECK(static_cast<std::uint8_t>(RefuseReason::kicked) == 7);
+  CHECK(static_cast<std::uint8_t>(RefuseReason::banned) == 8);
+  for (const auto t : {MessageType::lobby_action, MessageType::lobby_mutes,
+                       MessageType::lobby_result}) {
+    CHECK(channel_of(t) == kChannelSession);
+    CHECK_FALSE(allowed_on_channel(t, kChannelOwnership));
+  }
+  CHECK(may_send(Sender::client, MessageType::lobby_action));
+  CHECK_FALSE(may_send(Sender::server, MessageType::lobby_action));
+  CHECK(may_send(Sender::server, MessageType::lobby_mutes));
+  CHECK_FALSE(may_send(Sender::client, MessageType::lobby_mutes));
+  CHECK(may_send(Sender::server, MessageType::lobby_result));
+  CHECK_FALSE(may_send(Sender::client, MessageType::lobby_result));
+
+  Message action = LobbyAction{LobbyActionKind::mute_chat, 3};
+  CHECK_FALSE(sender_of(action));  // no player field: the server knows who sent it
+  Bytes b = must_encode(action);
+  REQUIRE(b.size() == kHeaderSize + 2);
+  CHECK(b[kHeaderSize] == 5);
+  CHECK(b[kHeaderSize + 1] == 3);
+  b = must_encode(LobbyResult{LobbyActionKind::kick, 2, LobbyResultCode::is_host});
+  REQUIRE(b.size() == kHeaderSize + 3);
+  CHECK(b[kHeaderSize + 2] == 3);
+  b.back() = 99;  // a newer server's result: kept
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(static_cast<std::uint8_t>(std::get<LobbyResult>(back).result) == 99);
+  b = must_encode(LobbyMutes{2, 0x80});  // unknown bits kept
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<LobbyMutes>(back).flags == 0x80);
+}
+
+TEST_CASE("join proof: the sealed player key (protocol 11) comes after the proof, or nothing") {
+  JoinProof p{};
+  p.proof[0] = 1;
+  const Bytes plain = must_encode(p);
+  SealedPlayerKey sealed{};
+  sealed[0] = 7;
+  p.player_key = sealed;
+  const Bytes with_key = must_encode(p);
+  CHECK(with_key.size() == plain.size() + kSealedPlayerKeyBytes);
+  Message back;
+  REQUIRE(decode(with_key, back) == Error::none);
+  CHECK(std::get<JoinProof>(back) == p);
+  REQUIRE(decode(plain, back) == Error::none);
+  CHECK_FALSE(std::get<JoinProof>(back).player_key);
+  Bytes odd = plain;
+  odd.insert(odd.end(), 16, 0);  // half a sealed key
+  set_u16(odd, 2, static_cast<std::uint16_t>(odd.size() - kHeaderSize));
+  CHECK(decode(odd, back) != Error::none);
+}
+
+TEST_CASE("bad lobby messages are refused") {
+  Bytes out;
+  CHECK(encode(LobbyAction{static_cast<LobbyActionKind>(0), 2}, out) == Error::bad_value);
+  CHECK(encode(LobbyAction{static_cast<LobbyActionKind>(kMaxLobbyAction + 1), 2}, out) ==
+        Error::bad_value);
+  CHECK(encode(LobbyAction{LobbyActionKind::kick, 0}, out) == Error::bad_value);
+  CHECK(encode(LobbyAction{LobbyActionKind::kick, kMaxPlayers + 1}, out) == Error::bad_value);
+  CHECK(encode(LobbyMutes{0, 1}, out) == Error::bad_value);
+  CHECK(encode(LobbyResult{LobbyActionKind::kick, 0, LobbyResultCode::done}, out) ==
+        Error::bad_value);
+  Message m;
+  Bytes b = must_encode(LobbyAction{LobbyActionKind::ban, 2});
+  b[kHeaderSize] = 7;  // no such action
+  CHECK(decode(b, m) == Error::bad_value);
+  b[kHeaderSize] = 2;
+  b[kHeaderSize + 1] = 0;  // nobody
+  CHECK(decode(b, m) == Error::bad_value);
+}
+
 TEST_CASE("fish lure has its number, channel and layout, only a client sends it (issue 151)") {
   CHECK(static_cast<int>(MessageType::fish_lure) == 320);
   CHECK(channel_of(MessageType::fish_lure) == kChannelOwnership);
@@ -2219,4 +2295,76 @@ TEST_CASE("mod settings: type 491, session channel, unique keys (modloader)") {
   ModSettings longer = m;
   longer.settings[0].value = std::string(kMaxModSettingValueChars + 1, 'v');
   CHECK(encode(longer, out) == Error::string_too_long);
+}
+
+TEST_CASE("local players: types 460 to 464, their channels and senders (split screen)") {
+  CHECK(static_cast<int>(MessageType::local_join) == 460);
+  CHECK(static_cast<int>(MessageType::local_message) == 464);
+  CHECK(channel_of(MessageType::local_sample) == kChannelPlayerSamples);
+  CHECK(allowed_on_channel(MessageType::local_sample, kChannelPlayerSamples));
+  CHECK_FALSE(allowed_on_channel(MessageType::local_sample, kChannelSession));
+  for (MessageType t : {MessageType::local_join, MessageType::local_joined, MessageType::local_leave,
+                        MessageType::local_message}) {
+    CHECK(channel_of(t) == kChannelSession);
+    CHECK(allowed_on_channel(t, kChannelSession));
+    CHECK_FALSE(allowed_on_channel(t, kChannelPlayerSamples));
+  }
+  CHECK(may_send(Sender::client, MessageType::local_join));
+  CHECK_FALSE(may_send(Sender::server, MessageType::local_join));
+  CHECK(may_send(Sender::server, MessageType::local_joined));
+  CHECK_FALSE(may_send(Sender::client, MessageType::local_joined));
+  CHECK_FALSE(may_send(Sender::server, MessageType::local_sample));
+}
+
+TEST_CASE("local players: seats are 1 to 3, a refusal names why, a join names no reason") {
+  Bytes out;
+  CHECK(encode(Message{LocalJoin{0, "Mido"}}, out) == Error::bad_value);
+  CHECK(encode(Message{LocalJoin{4, "Mido"}}, out) == Error::bad_value);
+  CHECK(encode(Message{LocalJoin{1, ""}}, out) == Error::bad_value);
+  CHECK(encode(Message{LocalJoin{1, std::string(17, 'a')}}, out) != Error::none);
+  CHECK(encode(Message{LocalLeave{0}}, out) == Error::bad_value);
+  CHECK(encode(Message{LocalJoined{1, 17, RefuseReason::server_full}}, out) == Error::bad_value);
+  // A join with a reason byte, or a refusal without one, does not decode.
+  Bytes joined = must_encode(LocalJoined{1, 5, RefuseReason::server_full});
+  joined.back() = 3;
+  CHECK(decode_bytes(joined) == Error::bad_value);
+  Bytes refused = must_encode(LocalJoined{1, 0, RefuseReason::server_full});
+  refused.back() = 0;
+  CHECK(decode_bytes(refused) == Error::bad_value);
+}
+
+TEST_CASE("local players: an envelope carries only its own kinds, whole, and never another envelope") {
+  PlayerSample sample;
+  sample.time = {5, 1};
+  sample.position = Vec3{1.0f, 2.0f, 3.0f};
+  const auto s = local_envelope(2, sample);
+  REQUIRE(s.has_value());
+  REQUIRE(std::holds_alternative<LocalSample>(*s));
+  CHECK(std::get<LocalSample>(*s).seat == 2);
+  CHECK(local_inner(*s) == Message{sample});
+  const auto m = local_envelope(1, PlayerEquip{0, {}});
+  REQUIRE(m.has_value());
+  CHECK(std::holds_alternative<LocalMessage>(*m));
+  CHECK(local_inner(*m) == Message{PlayerEquip{0, {}}});
+  CHECK_FALSE(local_envelope(1, Chat{0, "hi"}).has_value());          // chat stays the connection's player's
+  CHECK_FALSE(local_envelope(1, FlagSet{0, {}}).has_value());        // the world is the game's, not a seat's
+  CHECK_FALSE(local_envelope(0, sample).has_value());                // no seat 0
+  CHECK_FALSE(local_envelope(1, *s).has_value());                    // no envelope in an envelope
+  CHECK_FALSE(local_inner(Message{Ping{1}}).has_value());
+  // A wrong kind inside, written by hand, is refused on decode.
+  Bytes body{1};
+  const Bytes chat = must_encode(Chat{0, "hi"});
+  body.insert(body.end(), chat.begin(), chat.end());
+  Bytes wire{static_cast<std::uint8_t>(464 & 0xff), static_cast<std::uint8_t>(464 >> 8),
+             static_cast<std::uint8_t>(body.size()), 0};
+  wire.insert(wire.end(), body.begin(), body.end());
+  CHECK(decode_bytes(wire) == Error::bad_value);
+  // The right kind in the wrong envelope too: a sample in LOCAL_MESSAGE.
+  Bytes body2{1};
+  const Bytes sb = must_encode(sample);
+  body2.insert(body2.end(), sb.begin(), sb.end());
+  Bytes wire2{static_cast<std::uint8_t>(464 & 0xff), static_cast<std::uint8_t>(464 >> 8),
+              static_cast<std::uint8_t>(body2.size()), 0};
+  wire2.insert(wire2.end(), body2.begin(), body2.end());
+  CHECK(decode_bytes(wire2) == Error::bad_value);
 }

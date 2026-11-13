@@ -281,6 +281,13 @@ jobs:
             echo "$f: newest glibc symbol $newest"
             [ "$(printf '%s\nGLIBC_2.35\n' "$newest" | sort -V | tail -n1)" = GLIBC_2.35 ] || { echo "::error::$f needs $newest"; exit 1; }
           done
+      # (also in linux (gcc); here too, so they run when that job is stopped by another target's -Werror)
+      - name: The module's Linux clipboard tests and the kit tests
+        run: |
+          cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc-12 -DCMAKE_CXX_COMPILER=g++-12 -DCOOP_BUILD_TESTS=ON
+          cmake --build build-tests --target coop_tests --parallel 4
+          "$(find build-tests -name coop_tests -type f -perm -u+x | head -n1)" -tc='Linux clipboard*'
+          bash tools/release/tests/linux_longshot_kit_test.sh
       - name: The Linux kit
         run: |
           release=$(if [ "$GITHUB_REF_TYPE" = tag ]; then echo "$GITHUB_REF_NAME"; else echo "ci-${GITHUB_SHA::8}"; fi)

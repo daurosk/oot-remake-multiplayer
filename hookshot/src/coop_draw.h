@@ -122,7 +122,7 @@ struct Scene {
     std::optional<std::vector<CoopHook::PlayerRow>> players;  // the player list key is held
     std::optional<std::vector<CoopHook::OverlayLine>> panel;  // the panel is on
     // The game look: players' colours (Lifted, alpha 255) by what tags and
-    // chat lines call them: their names, "P1".."P4", "you". Nobody here: white.
+    // chat lines call them: their names, "P1".."P16", "you". Nobody here: white.
     std::map<std::string, std::uint32_t, std::less<>> colours;
 };
 

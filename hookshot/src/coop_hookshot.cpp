@@ -38,6 +38,7 @@
 #include "coop_hook.h"
 #include "coop_hud.h"
 #include "coop_native_ui.h"
+#include "coop/protocol/messages.hpp"
 #include "coop_hud_hearts.h"
 #include "coop_png.h"
 #include "coop_puppet.h"
@@ -606,6 +607,13 @@ std::uint32_t FromCodePage(unsigned byte) {
 
 }  // namespace
 
+// A player's colour for names, 1 to 16: the chosen one or the slot colour; past the protocol's four slot
+// colours (white) the 16-colour palette of the native UI (CoopNativeUi::Colour).
+std::uint32_t PlayerColour(std::uint8_t number, std::uint8_t self) {
+    const std::uint32_t c = CoopPuppet::NameColor(number, self);
+    return number > 4 && c == coop::protocol::slot_color(number) ? CoopNativeUi::Colour(number) : c;
+}
+
 BoxNow Box() {
     std::lock_guard lock(g_box_mutex);
     return {g_box.open(), g_box.text(), g_box.failed()};
@@ -662,15 +670,15 @@ CoopDraw::Scene DrawScene() {
                 self = row.number;
             }
         }
-        for (std::uint8_t n = 1; n <= 4; ++n) {  // a tag with no name
-            s.colours["P" + std::to_string(n)] = CoopDraw::Lifted(CoopPuppet::NameColor(n, self));
+        for (std::uint8_t n = 1; n <= CoopNativeUi::kMaxPlayers; ++n) {  // a tag with no name
+            s.colours["P" + std::to_string(n)] = CoopDraw::Lifted(PlayerColour(n, self));
         }
         if (self != 0) {
-            s.colours["you"] = CoopDraw::Lifted(CoopPuppet::NameColor(self, self));
+            s.colours["you"] = CoopDraw::Lifted(PlayerColour(self, self));
         }
         for (const auto& row : rows) {
             if (row.number != 0 && !row.name.empty()) {
-                s.colours[row.name] = CoopDraw::Lifted(CoopPuppet::NameColor(row.number, self));
+                s.colours[row.name] = CoopDraw::Lifted(PlayerColour(row.number, self));
             }
         }
     }

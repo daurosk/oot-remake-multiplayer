@@ -305,6 +305,12 @@ struct Stats {
   std::uint64_t dbno_revives_dropped = 0;  // mode off, to nobody, or to themselves
   std::uint64_t difficulty_refused = 0;  // DIFFICULTY from a player who does not host
   std::uint64_t mod_settings_refused = 0;  // MOD_SETTINGS from a player who does not host
+  // The Lobby (docs/protocol.md "Lobby"): the host's kicks, bans and mutes.
+  std::uint64_t lobby_done = 0;      // LOBBY_ACTIONs carried out
+  std::uint64_t lobby_refused = 0;   // LOBBY_ACTION from a player who does not host
+  std::uint64_t lobby_banned = 0;    // HELLOs refused: a banned name or address
+  std::uint64_t chat_muted = 0;      // CHAT from a player the host muted: dropped
+  std::uint64_t voice_muted = 0;     // VOICE_FRAME from a player the host muted: dropped
   // Connections refused at connect: their address already had
   // max_half_open_per_address waiting for HELLO. Not packets, so not in
   // dropped().
@@ -609,6 +615,10 @@ class Session {
   // values in force are the ones told before, as with the host's own choice.
   void tell_difficulty_change(ConnectionId except);
   void on_mods(ConnectionId id, Connection& c, protocol::Message& message);
+  // The Lobby: the host's kick, ban and mutes (docs/protocol.md "Lobby").
+  void on_lobby(ConnectionId id, const protocol::LobbyAction& a, std::uint64_t now_us);
+  std::uint8_t lobby_mutes_of(const Connection& c) const;
+  bool lobby_banned(const std::string& nickname, std::optional<std::uint32_t> address) const;
   void on_pvp_hit(ConnectionId id, Connection& c, protocol::Message& message);
   void on_dbno_mode(ConnectionId id, Connection& c, const protocol::DbnoMode& m);
   void on_dbno_revive(ConnectionId id, Connection& c, protocol::Message& message);
@@ -727,6 +737,12 @@ class Session {
   std::map<ConnectionId, Connection> connections_;
   // The host's connection; set while players are in.
   std::optional<ConnectionId> host_;
+  // The Lobby, kept by name (lower case) so a muted or banned player who
+  // comes back is still so; cleared when the session empties. Bans also keep
+  // the address, unless it is this PC's own (127.x: every relayed player).
+  std::map<std::string, std::uint8_t> lobby_mutes_;
+  std::set<std::string> banned_names_;
+  std::set<std::uint32_t> banned_addresses_;
   // PvP now: config_.pvp until the host changes it; back to config_.pvp when
   // the session empties. `pvp_set_by_` is PVP_MODE's set_by (0: the server).
   bool pvp_ = false;

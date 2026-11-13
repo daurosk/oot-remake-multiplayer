@@ -23,6 +23,13 @@ bool same_name(const std::string& a, const std::string& b) {
                     [](char x, char y) { return ascii_lower(x) == ascii_lower(y); });
 }
 
+// A name as the Lobby keeps it: without ASCII case, as same_name compares.
+std::string name_key(const std::string& name) {
+  std::string key = name;
+  for (char& ch : key) ch = ascii_lower(ch);
+  return key;
+}
+
 // The codec already refuses empty names and control characters; a name of
 // nothing but spaces is refused here.
 bool blank_name(const std::string& name) {
@@ -306,6 +313,11 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
     refuse(id, c, RefuseReason::bad_name, now_us);
     return;
   }
+  if (lobby_banned(hello.nickname, c.address)) {
+    ++stats_.lobby_banned;
+    refuse(id, c, RefuseReason::banned, now_us, "banned by the host");
+    return;
+  }
   // A build that lost its connection finds its old self still in until the
   // silence timeout. It takes that place when the old one is quiet, from the
   // same address, and the new connection showed the old one's rejoin token
@@ -387,6 +399,17 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
     }
   }
   if (mod_settings_) send(id, kChannelSession, *mod_settings_);
+  // The Lobby: who the host muted (the joiner too, when it was muted before
+  // it left); the others learn it of the joiner.
+  for (const auto& entry : connections_) {
+    if (entry.second.state != State::joined) continue;
+    if (const std::uint8_t flags = lobby_mutes_of(entry.second); flags != 0) {
+      send(id, kChannelSession, LobbyMutes{entry.second.number, flags});
+    }
+  }
+  if (const std::uint8_t flags = lobby_mutes_of(c); flags != 0) {
+    send_to_others(id, kChannelSession, LobbyMutes{c.number, flags});
+  }
   send_snapshot(id);
   log("player " + std::to_string(c.number) + " joined: " + c.nickname);
 }
@@ -499,7 +522,20 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     ++stats_.relayed;
     return;
   }
+  if (const auto* lobby = std::get_if<LobbyAction>(&message)) {
+    on_lobby(id, *lobby, now_us);
+    return;
+  }
+  // The Lobby: the host muted this player's chat or voice; nothing relayed.
+  if (std::holds_alternative<Chat>(message) && (lobby_mutes_of(c) & lobby_mute::chat) != 0) {
+    ++stats_.chat_muted;
+    return;
+  }
   if (auto* voice = std::get_if<VoiceFrame>(&message)) {
+    if ((lobby_mutes_of(c) & lobby_mute::voice) != 0) {
+      ++stats_.voice_muted;
+      return;
+    }
     on_voice(id, c, *voice, now_us);
     return;
   }
@@ -2004,6 +2040,83 @@ bool Session::object_in_fight(const ObjectId& id, std::uint64_t now_us) const {
   return it != objects_.end() && in_fight(it->second, now_us);
 }
 
+void Session::on_lobby(ConnectionId id, const LobbyAction& a, std::uint64_t now_us) {
+  const auto answer = [&](LobbyResultCode result) {
+    send(id, kChannelSession, LobbyResult{a.action, a.target, result});
+  };
+  if (!host_ || *host_ != id) {
+    ++stats_.lobby_refused;
+    answer(LobbyResultCode::not_host);
+    return;
+  }
+  const std::optional<ConnectionId> target = connection_of(a.target);
+  if (!target) {
+    answer(LobbyResultCode::no_player);
+    return;
+  }
+  if (*target == id) {
+    answer(LobbyResultCode::is_host);
+    return;
+  }
+  Connection& t = connections_.at(*target);
+  const std::string key = name_key(t.nickname);
+  const std::string who = "player " + std::to_string(t.number) + " (" + t.nickname + ")";
+  if (a.action == LobbyActionKind::kick || a.action == LobbyActionKind::ban) {
+    const bool ban = a.action == LobbyActionKind::ban;
+    if (ban) {
+      banned_names_.insert(key);
+      if (t.address && (ipv4_of(*t.address) >> 24) != 127) banned_addresses_.insert(*t.address);
+    }
+    // REFUSED first, so the game knows not to join again, then the close;
+    // the others get PLAYER_LEFT, kicked.
+    send(*target, kChannelSession, Refused{ban ? RefuseReason::banned : RefuseReason::kicked});
+    actions_.push_back(DisconnectAction{*target});
+    remove_player(*target, LeaveReason::kicked, now_us,
+                  ban ? "banned by the host" : "kicked by the host");
+    ++stats_.lobby_done;
+    answer(LobbyResultCode::done);
+    return;
+  }
+  std::uint8_t bit = lobby_mute::voice;
+  bool on = true;
+  switch (a.action) {
+    case LobbyActionKind::mute_voice: break;
+    case LobbyActionKind::unmute_voice: on = false; break;
+    case LobbyActionKind::mute_chat: bit = lobby_mute::chat; break;
+    case LobbyActionKind::unmute_chat: bit = lobby_mute::chat; on = false; break;
+    default: return;  // kick and ban above; the codec takes nothing else
+  }
+  const std::uint8_t before = lobby_mutes_of(t);
+  const std::uint8_t after = on ? static_cast<std::uint8_t>(before | bit)
+                                : static_cast<std::uint8_t>(before & ~bit);
+  if (after == before) {
+    answer(LobbyResultCode::unchanged);
+    return;
+  }
+  if (after == 0) {
+    lobby_mutes_.erase(key);
+  } else {
+    lobby_mutes_[key] = after;
+  }
+  send_to_scene({}, std::nullopt, kChannelSession, LobbyMutes{t.number, after});
+  ++stats_.lobby_done;
+  answer(LobbyResultCode::done);
+  log(who + (on ? " muted" : " unmuted") + (bit == lobby_mute::voice ? " (voice)" : " (chat)") +
+      " by the host");
+}
+
+std::uint8_t Session::lobby_mutes_of(const Connection& c) const {
+  if (lobby_mutes_.empty()) return 0;
+  const auto it = lobby_mutes_.find(name_key(c.nickname));
+  return it == lobby_mutes_.end() ? 0 : it->second;
+}
+
+bool Session::lobby_banned(const std::string& nickname,
+                           std::optional<std::uint32_t> address) const {
+  return banned_names_.contains(name_key(nickname)) ||
+         (address && banned_addresses_.contains(*address));
+}
+
 std::optional<ConnectionId> Session::connection_of(std::uint8_t number) const {
   for (const auto& [id, c] : connections_) {
     if (c.state == State::joined && c.number == number) return id;
@@ -2135,6 +2248,9 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     difficulty_set_by_ = 0;
     difficulty_told_ = {};
     mod_settings_.reset();
+    lobby_mutes_.clear();
+    banned_names_.clear();
+    banned_addresses_.clear();
     flags_.clear();
     objects_.clear();
     grass_.clear();

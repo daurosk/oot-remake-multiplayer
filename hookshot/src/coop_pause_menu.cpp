@@ -74,6 +74,16 @@ const std::vector<Command>& Commands() {
         {"/tp <player>", "The same as /teleport."},
         {"/pvp", "Says whether players can hurt each other (PvP) in this game."},
         {"/pvp on, /pvp off", "The host only: lets players hurt each other, or stops it, for everyone."},
+        // The Lobby (docs/play-online.md "Lobby"): the same as the Lobby tab's buttons.
+        {"/kick <player>", "The host only: takes that player out of the game. They can join again."},
+        {"/ban <player>",
+         "The host only: takes that player out, and their name and address cannot join again until the host stops "
+         "hosting."},
+        {"/mute <player>",
+         "The host: nobody hears that player's voice or sees their chat (the server stops passing them on); add "
+         "voice or chat for only that (/mute 2 voice). Anyone else: you stop hearing and seeing them yourself, and "
+         "nobody is told."},
+        {"/unmute <player>", "Undoes /mute (add voice or chat for only that)."},
     };
     return list;
 }

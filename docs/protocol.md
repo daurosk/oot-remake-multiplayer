@@ -117,7 +117,7 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 2 | `WELCOME` | 0 | server | above |
 | 3 | `REFUSED` | 0 | server | above |
 | 4 | `PLAYER_JOINED` | 0 | server | `u8` player number, nickname |
-| 5 | `PLAYER_LEFT` | 0 | server | `u8` player number, `u8` reason: 0 left, 1 timed out, 2 kicked (an unknown reason is kept) |
+| 5 | `PLAYER_LEFT` | 0 | server | `u8` player number, `u8` reason: 0 left, 1 timed out, 2 kicked by the host (an unknown reason is kept) |
 | 6 | `PING` | 0 | both | above |
 | 7 | `PONG` | 0 | both | above |
 | 8 | `PLAYER_STATUS` | 0 | both | `u8` player field, `u8` flags: bit 0 paused, 1 loading, 2 in cutscene, 3 in menu, 4 dead (unknown bits are kept); sent on every change |
@@ -498,6 +498,19 @@ Types 490 to 499 (modloader-b; 490 and 491 used). Both on the session channel, f
 - `MOD_SETTINGS` (491): the host's values of its mods' `"shared"` settings, all of them each time: u8 player, u8 count (0 to 32), then str mod id, str key (1 to 32 of `a-z 0-9 _`; a mod id and key once), str value (0 to 256 chars). Taken from the host only (`mod_settings_refused` counts the others); the server keeps the last one, relays it and gives it to each joiner; kept when the host leaves until the new host sends its own; forgotten when the session empties. A guest's game shows these values locked and uses them (the randomizer's seed).
 
 A build without protocol 11 does not know 490 and 491; all players need the same release.
+
+### Lobby (protocol 11, `LOBBY_ACTION`, `LOBBY_MUTES`, `LOBBY_RESULT`)
+
+Types 510 to 519 (lobby-b; 510 to 512 used). All three on the session channel. The host's moderation from the Lobby tab and the chat commands (play-online.md, "Lobby"); the server carries out every one of them and takes them from the host only, so no game can moderate by itself. A player's own mutes never reach the wire.
+
+- `LOBBY_ACTION` (510, client only): `u8` action (1 kick, 2 ban, 3 mute voice, 4 unmute voice, 5 mute chat, 6 unmute chat), `u8` target player (1 to 16). From anyone but the host it is refused (`lobby_refused`) and answered `not_host`; the host itself, or a number nobody has, is answered too and nothing happens.
+  - **Kick**: the server sends the target `REFUSED` 7 (kicked), closes it, and tells the others `PLAYER_LEFT` with reason 2 (kicked). The game stops and does not join again by itself (its client takes a `REFUSED` 7 or 8 after `WELCOME` too); the player may join again by hand.
+  - **Ban**: as a kick with `REFUSED` 8 (banned); the server keeps the name (any ASCII case) and the address, and refuses a `HELLO` with that name or from that address with `REFUSED` 8 (`lobby_banned`). This PC's own address (127.x, every relayed player's) is never kept. Forgotten when the session empties (on the game's own server: when the host stops hosting).
+  - **Mute**: the server drops the player's `CHAT` (`chat_muted`) or `VOICE_FRAME` (`voice_muted`) and relays them to nobody. Kept by name, so a muted player who leaves and comes back stays muted, and kept when the host changes; forgotten when the session empties.
+- `LOBBY_MUTES` (511, server only): `u8` player, `u8` bits (bit 0 voice, bit 1 chat; unknown bits kept): what the host muted of that player now. Sent to everyone on each change, and after `WELCOME` to a joiner for each muted player (the others learn it of a muted player who comes back).
+- `LOBBY_RESULT` (512, server only): `u8` action, `u8` target (as `LOBBY_ACTION`'s), `u8` result (0 done, 1 not host, 2 no such player, 3 the host itself, 4 already so; an unknown result is kept), to the player who sent the `LOBBY_ACTION`.
+- `REFUSED` reasons 7 (kicked) and 8 (banned) are protocol 11's.
+- **Host changes**: when the host leaves, the new host (the lowest number, "Who hosts") has the controls from the server's next `LOBBY_ACTION` on; the bans and mutes stay. There is no "make host": the server runs inside the host's game (hos_coop_host.h), so handing the host role to another game would move the flags' and save's truth there while the server and its controls stay on the first PC, and the session would still end when that game closes.
 
 ## Later stages (outline only)
 

@@ -140,6 +140,11 @@ std::string_view refuse_reason_text(proto::RefuseReason reason) {
     case proto::RefuseReason::bad_name: return "bad name";
     case proto::RefuseReason::bad_password:
       return "wrong join password: ask the host for it, then start Join.bat again and type it";
+    case proto::RefuseReason::kicked:
+      return "the host took you out of the game: you can join again";
+    case proto::RefuseReason::banned:
+      return "the host banned you from this game: you cannot join it again until the host "
+             "stops hosting";
     case proto::RefuseReason::not_encrypted:
       return "the server did not ask for the join password, so the game did not join it "
              "unencrypted (every session has a password and is encrypted): the host's server "
@@ -522,6 +527,26 @@ void Client::on_connected_message(proto::Message message, std::uint8_t channel) 
 
   if (const auto* token = std::get_if<proto::RejoinToken>(&message)) {
     rejoin_token_ = token->token;  // kept for the next connection
+    return;
+  }
+
+  // The Lobby (protocol 11): the host took us out. The server closes the
+  // connection next; we stop here and do not join again by ourselves.
+  if (const auto* refused = std::get_if<proto::Refused>(&message);
+      refused && (refused->reason == proto::RefuseReason::kicked ||
+                  refused->reason == proto::RefuseReason::banned)) {
+    if (peer_ != nullptr) {
+      enet_peer_disconnect_now(peer_, 0);
+      peer_ = nullptr;
+    }
+    players_.clear();
+    clear_shared();
+    early_.clear();
+    state_ = State::refused;
+    Event event;
+    event.kind = EventKind::refused;
+    event.refuse_reason = refused->reason;
+    push(std::move(event));
     return;
   }
 

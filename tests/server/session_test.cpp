@@ -4560,3 +4560,210 @@ TEST_CASE("interest: the pose upload cap holds poses back, shared by the players
   CHECK(count_to<PlayerPose>(h, 3) == count_to<PlayerPose>(h, 2));
   CHECK(h.session.stats().upload_capped > 0);
 }
+
+// --- The Lobby (docs/protocol.md "Lobby") ---
+
+namespace {
+
+template <typename T>
+std::vector<T> all_to(const Harness& h, ConnectionId id) {
+  std::vector<T> out;
+  for (const Sent& s : h.to(id)) {
+    if (const auto* m = std::get_if<T>(&s.message)) out.push_back(*m);
+  }
+  return out;
+}
+
+bool was_dropped(const Harness& h, ConnectionId id) {
+  return std::find(h.dropped.begin(), h.dropped.end(), id) != h.dropped.end();
+}
+
+}  // namespace
+
+TEST_CASE("lobby: only the host may kick, ban or mute; others are told no") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  for (const LobbyActionKind a : {LobbyActionKind::kick, LobbyActionKind::ban,
+                                  LobbyActionKind::mute_voice, LobbyActionKind::mute_chat}) {
+    h.receive(2, LobbyAction{a, 3}, kChannelSession);
+    CHECK(only_message_to<LobbyResult>(h, 2) == LobbyResult{a, 3, LobbyResultCode::not_host});
+    CHECK(h.to(3).empty());
+    CHECK(h.to(1).empty());
+    CHECK(h.dropped.empty());
+    h.clear();
+  }
+  CHECK(h.session.stats().lobby_refused == 4);
+  CHECK(h.session.stats().lobby_done == 0);
+  CHECK(h.session.player_count() == 3);
+  // The host cannot do it to itself, nor to nobody.
+  h.receive(1, LobbyAction{LobbyActionKind::kick, 1}, kChannelSession);
+  CHECK(only_message_to<LobbyResult>(h, 1) ==
+        LobbyResult{LobbyActionKind::kick, 1, LobbyResultCode::is_host});
+  h.clear();
+  h.receive(1, LobbyAction{LobbyActionKind::kick, 9}, kChannelSession);
+  CHECK(only_message_to<LobbyResult>(h, 1) ==
+        LobbyResult{LobbyActionKind::kick, 9, LobbyResultCode::no_player});
+  CHECK(h.session.player_count() == 3);
+}
+
+TEST_CASE("lobby: a kicked player is told, closed, reported as kicked, and may join again") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  h.receive(1, LobbyAction{LobbyActionKind::kick, 2}, kChannelSession);
+  CHECK(only_message_to<Refused>(h, 2) == Refused{RefuseReason::kicked});
+  CHECK(was_dropped(h, 2));
+  CHECK(all_to<PlayerLeft>(h, 3) == std::vector<PlayerLeft>{PlayerLeft{2, LeaveReason::kicked}});
+  CHECK(all_to<LobbyResult>(h, 1) ==
+        std::vector<LobbyResult>{LobbyResult{LobbyActionKind::kick, 2, LobbyResultCode::done}});
+  CHECK(h.session.player_count() == 2);
+  // The transport's close afterwards changes nothing.
+  h.clear();
+  h.session.disconnected(2, h.now);
+  h.collect();
+  CHECK(h.to(3).empty());
+  // A kick is not a ban: the same name comes back.
+  h.join(4, "Zelda");
+  CHECK(h.session.player_count() == 3);
+}
+
+TEST_CASE("lobby: a banned player's name and address are refused until the session ends") {
+  Harness h;
+  constexpr std::uint32_t kHome = 0x0A00A8C0;  // 192.168.0.10 in ENet's memory order
+  constexpr std::uint32_t kOther = 0x0B00A8C0;
+  h.join(1, "Link");
+  h.join(2, "Zelda", kHome);
+  h.clear();
+  h.receive(1, LobbyAction{LobbyActionKind::ban, 2}, kChannelSession);
+  CHECK(only_message_to<Refused>(h, 2) == Refused{RefuseReason::banned});
+  CHECK(was_dropped(h, 2));
+  CHECK(h.session.player_count() == 1);
+  // The same name from elsewhere, any case: refused.
+  h.clear();
+  h.connect(3, kOther);
+  h.receive(3, hello_from("ZELDA"), kChannelSession);
+  CHECK(all_to<Refused>(h, 3) == std::vector<Refused>{Refused{RefuseReason::banned}});
+  // Another name from the same address: refused.
+  h.clear();
+  h.connect(4, kHome);
+  h.receive(4, hello_from("Impa"), kChannelSession);
+  CHECK(all_to<Refused>(h, 4) == std::vector<Refused>{Refused{RefuseReason::banned}});
+  CHECK(h.session.stats().lobby_banned == 2);
+  // Someone else from elsewhere: in.
+  h.join(5, "Saria", kOther);
+  CHECK(h.session.player_count() == 2);
+  // Everyone leaves: a new session forgets the ban.
+  h.session.disconnected(1, h.now);
+  h.session.disconnected(5, h.now);
+  h.collect();
+  h.join(6, "Zelda", kHome);
+  CHECK(h.session.player_count() == 1);
+}
+
+TEST_CASE("lobby: a ban never takes this PC's own address (relayed players share it)") {
+  Harness h;
+  constexpr std::uint32_t kLoopback = 0x0100007F;  // 127.0.0.1 in ENet's memory order
+  h.join(1, "Link", kLoopback);
+  h.join(2, "Zelda", kLoopback);
+  h.clear();
+  h.receive(1, LobbyAction{LobbyActionKind::ban, 2}, kChannelSession);
+  CHECK(h.session.player_count() == 1);
+  h.join(3, "Saria", kLoopback);  // another relayed player
+  CHECK(h.session.player_count() == 2);
+}
+
+TEST_CASE("lobby: a player muted in chat is not relayed; everyone is told; unmute") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  h.receive(1, LobbyAction{LobbyActionKind::mute_chat, 2}, kChannelSession);
+  const LobbyMutes muted{2, lobby_mute::chat};
+  CHECK(all_to<LobbyMutes>(h, 1) == std::vector<LobbyMutes>{muted});
+  CHECK(all_to<LobbyMutes>(h, 2) == std::vector<LobbyMutes>{muted});
+  CHECK(all_to<LobbyMutes>(h, 3) == std::vector<LobbyMutes>{muted});
+  h.clear();
+  h.receive(2, Chat{0, "spam"}, kChannelSession);
+  CHECK(h.to(1).empty());
+  CHECK(h.to(3).empty());
+  CHECK(h.session.stats().chat_muted == 1);
+  // Muting twice changes nothing.
+  h.receive(1, LobbyAction{LobbyActionKind::mute_chat, 2}, kChannelSession);
+  CHECK(only_message_to<LobbyResult>(h, 1) ==
+        LobbyResult{LobbyActionKind::mute_chat, 2, LobbyResultCode::unchanged});
+  // The others still talk.
+  h.clear();
+  h.receive(3, Chat{0, "hi"}, kChannelSession);
+  CHECK(all_to<Chat>(h, 1) == std::vector<Chat>{Chat{3, "hi"}});
+  // Back on.
+  h.clear();
+  h.receive(1, LobbyAction{LobbyActionKind::unmute_chat, 2}, kChannelSession);
+  CHECK(all_to<LobbyMutes>(h, 3) == std::vector<LobbyMutes>{LobbyMutes{2, 0}});
+  h.clear();
+  h.receive(2, Chat{0, "sorry"}, kChannelSession);
+  CHECK(all_to<Chat>(h, 1) == std::vector<Chat>{Chat{2, "sorry"}});
+}
+
+TEST_CASE("lobby: a muted player stays muted after leaving and coming back; joiners are told") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, LobbyAction{LobbyActionKind::mute_voice, 2}, kChannelSession);
+  h.session.disconnected(2, h.now);
+  h.collect();
+  h.clear();
+  const Welcome w = h.join(3, "zelda");
+  const LobbyMutes muted{w.player_number, lobby_mute::voice};
+  CHECK(all_to<LobbyMutes>(h, 3) == std::vector<LobbyMutes>{muted});
+  CHECK(all_to<LobbyMutes>(h, 1) == std::vector<LobbyMutes>{muted});
+  h.clear();
+  h.join(4, "Saria");  // a newcomer learns who is muted
+  CHECK(all_to<LobbyMutes>(h, 4) == std::vector<LobbyMutes>{muted});
+}
+
+TEST_CASE("lobby: a player muted in voice is not relayed, the others are") {
+  ObjectHarness h;
+  h.receive(1, sample_at("KokiriForest", {0, 0, 0}), kChannelPlayerSamples);
+  h.receive(2, sample_at("KokiriForest", {1, 0, 0}), kChannelPlayerSamples);
+  h.receive(3, sample_at("KokiriForest", {2, 0, 0}), kChannelPlayerSamples);
+  h.receive(1, LobbyAction{LobbyActionKind::mute_voice, 2}, kChannelSession);
+  h.clear();
+  h.receive(2, voice_frame(1), kChannelVoice);
+  CHECK(count_to<VoiceFrame>(h, 1) == 0);
+  CHECK(count_to<VoiceFrame>(h, 3) == 0);
+  CHECK(h.session.stats().voice_muted == 1);
+  h.receive(3, voice_frame(1), kChannelVoice);
+  CHECK(count_to<VoiceFrame>(h, 1) == 1);
+  CHECK(count_to<VoiceFrame>(h, 2) == 1);
+  h.receive(1, LobbyAction{LobbyActionKind::unmute_voice, 2}, kChannelSession);
+  h.clear();
+  h.receive(2, voice_frame(2), kChannelVoice);
+  CHECK(count_to<VoiceFrame>(h, 1) == 1);
+}
+
+TEST_CASE("lobby: when the host leaves, the new host has the controls and the mutes hold") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.receive(1, LobbyAction{LobbyActionKind::mute_chat, 3}, kChannelSession);
+  h.session.disconnected(1, h.now);
+  h.collect();
+  REQUIRE(h.session.host() == 2);
+  h.clear();
+  h.receive(3, Chat{0, "still muted"}, kChannelSession);
+  CHECK(h.to(2).empty());
+  h.receive(3, LobbyAction{LobbyActionKind::kick, 2}, kChannelSession);
+  CHECK(only_message_to<LobbyResult>(h, 3) ==
+        LobbyResult{LobbyActionKind::kick, 2, LobbyResultCode::not_host});
+  h.clear();
+  h.receive(2, LobbyAction{LobbyActionKind::kick, 3}, kChannelSession);
+  CHECK(all_to<Refused>(h, 3) == std::vector<Refused>{Refused{RefuseReason::kicked}});
+  CHECK(h.session.player_count() == 1);
+}

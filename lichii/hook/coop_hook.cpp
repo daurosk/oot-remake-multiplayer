@@ -53,6 +53,7 @@
 #include "coop_boss.h"
 #include "coop_teleport_game.h"
 #include "coop_pvp_game.h"
+#include "coop_lobby_game.h"
 #include "coop_dbno_game.h"
 #include "coop_mod_share.h"
 #include "coop_scene_probe.h"
@@ -317,7 +318,14 @@ public:
                 }
             }
             CoopRide::OnEvent(event);  // their horses (PLAYER_RIDE, issue 199)
-            CoopVoice::OnEvent(event);  // their voices (VOICE_FRAME, docs/voice.md)
+            CoopLobby::OnEvent(event, client);  // the Lobby's mutes and the host's actions
+            // Their voices (VOICE_FRAME, docs/voice.md), but one we muted ourselves (the Lobby).
+            if (const auto* v = event.kind == coop::net::EventKind::message
+                                    ? std::get_if<coop::protocol::VoiceFrame>(&event.message)
+                                    : nullptr;
+                v == nullptr || !CoopLobby::VoiceHidden(v->player_number)) {
+                CoopVoice::OnEvent(event);
+            }
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -906,6 +914,11 @@ public:
         for (auto& line : CoopDbno::TakeLines()) {
             chat_.Add(std::move(line), true);
         }
+        // The Lobby (docs/play-online.md "Lobby"): the tab's host actions go out.
+        CoopLobby::Frame(report.connected ? session_.get() : nullptr);
+        for (auto& line : CoopLobby::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
         // Difficulty (docs/play-online.md "Difficulty"): the host's choice goes out.
         CoopDifficulty::Frame(report.connected ? session_.get() : nullptr);
         for (auto& line : CoopDifficulty::TakeLines()) {
@@ -951,6 +964,9 @@ public:
         }
         if (CoopDbno::OnChat(text, *session_)) {
             return true;  // /dbno: the same
+        }
+        if (CoopLobby::OnChat(text, *session_)) {
+            return true;  // /kick, /ban, /mute, /unmute (the Lobby): the same
         }
         const bool sent =
             session_->with_client([&](coop::net::Client& c) { return c.send_chat(text); });
@@ -1468,7 +1484,9 @@ private:
             chat_.Add("server " + note_, true);
             break;
         case EventKind::chat:
-            chat_.Add(name(event.player, {}) + ": " + event.text, false);
+            if (!CoopLobby::ChatHidden(event.player)) {  // the Lobby: muted by us
+                chat_.Add(name(event.player, {}) + ": " + event.text, false);
+            }
             break;
         case EventKind::player_joined:
             chat_.Add(name(event.player, event.nickname) + " joined", true);

@@ -12,6 +12,7 @@
 #include "common/logging.h"
 #include "coop_hook.h"
 #include "coop_hookshot.h"
+#include "coop_lobby_tab.h"
 #include "coop_mods_tab.h"
 #include "coop_pause_files.h"
 #include "coop_title.h"
@@ -419,16 +420,21 @@ void Tick() {
     Follow(Status());
 }
 
-// Tab 1: Mods (coop_mods_tab.h), once the mod loader runs.
-constexpr int kModsTab = 1;
+// Tab 1: the Lobby (coop_lobby_tab.h), always: who is in the game, the host's controls.
+// Tab 2: Mods (coop_mods_tab.h), once the mod loader runs.
+constexpr int kLobbyTab = 1;
+constexpr int kModsTab = 2;
 
 int Tabs() {
-    return CoopModsTab::Available() ? 2 : 1;
+    return CoopModsTab::Available() ? 3 : 2;
 }
 
 const char* TabName(int tab) {
     if (tab == kModsTab && CoopModsTab::Available()) {
         return CoopModsTab::TabName();
+    }
+    if (tab == kLobbyTab) {
+        return CoopLobbyTab::TabName();
     }
     return tab == kMultiplayerTab ? "Multiplayer" : nullptr;
 }
@@ -436,6 +442,9 @@ const char* TabName(int tab) {
 bool Page(int tab, HosCoopMenuPage* out) {
     if (tab == kModsTab) {
         return CoopModsTab::Page(out);
+    }
+    if (tab == kLobbyTab) {
+        return CoopLobbyTab::Page(out);
     }
     if (tab != kMultiplayerTab || out == nullptr || out->size < sizeof(HosCoopMenuPage)) {
         return false;
@@ -477,6 +486,9 @@ bool Page(int tab, HosCoopMenuPage* out) {
 bool Input(int tab, int event, int arg, int arg2) {
     if (tab == kModsTab) {
         return CoopModsTab::MenuInput(event, arg, arg2);
+    }
+    if (tab == kLobbyTab) {
+        return CoopLobbyTab::MenuInput(event, arg, arg2);
     }
     if (tab != kMultiplayerTab) {
         return false;

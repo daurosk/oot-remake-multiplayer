@@ -1957,6 +1957,61 @@ TEST_CASE("bad pvp messages are refused") {
   CHECK(decode(b, m) == Error::bad_value);
 }
 
+TEST_CASE("lobby messages have their numbers, channel, senders and layout") {
+  CHECK(static_cast<std::uint16_t>(MessageType::lobby_action) == 510);
+  CHECK(static_cast<std::uint16_t>(MessageType::lobby_mutes) == 511);
+  CHECK(static_cast<std::uint16_t>(MessageType::lobby_result) == 512);
+  CHECK(static_cast<std::uint8_t>(RefuseReason::kicked) == 7);
+  CHECK(static_cast<std::uint8_t>(RefuseReason::banned) == 8);
+  for (const auto t : {MessageType::lobby_action, MessageType::lobby_mutes,
+                       MessageType::lobby_result}) {
+    CHECK(channel_of(t) == kChannelSession);
+    CHECK_FALSE(allowed_on_channel(t, kChannelOwnership));
+  }
+  CHECK(may_send(Sender::client, MessageType::lobby_action));
+  CHECK_FALSE(may_send(Sender::server, MessageType::lobby_action));
+  CHECK(may_send(Sender::server, MessageType::lobby_mutes));
+  CHECK_FALSE(may_send(Sender::client, MessageType::lobby_mutes));
+  CHECK(may_send(Sender::server, MessageType::lobby_result));
+  CHECK_FALSE(may_send(Sender::client, MessageType::lobby_result));
+
+  Message action = LobbyAction{LobbyActionKind::mute_chat, 3};
+  CHECK_FALSE(sender_of(action));  // no player field: the server knows who sent it
+  Bytes b = must_encode(action);
+  REQUIRE(b.size() == kHeaderSize + 2);
+  CHECK(b[kHeaderSize] == 5);
+  CHECK(b[kHeaderSize + 1] == 3);
+  b = must_encode(LobbyResult{LobbyActionKind::kick, 2, LobbyResultCode::is_host});
+  REQUIRE(b.size() == kHeaderSize + 3);
+  CHECK(b[kHeaderSize + 2] == 3);
+  b.back() = 99;  // a newer server's result: kept
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(static_cast<std::uint8_t>(std::get<LobbyResult>(back).result) == 99);
+  b = must_encode(LobbyMutes{2, 0x80});  // unknown bits kept
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<LobbyMutes>(back).flags == 0x80);
+}
+
+TEST_CASE("bad lobby messages are refused") {
+  Bytes out;
+  CHECK(encode(LobbyAction{static_cast<LobbyActionKind>(0), 2}, out) == Error::bad_value);
+  CHECK(encode(LobbyAction{static_cast<LobbyActionKind>(kMaxLobbyAction + 1), 2}, out) ==
+        Error::bad_value);
+  CHECK(encode(LobbyAction{LobbyActionKind::kick, 0}, out) == Error::bad_value);
+  CHECK(encode(LobbyAction{LobbyActionKind::kick, kMaxPlayers + 1}, out) == Error::bad_value);
+  CHECK(encode(LobbyMutes{0, 1}, out) == Error::bad_value);
+  CHECK(encode(LobbyResult{LobbyActionKind::kick, 0, LobbyResultCode::done}, out) ==
+        Error::bad_value);
+  Message m;
+  Bytes b = must_encode(LobbyAction{LobbyActionKind::ban, 2});
+  b[kHeaderSize] = 7;  // no such action
+  CHECK(decode(b, m) == Error::bad_value);
+  b[kHeaderSize] = 2;
+  b[kHeaderSize + 1] = 0;  // nobody
+  CHECK(decode(b, m) == Error::bad_value);
+}
+
 TEST_CASE("fish lure has its number, channel and layout, only a client sends it (issue 151)") {
   CHECK(static_cast<int>(MessageType::fish_lure) == 320);
   CHECK(channel_of(MessageType::fish_lure) == kChannelOwnership);

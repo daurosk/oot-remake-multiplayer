@@ -375,6 +375,18 @@ TEST_CASE("title menu: voice chat is off unless turned on: on writes ptt, off ta
         }
     }
     CHECK(seen);
+    // "open" by hand counts for this run too (Host / Join set the variable), not ptt in its place
+    const auto by_hand = Options::Read("", "LICHII_COOP_VOICE=Open\r\n");
+    CHECK(by_hand.VoiceMode() == "open");
+    bool open_seen = false;
+    for (const auto& [k, v] : by_hand.Environment()) {
+        if (k == "LICHII_COOP_VOICE") {
+            open_seen = true;
+            CHECK(v == "open");
+        }
+    }
+    CHECK(open_seen);
+    CHECK(Options::Read("", "LICHII_COOP_VOICE=on\r\n").VoiceMode() == "ptt");
 }
 
 TEST_CASE("title menu: the host's player count, 2 to 16, read and written") {

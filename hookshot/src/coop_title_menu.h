@@ -76,6 +76,7 @@ struct Options {
     bool cheats = false;           // LICHII_COOP_CHEATS
     int max_players = 4;           // max_players (the host's: 2 to kMaxPlayers)
     bool voice = false;            // LICHII_COOP_VOICE (ptt or open: proximity voice chat; unset, the default: off)
+    std::string voice_in_file;     // that line's value as read ("open" written by hand stays open while voice is on)
 
     // From the two files' texts (a missing file: "").
     static Options Read(std::string_view coop_ini, std::string_view options_ini);
@@ -85,6 +86,8 @@ struct Options {
     // launcher sets them from coop-options.ini (name, "" = not set), so they
     // count for this run when co-op has not started yet.
     std::vector<std::pair<std::string, std::string>> Environment() const;
+    // LICHII_COOP_VOICE's value while voice is on: "open" when the file said so, else "ptt" (V to talk).
+    std::string VoiceMode() const;
 };
 
 // coop.ini with what joining a server needs: server ("host:port"), name and

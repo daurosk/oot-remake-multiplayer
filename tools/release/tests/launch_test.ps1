@@ -138,6 +138,16 @@ try {
     . (Join-Path $kitSrc 'scripts\coop-ini.ps1')
     foreach ($good in 'blue', 'Purple', '#FF8020', 'ff8020') { Check (Test-CoopColor $good) "a colour: $good" }
     foreach ($bad in 'blurple', '#FF802', '#GG8020', '') { Check (-not (Test-CoopColor $bad)) "not a colour: '$bad'" }
+    # The forms players type (10.1 report: a hex colour did nothing): one text for every reader.
+    foreach ($pair in @(@('#FF8020', '#FF8020'), @('ff8020', '#FF8020'), @('"#ff8020"', '#FF8020'), @("'0xFF8020'", '#FF8020'),
+                         @('#F82', '#FF8822'), @(' Orange ', 'orange'), @('blurple', ''))) {
+        Check ((ConvertTo-CoopColor $pair[0]) -eq $pair[1]) "colour '$($pair[0])' reads as '$($pair[1])'"
+    }
+    foreach ($hex in '#FF8020', 'FF8020', '"#FF8020"', '0xFF8020') { Check ((Get-KitTunic $hex) -eq 'orange') "own tunic of $hex is orange" }
+    $optFile = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-color-' + [Guid]::NewGuid().ToString('N').Substring(0, 8) + '.ini')
+    [System.IO.File]::WriteAllText($optFile, "color = `"#ff8020`"  # mine`r`n")
+    Check ((Read-KitOptions $optFile)['LICHII_COOP_COLOR'] -eq '#FF8020') 'coop-options.ini color = "#ff8020" passes #FF8020 on'
+    Remove-Item -LiteralPath $optFile -ErrorAction SilentlyContinue
     [System.IO.File]::WriteAllText($opt, "# color = red`r`ncolor = #FF8020  # mine`r`nLICHII_COOP_PUPPET=1`r`n")
     $said = Read-KitOptions $opt 6>&1 | Where-Object { $_ -is [System.Management.Automation.InformationRecord] }
     $o = Read-KitOptions $opt 6>$null

@@ -111,7 +111,10 @@ TEST_CASE("title menu: unknown values in the files read as the defaults") {
     CHECK(o.colour.empty());
     CHECK(o.chat_key == "T");
     CHECK(o.password.empty());
-    CHECK(Options::Read("", "color = Grey\r\n").colour == "gray");
+    CHECK(Options::Read("", "color = Grey\r\n").colour.empty());   // (not a tunic colour: the row offers the ten)
+    CHECK(Options::Read("", "color = #ff8020\r\n").colour == "#FF8020");   // a hex colour is kept
+    CHECK(Options::Read("", "color = \"ff8020\"\r\n").colour == "#FF8020");
+    CHECK(Colours().size() == 11);   // none + the ten tunics
     CHECK(Options::Read("", "LICHII_COOP_CHAT_KEY=off\r\n").chat_key == "off");
 }
 

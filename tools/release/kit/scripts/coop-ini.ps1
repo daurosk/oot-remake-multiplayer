@@ -30,10 +30,20 @@ function Test-CoopPassword([string]$Value) {
 # names below (case does not matter) or #RRGGBB / RRGGBB. The names are the emulator's
 # (lichii/hook/coop_colors.cpp); keep the two lists the same.
 $CoopColorNames = @('red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'pink', 'white', 'black', 'brown', 'gray', 'grey')
+# The colour as the emulator and the module read it: a name in lower case, or #RRGGBB. Takes the
+# forms players type: quotes around it, '#RRGGBB', 'RRGGBB', '0xRRGGBB', '#RGB'. '' when it is none.
+function ConvertTo-CoopColor([string]$Value) {
+    if (-not $Value) { return '' }
+    $v = $Value.Trim().Trim('"', "'").Trim()
+    if ($CoopColorNames -contains $v.ToLowerInvariant()) { return $v.ToLowerInvariant() }
+    if ($v -match '^(?:#|0x)?([0-9A-Fa-f]{6})$') { return '#' + $Matches[1].ToUpperInvariant() }
+    if ($v -match '^#([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])$') {
+        return ('#' + $Matches[1] + $Matches[1] + $Matches[2] + $Matches[2] + $Matches[3] + $Matches[3]).ToUpperInvariant()
+    }
+    return ''
+}
 function Test-CoopColor([string]$Value) {
-    $v = $Value.Trim()
-    if ($CoopColorNames -contains $v.ToLowerInvariant()) { return $true }
-    return ($v -match '^#?[0-9A-Fa-f]{6}$')
+    return [bool](ConvertTo-CoopColor $Value)
 }
 
 # Returns @{ server; port; name; password } from an existing coop.ini (missing keys are empty).

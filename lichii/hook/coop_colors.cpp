@@ -49,9 +49,17 @@ int HexDigit(char c) {
 }  // namespace
 
 std::optional<std::uint32_t> Parse(std::string_view text) {
-    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
-    while (!text.empty() && (text.back() == ' ' || text.back() == '\t' || text.back() == '\r')) {
-        text.remove_suffix(1);
+    const auto trim = [&text] {
+        while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
+        while (!text.empty() && (text.back() == ' ' || text.back() == '\t' || text.back() == '\r')) {
+            text.remove_suffix(1);
+        }
+    };
+    trim();
+    // Quotes around it ("#FF8020", as players type them in an ini).
+    if (text.size() >= 2 && (text.front() == '"' || text.front() == '\'') && text.back() == text.front()) {
+        text = text.substr(1, text.size() - 2);
+        trim();
     }
     for (const Named& n : kNamed) {
         const std::string_view name(n.name);
@@ -61,7 +69,20 @@ std::optional<std::uint32_t> Parse(std::string_view text) {
             return n.rgb;
         }
     }
-    if (!text.empty() && text.front() == '#') text.remove_prefix(1);
+    if (!text.empty() && text.front() == '#') {
+        text.remove_prefix(1);
+    } else if (text.size() == 8 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+        text.remove_prefix(2);   // 0xRRGGBB
+    }
+    if (text.size() == 3) {   // #RGB: each digit twice
+        std::uint32_t rgb = 0;
+        for (const char c : text) {
+            const int d = HexDigit(c);
+            if (d < 0) return std::nullopt;
+            rgb = (rgb << 8) | static_cast<std::uint32_t>(d * 17);
+        }
+        return rgb;
+    }
     if (text.size() != 6) return std::nullopt;
     std::uint32_t rgb = 0;
     for (const char c : text) {

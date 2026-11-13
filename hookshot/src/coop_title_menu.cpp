@@ -229,8 +229,9 @@ std::string IniUnset(std::string_view text, std::string_view key) {
 }
 
 const std::vector<std::string>& Colours() {
-    static const std::vector<std::string> list = {"",     "red",   "orange", "yellow", "green", "cyan", "blue",
-                                                  "purple", "pink", "white",  "black",  "brown", "gray"};
+    // The ten tunic colours (lichii/hook/coop_colors.cpp kTunics), after "" (the player number's).
+    static const std::vector<std::string> list = {"",     "red",   "orange", "yellow", "green", "cyan",
+                                                  "blue", "purple", "pink",  "white",  "black"};
     return list;
 }
 
@@ -268,11 +269,21 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     if (const auto v = IniGet(options_ini, "color")) {
         std::string c = *v;
         std::transform(c.begin(), c.end(), c.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-        if (c == "grey") {
-            c = "gray";
+        if (c.size() >= 2 && (c.front() == '"' || c.front() == '\'') && c.back() == c.front()) {
+            c = std::string(Trim(c.substr(1, c.size() - 2)));
         }
         const auto& list = Colours();
-        o.colour = std::find(list.begin(), list.end(), c) != list.end() ? c : "";
+        const bool hex = (c.size() == 7 && c[0] == '#') || c.size() == 6;
+        const std::string digits = c.size() == 7 ? c.substr(1) : c;
+        if (std::find(list.begin(), list.end(), c) != list.end()) {
+            o.colour = c;
+        } else if (hex && std::all_of(digits.begin(), digits.end(), [](char ch) { return std::isxdigit(static_cast<unsigned char>(ch)); })) {
+            o.colour = "#" + digits;   // the player's own colour: kept (the row then steps into the tunics)
+            std::transform(o.colour.begin(), o.colour.end(), o.colour.begin(),
+                           [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+        } else {
+            o.colour = "";
+        }
     }
     o.tunics = !Off(IniGet(options_ini, "LICHII_COOP_TUNICS"));
     o.hud = !Off(IniGet(options_ini, "LICHII_COOP_HUD"));

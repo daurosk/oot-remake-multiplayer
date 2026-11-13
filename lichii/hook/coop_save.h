@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <string_view>
 
 namespace coop::net {
 class Client;
@@ -40,6 +41,14 @@ bool HostSaveReady();
 
 // The host said it has no save yet (a new game): nothing to wait for.
 bool HostHasNoSave();
+
+// Hookshot's title module, each pad poll: whether the title's menu is up. A guest switches to the host's save only
+// then (never while a file loads).
+void NoteTitle(bool title_up);
+
+// A guest's switch to the host's save that has not happened yet is dropped for this session (the player picked a
+// file on the title while waiting, or the title said the save did not come): the game stays on its own saves.
+void CancelPendingSwitch(std::string_view why);
 
 // The emulator's save folder path for a user's account save (relative to the
 // NAND, "/user/save/0000000000000000/<user>/<title>"): with the co-op folder

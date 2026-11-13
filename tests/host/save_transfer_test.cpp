@@ -237,6 +237,59 @@ TEST_CASE("save transfer: a half-received save is never written, a slot is writt
   CHECK(ReadFile(own / "slot_02" / "progress.sav") == Bytes{7});  // own save untouched
 }
 
+TEST_CASE("save transfer: a guest's switch to the host's save goes only on the title, never during a load") {
+  using save::PendingStep;
+  using save::pending_step;
+  CHECK(pending_step(false, true, false) == PendingStep::keep);  // nothing in yet
+  CHECK(pending_step(true, true, false) == PendingStep::go);     // in, on the title's menu
+  CHECK(pending_step(true, false, false) == PendingStep::keep);  // in, but the title is not up (booting, or a
+                                                                 // file loading): never a re-mount under a load
+  CHECK(pending_step(true, true, true) == PendingStep::drop);    // Link is in the game: the player's own file
+  CHECK(pending_step(false, false, true) == PendingStep::drop);
+  CHECK(pending_step(true, false, true) == PendingStep::drop);
+}
+
+TEST_CASE("save transfer: a send the full outbox could not take is owed again") {
+  using Send = save::Planner::Send;
+  const auto t0 = fs::file_time_type::clock::now();
+  save::Planner p;
+  CHECK(p.on_ask(2));
+  const auto first = p.due(t0);
+  REQUIRE(first == std::vector<Send>{{2, proto::SaveReason::join}});
+  p.retry(first[0]);
+  CHECK(p.due(t0) == first);
+  // A player who left meanwhile is not sent to.
+  p.retry(first[0]);
+  p.forget(2);
+  p.retry(first[0]);
+  CHECK(p.due(t0).empty());
+  // The send to everyone after a load comes back too.
+  p.on_host_load(t0);
+  const auto reload = p.due(t0 + std::chrono::seconds(1));
+  REQUIRE(reload == std::vector<Send>{{0, proto::SaveReason::host_load}});
+  p.retry(reload[0]);
+  CHECK(p.due(t0 + std::chrono::seconds(1)) == reload);
+}
+
+TEST_CASE("save transfer: a host's save sent again replaces the co-op slot whole, nothing left beside it") {
+  TempDir dir("coop_tests_save_resend");
+  const fs::path own = dir.path / "0400486024DEC000";
+  const fs::path coop = save::coop_dir_of(own);
+  const auto first = Slot(20), second = Slot(30);
+  CHECK(save::write_coop_save(coop, first, own) == save::WriteResult::written);
+  CHECK(save::write_coop_save(coop, second, own) == save::WriteResult::written);
+  CHECK(ReadFile(coop / "slot_00" / "progress.sav") == second.files[0].bytes);
+  CHECK(ReadFile(coop / "slot_00" / "caption.sav") == second.files[1].bytes);
+  CHECK_FALSE(fs::exists(coop / "slot_00.old"));
+  CHECK_FALSE(fs::exists(coop / "slot_00.part"));
+  // A stale .old from a cut-off write is never loadable and is replaced.
+  WriteFile(coop / "slot_00.old" / "progress.sav", {1});
+  CHECK(save::newest_slot(coop) == coop / "slot_00");
+  CHECK(save::write_coop_save(coop, first, own) == save::WriteResult::written);
+  CHECK(ReadFile(coop / "slot_00" / "progress.sav") == first.files[0].bytes);
+  CHECK_FALSE(fs::exists(coop / "slot_00.old"));
+}
+
 TEST_CASE("save transfer: a guest that asks again and again gets the save once") {
   using Send = save::Planner::Send;
   const auto t0 = fs::file_time_type::clock::now();

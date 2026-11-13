@@ -329,20 +329,29 @@ WriteResult write_coop_save(const fs::path& coop_dir, const SaveSlot& slot, cons
       if (!ok) break;
       ok = slot_file(f.name) && write_file(part / f.name, f.bytes);
     }
-    // Whole, then in place: slot_NN is the old slot or the new one, never half of one.
-    if (ok) {
-      fs::remove_all(dir, dec);
+    // Whole, then in place: slot_NN is the old slot or the new one, never half of one. The old one is moved to
+    // slot_NN.old first and put back if the new one cannot go in (a file the game holds open on Windows).
+    fs::path old = dir;
+    old += ".old";
+    const bool had_old = ok && fs::exists(dir, dec);
+    if (ok && had_old) {
+      fs::remove_all(old, dec);
+      dec.clear();
+      fs::rename(dir, old, dec);
       ok = !dec;
     }
     if (ok) {
       fs::rename(part, dir, dec);
       ok = !dec;
+      if (!ok && had_old) {
+        std::error_code bec;
+        fs::rename(old, dir, bec);
+      }
     }
-    if (!ok) {
-      std::error_code rec;
-      fs::remove_all(part, rec);
-      return WriteResult::failed;
-    }
+    std::error_code rec;
+    fs::remove_all(part, rec);
+    if (!ok) return WriteResult::failed;
+    if (had_old) fs::remove_all(old, rec);
   }
   return WriteResult::written;
 }
@@ -362,6 +371,11 @@ int clear_coop_slots(const fs::path& coop_dir) {
     if (!rec) ++n;
   }
   return n;
+}
+
+PendingStep pending_step(bool slot_in, bool title_up, bool in_game) {
+  if (in_game) return PendingStep::drop;
+  return slot_in && title_up ? PendingStep::go : PendingStep::keep;
 }
 
 bool decide_again(bool decided, bool over, bool in_game) {

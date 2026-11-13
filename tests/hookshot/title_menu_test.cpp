@@ -591,6 +591,30 @@ TEST_CASE("title menu: a host with no save: AutoLoad stops waiting at once and p
     CHECK(c.active());
 }
 
+TEST_CASE("title menu: the player picking a file while the host's save comes stops AutoLoad (hostsave-fix)") {
+    // Only the player's own A on a title button that is not a co-op row counts.
+    CHECK(AutoLoad::PlayerPicksFile(true, false, AutoLoad::kContinue, false));
+    CHECK(AutoLoad::PlayerPicksFile(true, false, 0, false));
+    CHECK_FALSE(AutoLoad::PlayerPicksFile(true, true, AutoLoad::kContinue, false));   // AutoLoad's own press
+    CHECK_FALSE(AutoLoad::PlayerPicksFile(true, false, 4, true));                    // Host / Join / Settings
+    CHECK_FALSE(AutoLoad::PlayerPicksFile(true, false, -1, false));                  // no button focused
+    CHECK_FALSE(AutoLoad::PlayerPicksFile(false, false, AutoLoad::kContinue, false)); // not the title
+    AutoLoad a;
+    a.Start(0, "Saria");
+    CHECK(a.waiting());
+    a.PlayerChose();
+    CHECK_FALSE(a.active());
+    CHECK(a.Line().empty());   // (their choice: no "did not arrive" line)
+    CHECK_FALSE(a.Step(AutoLoad::kWaitSaveMs + 1, true, true, false).press_a);
+    // Once loading the host's save, the player's A changes nothing.
+    AutoLoad b;
+    b.Start(0, "Saria");
+    b.Step(100, true, true, false);
+    CHECK_FALSE(b.waiting());
+    b.PlayerChose();
+    CHECK(b.active());
+}
+
 TEST_CASE("title menu: with no Continue under the cursor AutoLoad presses nothing on the title") {
     CHECK_FALSE(AutoLoad::PressAllowed(true, 0));    // New Game focused (Continue hidden: the cursor could not go there)
     CHECK_FALSE(AutoLoad::PressAllowed(true, -1));   // nothing focused

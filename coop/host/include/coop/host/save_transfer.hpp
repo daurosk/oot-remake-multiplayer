@@ -141,6 +141,15 @@ class Planner {
     asks_.erase(player);
     answered_.erase(player);
   }
+  // A Send that could not go out (the outbox full): owed again at the next look. A player who left meanwhile is
+  // not asked for again.
+  void retry(const Send& send) {
+    if (send.to_player == 0) {
+      reload_ = true;  // (loaded_at_ is gone: the next look sends)
+    } else if (answered_.count(send.to_player) != 0) {
+      asks_.insert(send.to_player);
+    }
+  }
   // Nothing owed: no ask and no reload.
   bool idle() const { return !reload_ && asks_.empty(); }
   // Whether the send to every guest waits for the game's next save after the host's load.
@@ -201,6 +210,13 @@ FolderChoice folder_choice(std::optional<bool> env, bool can_switch, bool connec
 // new client, or the client idle, stopped or refused; a reconnect is not), but never with a save loaded (Link in
 // the game: no switch then).
 bool decide_again(bool decided, bool over, bool in_game);
+
+// A guest's pending switch to the co-op folder (Hookshot), each frame: `go` only on the title's menu with the host's
+// save in (never during a load, where a re-mount changes the folder under the game's read: the 10.1 crash);
+// `drop` once Link is in the game (the player's own file or a new game). The hook also drops it when the player
+// picks a file on the title while waiting, or AutoLoad gives up (CoopSave::CancelPendingSwitch).
+enum class PendingStep { keep, go, drop };
+PendingStep pending_step(bool slot_in, bool title_up, bool in_game);
 
 // A guest's save state for ONE session (CoopSave): the ask sent, the parts coming in, a slot that came before the
 // save folder was open, whether the host's save is written, the "stuck" note said. A new session starts from a

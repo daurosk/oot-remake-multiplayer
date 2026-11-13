@@ -977,6 +977,8 @@ bool InGame() {
 
 std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
     std::lock_guard lock(g_mutex);
+    CoopSave::NoteTitle(TitleUp());   // (a guest switches to the host's save only on the title's menu)
+    bool auto_a = false;              // this poll's A is AutoLoad's, not the player's
     if (g_autoload.active() && CoopSave::HostHasNoSave()) {
         g_autoload.NoSave();
         LOG_INFO(Core, "coop: title menu: host's save: {}", g_autoload.Line());
@@ -994,9 +996,14 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
         const bool title = TitleUp();
         if (tick.press_a && CoopTitleMenu::AutoLoad::PressAllowed(title, title ? FocusedIndex(g_screen.load()) : -1)) {
             buttons |= kA;
+            auto_a = true;
         }
         if (!g_autoload.active()) {
             LOG_INFO(Core, "coop: title menu: host's save: {}", g_autoload.Line().empty() ? "loaded" : g_autoload.Line());
+            if (!g_autoload.Line().empty()) {
+                // The title said "Continue plays your own save": a save coming later must not switch it.
+                CoopSave::CancelPendingSwitch("the host's save did not come in time");
+            }
         }
     }
     const std::uint64_t dirs = Directions(buttons, stick);
@@ -1038,6 +1045,19 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
             g_pad_eat = false;
         } else {
             return hush();
+        }
+    }
+    if ((down & kA) != 0 && TitleUp()) {
+        // The player's own A on the title (not on our co-op rows): they pick their own file or a new game while the
+        // host's save is still coming. No switch after this: it would change the save folder under the load.
+        const int f = FocusedIndex(g_screen.load());
+        const bool our_row = g_rows && f >= kFirstRow && f < kFirstRow + static_cast<int>(kRowLabels.size());
+        if (CoopTitleMenu::AutoLoad::PlayerPicksFile(true, auto_a, f, our_row)) {
+            CoopSave::CancelPendingSwitch("the player chose a file on the title");
+            if (g_autoload.waiting()) {
+                g_autoload.PlayerChose();
+                LOG_INFO(Core, "coop: title menu: host's save: not waited for (the player chose a file)");
+            }
         }
     }
     if (!HasScratch() || !TitleUp()) {

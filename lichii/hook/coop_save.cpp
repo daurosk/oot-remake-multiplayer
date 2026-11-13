@@ -54,6 +54,7 @@ bool g_decided = false;   // the run-time choice is made (for this session: save
 // Hookshot, a guest: the co-op folder it moves to once the host's save is written there. Until then the game stays
 // on its own folder, so the title never offers an empty or half-written co-op folder (that crashed the game).
 fs::path g_pending;
+bool g_title_up = false;   // the title's menu is up (NoteTitle, Hookshot's title module)
 const void* g_decided_client = nullptr;   // the session's client it was made for
 
 // Unset, or "1"/"0": the environment's LICHII_COOP_HOST_SAVE.
@@ -152,14 +153,20 @@ void SwitchFrame(coop::net::Client& client) {
 // and only then does the game move to it. Link already in the game (the player chose their own file or a new game
 // meanwhile): no switch, the save stays unused.
 void PendingFrame() {
-    if (g_pending.empty() || !g_guest.unwritten) return;
+    if (g_pending.empty()) return;
+    switch (save::pending_step(g_guest.unwritten.has_value(), g_title_up, g_in_game)) {
+    case save::PendingStep::keep:
+        return;
+    case save::PendingStep::drop:
+        LOG_INFO(Core, "coop: save: a file is loaded: this game keeps it; the host's save is not used");
+        g_pending.clear();
+        g_guest.unwritten.reset();
+        return;
+    case save::PendingStep::go:
+        break;
+    }
     auto slot = std::move(*g_guest.unwritten);
     g_guest.unwritten.reset();
-    if (g_in_game) {
-        LOG_INFO(Core, "coop: save: the host's save came, but a file is loaded already: this game keeps it");
-        g_pending.clear();
-        return;
-    }
     const fs::path to = std::exchange(g_pending, {});
     if (WriteSlotTo(to, slot) != save::WriteResult::written) return;
     if (!g_remount(to.string())) {
@@ -237,6 +244,19 @@ bool HostSaveReady() {
 bool HostHasNoSave() {
     std::lock_guard lock(g_mutex);
     return g_guest.no_save;
+}
+
+void NoteTitle(bool title_up) {
+    std::lock_guard lock(g_mutex);
+    g_title_up = title_up;
+}
+
+void CancelPendingSwitch(std::string_view why) {
+    std::lock_guard lock(g_mutex);
+    if (g_pending.empty()) return;
+    g_pending.clear();
+    g_guest.unwritten.reset();
+    LOG_INFO(Core, "coop: save: {}: this game stays on its own saves; the host's save is not used", why);
 }
 
 std::string SaveDirectory(const std::string& path, bool account_save) {
@@ -392,8 +412,9 @@ void OnFrame(coop::net::Client& client, bool host_reset) {
             }
             auto parts = save::split(packed, g_next_id++, send.reason, send.to_player);
             if (g_outbox.size() + parts.size() > save::kMaxOutboxParts) {
-                LOG_WARNING(Core, "coop: save: {} parts already waiting: this send dropped",
+                LOG_WARNING(Core, "coop: save: {} parts already waiting: this send goes at a later look",
                             g_outbox.size());
+                g_planner.retry(send);
                 continue;
             }
             LOG_INFO(Core, "coop: save: sending {} ({} bytes, {} parts) to {}",

@@ -388,7 +388,7 @@ TEST_CASE("mods: the Loader switches, moves and says when a restart is needed") 
         Put(t.root / HOS_COOP_MODS_APPLIED_FILE, text);
     }
     std::vector<std::string> log;
-    Loader loader(t.root, {[&](const std::string& l) { log.push_back(l); }, kPid});
+    Loader loader(t.root, {[&](const std::string& l) { log.push_back(l); }, kPid, nullptr});
     loader.Start();
     CHECK(loader.ExeReadsList());
     REQUIRE_FALSE(log.empty());
@@ -445,7 +445,7 @@ TEST_CASE("mods: the Loader switches, moves and says when a restart is needed") 
     CHECK(loader.RestartNeeded().why.back() == "A new seed: it is used from the next start.");
 
     // A second Loader (the next start) reads back what the first one saved.
-    Loader next(t.root, {nullptr, kPid});
+    Loader next(t.root, {nullptr, kPid, nullptr});
     next.Start();
     CHECK(next.Value("bee", "boot") == "1");
     CHECK(next.CodeToLoad().empty());
@@ -456,7 +456,7 @@ TEST_CASE("mods: without patch 0011 the tab cannot switch or move game files, bu
     t.Romfs("a");
     t.Json("c", R"({"code": "c.dll", "settings": [{"key": "x"}]})");
     Put(t.root / "c" / "c.dll", "MZ");
-    Loader loader(t.root, {nullptr, 1});   // no coop-mods.applied: an older hookshot.exe
+    Loader loader(t.root, {nullptr, 1, nullptr});   // no coop-mods.applied: an older hookshot.exe
     loader.Start();
     CHECK_FALSE(loader.ExeReadsList());
     std::string problem;
@@ -478,7 +478,7 @@ TEST_CASE("mods: an applied file from another process is an earlier run's") {
     char line[100];
     hos_coop_mods_applied_head(line, sizeof line, 5);
     Put(t.root / HOS_COOP_MODS_APPLIED_FILE, line);
-    Loader loader(t.root, {nullptr, 6});
+    Loader loader(t.root, {nullptr, 6, nullptr});
     loader.Start();
     CHECK_FALSE(loader.ExeReadsList());
 }
@@ -489,7 +489,7 @@ TEST_CASE("mods: in co-op the host's value of a shared setting is shown locked a
         {"key": "seed", "type": "text", "shared": true, "restart": true},
         {"key": "hints", "type": "toggle"}]})");
     t.Json("mine", R"({"id": "mine", "coop": "own", "settings": [{"key": "x", "type": "toggle", "shared": true}]})");
-    Loader loader(t.root, {nullptr, 1});
+    Loader loader(t.root, {nullptr, 1, nullptr});
     loader.Start();
     REQUIRE(loader.Set("rando", "seed", "MINE"));
     CHECK(loader.SharedValues() == std::vector<SharedValue>{{"rando", "seed", "MINE"}});  // not "own" mods, not unshared
@@ -520,11 +520,11 @@ TEST_CASE("mods: in co-op the host's value of a shared setting is shown locked a
     CHECK_FALSE(loader.Settings("rando")[0].locked);
     CHECK(loader.Set("rando", "seed", "AGAIN"));
 
-    Loader again(t.root, {nullptr, 2});  // the next start, before joining
+    Loader again(t.root, {nullptr, 2, nullptr});  // the next start, before joining
     again.Start();
     CHECK(again.Value("rando", "seed") == "AGAIN");
     loader.SetHostValues(std::vector<SharedValue>{{"rando", "seed", "HOST2"}});
-    Loader third(t.root, {nullptr, 3});
+    Loader third(t.root, {nullptr, 3, nullptr});
     third.Start();
     CHECK(third.Value("rando", "seed") == "HOST2");
 }

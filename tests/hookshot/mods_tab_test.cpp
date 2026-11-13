@@ -42,7 +42,7 @@ struct Mods {
               {"key": "glow", "name": "Glow", "type": "toggle", "restart": true},
               {"key": "seed", "name": "Seed", "type": "text", "shared": true}]})");
         Put(root / "a-tunic" / "romfs" / "UI" / "a.zs", "y");
-        loader = std::make_unique<CoopMods::Loader>(root, CoopMods::Loader::Hooks{nullptr, 1});
+        loader = std::make_unique<CoopMods::Loader>(root, CoopMods::Loader::Hooks{nullptr, 1, nullptr});
         loader->Start();
     }
     ~Mods() {
@@ -178,7 +178,7 @@ TEST_CASE("mods tab: an empty folder says where mods go") {
     std::error_code ec;
     fs::remove_all(root, ec);
     fs::create_directories(root);
-    CoopMods::Loader loader(root, {nullptr, 1});
+    CoopMods::Loader loader(root, {nullptr, 1, nullptr});
     loader.Start();
     Tab tab({&loader, nullptr, nullptr});
     tab.Show();

@@ -167,7 +167,7 @@ TEST_CASE("rando: OOTRR's command lines") {
 
 TEST_CASE("rando: switched on, a seed is made, built once and switched on first, and a restart is asked for") {
     World w;
-    CoopMods::Loader loader(w.mods, {nullptr, 1});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -203,7 +203,7 @@ TEST_CASE("rando: switched on, a seed is made, built once and switched on first,
 TEST_CASE("rando: a failed build is said once and not tried again until the settings change") {
     World w;
     w.fail_at = 1;
-    CoopMods::Loader loader(w.mods, {nullptr, 1});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
     loader.Start();
     std::vector<std::string> log;
     auto hooks = w.Hooks();
@@ -232,7 +232,7 @@ TEST_CASE("rando: a failed build is said once and not tried again until the sett
 
 TEST_CASE("rando: without OOTRR or the game folder it says what to set") {
     World w;
-    CoopMods::Loader loader(w.mods, {nullptr, 1});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -245,7 +245,7 @@ TEST_CASE("rando: without OOTRR or the game folder it says what to set") {
 
 TEST_CASE("rando: a guest builds the host's seed, and its own seed is not made") {
     World w;
-    CoopMods::Loader loader(w.mods, {nullptr, 1});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();

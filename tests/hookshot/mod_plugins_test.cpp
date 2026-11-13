@@ -387,7 +387,7 @@ TEST_CASE("mod plugins: the sample mod (hookshot/samples/hello-mod) through the 
     fs::copy_file(COOP_SAMPLE_MOD_JSON, root / "hello-mod" / "mod.json");
     std::vector<std::string> log;
     {
-        CoopMods::Loader loader(root, {[&](const std::string& l) { log.push_back("mods: " + l); }, 1});
+        CoopMods::Loader loader(root, {[&](const std::string& l) { log.push_back("mods: " + l); }, 1, nullptr});
         loader.Start();
         Game game;
         game.log = [&](const std::string& l) { log.push_back(l); };

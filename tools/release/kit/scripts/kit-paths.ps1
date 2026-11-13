@@ -626,7 +626,8 @@ function Test-KitPuppetPackStale([string]$Manifest, [string]$ToolDir) {
 # and stopped: these say what is missing and that the kit sets it up.
 function Get-KitHookshotNeedText([string]$Need, [string]$Game = '') {
     switch ($Need) {
-        'game' { 'Hookshot isn''t set up yet. The kit builds the co-op Hookshot game on this PC from your own game, once (about 20 to 40 minutes; the PC stays usable).' }
+        # (the tester behind this was an emulator player joining a Hookshot host with Join-Hookshot.bat)
+        'game' { 'Playing on the emulator? Use Join.bat (or Host.bat): emulator and Hookshot players can be in the same game.' + "`n" + 'Hookshot isn''t set up yet. The kit builds the co-op Hookshot game on this PC from your own game, once (about 20 to 40 minutes; the PC stays usable).' }
         'moved' { "The co-op Hookshot game this kit built is not in $Game any more (moved or deleted). Moved it? Answer n, then run Build-Hookshot-Coop.bat -Out ""<its new folder>"" (seconds). Otherwise it is built again (about 20 to 40 minutes)." }
         'pin' { 'Your Hookshot game was built for another Hookshot version than this kit uses: it is built again (about 15 minutes; the PC stays usable).' }
         'patches' { 'This update changes the Hookshot game a little: updating it (a few minutes).' }

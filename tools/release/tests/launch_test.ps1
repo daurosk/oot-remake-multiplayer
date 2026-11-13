@@ -663,7 +663,7 @@ try {
     foreach ($n in 'game', 'moved', 'pin', 'patches', 'module', 'quarantine') { Check ([bool](Get-KitHookshotNeedText $n)) "hookshot need text: $n" }
     foreach ($n in 'game', 'moved', 'pin') { Check ([bool](Get-KitHookshotNeedQuestion $n)) "hookshot need question: $n asks first" }
     foreach ($n in 'patches', 'module', 'quarantine', '') { Check (-not (Get-KitHookshotNeedQuestion $n)) "hookshot need question: none for '$n'" }
-    Check ((Get-KitHookshotNeedText 'game') -match "isn't set up yet" -and (Get-KitHookshotNeedText 'game') -notmatch 'No co-op') 'hookshot need text: game says it is not set up yet, in plain words'
+    Check ((Get-KitHookshotNeedText 'game') -match "isn't set up yet" -and (Get-KitHookshotNeedText 'game') -notmatch 'No co-op' -and (Get-KitHookshotNeedText 'game') -match '^Playing on the emulator\? Use Join\.bat') 'hookshot need text: game says first to use Join.bat on the emulator, then not set up yet'
     Check ((Get-KitHookshotNeedText 'moved' 'D:\Old\game') -match 'D:\\Old\\game' -and (Get-KitHookshotNeedText 'moved') -match '-Out') 'hookshot need text: moved names the folder and -Out'
     Check ((Get-KitHookshotNeedText 'quarantine') -match 'Antivirus' -and (Get-KitHookshotNeedText 'quarantine') -match 'Exclusions') 'hookshot need text: quarantine says antivirus and the exclusion steps'
     Check ((Get-KitHookshotNeedText 'pin') -match 'about 15 minutes') 'hookshot need text: a pin move says about 15 minutes'
@@ -696,7 +696,7 @@ try {
     $built = { Test-Path -LiteralPath (Join-Path $hm 'hookshot\tools') }
     # never built: plain words, the offer, n = no build, a pointer to Build-Hookshot-Coop.bat
     $out = & $runHs 'join'
-    Check ($out -match "Hookshot isn't set up yet" -and $out -match 'Set it up now\? \(then the game starts\) \[Y/n\]' -and $out -match 'Not now\. Build-Hookshot-Coop\.bat' -and $out -notmatch 'Hookshot started' -and -not (& $built)) "Join-Hookshot, no game: says not set up yet, offers the build, n builds nothing [$out]"
+    Check ($out -match 'Playing on the emulator\? Use Join\.bat \(or Host\.bat\).*\|Hookshot isn''t set up yet' -and $out -match 'Set it up now\? \(then the game starts\) \[Y/n\]' -and $out -match 'Not now\. Build-Hookshot-Coop\.bat' -and $out -notmatch 'Hookshot started' -and -not (& $built)) "Join-Hookshot, no game: says not set up yet, offers the build, n builds nothing [$out]"
     $out = & $runHs 'host'
     Check ($out -match "Hookshot isn't set up yet" -and $out -match 'Set it up now\?' -and $out -notmatch 'Hookshot started') "Host-Hookshot, no game: the same offer [$out]"
     $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$hm\scripts\play.ps1`" choose -Hookshot -NoUpdate < `"$no`"" 2>&1) -join '|'

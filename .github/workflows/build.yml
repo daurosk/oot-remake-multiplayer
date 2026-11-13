@@ -163,6 +163,8 @@ jobs:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_MAXSIZE: 400M
+      # make -j with no limit ran the runner out of memory (exit 143 after ~2.5 min): 4 jobs.
+      CMAKE_BUILD_PARALLEL_LEVEL: 4
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
       - name: Settings for ${{ matrix.job }}
@@ -222,7 +224,7 @@ jobs:
           -DFETCHCONTENT_SOURCE_DIR_DOCTEST="$GITHUB_WORKSPACE/.deps/doctest"
           -DFETCHCONTENT_SOURCE_DIR_MONOCYPHER="$GITHUB_WORKSPACE/.deps/monocypher"
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build --parallel 4
       - name: ccache stats
         run: ccache --show-stats
       - name: Test

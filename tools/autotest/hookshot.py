@@ -623,7 +623,10 @@ class Player:
                 return False
             if e.code in ("bad_request", "unknown_cmd"):   # a bridge without `wait map`: trust "sent"
                 return True
-            raise
+            self.log("coop: test warp: wait for map %s: %s" % (to, e))
+            return False   # asked again until warp_for, then the "gave up" line
+        except TimeoutError:
+            return False
 
     # the module's test commands: written to its file, taken when it is empty again
     def module(self, batch):
@@ -683,8 +686,8 @@ class Player:
             elif s.kind == "mark":
                 self._until(t)
                 self.mark(s.name)
-                # The mark waits for the module to take it (up to a quarter second): the next step starts after
-                # it, or a short press scheduled from before it would be let go at once (a title press lost).
+                # The mark waits for the module to take it (usually a quarter second, at most 2 x take_for): the
+                # next step starts after it, or a short press scheduled before it is let go at once (a title press lost).
                 t = max(t, self.clock())
             elif s.kind in ("goto", "toward"):
                 t = max(t, self.steer(s, max(t, self.clock())))

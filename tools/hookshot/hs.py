@@ -7,12 +7,15 @@
     python -I tools/hookshot/hs.py lock status|acquire|release --name emu|hs [--owner WHO] [--wait S]
     python -I tools/hookshot/hs.py compile-all [--build DIR] [--emu-build DIR] [--jobs N] [--dry-run]
     python -I tools/hookshot/hs.py build --pair <hookshot-A> --pair <hookshot-B> [--kit DIR --game FILE] [--dry-run]
+    python -I tools/hookshot/hs.py warmup --pair <hookshot-A1> --to <hookshot-B1> ... [--timeout S] [--dry-run]
 
 The game build (Hookshot's make_game.py on the player's game file, about an hour) depends only on Hookshot's tools
 release (tools/release/kit/hookshot/TOOLS.txt), the pinned commit (hookshot/PIN) and our patches
 (hookshot/patches/*.patch). Those three make the key; the kit's Build-Hookshot-Coop writes the same three lines to
 the game's coop-built-from.txt, so a game folder built by a kit can seed the cache. With the key unchanged, `build`
 copies the cached game into each pair folder and rebuilds only hookshot_coop.dll.
+A miss builds in the pin's shared tools and work folders (cache\\pins\\<release>-<commit>), so only what
+changed is translated and compiled again (hs-build-speed).
 
 The cache is outside the repo: %LOCALAPPDATA%\\oot-coop\\hs-cache\\<key>\\ (or $OOT_COOP_HS_CACHE). Each entry has
 game\\ (the game folder without anything per player), stamp.txt (the three lines) and used.txt (last use).
@@ -46,9 +49,18 @@ PER_PLAYER = {"hookshot_coop.dll", "coop.ini", "coop-options.ini", "user", "save
               "hookshot_log.txt", "hookshot_log.old.txt", "control.json"}
 CACHE_GAME = "game"
 CACHE_NAME = re.compile(r"^[0-9a-f]{20}(\.part|\.build)?$")
-# Caches the game writes while it runs (shaders, pipelines): copied into a pair that has none, never overwritten.
-RUNTIME_CACHE = re.compile(r"^(hookshot_(pipelines|pipeline_states|programs|shaders)\.(bin|idx)"
-                           r"|hookshot_damaged_files\.txt|mkw_vk_pipelines\.bin)$", re.I)
+# Caches the game writes while it runs (shaders, pipelines): copied into a pair that has none, never overwritten,
+# except when the pair's game was built from another stamp (cache_restore): then they are another build's.
+RUNTIME_CACHE = re.compile(r"^(hookshot_(pipelines|pipeline_states|programs|shaders|computes|prepared)\.(bin|idx)"
+                           r"|hookshot_pipelines\.bin\.(built|predicted)|hookshot_damaged_files\.txt"
+                           r"|mkw_vk_pipelines(_play_\d+)?\.bin)$", re.I)
+# What one start's shader preparation leaves (warmup): the noted pipelines built into the pipeline cache. The game build
+# prepares in a separate process that does not write hookshot_pipelines.bin.built (on NVIDIA that process's pipeline
+# cache does not answer the game's), so each new game folder's first start builds every noted pipeline (35269, about
+# 18 min; six at once took 9+ min per load in wave 1). One pair warmed, these files go to the others and the cache.
+WARM_FILES = re.compile(r"^(hookshot_pipelines\.bin(\.built|\.predicted)?|hookshot_(pipeline_states|computes|prepared)\.bin"
+                        r"|hookshot_programs\.(bin|idx)|mkw_vk_pipelines(_play_\d+)?\.bin)$", re.I)
+WARM_DONE = "vk: start-up: the shaders took"
 
 
 class Fail(Exception):
@@ -93,6 +105,23 @@ def stamp(repo=REPO):
         raise Fail("no hookshot/patches/*.patch")
     hashes = ",".join(sha256_file(os.path.join(pdir, p)) for p in patches)
     return "release=%s\ncommit=%s\npatches=%s" % (tools["release"], pin["commit"], hashes)
+
+
+def pin_of(stamp_text):
+    """'<release>-<commit 12>' of a stamp: what one shared tools and work folder serves (hs-build-speed)."""
+    keys = dict(line.split("=", 1) for line in stamp_text.replace("\r", "").split("\n") if "=" in line)
+    if not keys.get("release") or not keys.get("commit"):
+        raise Fail("a stamp without release= and commit=")
+    return "%s-%s" % (re.sub(r"[^A-Za-z0-9._-]", "_", keys["release"]), keys["commit"][:12])
+
+
+def pin_dir(stamp_text):
+    """The shared folder of a pin: tools/ (Hookshot's tools and patched source), work/ (its build files and object
+    cache) and game/ (THE game folder of the pin, built again in place). Every build of that pin, whatever the patches,
+    goes through it: Hookshot's own lift key and object cache decide what is done again. The game folder must stay the
+    same path: the lift key hashes it (make_game.py: OOT_DUMP, OOT_ROMFS), and it keeps .hookshot_exefs and the prepared
+    shaders. Not a cache entry (cache_prune leaves it); the cache gets a copy of the game folder."""
+    return os.path.join(cache_root(), "pins", pin_of(stamp_text))
 
 
 def key_of(stamp_text):
@@ -147,9 +176,10 @@ def find_exe(folder):
     return None
 
 
-def copy_tree(src, dst, skip_top=PER_PLAYER, dry=False, say=print):
+def copy_tree(src, dst, skip_top=PER_PLAYER, dry=False, say=print, runtime_too=False):
     """Copies src into dst: new or changed files (size or mtime) only, links recreated as links (never followed),
-    the top-level names in skip_top left alone on both sides. Returns (files copied, links made)."""
+    the top-level names in skip_top left alone on both sides; dst's runtime caches kept unless runtime_too.
+    Returns (files copied, links made)."""
     copied = links = 0
     for name in sorted(os.listdir(src)):
         if name.lower() in skip_top:
@@ -166,11 +196,11 @@ def copy_tree(src, dst, skip_top=PER_PLAYER, dry=False, say=print):
         elif os.path.isdir(s):
             if not dry:
                 os.makedirs(d, exist_ok=True)
-            c, n = copy_tree(s, d, set(), dry, say)
+            c, n = copy_tree(s, d, set(), dry, say, runtime_too)
             copied, links = copied + c, links + n
         else:
             if os.path.isfile(d) and not is_link(d):
-                if skip_top is PER_PLAYER and RUNTIME_CACHE.match(name):
+                if skip_top is PER_PLAYER and RUNTIME_CACHE.match(name) and not runtime_too:
                     continue
                 a, b = os.stat(s), os.stat(d)
                 if a.st_size == b.st_size and int(a.st_mtime) == int(b.st_mtime):
@@ -239,10 +269,140 @@ def cache_restore(dst, repo=REPO, dry=False, say=print):
     if not os.path.isfile(os.path.join(folder, "stamp.txt")):
         say("cache: miss for %s" % k)
         return False
-    c, n = copy_tree(os.path.join(folder, CACHE_GAME), dst, dry=dry, say=lambda *_: None)
+    # A pair whose game was built from another stamp has that build's runtime caches: a prepared record and
+    # pipeline notes of another translator would make the new game prepare everything again. Replaced then.
+    have = ""
+    sf = os.path.join(dst, "coop-built-from.txt")
+    if os.path.isfile(sf):
+        with open(sf, encoding="utf-8") as f:
+            have = f.read()
+    other = bool(have.strip()) and key_of(have) != k
+    if other:
+        say("cache: %s held another build (%s): its runtime caches are replaced" % (dst, key_of(have)))
+    c, n = copy_tree(os.path.join(folder, CACHE_GAME), dst, dry=dry, say=lambda *_: None, runtime_too=other)
     say("cache: %s -> %s: %d file(s) %s, %d link(s)" % (k, dst, c, "to copy" if dry else "copied", n))
     if not dry:
         touch_used(folder)
+    return True
+
+
+def warm_dir(folder):
+    """Where a game folder's caches are: beside its hookshot.exe."""
+    exe = find_exe(folder)
+    return os.path.dirname(exe) if exe else folder
+
+
+def warm_files(folder):
+    """The warm-up's files in a game folder, by name."""
+    d = warm_dir(folder)
+    if not os.path.isdir(d):
+        return []
+    return sorted(n for n in os.listdir(d) if WARM_FILES.match(n) and os.path.isfile(os.path.join(d, n)))
+
+
+def warm_spread(src, dsts, dry=False, say=print):
+    """Copies src's warm-up files over each destination game folder's. Returns the files copied."""
+    names = warm_files(src)
+    if "hookshot_pipelines.bin.built" not in [n.lower() for n in names]:
+        raise Fail("%s has no hookshot_pipelines.bin.built: its start did not finish the shader preparation" % src)
+    sdir = warm_dir(src)
+    total = 0
+    for dst in dsts:
+        if not find_exe(dst):
+            raise Fail("no hookshot.exe in %s" % dst)
+        ddir = warm_dir(dst)
+        if os.path.normcase(os.path.abspath(ddir)) == os.path.normcase(os.path.abspath(sdir)):
+            continue
+        for n in warm_files(dst):   # a warm file src has not (another play file) would mix two starts' caches
+            if n not in names:
+                say("  remove %s" % os.path.join(ddir, n))
+                if not dry:
+                    os.unlink(os.path.join(ddir, n))
+        for n in names:
+            if not dry:
+                shutil.copy2(os.path.join(sdir, n), os.path.join(ddir, n))
+            total += 1
+        say("warmup: %d file(s) %s %s" % (len(names), "to copy into" if dry else "copied into", ddir))
+    return total
+
+
+def warm_start(game, out, timeout, say=print, popen=subprocess.Popen, connect=None, clock=time.monotonic,
+               sleep=time.sleep):
+    """Starts the game in `game` until its shader preparation ends (WARM_DONE in its output), then quits it through
+    its bridge so it writes its caches. True when the line came and the game closed after the quit."""
+    exe = find_exe(game)
+    if not exe:
+        raise Fail("no hookshot.exe in %s" % game)
+    os.makedirs(out, exist_ok=True)
+    log = os.path.join(out, "warmup-out.txt")
+    sock = "coop-warmup-%d" % os.getpid() if WINDOWS else os.path.join(out, "control.sock")
+    if connect is None:
+        sys.path.insert(0, os.path.join(REPO, "tools", "autotest"))
+        import hookshot as hk  # noqa: E402 (the autotest's bridge client)
+        connect = hk.Bridge.connect
+    env = dict(os.environ, HOS_CONTROL=sock)
+    with open(log, "wb") as go:
+        kw = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {"start_new_session": True}
+        p = popen([exe], cwd=os.path.dirname(exe), env=env, stdin=subprocess.DEVNULL, stdout=go,
+                  stderr=subprocess.STDOUT, **kw)
+    say("warmup: %s started (pid %s), output %s" % (exe, getattr(p, "pid", "?"), log))
+    t0, done = clock(), False
+    try:
+        while clock() - t0 < timeout:
+            with open(log, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+            if WARM_DONE in text:
+                done = True
+                say("warmup: %s" % [ln for ln in text.splitlines() if WARM_DONE in ln][-1].strip())
+                break
+            if p.poll() is not None:
+                say("warmup: the game ended before its shaders were prepared (exit %s)" % p.returncode)
+                return False
+            sleep(5)
+        if not done:
+            say("warmup: no '%s' in %d s" % (WARM_DONE, timeout))
+        sleep(10)   # (the title screen's first frames, then a quit: the game writes its pipeline cache as it closes)
+        try:
+            b = connect(sock, timeout=60)
+            b.request("quit", reply_timeout=10.0, check=False)
+            b.close()
+        except Exception as e:   # noqa: BLE001 (any bridge failure: the wait below ends it)
+            say("warmup: quit through the bridge failed (%s)" % e)
+        try:
+            p.wait(120)
+        except subprocess.TimeoutExpired:
+            say("warmup: the game did not close in 120 s: ended (its caches may be incomplete)")
+            p.kill()
+            p.wait(15)
+            return False
+        return done
+    finally:
+        if p.poll() is None:
+            p.kill()
+
+
+def warmup(pair, to=(), timeout=3600, out=None, repo=REPO, dry=False, say=print, start=warm_start):
+    """One pair's first start prepares the shaders; its warm files then go into the cache entry and the other pairs.
+    A game run, not a build: no build lock (whoever runs it holds the test turn)."""
+    k = key_of(stamp(repo))
+    sf = os.path.join(pair, "coop-built-from.txt")
+    have = ""
+    if os.path.isfile(sf):
+        with open(sf, encoding="utf-8") as f:
+            have = f.read()
+    if key_of(have) != k:
+        raise Fail("%s holds the game of %s, not of the current key %s (hs.py build first)"
+                   % (pair, key_of(have) if have.strip() else "nothing", k))
+    entry = os.path.join(cache_root(), k, CACHE_GAME)
+    say("warmup: key %s, pair %s, then %s" % (k, pair, ", ".join(to) or "no other pair"))
+    if dry:
+        say("warmup: would start %s until '%s' (at most %d s), quit it, and copy its warm files into %s%s"
+            % (find_exe(pair) or pair, WARM_DONE, timeout, entry, "".join(" and " + t for t in to)))
+        return True
+    if not start(pair, out or os.path.join(pair, "warmup"), timeout, say=say):
+        raise Fail("the warm-up start did not finish")
+    warm_spread(pair, list(to) + ([entry] if os.path.isdir(entry) else []), say=say)
+    say("warmup: OK (a pair's next start should log 'vk: precompile: ... in N ms', not 'start-up: pipelines 0 of')")
     return True
 
 
@@ -505,7 +665,17 @@ def find_dll(build):
     return os.path.join(build, "hookshot", "hookshot_coop.dll")
 
 
-def build(pairs, build_dir, kit=None, game=None, jobs=8, keep=3, repo=REPO, dry=False, say=print, root=None,
+def build_script_args(script):
+    """What the kit's hookshot-build.ps1 takes: a kit made before hs-build-speed has no -Tools/-Work."""
+    try:
+        with open(script, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return set()
+    return {a for a in ("Tools", "Work") if re.search(r"\[string\]\$%s\b" % a, text)}
+
+
+def build(pairs, build_dir, kit=None, game=None, jobs=0, keep=3, repo=REPO, dry=False, say=print, root=None,
           owner="hs-build"):
     """Game from the cache (or built once through a kit and stored), hookshot_coop.dll rebuilt, both into each pair."""
     root = root or main_root(repo)
@@ -520,23 +690,35 @@ def build(pairs, build_dir, kit=None, game=None, jobs=8, keep=3, repo=REPO, dry=
             if not kit:
                 raise Fail("cache miss for %s: pass --kit <a made kit> --game <your .nup/.xci> to build the game once,"
                            " or `cache store --from <a game folder built from this stamp>`" % k)
-            out = os.path.join(cache_root(), k + ".build")
-            cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-                   os.path.join(kit, "scripts", "hookshot-build.ps1"), "-Out", out, "-Jobs", str(jobs)]
+            script = os.path.join(kit, "scripts", "hookshot-build.ps1")
+            shared = pin_dir(st) if build_script_args(script) >= {"Tools", "Work"} else None
+            # (the pin's one game folder, built again in place and kept; an old kit: a new folder, removed after)
+            out = os.path.join(shared, "game") if shared else os.path.join(cache_root(), k + ".build")
+            cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Out", out]
+            if jobs:   # (0: Hookshot's own choice, one compiler per CPU thread as the free memory allows)
+                cmd += ["-Jobs", str(jobs)]
             if game:
                 cmd += ["-Game", game]
-            say("cache: miss; building the game once (about an hour)")
+            if shared:
+                cmd += ["-Tools", os.path.join(shared, "tools"), "-Work", os.path.join(shared, "work")]
+                say("cache: miss; building the pin's game folder %s again in place (only what changed since its last"
+                    " build)" % out)
+            else:
+                say("cache: miss; this kit's hookshot-build.ps1 has no -Tools/-Work (a kit from before hs-build-speed):"
+                    " a full build in the kit's own folders")
             if not run_steps([cmd], [], dry, say):
                 raise Fail("hookshot-build.ps1 failed")
             if dry:
                 say("cache: would store %s as %s" % (out, k))
             else:
                 cache_store(out, repo, say=say)
-                remove_tree(out)
+                if not shared:
+                    remove_tree(out)
         else:
             say("cache: hit %s" % k)
         prefix = [] if dry else msvc_prefix()
-        if not run_steps(unit_steps(build_dir, jobs, repo, target="hookshot_coop"), prefix, dry, say):
+        if not run_steps(unit_steps(build_dir, jobs or os.cpu_count() or 8, repo, target="hookshot_coop"),
+                         prefix, dry, say):
             raise Fail("hookshot_coop did not build")
         dll = find_dll(build_dir)
         for p in pairs:
@@ -591,12 +773,18 @@ def main(argv=None):
     ca.add_argument("--emu-build", help="the emulator's Ninja build folder: also compile its lichii/hook objects")
     ca.add_argument("--jobs", type=int, default=8)
     ca.add_argument("--dry-run", action="store_true")
+    w = sub.add_parser("warmup", help="one pair prepares the shaders; its caches go to the other pairs and the cache")
+    w.add_argument("--pair", required=True, help="the game folder that is started (built from the current key)")
+    w.add_argument("--to", action="append", default=[], help="another pair that gets the warm files (repeat)")
+    w.add_argument("--timeout", type=int, default=3600)
+    w.add_argument("--dry-run", action="store_true")
     b = sub.add_parser("build")
     b.add_argument("--pair", action="append", required=True, help="a Hookshot game folder to fill (repeat)")
     b.add_argument("--build", help="unit build folder (default: <repo>/build)")
     b.add_argument("--kit", help="a made kit: its hookshot-build.ps1 builds the game on a cache miss")
     b.add_argument("--game", help="your game file for that build")
-    b.add_argument("--jobs", type=int, default=8)
+    b.add_argument("--jobs", type=int, default=0,
+                   help="game compilers at once; 0 (default): Hookshot's choice, one per CPU thread as memory allows")
     b.add_argument("--keep", type=int, default=3)
     b.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
@@ -643,6 +831,9 @@ def main(argv=None):
             if a.action == "acquire":
                 return 0 if lock_acquire(root, a.name, a.owner, a.wait, a.max_age, pid=a.pid) else 1
             return 0 if lock_release(root, a.name, a.owner) else 1
+        if a.cmd == "warmup":
+            return 0 if warmup(os.path.abspath(a.pair), [os.path.abspath(t) for t in a.to], a.timeout,
+                               repo=repo, dry=a.dry_run) else 1
         bdir = os.path.abspath(a.build) if a.build else os.path.join(repo, "build")
         if a.cmd == "compile-all":
             return 0 if compile_all(bdir, a.emu_build, a.jobs, repo, a.dry_run) else 1

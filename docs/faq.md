@@ -49,7 +49,7 @@ Share it only with the people you play with. It holds your internet address, the
 
 ## Emulator or Hookshot?
 
-The emulator kit is the usual way and has every co-op feature. [Hookshot](setup.md#play-on-hookshot-experimental) is experimental: no emulator, but it needs a graphics card with mesh shaders (NVIDIA RTX 20 or newer, AMD RX 6000 or newer), 16 GB of RAM and a long first build. It has the same co-op features, with some keys of its own (T for chat, F6 for the player list). Both can join one session and see each other as Link. <!-- TBC big run: Hookshot rows + mixed run; Link puppets need hs-puppets-b (else "others show as Navi only") -->
+The emulator kit is the usual way and has every co-op feature. [Hookshot](setup.md#play-on-hookshot-experimental) is experimental: no emulator, but it needs a graphics card with mesh shaders (NVIDIA RTX 20 or newer, AMD RX 6000 or newer), 16 GB of RAM and a long first build. It has the same co-op features, with some keys of its own (T for chat, F6 for the player list). Both can join one session and see each other as Link in their colours (checked by hand).
 
 ## Is my game traffic encrypted?
 

@@ -23,6 +23,11 @@ from .tunic import COLORS, TunicError, _brti, _lin, _luma, _srgb, _bc1_order, pa
 EXTRA = {
     "Mt_Vest_Player_Adult_Alb": ("Adult",),
     "Mt_Angin_Acs_Player_Adult_Alb": ("Adult",),
+    # The child's cap knot, headband and collar (Mt_Cloth_Parts: Angin_Knot_Head_Band,
+    # Angin_Parts_Collar_R) and the string at the back (Mt_Vest: String_Back_1): about a third
+    # green each, the green edge of the cap seen in the hand test of a768c36.
+    "Mt_Cloth_Parts_Player_Child_Alb": ("Child",),
+    "Mt_Vest_Player_Child_Alb": ("Child",),
 }
 
 BC1, BC3 = 0x1A, 0x1C

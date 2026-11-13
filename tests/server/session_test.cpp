@@ -356,7 +356,7 @@ TEST_CASE("a player who leaves is reported to the others and frees the number") 
 
 // Stray (2026-11-12): after a server restart the games came back in the order
 // they noticed it, so A (was 1) became 2 and B (was 2) became 1. With their
-// previous numbers in HELLO (protocol 11) they keep them.
+// previous numbers in HELLO (protocol 10) they keep them.
 TEST_CASE("a restarted server gives each game back its previous number when free") {
   Harness h;
   Hello b = hello_from("B");

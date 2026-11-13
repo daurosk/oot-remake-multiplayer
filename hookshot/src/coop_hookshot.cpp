@@ -28,6 +28,7 @@
 #include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "coop_callers.h"
+#include "coop_camera.h"
 #include "coop_cheats.h"
 #include "coop_cheats_panel.h"
 #include "coop_chatbox.h"
@@ -758,6 +759,23 @@ COOP_HOOKSHOT_EXPORT void hos_coop_draw(const HosCoopDraw* d) {
         t.text_width = d->text_width;
         CoopDraw::Draw(t, CoopHookshot::DrawScene());
     }
+}
+// The game's camera for the name tags (hos_coop_draw.h), on the thread that records Hookshot's draws: published as
+// the emulator's renderer does (lichii/hook/coop_camera_track.h), the largest scene target of a frame. The game's
+// clip y runs up, as on the emulator ("clip y up"); LICHII_COOP_CAMERA_FLIP_Y turns the markers over if not.
+COOP_HOOKSHOT_EXPORT int hos_coop_camera_wanted(uint64_t frame, float width, float height) {
+    return g_on && CoopCamera::Wanted() && CoopCamera::Better(frame, width, height) ? 1 : 0;
+}
+COOP_HOOKSHOT_EXPORT void hos_coop_camera(uint64_t frame, const float* block, float width, float height) {
+    if (!g_on || !CoopHookshot::CameraBlockOk(block, width, height)) {
+        return;
+    }
+    static std::atomic<bool> said{false};
+    if (!said.exchange(true)) {
+        LOG_INFO(Core, "coop: Hookshot hands co-op the game's camera ({}x{} scene): name tags on",
+                 static_cast<int>(width), static_cast<int>(height));
+    }
+    CoopCamera::Publish(frame, block + CoopHookshot::kCameraMatrix, width, height, false);
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_draw2(const HosCoopDraw* d) {
     if ((g_on || g_menu_only) && d != nullptr) {

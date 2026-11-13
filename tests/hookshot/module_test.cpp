@@ -3,6 +3,8 @@
 // (hookshot/patches): what can be checked without the game.
 #include <doctest/doctest.h>
 
+#include <array>
+
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -340,5 +342,33 @@ TEST_CASE("hookshot: on Linux the window's keys, typed text and mouse reach co-o
           std::string::npos);
     // The key state for F6, F7 and the closing keys.
     CHECK(patch.find("+    api.key_down = bridge_key_down;") != std::string::npos);
+}
+
+TEST_CASE("hookshot: the game's camera reaches the module for the name tags (no camera, no tags)") {
+    // The block as the game fills it: the target's size at 0x120, the projection's w row (.., -1, 0) at 0xa0..0xac.
+    std::array<float, 0x130 / 4> block{};
+    block[0x120 / 4] = 1440.0f;
+    block[0x124 / 4] = 810.0f;
+    block[0xa8 / 4] = -1.0f;
+    block[CoopHookshot::kCameraMatrix] = 1.5f;  // the world-to-clip matrix starts at 0x30
+    CHECK(CoopHookshot::kCameraMatrix == 12);
+    CHECK(CoopHookshot::CameraBlockOk(block.data(), 1440.0f, 810.0f));
+    CHECK_FALSE(CoopHookshot::CameraBlockOk(block.data(), 1920.0f, 1080.0f));  // another target's block
+    CHECK_FALSE(CoopHookshot::CameraBlockOk(nullptr, 1440.0f, 810.0f));
+    block[0xa8 / 4] = 0.0f;  // not a perspective projection (a shadow or HUD pass)
+    CHECK_FALSE(CoopHookshot::CameraBlockOk(block.data(), 1440.0f, 810.0f));
+    // The patch: vk_draw.cpp hands each scene draw to vk_coop.cpp, which finds the module's two exports.
+    const std::string patch = Patch();
+    CHECK(patch.find("+        coop::note_scene_draw(at.color[0], at.width, at.height, s.ubo[0][0].addr, s.ubo[0][0].size);") !=
+          std::string::npos);
+    const std::string vk = NewFile(patch, "gpu/vk/vk_coop.cpp");
+    CHECK(vk.find("\"hos_coop_camera_wanted\"") != std::string::npos);
+    CHECK(vk.find("\"hos_coop_camera\"") != std::string::npos);
+    CHECK(vk.find("color0->format != VK_FORMAT_B10G11R11_UFLOAT_PACK32") != std::string::npos);
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_camera_wanted(uint64_t frame, float width, float height)") !=
+          std::string::npos);
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT void hos_coop_camera(uint64_t frame, const float* block, float width, float height)") !=
+          std::string::npos);
 }
 

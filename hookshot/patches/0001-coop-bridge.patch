@@ -1,4 +1,4 @@
-From f520e5d22c2a69615497b900b25a6cf7135b2307 Mon Sep 17 00:00:00 2001
+From 05b63720751bdf2e810ebb769a3eefbfb1f31603 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Wed, 11 Nov 2026 22:08:58 -0900
 Subject: [PATCH] Co-op bridge: frame hook, AI hold and the co-op module's
@@ -21,10 +21,15 @@ and host/posix/display_sdl.c does all of it on Linux: SDL's key presses as
 virtual-key codes, its typed text as code points (host/hos_sdl.c reads SDL's
 text events) and the mouse; the module reads held keys through the table's
 key_down.
+
+gpu/vk/vk_draw.cpp also hands each scene draw's camera block (the uniform buffer
+Hookshot's temporal upscalers read) to the module's optional
+hos_coop_camera_wanted / hos_coop_camera (vk_coop.cpp), for co-op's name tags.
 ---
- gpu/vk/hos_coop_draw.h   |  36 +++++++
- gpu/vk/vk_coop.cpp       | 137 ++++++++++++++++++++++++++
- gpu/vk/vk_coop.h         |  13 +++
+ gpu/vk/hos_coop_draw.h   |  43 +++++++++
+ gpu/vk/vk_coop.cpp       | 160 ++++++++++++++++++++++++++++++
+ gpu/vk/vk_coop.h         |  20 ++++
+ gpu/vk/vk_draw.cpp       |   2 +
  gpu/vk/vk_menu.cpp       |   9 +-
  host/coop_bridge.c       | 204 +++++++++++++++++++++++++++++++++++++++
  host/display.c           |  28 +++++-
@@ -37,7 +42,7 @@ key_down.
  nx2/build.py             |   2 +-
  nx2/coop_hooks.py        |  61 ++++++++++++
  nx2/lift.py              |   2 +
- 15 files changed, 653 insertions(+), 8 deletions(-)
+ 16 files changed, 692 insertions(+), 8 deletions(-)
  create mode 100644 gpu/vk/hos_coop_draw.h
  create mode 100644 gpu/vk/vk_coop.cpp
  create mode 100644 gpu/vk/vk_coop.h
@@ -47,10 +52,10 @@ key_down.
 
 diff --git a/gpu/vk/hos_coop_draw.h b/gpu/vk/hos_coop_draw.h
 new file mode 100644
-index 00000000..6f8106f0
+index 00000000..9329c4bd
 --- /dev/null
 +++ b/gpu/vk/hos_coop_draw.h
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,43 @@
 +/* SPDX-License-Identifier: GPL-3.0-or-later
 +   The co-op module's drawing over the picture (oot-remake-multiplayer, docs/hookshot.md).
 +
@@ -85,14 +90,21 @@ index 00000000..6f8106f0
 +typedef int (*hos_coop_draw_wanted_fn)(void);             /* 1: something to draw now (Hookshot then makes an ImGui frame) */
 +typedef void (*hos_coop_draw_fn)(const HosCoopDraw *d);   /* draws it (the table up to text_width) */
 +typedef void (*hos_coop_draw2_fn)(const HosCoopDraw *d);  /* draws it (the whole table) */
++/* The game's camera, for co-op's name tags and edge arrows (optional exports; an older module has none). For each draw
++   into the scene's colour target (B10G11R11 with depth), on the thread that records it: hos_coop_camera_wanted says
++   whether this frame (Hookshot's frame number) still wants a camera from a target this size (the largest of a frame
++   wins); if so, hos_coop_camera gets the draw's vertex-stage uniform buffer 3, its first 0x130 bytes (the game's
++   camera block: view-projection at 0x30, the target's size at 0x120), and checks it itself. */
++typedef int (*hos_coop_camera_wanted_fn)(uint64_t frame, float width, float height);
++typedef void (*hos_coop_camera_fn)(uint64_t frame, const float *block, float width, float height);
 +
 +#endif
 diff --git a/gpu/vk/vk_coop.cpp b/gpu/vk/vk_coop.cpp
 new file mode 100644
-index 00000000..9a7c621a
+index 00000000..693d1247
 --- /dev/null
 +++ b/gpu/vk/vk_coop.cpp
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,160 @@
 +// (oot-remake-multiplayer) Co-op's drawing over the picture: hookshot_coop.dll's hos_coop_draw_wanted / hos_coop_draw
 +// (hos_coop_draw.h), found once host/coop_bridge.c has loaded it, drawn in the menu's Dear ImGui frame (vk_menu.cpp
 +// menu_record). Nothing happens without the module: no ImGui frame is made for it. A module with hos_coop_draw2 also gets
@@ -109,7 +121,8 @@ index 00000000..9a7c621a
 +#include "imgui.h"
 +#include "imgui_internal.h"   // (RegisterUserTexture: the module's pictures, as vk_imgui.cpp's logo)
 +#include "vk_imgui.h"
-+#include "vk_internal.h"   // (logf)
++#include "vk_internal.h"   // (logf, memory_read_as_submitted)
++#include "vk_texture.h"    // (Texture, texture_frame_no)
 +#include "hos_coop_draw.h"
 +
 +#ifdef _WIN32
@@ -124,6 +137,8 @@ index 00000000..9a7c621a
 +std::atomic<hos_coop_draw_wanted_fn> wanted_fn{nullptr};
 +std::atomic<hos_coop_draw_fn> draw_fn{nullptr};
 +std::atomic<hos_coop_draw2_fn> draw2_fn{nullptr};   // (a module with the game look: the whole table)
++std::atomic<hos_coop_camera_wanted_fn> camera_wanted_fn{nullptr};   // (a module with name tags on Hookshot)
++std::atomic<hos_coop_camera_fn> camera_fn{nullptr};
 +
 +// (the bridge loads the module at the game's first frame hook: looked for again every 60 presents until found)
 +void find() {
@@ -136,15 +151,23 @@ index 00000000..9a7c621a
 +    auto w = (hos_coop_draw_wanted_fn)(void *)GetProcAddress(m, "hos_coop_draw_wanted");
 +    auto d = (hos_coop_draw_fn)(void *)GetProcAddress(m, "hos_coop_draw");
 +    auto d2 = (hos_coop_draw2_fn)(void *)GetProcAddress(m, "hos_coop_draw2");
++    auto cw = (hos_coop_camera_wanted_fn)(void *)GetProcAddress(m, "hos_coop_camera_wanted");
++    auto cf = (hos_coop_camera_fn)(void *)GetProcAddress(m, "hos_coop_camera");
 +#else
 +    void *m = dlopen("hookshot_coop.so", RTLD_NOW | RTLD_NOLOAD);
 +    auto w = (hos_coop_draw_wanted_fn)(m ? dlsym(m, "hos_coop_draw_wanted") : dlsym(RTLD_DEFAULT, "hos_coop_draw_wanted"));
 +    auto d = (hos_coop_draw_fn)(m ? dlsym(m, "hos_coop_draw") : dlsym(RTLD_DEFAULT, "hos_coop_draw"));
 +    auto d2 = (hos_coop_draw2_fn)(m ? dlsym(m, "hos_coop_draw2") : dlsym(RTLD_DEFAULT, "hos_coop_draw2"));
++    auto cw = (hos_coop_camera_wanted_fn)(m ? dlsym(m, "hos_coop_camera_wanted") : dlsym(RTLD_DEFAULT, "hos_coop_camera_wanted"));
++    auto cf = (hos_coop_camera_fn)(m ? dlsym(m, "hos_coop_camera") : dlsym(RTLD_DEFAULT, "hos_coop_camera"));
 +#endif
 +    if (!w || !d) return;   // (an older module: nothing to draw)
 +    wanted_fn.store(w, std::memory_order_release);
 +    draw2_fn.store(d2, std::memory_order_release);
++    if (cw && cf) {
++        camera_fn.store(cf, std::memory_order_release);
++        camera_wanted_fn.store(cw, std::memory_order_release);
++    }
 +    draw_fn.store(d, std::memory_order_release);
 +}
 +
@@ -213,6 +236,18 @@ index 00000000..9a7c621a
 +
 +}  // namespace
 +
++void note_scene_draw(const Texture *color0, uint32_t width, uint32_t height, uint64_t camera, uint64_t camera_size) {
++    const auto cw = camera_wanted_fn.load(std::memory_order_acquire);
++    if (!cw || !color0 || !camera || camera_size < 0x130 || width < 640 || height < 360 ||
++        color0->format != VK_FORMAT_B10G11R11_UFLOAT_PACK32)
++        return;
++    const uint64_t frame = texture_frame_no();
++    if (!cw(frame, (float)width, (float)height)) return;
++    float block[0x130 / 4];
++    if (!memory_read_as_submitted(camera, block, sizeof block)) return;
++    if (const auto cf = camera_fn.load(std::memory_order_acquire)) cf(frame, block, (float)width, (float)height);
++}
++
 +bool wanted() {
 +    find();
 +    const auto w = wanted_fn.load(std::memory_order_acquire);
@@ -232,14 +267,18 @@ index 00000000..9a7c621a
 +}  // namespace mkwvk::coop
 diff --git a/gpu/vk/vk_coop.h b/gpu/vk/vk_coop.h
 new file mode 100644
-index 00000000..d774b878
+index 00000000..59acc4be
 --- /dev/null
 +++ b/gpu/vk/vk_coop.h
-@@ -0,0 +1,13 @@
+@@ -0,0 +1,20 @@
 +// (oot-remake-multiplayer) Co-op's drawing over the picture (vk_coop.cpp, hos_coop_draw.h).
 +#pragma once
 +
 +#include <cstdint>
++
++namespace mkwvk {
++struct Texture;
++}
 +
 +namespace mkwvk::coop {
 +
@@ -247,10 +286,33 @@ index 00000000..d774b878
 +bool wanted();
 +/// Draws it into the current Dear ImGui frame (after ui::begin), over a w x h window image
 +void draw(uint32_t w, uint32_t h);
++/// A draw into a target with depth (vk_draw.cpp, beside temporal_note_scene_draw): the scene's camera for the module's
++/// name tags, when it has hos_coop_camera (nothing otherwise). camera: the vertex stage's uniform buffer 3
++void note_scene_draw(const Texture *color0, uint32_t width, uint32_t height, uint64_t camera, uint64_t camera_size);
 +
 +}  // namespace mkwvk::coop
+diff --git a/gpu/vk/vk_draw.cpp b/gpu/vk/vk_draw.cpp
+index 9ce60e90..b970bf41 100644
+--- a/gpu/vk/vk_draw.cpp
++++ b/gpu/vk/vk_draw.cpp
+@@ -39,6 +39,7 @@
+ #include "upscaler_rows.h"    // (upscale_lod_bias: which upscalers draw the 3D smaller)
+ #include "dlss_actor.h"
+ #include "vk_temporal.h"
++#include "vk_coop.h"   // (oot-remake-multiplayer: the camera for co-op's name tags)
+ #include "vk_fsr3.h"          // (AMD FSR 3.1 in the gameplay upscale's place)
+ #include "vk_fsr3_inputs.h"
+ #include "reactive_policy.h"
+@@ -6667,6 +6668,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
+     // FSR 3.1 (vk_fsr3_inputs.cpp). The vertex stage's uniform buffer 3 (NVN's binding 0)
+     if (at.n && at.color[0] && at.depth) {
+         temporal_note_scene_draw(at.color[0], at.width, at.height, at.depth, s.ubo[0][0].addr, s.ubo[0][0].size);
++        coop::note_scene_draw(at.color[0], at.width, at.height, s.ubo[0][0].addr, s.ubo[0][0].size);   // (oot-remake-multiplayer: name tags)
+         fsr3_inputs::note_scene_draw(at.color[0], at.width, at.height, at.depth, s.ubo[0][0].addr, s.ubo[0][0].size);
+     }
+     uint8_t types[8];
 diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
-index 872c3f6b..f0a11d39 100644
+index 487f7961..10e332b9 100644
 --- a/gpu/vk/vk_menu.cpp
 +++ b/gpu/vk/vk_menu.cpp
 @@ -36,6 +36,7 @@
@@ -260,8 +322,8 @@ index 872c3f6b..f0a11d39 100644
 +#include "vk_coop.h"   // (oot-remake-multiplayer: co-op's drawing over the picture)
  #include "vk_menu_keys.h"   // (which gamepad buttons confirm and go back: those A and B are bound to)         // (how it looks: Dear ImGui, vk_imgui.h)
  #include "vk_dlss.h"
- #include "vk_bug_report.h"   // (the Gameplay tab's Bug report: what it writes, and how)
-@@ -4557,7 +4558,8 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
+ #include "vk_framegen.h"   // (Frame generation by: who makes the frames now, framegen_maker)
+@@ -4962,7 +4963,8 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
      const bool start = startup_on.load(std::memory_order_acquire);
      const bool fps = opts.show_fps && !start;   // (no game frames yet: not "0 FPS" over the start-up screen)
      const bool open = open_now.load(std::memory_order_relaxed);
@@ -271,7 +333,7 @@ index 872c3f6b..f0a11d39 100644
          // (but a new window size or Menu size since the last bake: one frame with nothing drawn that bakes the menu's glyphs
          // and measures its page for the new size, so the next open has no hitch whatever was resized while nothing showed)
          if (prebake_needed(w, h) && ui::begin(w, h)) {
-@@ -4580,6 +4582,7 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
+@@ -4985,6 +4987,7 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
      ui::Ctx c = ui_ctx(w, h);
      prebake(c);   // (the menu's glyphs at this size, before it opens: no hitch then)
      if (start) draw_startup(c);   // (under the menu)
@@ -279,7 +341,7 @@ index 872c3f6b..f0a11d39 100644
      if (open) draw_menu(c);
      if (fps) draw_fps(c, open);
      ::mkwvk::rec::boundary(::mkwvk::rec::B_DIRECT);   // (Dear ImGui records into cmd directly, its backend through its own pointers: what this thread recorded through vk_work.h reaches cmd first)
-@@ -4589,9 +4592,11 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
+@@ -4994,9 +4997,11 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
  void menu_record_image(VkCommandBuffer cmd, VkImage image, VkImageView view, uint32_t w, uint32_t h) {
      const bool open = open_now.load(std::memory_order_relaxed);
      const bool fps = opts.show_fps && !startup_on.load(std::memory_order_acquire);
@@ -648,26 +710,26 @@ index 00000000..9e2075c4
 +
 +#endif
 diff --git a/host/hos_sdl.c b/host/hos_sdl.c
-index 4a6296a7..152570e9 100644
+index 35a24d6e..91bd8679 100644
 --- a/host/hos_sdl.c
 +++ b/host/hos_sdl.c
-@@ -24,6 +24,7 @@ static struct {
-     void *PadHasSensor, *PadSensorEnable, *PadSensorData;   /* (motion: optional, NULL in an SDL without them) */
+@@ -25,6 +25,7 @@ static struct {
      void *PadVendor, *PadSteamHandle, *SetHintPriority;   /* (Steam's stand-in pads: optional, host/steam_pads.h) */
+     void *JoystickGUID, *PadMapping;   /* (optional connection diagnostics: no serial number or device path) */
      void *GetGamepads, *GetGamepadID, *Free;   /* (SDL3) */
 +    void *StartTextInput;   /* (optional: co-op's chat box, hos_sdl_text_input) */
-     void *NumJoysticks, *IsGameController, *DeviceInstanceID, *GetJoystick, *JoystickInstanceID;   /* (SDL2) */
+     void *NumJoysticks, *IsGameController, *DeviceInstanceID, *GetJoystick, *JoystickInstanceID;   /* (SDL2; GetJoystick also SDL3's diagnostics) */
  } f;
  #define CALL(type, fn) ((type)f.fn)
-@@ -77,6 +78,7 @@ static int get_all(HMODULE m, int three) {
-     *(FARPROC *)&f.PadVendor = GetProcAddress(m, three ? "SDL_GetGamepadVendor" : "SDL_GameControllerGetVendor");
-     *(FARPROC *)&f.PadSteamHandle = GetProcAddress(m, three ? "SDL_GetGamepadSteamHandle" : "SDL_GameControllerGetSteamHandle");
+@@ -80,6 +81,7 @@ static int get_all(HMODULE m, int three) {
      *(FARPROC *)&f.SetHintPriority = GetProcAddress(m, "SDL_SetHintWithPriority");
+     *(FARPROC *)&f.JoystickGUID = GetProcAddress(m, three ? "SDL_GetJoystickGUID" : "SDL_JoystickGetGUID");
+     *(FARPROC *)&f.PadMapping = GetProcAddress(m, three ? "SDL_GetGamepadMapping" : "SDL_GameControllerMapping");
 +    *(FARPROC *)&f.StartTextInput = GetProcAddress(m, "SDL_StartTextInput");
      if (three) {
+         *(FARPROC *)&f.GetJoystick = GetProcAddress(m, "SDL_GetGamepadJoystick");   /* (optional: diagnostics only) */
          GET(SetWindowPosition, "SDL_SetWindowPosition");
-         GET(GetPrimaryDisplay, "SDL_GetPrimaryDisplay");
-@@ -236,6 +238,11 @@ void hos_sdl_mouse_position(float *x, float *y) {
+@@ -244,6 +246,11 @@ void hos_sdl_mouse_position(float *x, float *y) {
          *x = (float)ix, *y = (float)iy;
      }
  }
@@ -679,7 +741,7 @@ index 4a6296a7..152570e9 100644
  void hos_sdl_window_size(void *window, int *width, int *height) {
      if (version == 3) CALL(_Bool (*)(void *, int *, int *), GetWindowSize)(window, width, height);
      else CALL(void (*)(void *, int *, int *), GetWindowSize)(window, width, height);
-@@ -279,6 +286,13 @@ static void read_event(const uint8_t *raw, HosSdlEvent *e) {
+@@ -287,6 +294,13 @@ static void read_event(const uint8_t *raw, HosSdlEvent *e) {
              if (dir == 1) e->wheel = -e->wheel;
              break;
          }
@@ -693,7 +755,7 @@ index 4a6296a7..152570e9 100644
          }
          return;
      }
-@@ -312,6 +326,10 @@ static void read_event(const uint8_t *raw, HosSdlEvent *e) {
+@@ -320,6 +334,10 @@ static void read_event(const uint8_t *raw, HosSdlEvent *e) {
          e->wheel = (float)(dir == 1 ? -i[0] : i[0]);
          break;
      }
@@ -705,7 +767,7 @@ index 4a6296a7..152570e9 100644
  }
  int hos_sdl_wait_event(HosSdlEvent *e, int timeout_ms) {
 diff --git a/host/hos_sdl.h b/host/hos_sdl.h
-index a04c061a..df7deee0 100644
+index 167e12e3..35339cf1 100644
 --- a/host/hos_sdl.h
 +++ b/host/hos_sdl.h
 @@ -35,7 +35,8 @@ void hos_sdl_icon(void *window, const char *png);   /* (SDL 3.4's PNG loader: no
@@ -729,7 +791,7 @@ index a04c061a..df7deee0 100644
  int hos_sdl_poll_event(HosSdlEvent *e);
  
 diff --git a/host/nn_hid.c b/host/nn_hid.c
-index 43e312d2..7f34e061 100644
+index 47e521c0..054caa5a 100644
 --- a/host/nn_hid.c
 +++ b/host/nn_hid.c
 @@ -52,7 +52,8 @@ static int64_t sampling;
@@ -742,7 +804,7 @@ index 43e312d2..7f34e061 100644
  
  int hos_mouse_take(int32_t *dx, int32_t *dy);   /* display.c */
  
-@@ -1041,6 +1042,7 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
+@@ -1045,6 +1046,7 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
  
  static void vibration_send(uint64_t handle, uint64_t value);
  volatile int64_t hos_hid_last_read;
@@ -750,7 +812,7 @@ index 43e312d2..7f34e061 100644
  
  /* GetNpadStates(State* out, int count, unsigned int const& npadId): the latest state first */
  static void npad_states(Ctx *c) {
-@@ -1100,11 +1102,13 @@ static void npad_states(Ctx *c) {
+@@ -1104,11 +1106,13 @@ static void npad_states(Ctx *c) {
      uint64_t hos_frame_step_buttons(uint64_t buttons);   /* nn_vi.c: the frame step of the wheel and quick menus */
      if (connected) buttons = hos_frame_step_buttons(buttons);
      int64_t s = ++sampling;
@@ -766,10 +828,10 @@ index 43e312d2..7f34e061 100644
          G32(e + 32) = connected ? ATTR_CONNECTED : 0;
      }
 diff --git a/host/nvn_native.c b/host/nvn_native.c
-index a125386f..24cc4e15 100644
+index 7e2bdbe7..0cf33349 100644
 --- a/host/nvn_native.c
 +++ b/host/nvn_native.c
-@@ -2511,6 +2511,8 @@ NV(nvnQueuePresentTexture) {
+@@ -2512,6 +2512,8 @@ NV(nvnQueuePresentTexture) {
      extern volatile LONG64 hos_present_count;   /* display.c */
      InterlockedIncrement64(&hos_present_count);
      hos_vi_native_presented(phases);
@@ -887,12 +949,12 @@ index f6da1cc2..a0e8949e 100644
                          static float rx, ry;
                          rx += e.dx, ry += e.dy;
 diff --git a/nx2/build.py b/nx2/build.py
-index 92b97bfe..1253b776 100644
+index fc123351..effa6705 100644
 --- a/nx2/build.py
 +++ b/nx2/build.py
-@@ -1087,7 +1087,7 @@ def main():
+@@ -1219,7 +1219,7 @@ def main():
                         "-DIMGUI_DISABLE_WIN32_FUNCTIONS", "-DIMGUI_DISABLE_DEMO_WINDOWS", "-DIMGUI_DISABLE_DEBUG_TOOLS"]
-         imgui_deps = b"".join(open(os.path.join(d, f), "rb").read() for d in (imgui, os.path.join(imgui, "backends"), zstd)
+         imgui_deps = b"".join(open(os.path.join(d, f), "rb").read() for d in (imgui, os.path.join(imgui, "backends"), zbic)
                                for f in sorted(os.listdir(d)) if f.endswith(".h"))
 -        imgui_users = ("vk_imgui.cpp", "vk_menu.cpp")
 +        imgui_users = ("vk_imgui.cpp", "vk_menu.cpp", "vk_coop.cpp")   # (oot-remake-multiplayer: co-op's drawing, vk_coop.cpp)

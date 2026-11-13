@@ -182,6 +182,194 @@ class CacheTest(Fixture):
         self.assertTrue(os.path.isfile(os.path.join(target, "big.bin")), "prune went into the junction")
 
 
+class WarmTest(Fixture):
+    """The shader warm-up: which files, the copy, the restore of a pair that held another build, and the start
+    (a fake game process and bridge: no Hookshot)."""
+
+    WARM = ("hookshot_pipelines.bin", "hookshot_pipelines.bin.built", "hookshot_prepared.bin",
+            "hookshot_programs.bin", "hookshot_programs.idx", "mkw_vk_pipelines.bin", "mkw_vk_pipelines_play_1.bin")
+
+    def warmed(self, name="warm"):
+        g = self.game(name)
+        for n in self.WARM:
+            write(os.path.join(g, n), "warm " + n)
+        write(os.path.join(g, "hookshot_pipelines.bin.built.warming"), "1\n")   # not a warm file
+        return g
+
+    def test_warm_files_are_the_preparations_caches_only(self):
+        g = self.warmed()
+        self.assertEqual(hs.warm_files(g), sorted(self.WARM))
+        for n in ("hookshot_shaders.bin", "hookshot_pipeline_states_shipped.bin", "hookshot_log.txt", "image.bin"):
+            self.assertFalse(hs.WARM_FILES.match(n), n)
+        for n in self.WARM:
+            self.assertTrue(hs.RUNTIME_CACHE.match(n), n)   # never overwritten in a pair of the same build
+
+    def test_spread_overwrites_and_drops_another_starts_play_files(self):
+        src = self.warmed()
+        dst = self.game("pair")
+        write(os.path.join(dst, "hookshot_prepared.bin"), "cold")
+        write(os.path.join(dst, "mkw_vk_pipelines_play_4.bin"), "a play file of another start")
+        self.assertEqual(hs.warm_spread(src, [dst, src], say=self.say), len(self.WARM))   # src itself is skipped
+        with open(os.path.join(dst, "hookshot_prepared.bin")) as f:
+            self.assertEqual(f.read(), "warm hookshot_prepared.bin")
+        self.assertFalse(os.path.exists(os.path.join(dst, "mkw_vk_pipelines_play_4.bin")))
+        self.assertEqual(hs.warm_files(dst), sorted(self.WARM))
+
+    def test_spread_refuses_a_folder_whose_preparation_did_not_finish(self):
+        src = self.warmed()
+        os.unlink(os.path.join(src, "hookshot_pipelines.bin.built"))
+        with self.assertRaises(hs.Fail):
+            hs.warm_spread(src, [self.game("pair")], say=self.say)
+
+    def test_restore_replaces_the_runtime_caches_of_another_build(self):
+        k = hs.cache_store(self.warmed("new"), self.repo, say=self.say)
+        same = self.game("same")
+        write(os.path.join(same, "hookshot_prepared.bin"), "this build's own, newer")
+        hs.cache_restore(same, self.repo, say=self.say)
+        with open(os.path.join(same, "hookshot_prepared.bin")) as f:
+            self.assertEqual(f.read(), "this build's own, newer")   # same build: kept, as before
+        old = self.game("old", stamp="release=v2.1.0\ncommit=x\npatches=old")
+        write(os.path.join(old, "hookshot_prepared.bin"), "another translator's")
+        hs.cache_restore(old, self.repo, say=self.say)
+        with open(os.path.join(old, "hookshot_prepared.bin")) as f:
+            self.assertEqual(f.read(), "warm hookshot_prepared.bin")
+        self.assertIn("held another build", self.out.getvalue())
+        with open(os.path.join(old, "coop.ini")) as f:
+            self.assertEqual(f.read(), "server = me")   # per-player files still kept
+        self.assertTrue(os.path.isdir(os.path.join(self.cache, k)))
+
+    def test_warmup_starts_the_pair_then_fills_the_cache_and_the_others(self):
+        hs.cache_store(self.game("built"), self.repo, say=self.say)
+        pair, other = self.game("A1"), self.game("B1")
+        started = []
+
+        def start(game, out, timeout, say=print):
+            started.append((game, timeout))
+            for n in self.WARM:
+                write(os.path.join(game, n), "warm " + n)
+            return True
+
+        self.assertTrue(hs.warmup(pair, [other], 99, repo=self.repo, say=self.say, start=start))
+        self.assertEqual(started, [(pair, 99)])
+        k = hs.key_of(hs.stamp(self.repo))
+        for d in (other, os.path.join(self.cache, k, "game")):
+            self.assertEqual(hs.warm_files(d), sorted(self.WARM), d)
+
+    def test_warmup_refuses_a_pair_of_another_build_and_dry_run_starts_nothing(self):
+        old = self.game("old", stamp="release=v2.1.0\ncommit=x\npatches=old")
+        with self.assertRaises(hs.Fail):
+            hs.warmup(old, repo=self.repo, say=self.say, start=lambda *a, **k: self.fail("started"))
+        self.assertTrue(hs.warmup(self.game("A1"), dry=True, repo=self.repo, say=self.say,
+                                  start=lambda *a, **k: self.fail("started")))
+
+    def test_start_waits_for_the_line_then_quits_through_the_bridge(self):
+        g = self.game("A1")
+        out = os.path.join(self.tmp, "out")
+        asked = []
+        test = self
+
+        class Proc:
+            pid, returncode, polls = 7, None, 0
+
+            def __init__(self, args, stdout=None, **kw):
+                test.assertTrue(kw["env"]["HOS_CONTROL"])   # the bridge the quit goes through
+                self.out = stdout
+
+            def poll(self):
+                self.polls += 1
+                if self.polls == 2:   # the game's output, written while it runs
+                    with open(os.path.join(out, "warmup-out.txt"), "a") as f:
+                        f.write("[hos host] vk: start-up: the shaders took 1081.5 s\n")
+                return self.returncode
+
+            def wait(self, t=None):
+                self.returncode = 0
+                return 0
+
+            def kill(self):
+                asked.append("kill")
+
+        class Bridge:
+            def request(self, cmd, **k):
+                asked.append(cmd)
+
+            def close(self):
+                pass
+
+        ok = hs.warm_start(g, out, 600, say=self.say, popen=Proc, connect=lambda s, timeout: Bridge(),
+                           clock=iter(range(0, 10000, 5)).__next__, sleep=lambda s: None)
+        self.assertTrue(ok)
+        self.assertEqual(asked, ["quit"])
+        self.assertIn("the shaders took 1081.5 s", self.out.getvalue())
+
+    def test_start_that_ends_early_is_a_failure(self):
+        g = self.game("A1")
+
+        class Proc:
+            pid, returncode = 8, 3
+
+            def __init__(self, *a, **k):
+                pass
+
+            def poll(self):
+                return self.returncode
+
+        self.assertFalse(hs.warm_start(g, os.path.join(self.tmp, "out"), 600, say=self.say, popen=Proc,
+                                       connect=lambda s, timeout: None, sleep=lambda s: None))
+        self.assertIn("ended before its shaders were prepared", self.out.getvalue())
+
+
+class BuildSpeedTest(Fixture):
+    """hs-build-speed: the pin's shared folders, Hookshot's own jobs, warm shader files seeded (dry runs, no build)."""
+
+    def kit(self, new=True):
+        k = os.path.join(self.tmp, "kit")
+        script = ("param([string]$Game = '', [string]$Out = '', [int]$Jobs = 0, [string]$Tools = '', [string]$Work = '')\n"
+                  if new else "param([string]$Game = '', [string]$Out = '', [int]$Jobs = 0)\n")
+        write(os.path.join(k, "scripts", "hookshot-build.ps1"), script)
+        return k
+
+    def test_pin_of_and_its_folder(self):
+        st = hs.stamp(self.repo)
+        self.assertEqual(hs.pin_of(st), "v2.1.0-%s" % COMMIT[:12])
+        self.assertEqual(hs.pin_of(st.replace("patches=", "patches=other,")), hs.pin_of(st))   # patches: same folder
+        self.assertEqual(hs.pin_dir(st), os.path.join(self.cache, "pins", hs.pin_of(st)))
+        self.assertEqual(hs.pin_of("release=v2.2.0-rc.1\ncommit=4aee23659b9436dab2cd\n"), "v2.2.0-rc.1-4aee23659b94")
+        with self.assertRaises(hs.Fail):
+            hs.pin_of("patches=x")
+        self.assertFalse(hs.CACHE_NAME.match("pins"))   # cache_prune leaves the shared folders alone
+
+    def test_script_args(self):
+        self.assertEqual(hs.build_script_args(os.path.join(self.kit(), "scripts", "hookshot-build.ps1")), {"Tools", "Work"})
+        self.assertEqual(hs.build_script_args(os.path.join(self.kit(False), "scripts", "hookshot-build.ps1")), set())
+        self.assertEqual(hs.build_script_args(os.path.join(self.tmp, "none.ps1")), set())
+
+    def test_a_miss_builds_in_the_pins_folders_with_hookshots_jobs(self):
+        kit = self.kit()
+        hs.build([os.path.join(self.tmp, "A1")], os.path.join(self.tmp, "b"), kit=kit, game="g.nup", repo=self.repo,
+                 dry=True, say=self.say)
+        out = self.out.getvalue()
+        shared = hs.pin_dir(hs.stamp(self.repo))
+        line = [ln for ln in out.splitlines() if ln.startswith("$ ") and "hookshot-build.ps1" in ln][0]
+        self.assertIn('-Tools "%s"' % os.path.join(shared, "tools") if " " in shared else os.path.join(shared, "tools"), line)
+        self.assertIn(os.path.join(shared, "work"), line)
+        self.assertIn(os.path.join(shared, "game"), line)   # the pin's one game folder: the lift key stays the same
+        self.assertIn("would store %s as" % os.path.join(shared, "game"), out)
+        self.assertNotIn(".build", line)
+        self.assertNotIn("-Jobs", line)   # Hookshot's own choice: one compiler per CPU thread
+        self.assertIn("--parallel %d" % (os.cpu_count() or 8), out)   # the module: every thread too
+        self.assertIn("game folder", out)
+
+    def test_an_old_kit_builds_as_before_and_jobs_are_passed_when_asked(self):
+        hs.build([os.path.join(self.tmp, "A1")], os.path.join(self.tmp, "b"), kit=self.kit(False), jobs=12,
+                 repo=self.repo, dry=True, say=self.say)
+        out = self.out.getvalue()
+        line = [ln for ln in out.splitlines() if ln.startswith("$ ") and "hookshot-build.ps1" in ln][0]
+        self.assertNotIn("-Work", line)
+        self.assertIn("-Jobs 12", line)
+        self.assertIn("a full build in the kit's own folders", out)
+        self.assertIn(".build", line)   # an old kit: a new folder, removed after the store
+
 class LockTest(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp()

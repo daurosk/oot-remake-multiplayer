@@ -340,6 +340,9 @@ foreach ($key in $options.Keys) {
     Set-Item -Path "env:$key" -Value $value
     Write-Host "Option: $key=$value"
 }
+# No colour chosen: the colour of the player number you will most likely get, for your own Link too
+# (kit-paths.ps1). Before the pack step, which puts that tunic over the game's.
+[void](Set-KitDefaultColor $Mode $Server)
 if ($Hookshot) {
     # As the emulator below (kit-paths.ps1 Use-KitPuppetPack): the pack hints, your own tunic (#202), the
     # puppets off without a pack. The pack is in mods\contents (Build-Hookshot-Coop.bat installs it), and

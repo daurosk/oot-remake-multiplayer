@@ -420,7 +420,7 @@ class HookshotGames:
         open(self.commands[x], "w").close()
         sock = "%s-%s" % (self.pipe, x) if WINDOWS else os.path.join(self.out, "control-%s.sock" % x)
         env = dict(os.environ, HOS_CONTROL=sock, HOS_CONTROL_MEM="ro", LICHII_COOP_TEST_COMMANDS=self.commands[x],
-                   LICHII_COOP_SERVER="127.0.0.1:%d" % self.port, LICHII_COOP_NAME="Hook" + x)
+                   LICHII_COOP_SERVER="127.0.0.1:%d" % self.port, LICHII_COOP_NAME=x)   # "A", "B": /teleport B
         env.pop("LICHII_COOP_PASSWORD", None)
         # Each game plays the save its scenario put in (the joiner would load the host's): a switch can undo it.
         env.setdefault("LICHII_COOP_TEST_OWN_SAVE", "1")

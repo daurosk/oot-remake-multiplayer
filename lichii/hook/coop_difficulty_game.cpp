@@ -18,6 +18,7 @@
 
 #include "common/fs/path_util.h"
 #include "common/logging.h"
+#include "coop_every.h"
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
 
@@ -186,7 +187,29 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     LOG_INFO(Core, "coop: difficulty: {} (set by {})", Describe(g.state.choice, m->values, players), m->set_by);
 }
 
+// The hits the game's Life step scaled (Kinds::Step), said at most every 5 s
+// when there were new ones: the in-game proof that the values reach the game.
+static void LogHits() {
+    static CoopEvery::Every every{5'000'000};
+    static std::uint64_t enemy_said = 0;
+    static std::uint64_t link_said = 0;
+    if (!every.Due(CoopEvery::NowUs())) {
+        return;
+    }
+    const std::uint64_t enemy = TheKinds().EnemyHits();
+    const std::uint64_t link = TheKinds().LinkHits();
+    if (enemy == enemy_said && link == link_said) {
+        return;
+    }
+    const Values v = Now();
+    LOG_INFO(Core, "coop: difficulty: the Life step scaled {} hits on enemies (life {}%) and {} on our Link (damage {}%)",
+             enemy - enemy_said, v.hp_pct, link - link_said, v.damage_pct);
+    enemy_said = enemy;
+    link_said = link;
+}
+
 void Frame(coop::host::Session* session) {
+    LogHits();
     if (session == nullptr) {
         return;
     }

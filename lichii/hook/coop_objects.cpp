@@ -54,6 +54,7 @@
 #include "coop_flags.h"
 #include "coop_hold.h"
 #include "coop_actor_events.h"
+#include "coop_difficulty.h"
 #include "coop_puppet.h"
 #include "coop_pvp_game.h"
 #include "coop_svc.h"
@@ -1143,6 +1144,7 @@ public:
             // them fill up over a long session). Nothing given there is owed.
             life_scene_ = *scene;
             CoopActorEvents::TheLifeTable().Clear();
+            CoopDifficulty::TheKinds().Clear();  // difficulty: the kinds of the scene before
             life_given_.clear();
             step_hits_.clear();
         }
@@ -2057,6 +2059,7 @@ private:
                 CoopCounters::TheHostRing().Clear();
                 ring_count_seen_ = CoopCounters::TheHostRing().Count();
                 CoopActorEvents::TheLifeTable().Clear();  // (another heap's components)
+                CoopDifficulty::TheKinds().Clear();
                 CoopActorEvents::TheRing().Forget();
 #endif
             }
@@ -2248,9 +2251,18 @@ private:
                              known.first, vt - main_, slot - main_);
                 }
             }
+            if (CoopDifficulty::IsEnemy(known.first, CoopEnemyShots::IsEnemyShot(known.first))) {
+                CoopDifficulty::TheKinds().Mark(a, CoopDifficulty::Kind::enemy);  // difficulty: an attacker
+            }
             if (known.first.starts_with("Player_")) {  // our own Link, for coop_world
                 if (known.first == "Player_Child" || known.first == "Player_Adult") {
                     our_link_ = a;  // the ocarina probe (issue 152)
+                    // Difficulty: the Life component whose hits from enemies are scaled.
+                    if (const auto table = r.Ptr(a + kActorComponents)) {
+                        if (const auto component = r.Ptr(*table + kComponentLife)) {
+                            CoopDifficulty::TheKinds().Mark(*component, CoopDifficulty::Kind::our_link_life);
+                        }
+                    }
                 }
                 coop::protocol::Vec3 at{};
                 for (std::size_t i = 0; i < 3; ++i) {
@@ -2352,6 +2364,9 @@ private:
                         const auto table = r.Ptr(a + kActorComponents);
                         if (const auto component = table ? r.Ptr(*table + kComponentLife) : std::nullopt) {
                             life_components.emplace(*component, a);  // (whose Life step is whose: StepHits)
+                            if (CoopDifficulty::IsEnemy(s.name, false)) {  // difficulty: its hits are scaled
+                                CoopDifficulty::TheKinds().Mark(*component, CoopDifficulty::Kind::enemy_life);
+                            }
                         }
                     }
                 }

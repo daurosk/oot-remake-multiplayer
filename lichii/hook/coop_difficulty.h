@@ -10,6 +10,9 @@
 // (coop_difficulty_game.cpp).
 #pragma once
 
+#include <array>
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -81,26 +84,96 @@ std::optional<Choice> ParseChoice(std::string_view text);
 // The rules the game's side applies
 // ---------------------------------------------------------------------------
 
-// Enemy life. The most life an enemy has at `hp_pct` when the game gave it
-// `base_max`: rounded to the nearest, never under 1.
-std::int32_t ScaledMax(std::int32_t base_max, std::uint16_t hp_pct);
-// An enemy's life after its most went from `old_max` to `new_max`: the same
-// share of it, rounded up when the most grows and down when it shrinks (so
-// up and back down gives the life it had), never under 1 for a living
-// enemy: a change never kills one. 0 stays 0.
-std::int32_t ScaledLife(std::int32_t life, std::int32_t old_max, std::int32_t new_max);
+// Enemy life and damage go through the game's own Life step (patch 0007:
+// each Life component's damage of a frame, summed, reaches the module before
+// the game takes it off; coop_hookshot.cpp). Nothing is written into an
+// enemy: the game's own hit takes what the step lets through.
+//
+// Enemy life: an enemy at `hp_pct` takes 100 / hp_pct of each frame's damage
+// `sum`, so it lasts hp_pct / 100 as many hits (300: three times as many).
+// The parts of a point are carried in `carry` (hundredths, below hp_pct) to
+// the enemy's next hit, so small hits add up to what one big one takes. A
+// heal (0 or less) is passed on as it is.
+std::int32_t EnemyTakes(std::int32_t sum, std::uint16_t hp_pct, std::int32_t& carry);
+// Enemy damage: our Link takes damage_pct / 100 of what an enemy dealt him
+// (quarter hearts), the parts of a quarter carried in `carry` (hundredths,
+// below 100) to his next hit from an enemy.
+std::int32_t LinkTakes(std::int32_t sum, std::uint16_t damage_pct, std::int32_t& carry);
 
-// Enemy damage. What one hit of `taken` (quarter hearts) costs at
-// `damage_pct`. Parts of a quarter are carried to the next hit, so many
-// small hits add up to the same as one big one.
-class DamageScaler {
+// What the object walk found, for the Life step on the game's threads.
+enum class Kind : std::uint8_t {
+    none = 0,
+    enemy_life = 1,     // an enemy's (or a boss's) Life component
+    enemy = 2,          // an enemy actor, or an enemy's shot: an attacker whose hits on Link are scaled
+    our_link_life = 3,  // our own Link's Life component
+};
+// An attacker whose hit on Link is the enemies' damage: an enemy or a boss
+// (Enemy_*), or an enemy's shot (`enemy_shot`: coop_enemy_shots.h).
+bool IsEnemy(std::string_view actor_name, bool enemy_shot);
+// The incoming hit's attacker actor: a u64 at this offset in a Life component
+// (the hit record the Life step reads; coop_objects.cpp kHitTemplate).
+inline constexpr std::uint64_t kHitAttacker = 0x240;
+
+// Addresses and their Kind, with each Life component's carry. One writer
+// (the object walk, present thread: Mark and Clear), any number of readers
+// (the game's threads: Step); no lock. A full table marks nothing more (its
+// hits then go through unscaled) until Clear (a new scene).
+class Kinds {
 public:
-    std::int32_t Scale(std::int32_t taken, std::uint16_t damage_pct);
-    void Reset() { carry_ = 0; }
+    static constexpr std::size_t kSlots = 1024;
+    static constexpr std::size_t kProbes = 32;
+
+    // False when the table has no room for it.
+    bool Mark(std::uint64_t address, Kind kind) noexcept;
+    Kind Of(std::uint64_t address) const noexcept;
+    void Clear() noexcept;
+
+    // One Life step of `component` with `sum` (the frame's damage): what the
+    // game takes at `values`. `attacker()` reads the hit's attacker actor;
+    // called only for our Link's component. Counts what it scaled.
+    template <class AttackerOf>
+    std::int32_t Step(std::uint64_t component, std::int32_t sum, const Values& values,
+                      AttackerOf&& attacker) noexcept {
+        if (sum <= 0) {
+            return sum;
+        }
+        Slot* s = Find(component);
+        if (s == nullptr) {
+            return sum;
+        }
+        const Kind kind = static_cast<Kind>(s->kind.load(std::memory_order_acquire));
+        if (kind == Kind::enemy_life) {
+            return Scaled(*s, sum, values.hp_pct, &EnemyTakes, enemy_hits_);
+        }
+        if (kind == Kind::our_link_life && values.damage_pct != 100 && Of(attacker()) == Kind::enemy) {
+            return Scaled(*s, sum, values.damage_pct, &LinkTakes, link_hits_);
+        }
+        return sum;
+    }
+    // How many hits Step changed: on enemies, on our Link (for the log).
+    std::uint64_t EnemyHits() const noexcept { return enemy_hits_.load(std::memory_order_relaxed); }
+    std::uint64_t LinkHits() const noexcept { return link_hits_.load(std::memory_order_relaxed); }
 
 private:
-    std::int32_t carry_ = 0;  // hundredths of a quarter heart not yet taken
+    struct Slot {
+        std::atomic<std::uint64_t> key{0};
+        std::atomic<std::uint8_t> kind{0};
+        // The carry and the percent it was made at (pct << 16 | carry): a
+        // carry from other values is dropped.
+        std::atomic<std::uint32_t> carry{0};
+    };
+    using Rule = std::int32_t (*)(std::int32_t, std::uint16_t, std::int32_t&);
+    static std::int32_t Scaled(Slot& s, std::int32_t sum, std::uint16_t pct, Rule rule,
+                               std::atomic<std::uint64_t>& hits) noexcept;
+    static std::size_t Hash(std::uint64_t address) noexcept;
+    Slot* Find(std::uint64_t address) noexcept;
+    const Slot* Find(std::uint64_t address) const noexcept;
+
+    std::array<Slot, kSlots> slots_{};
+    std::atomic<std::uint64_t> enemy_hits_{0};
+    std::atomic<std::uint64_t> link_hits_{0};
 };
+Kinds& TheKinds();
 
 // Enemy count. How many more of the enemy placed with `key` there are at
 // `count_pct`: every enemy gets count_pct / 100 - 1, and count_pct % 100 in

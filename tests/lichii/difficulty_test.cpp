@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -156,83 +157,182 @@ TEST_CASE("difficulty: a new host offers its kept choice once, and only when nob
   CHECK_FALSE(CoopDifficulty::OffersKept(true, 0, Choice{}, false));  // automatic is the default already
 }
 
-TEST_CASE("difficulty: enemy life") {
-  using CoopDifficulty::ScaledLife;
-  using CoopDifficulty::ScaledMax;
-  CHECK(ScaledMax(12, 100) == 12);
-  CHECK(ScaledMax(12, 140) == 17);  // 16.8
-  CHECK(ScaledMax(12, 300) == 36);
-  CHECK(ScaledMax(12, 75) == 9);
-  CHECK(ScaledMax(1, 140) == 1);  // a Keese stays one hit
-  CHECK(ScaledMax(1, 150) == 2);
-  CHECK(ScaledMax(1, 25) == 1);  // never under 1
-  CHECK(ScaledMax(3, 25) == 1);
-  CHECK(ScaledMax(0, 300) == 0);  // nothing to scale
-  CHECK(ScaledMax(-1, 300) == -1);
-  CHECK(ScaledMax(INT32_MAX, 500) == INT32_MAX);
-
-  // Full stays full, and a hurt enemy keeps its share, rounded up when the
-  // most grows.
-  CHECK(ScaledLife(12, 12, 36) == 36);
-  CHECK(ScaledLife(6, 12, 36) == 18);
-  CHECK(ScaledLife(1, 12, 36) == 3);
-  CHECK(ScaledLife(36, 36, 12) == 12);
-  CHECK(ScaledLife(1, 36, 12) == 1);  // 0.33: alive stays alive
-  CHECK(ScaledLife(5, 36, 12) == 1);  // 1.67: down when the most shrinks
-  CHECK(ScaledLife(6, 36, 12) == 2);
-  CHECK(ScaledLife(0, 12, 36) == 0);  // dead stays dead
-  CHECK(ScaledLife(-3, 12, 36) == 0);
-  CHECK(ScaledLife(7, 12, 12) == 7);
-  CHECK(ScaledLife(20, 12, 36) == 36);  // over its max: full
-  CHECK(ScaledLife(7, 0, 5) == 5);      // no max known: only the cap
-  // Up and back down never gains or loses life.
-  for (std::int32_t life = 1; life <= 12; ++life) {
-    for (std::uint16_t pct : {25, 75, 140, 180, 300, 500}) {
-      const std::int32_t max = ScaledMax(12, pct);
-      const std::int32_t scaled = ScaledLife(life, 12, max);
-      CHECK(scaled >= 1);
-      CHECK(scaled <= max);
-      if (pct >= 100) {
-        CHECK(ScaledLife(scaled, max, 12) == life);
-      }
+TEST_CASE("difficulty: enemy life is how much of each hit an enemy takes") {
+  using CoopDifficulty::EnemyTakes;
+  std::int32_t carry = 0;
+  CHECK(EnemyTakes(4, 100, carry) == 4);
+  CHECK(carry == 0);
+  CHECK(EnemyTakes(6, 300, carry) == 2);  // a third
+  CHECK(carry == 0);
+  CHECK(EnemyTakes(0, 300, carry) == 0);   // no damage this frame
+  CHECK(EnemyTakes(-3, 300, carry) == -3);  // a heal is not scaled
+  CHECK(carry == 0);
+  // A one-life Keese at 200% takes two hits, at 300% three.
+  for (std::uint16_t pct : {200, 300, 500}) {
+    carry = 0;
+    int hits = 0;
+    std::int32_t life = 1;
+    while (life > 0) {
+      life -= EnemyTakes(1, pct, carry);
+      ++hits;
     }
+    CHECK(hits == pct / 100);
   }
+  // At less than 100% a hit takes more: 75% is four thirds.
+  carry = 0;
+  CHECK(EnemyTakes(3, 75, carry) == 4);
+  CHECK(carry == 0);
+  CHECK(EnemyTakes(1, 75, carry) == 1);  // 1.33
+  CHECK(EnemyTakes(1, 75, carry) == 1);  // 1.33 + .33
+  CHECK(EnemyTakes(1, 75, carry) == 2);  // the parts add up to one more
+  // Many small hits take what one big one does, at every slider mark.
+  for (std::uint16_t pct = coop::protocol::kMinHpPct; pct <= coop::protocol::kMaxHpPct;
+       pct += coop::protocol::kDifficultyStep) {
+    std::int32_t small_carry = 0;
+    std::int32_t big_carry = 0;
+    std::int32_t small = 0;
+    for (int hit = 0; hit < 600; ++hit) {
+      small += EnemyTakes(1, pct, small_carry);
+      CHECK(small_carry >= 0);
+      CHECK(small_carry < pct);
+    }
+    CHECK(small == EnemyTakes(600, pct, big_carry));
+    CHECK(small == 600 * 100 / pct);
+  }
+  // A carry out of range (another value's) cannot make a hit take more.
+  carry = 99999;
+  CHECK(EnemyTakes(1, 300, carry) == 1);  // (299 + 100) / 300
+  carry = -5;
+  CHECK(EnemyTakes(1, 300, carry) == 0);
+  CHECK(EnemyTakes(INT32_MAX, 25, carry) == INT32_MAX);  // no overflow
 }
 
-TEST_CASE("difficulty: enemy damage carries the parts of a quarter heart") {
-  CoopDifficulty::DamageScaler s;
-  CHECK(s.Scale(4, 100) == 4);
-  CHECK(s.Scale(4, 150) == 6);
-  CHECK(s.Scale(4, 200) == 8);
-  CHECK(s.Scale(0, 200) == 0);
-  CHECK(s.Scale(-2, 200) == -2);  // a heal is not damage
+TEST_CASE("difficulty: enemy damage on Link carries the parts of a quarter heart") {
+  using CoopDifficulty::LinkTakes;
+  std::int32_t carry = 0;
+  CHECK(LinkTakes(4, 100, carry) == 4);
+  CHECK(LinkTakes(4, 150, carry) == 6);
+  CHECK(LinkTakes(4, 200, carry) == 8);
+  CHECK(LinkTakes(0, 200, carry) == 0);
+  CHECK(LinkTakes(-2, 200, carry) == -2);  // a heal is not damage
   // Quarter-heart hits at 120%: every fifth costs one more.
-  s.Reset();
+  carry = 0;
   int total = 0;
   for (int hit = 0; hit < 10; ++hit) {
-    total += s.Scale(1, 120);
+    total += LinkTakes(1, 120, carry);
   }
   CHECK(total == 12);
   // At 50% every second one is free; ten cost five.
-  s.Reset();
-  CHECK(s.Scale(1, 50) == 0);
-  CHECK(s.Scale(1, 50) == 1);
-  total = 0;
-  for (int hit = 0; hit < 10; ++hit) {
-    total += s.Scale(1, 50);
-  }
-  CHECK(total == 5);
+  carry = 0;
+  CHECK(LinkTakes(1, 50, carry) == 0);
+  CHECK(LinkTakes(1, 50, carry) == 1);
   // Many small hits cost what one big one does.
-  for (std::uint16_t pct : {25, 75, 120, 140, 160, 275}) {
-    CoopDifficulty::DamageScaler small;
-    CoopDifficulty::DamageScaler big;
+  for (std::uint16_t pct = coop::protocol::kMinDamagePct; pct <= coop::protocol::kMaxDamagePct;
+       pct += coop::protocol::kDifficultyStep) {
+    std::int32_t small_carry = 0;
+    std::int32_t big_carry = 0;
     int sum = 0;
     for (int hit = 0; hit < 100; ++hit) {
-      sum += small.Scale(1, pct);
+      sum += LinkTakes(1, pct, small_carry);
     }
-    CHECK(sum == big.Scale(100, pct));
+    CHECK(sum == LinkTakes(100, pct, big_carry));
     CHECK(sum == pct);
   }
+  CHECK(LinkTakes(INT32_MAX, 400, carry) == INT32_MAX);  // no overflow
+}
+
+TEST_CASE("difficulty: enemies are Enemy_ actors and their shots") {
+  CHECK(CoopDifficulty::IsEnemy("Enemy_Keese", false));
+  CHECK(CoopDifficulty::IsEnemy("Enemy_DungeonBoss_Gohma", false));
+  CHECK(CoopDifficulty::IsEnemy("Octorok_Bullet", true));
+  CHECK_FALSE(CoopDifficulty::IsEnemy("Player_Child", false));
+  CHECK_FALSE(CoopDifficulty::IsEnemy("Animal_Cucco", false));
+  CHECK_FALSE(CoopDifficulty::IsEnemy("Obj_Pot", false));
+}
+
+TEST_CASE("difficulty: the Life step scales enemies' hits, and enemies' hits on our Link only") {
+  using CoopDifficulty::Kind;
+  auto kinds = std::make_unique<CoopDifficulty::Kinds>();
+  constexpr std::uint64_t kKeeseLife = 0x10'0000'1000, kKeese = 0x10'0000'2000;
+  constexpr std::uint64_t kLinkLife = 0x10'0000'3000, kOctorokShot = 0x10'0000'4000;
+  constexpr std::uint64_t kPot = 0x10'0000'5000, kCopyLife = 0x10'0000'6000;
+  CHECK(kinds->Mark(kKeeseLife, Kind::enemy_life));
+  CHECK(kinds->Mark(kKeese, Kind::enemy));
+  CHECK(kinds->Mark(kOctorokShot, Kind::enemy));
+  CHECK(kinds->Mark(kLinkLife, Kind::our_link_life));
+  CHECK_FALSE(kinds->Mark(0, Kind::enemy));
+  CHECK(kinds->Of(kKeese) == Kind::enemy);
+  CHECK(kinds->Of(kPot) == Kind::none);
+  CHECK(kinds->Of(0) == Kind::none);
+
+  const Values hard{300, 200, 100};
+  std::uint64_t attacker = kKeese;
+  int asked = 0;
+  auto attacker_of = [&] {
+    ++asked;
+    return attacker;
+  };
+  // An enemy: a third of each hit, the parts carried.
+  CHECK(kinds->Step(kKeeseLife, 1, hard, attacker_of) == 0);
+  CHECK(kinds->Step(kKeeseLife, 1, hard, attacker_of) == 0);
+  CHECK(kinds->Step(kKeeseLife, 1, hard, attacker_of) == 1);
+  CHECK(kinds->Step(kKeeseLife, -1, hard, attacker_of) == -1);
+  CHECK(asked == 0);  // an enemy's attacker is never read
+  CHECK(kinds->EnemyHits() == 3);
+  // A component the walk did not mark (another player's copy not seen yet, a pot): as the game has it.
+  CHECK(kinds->Step(kCopyLife, 5, hard, attacker_of) == 5);
+  // Our Link: double from an enemy and from an enemy's shot...
+  CHECK(kinds->Step(kLinkLife, 4, hard, attacker_of) == 8);
+  attacker = kOctorokShot;
+  CHECK(kinds->Step(kLinkLife, 2, hard, attacker_of) == 4);
+  CHECK(kinds->LinkHits() == 2);
+  // ...but not from anything else: a fall, fire, a PvP hit (our own Link stands in as its attacker).
+  attacker = 0;
+  CHECK(kinds->Step(kLinkLife, 4, hard, attacker_of) == 4);
+  attacker = kLinkLife;
+  CHECK(kinds->Step(kLinkLife, 4, hard, attacker_of) == 4);
+  attacker = kPot;
+  CHECK(kinds->Step(kLinkLife, 4, hard, attacker_of) == 4);
+  CHECK(kinds->LinkHits() == 2);
+  // At 100% nothing changes and nothing is counted.
+  attacker = kKeese;
+  const Values normal{};
+  CHECK(kinds->Step(kLinkLife, 3, normal, attacker_of) == 3);
+  CHECK(kinds->Step(kKeeseLife, 3, normal, attacker_of) == 3);
+  CHECK(kinds->EnemyHits() == 3);
+  CHECK(kinds->LinkHits() == 2);
+  // A carry made at other values is dropped: at 200% the Keese starts afresh.
+  CHECK(kinds->Step(kKeeseLife, 1, hard, attacker_of) == 0);  // carry 100 at 300
+  CHECK(kinds->Step(kKeeseLife, 1, Values{200, 100, 100}, attacker_of) == 0);  // 100 / 200, not 200 / 200
+  CHECK(kinds->Step(kKeeseLife, 1, Values{200, 100, 100}, attacker_of) == 1);
+  // Marked again as something else (the address is another actor's now): its carry goes.
+  CHECK(kinds->Step(kKeeseLife, 1, hard, attacker_of) == 0);
+  CHECK(kinds->Mark(kKeeseLife, Kind::our_link_life));
+  CHECK(kinds->Of(kKeeseLife) == Kind::our_link_life);
+  // A new scene forgets everything.
+  kinds->Clear();
+  CHECK(kinds->Of(kKeese) == Kind::none);
+  CHECK(kinds->Step(kKeeseLife, 3, hard, attacker_of) == 3);
+}
+
+TEST_CASE("difficulty: a full kinds table marks nothing more and scales nothing it does not know") {
+  using CoopDifficulty::Kind;
+  auto kinds = std::make_unique<CoopDifficulty::Kinds>();
+  std::size_t marked = 0;
+  for (std::uint64_t i = 1; i <= 4 * CoopDifficulty::Kinds::kSlots; ++i) {
+    if (kinds->Mark(i << 4, Kind::enemy_life)) {
+      ++marked;
+    }
+  }
+  CHECK(marked >= CoopDifficulty::Kinds::kSlots / 2);
+  CHECK(marked <= CoopDifficulty::Kinds::kSlots);
+  // Everything marked is found again; nothing else is.
+  std::size_t found = 0;
+  for (std::uint64_t i = 1; i <= 4 * CoopDifficulty::Kinds::kSlots; ++i) {
+    found += kinds->Of(i << 4) == Kind::enemy_life ? 1 : 0;
+  }
+  CHECK(found == marked);
+  CHECK(kinds->Of(0x7777'0000'0000) == Kind::none);
 }
 
 TEST_CASE("difficulty: extra enemies are picked by the placement key alone") {

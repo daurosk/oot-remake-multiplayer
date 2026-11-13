@@ -172,33 +172,114 @@ bool OffersKept(bool hosts, std::uint8_t set_by, const std::optional<Choice>& ke
     return hosts && set_by == 0 && kept && !kept->auto_scale && !offered;
 }
 
-std::int32_t ScaledMax(std::int32_t base_max, std::uint16_t hp_pct) {
-    if (base_max <= 0) {
-        return base_max;
+std::int32_t EnemyTakes(std::int32_t sum, std::uint16_t hp_pct, std::int32_t& carry) {
+    if (sum <= 0 || hp_pct == 0) {
+        return sum;
     }
-    const std::int64_t scaled = (static_cast<std::int64_t>(base_max) * hp_pct + 50) / 100;
-    return static_cast<std::int32_t>(std::clamp<std::int64_t>(scaled, 1, INT32_MAX));
+    const std::int64_t total =
+        static_cast<std::int64_t>(sum) * 100 + std::clamp<std::int32_t>(carry, 0, hp_pct - 1);
+    carry = static_cast<std::int32_t>(total % hp_pct);
+    return static_cast<std::int32_t>(std::min<std::int64_t>(total / hp_pct, INT32_MAX));
 }
 
-std::int32_t ScaledLife(std::int32_t life, std::int32_t old_max, std::int32_t new_max) {
-    if (life <= 0 || new_max <= 0) {
-        return std::max(life, 0);
+std::int32_t LinkTakes(std::int32_t sum, std::uint16_t damage_pct, std::int32_t& carry) {
+    if (sum <= 0) {
+        return sum;
     }
-    if (old_max <= 0 || old_max == new_max) {
-        return std::min(life, new_max);
-    }
-    const std::int64_t part = static_cast<std::int64_t>(std::min(life, old_max)) * new_max;
-    const std::int64_t share = new_max > old_max ? (part + old_max - 1) / old_max : part / old_max;
-    return static_cast<std::int32_t>(std::clamp<std::int64_t>(share, 1, new_max));
-}
-
-std::int32_t DamageScaler::Scale(std::int32_t taken, std::uint16_t damage_pct) {
-    if (taken <= 0) {
-        return taken;
-    }
-    const std::int64_t total = static_cast<std::int64_t>(taken) * damage_pct + carry_;
-    carry_ = static_cast<std::int32_t>(total % 100);
+    const std::int64_t total =
+        static_cast<std::int64_t>(sum) * damage_pct + std::clamp<std::int32_t>(carry, 0, 99);
+    carry = static_cast<std::int32_t>(total % 100);
     return static_cast<std::int32_t>(std::min<std::int64_t>(total / 100, INT32_MAX));
+}
+
+bool IsEnemy(std::string_view actor_name, bool enemy_shot) {
+    return enemy_shot || actor_name.starts_with("Enemy_");
+}
+
+std::size_t Kinds::Hash(std::uint64_t address) noexcept {
+    return static_cast<std::size_t>(((address >> 4) * 0x9e3779b97f4a7c15ull) >> 54);  // 10 bits: kSlots
+}
+
+bool Kinds::Mark(std::uint64_t address, Kind kind) noexcept {
+    if (address == 0) {
+        return false;
+    }
+    const auto k = static_cast<std::uint8_t>(kind);
+    for (std::size_t i = 0; i < kProbes; ++i) {
+        Slot& s = slots_[(Hash(address) + i) % kSlots];
+        const std::uint64_t key = s.key.load(std::memory_order_acquire);
+        if (key == 0) {
+            // (only this writer inserts: no race on the key) The kind goes in
+            // first, so a reader that finds the key reads its kind.
+            s.carry.store(0, std::memory_order_relaxed);
+            s.kind.store(k, std::memory_order_release);
+            s.key.store(address, std::memory_order_release);
+            return true;
+        }
+        if (key == address) {
+            if (s.kind.load(std::memory_order_relaxed) != k) {
+                s.carry.store(0, std::memory_order_relaxed);  // another actor at that address now
+                s.kind.store(k, std::memory_order_release);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+const Kinds::Slot* Kinds::Find(std::uint64_t address) const noexcept {
+    if (address == 0) {
+        return nullptr;
+    }
+    for (std::size_t i = 0; i < kProbes; ++i) {
+        const Slot& s = slots_[(Hash(address) + i) % kSlots];
+        const std::uint64_t key = s.key.load(std::memory_order_acquire);
+        if (key == 0) {
+            return nullptr;
+        }
+        if (key == address) {
+            return &s;
+        }
+    }
+    return nullptr;
+}
+
+Kinds::Slot* Kinds::Find(std::uint64_t address) noexcept {
+    return const_cast<Slot*>(static_cast<const Kinds*>(this)->Find(address));
+}
+
+Kind Kinds::Of(std::uint64_t address) const noexcept {
+    const Slot* s = Find(address);
+    return s == nullptr ? Kind::none : static_cast<Kind>(s->kind.load(std::memory_order_acquire));
+}
+
+void Kinds::Clear() noexcept {
+    for (Slot& s : slots_) {
+        s.key.store(0, std::memory_order_release);
+        s.kind.store(0, std::memory_order_relaxed);
+        s.carry.store(0, std::memory_order_relaxed);
+    }
+}
+
+std::int32_t Kinds::Scaled(Slot& s, std::int32_t sum, std::uint16_t pct, Rule rule,
+                           std::atomic<std::uint64_t>& hits) noexcept {
+    if (pct == 100) {
+        return sum;
+    }
+    // The game steps each component once a frame, one at a time, so a plain
+    // load and store of its carry is enough.
+    const std::uint32_t packed = s.carry.load(std::memory_order_relaxed);
+    std::int32_t carry = (packed >> 16) == pct ? static_cast<std::int32_t>(packed & 0xffff) : 0;
+    const std::int32_t taken = rule(sum, pct, carry);
+    s.carry.store(static_cast<std::uint32_t>(pct) << 16 | static_cast<std::uint32_t>(carry & 0xffff),
+                  std::memory_order_relaxed);
+    hits.fetch_add(1, std::memory_order_relaxed);
+    return taken;
+}
+
+Kinds& TheKinds() {
+    static Kinds kinds;
+    return kinds;
 }
 
 unsigned ExtraCount(std::uint64_t key, std::uint16_t count_pct) {

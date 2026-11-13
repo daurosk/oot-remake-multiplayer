@@ -499,9 +499,9 @@ TEST_CASE("local game: a pad that reconnects into its slot is taken again for it
 
 TEST_CASE("local game: an extra player's Player whose controller is missing gets input off, never player 1's pad") {
     World w;
-    const std::uint64_t main = 0x80000000;
+    static constexpr std::uint64_t main = 0x80000000;
     auto deps = w.Deps();
-    deps.main_base = [main] { return main; };
+    deps.main_base = [] { return main; };
     CoopLocalGame::Game game(std::move(deps));
     game.See(InPlay());
     REQUIRE(game.Add(1, SeatOn(1)));

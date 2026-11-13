@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// hookshot/compat: the emulator's LOG_* macros, into hookshot_log.txt.
+// hookshot/compat: the emulator's LOG_* macros, into longshot_log.txt.
 #pragma once
 #include <fmt/format.h>
 

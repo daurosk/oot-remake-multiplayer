@@ -4,7 +4,7 @@
 // The game's Player reads its pad in two small functions, each called from one
 // AI node's update: the buttons (main+0x279ce80) and the sticks
 // (main+0x279e2c0); a third (main+0x3025850) says whether input is off. On
-// Hookshot all three are wrapped (patch 0010, wrap ids below). This file is
+// Hookshot all three are wrapped (patch 0017, wrap ids below). This file is
 // what the wraps do, without any game or network code:
 //   - for the local Link: after the game's own read, the bytes it read are
 //     kept as one Frame for the other games;

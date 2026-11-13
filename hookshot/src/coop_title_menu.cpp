@@ -627,7 +627,9 @@ std::string AutoLoad::Line() const {
     case Phase::kLoad:
         return "Loading " + host_ + "'s save...";
     case Phase::kNoSave:
-        return host_ + "'s save did not arrive: choose a file to play.";
+        return host_ + "'s save did not arrive: Continue plays your own save, New Game starts a new one.";
+    case Phase::kHostNone:
+        return host_ + " has no save yet: New Game starts one, Continue plays your own.";
     case Phase::kStuck:
         return "Press Continue to play " + host_ + "'s save.";
     default:

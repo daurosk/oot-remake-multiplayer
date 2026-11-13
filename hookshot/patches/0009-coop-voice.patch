@@ -1,4 +1,4 @@
-From a1dd499122e3f47602e00593b66d40ed8e389766 Mon Sep 17 00:00:00 2001
+From f6ad497c65d32292b77f51adf02ff5434ad6a326 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 13:32:10 -0900
 Subject: [PATCH] Co-op voice: the module's voices in the game's final mix
@@ -47,8 +47,8 @@ index 00000000..4996f2e8
 +#include <opus.h>
 +#define WIN32_LEAN_AND_MEAN
 +#include <windows.h>
-+#ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
-+#include "../gpu/vk/compat/hookshot_env.h"
++#ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
++#include "../gpu/vk/compat/longshot_env.h"
 +#endif
 +
 +int hos_voice_mic_start(void);   /* nn_audio_in.c */
@@ -204,7 +204,7 @@ index 00000000..7fc2aa9d
 +
 +#endif
 diff --git a/host/nn_audio.c b/host/nn_audio.c
-index df23b9d8..b8b8414a 100644
+index af1ee013..62827c54 100644
 --- a/host/nn_audio.c
 +++ b/host/nn_audio.c
 @@ -620,6 +620,18 @@ static void render_frame(int16_t *pcm, int channels) {   /* 240 frames of the de
@@ -227,7 +227,7 @@ index df23b9d8..b8b8414a 100644
          Mix *f = &mixes[sink_mix];
          const float g = f->volume;
 diff --git a/host/nn_audio_in.c b/host/nn_audio_in.c
-index a5e013a8..454de607 100644
+index afd07b14..1c80f30e 100644
 --- a/host/nn_audio_in.c
 +++ b/host/nn_audio_in.c
 @@ -506,3 +506,64 @@ HLE(_ZN2nn5audio18GetInputStreamGainEPKNS0_15InputStreamTypeE) {

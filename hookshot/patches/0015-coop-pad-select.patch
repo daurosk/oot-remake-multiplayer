@@ -1,4 +1,4 @@
-From 452a2d1313c96b51d4f7858ac9bfccd780d2bc26 Mon Sep 17 00:00:00 2001
+From 64684e2f9b38c92e71924cfe4e615bc1ef5c2d0f Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Fri, 13 Nov 2026 02:56:35 -0900
 Subject: [PATCH] Co-op pad select: this game's controller and keyboard, for
@@ -23,7 +23,7 @@ the exe: hos_coop_input_select and hos_coop_input_pad_name.
  3 files changed, 114 insertions(+), 3 deletions(-)
 
 diff --git a/host/display.c b/host/display.c
-index 8f58c150..65134cf4 100644
+index 5e7e214f..d84e5c81 100644
 --- a/host/display.c
 +++ b/host/display.c
 @@ -37,6 +37,7 @@ static int renderer;   /* the renderer presents into the window */
@@ -34,16 +34,16 @@ index 8f58c150..65134cf4 100644
  static int cursor_hidden;
  
  int hos_mouse_take(int32_t *dx, int32_t *dy) {
-@@ -330,6 +331,8 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
+@@ -332,6 +333,8 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
          return 0;
      case WM_TIMER: {
          pointer_update(w, 0, 0);
 +        if (mouse_captured && hos_input_keyboard_mode() == 2) mouse_capture(w, 0);   /* (patch 0015: keyboard and mouse
 +                                                                                      off: a capture from before let go) */
-         /* (hookshot, #1532) a controller is not input to Windows: playing with one, the display went off at the power
+         /* (longshot, #1532) a controller is not input to Windows: playing with one, the display went off at the power
             plan's timeout. While the game's window is in front and not minimized, the display's idle timer is reset every
             30 s (ES_DISPLAY_REQUIRED without ES_CONTINUOUS: nothing is held when the game is left or closed).
-@@ -371,7 +374,7 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
+@@ -373,7 +376,7 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
          if (coop_mouse(w, (POINT){(short)LOWORD(lp), (short)HIWORD(lp)}, 1)) return 0;   /* (oot-remake-multiplayer) */
          if (menu_open) menu_press(w, lp, HOS_MOUSE_LEFT);
          else if (game_menu_open) game_menu_press(lp, HOS_MOUSE_LEFT);
@@ -53,7 +53,7 @@ index 8f58c150..65134cf4 100644
      case WM_CHAR: {   /* (oot-remake-multiplayer: co-op's chat box, coop_bridge.c) */
          extern int hos_coop_char(unsigned ch);
 diff --git a/host/nn_hid.c b/host/nn_hid.c
-index 8e0476be..f22528ff 100644
+index 02598424..51861870 100644
 --- a/host/nn_hid.c
 +++ b/host/nn_hid.c
 @@ -760,6 +760,8 @@ static void pads_read(uint64_t *buttons, int32_t stick[4]) {
@@ -65,7 +65,7 @@ index 8e0476be..f22528ff 100644
              if (now < retry[p]) continue;
              XINPUT_STATE xs;
              if (xinput_get((DWORD)p, &xs) != ERROR_SUCCESS) {
-@@ -951,6 +953,22 @@ static uint64_t oc_pad_word(uint64_t buttons) {
+@@ -958,6 +960,22 @@ static uint64_t oc_pad_word(uint64_t buttons) {
      return w;
  }
  
@@ -88,7 +88,7 @@ index 8e0476be..f22528ff 100644
  static void read_input(uint64_t *buttons, int32_t stick[4]) {
      *buttons = 0;
      memset(stick, 0, 4 * sizeof *stick);
-@@ -982,7 +1000,9 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
+@@ -989,7 +1007,9 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
          static const char *env;
          static int looked;
          if (!looked) looked = 1, env = getenv("HOS_INPUT_BACKGROUND");
@@ -98,8 +98,8 @@ index 8e0476be..f22528ff 100644
 +        if (hos_input_keyboard_mode() == 1) keys_behind(buttons, stick);
          return;
      }
-     {   /* (hookshot) while the Insert menu is open the pads are its own, as the keyboard is (key()), and after it
-@@ -1000,6 +1020,11 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
+     {   /* (longshot) while the Insert menu is open the pads are its own, as the keyboard is (key()), and after it
+@@ -1007,6 +1027,11 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
              ps[3] > 12000 || ps[3] < -12000)
              player_used();
      }
@@ -108,11 +108,11 @@ index 8e0476be..f22528ff 100644
 +        hos_mouse_native_stick(stick[2] != 0 || stick[3] != 0);
 +        return;
 +    }
-     binds_load();   /* (the keys: key_default's, or hookshot_options.ini's; the mouse's buttons once its capture is known) */
+     binds_load();   /* (the keys: key_default's, or longshot_options.ini's; the mouse's buttons once its capture is known) */
      for (int i = 0; i < HOS_SW_N; i++)
          if (bound_down(i, 0)) *buttons |= 1ULL << i, player_used();
 diff --git a/host/pad_sdl.c b/host/pad_sdl.c
-index f6ad2c51..7799e741 100644
+index f587e3b1..1c76f4ff 100644
 --- a/host/pad_sdl.c
 +++ b/host/pad_sdl.c
 @@ -188,6 +188,31 @@ static int hd_poll(int i, const uint8_t side[3][4], long long now) {
@@ -203,7 +203,7 @@ index f6ad2c51..7799e741 100644
 +                hd_poll(i, still, now);   /* (an HD rumble pad: silence once, when this game's last packet was not) */
 +                continue;
 +            }
-             /* (hookshot) a real Valve pad beside its Steam stand-in: its motion is read (motion_poll), its buttons and
+             /* (longshot) a real Valve pad beside its Steam stand-in: its motion is read (motion_poll), its buttons and
                 sticks come through the stand-in as the player's Steam layout maps them, so they are not merged twice,
                 and its rumble goes through Steam too. Its own presses still mark it the pad used last, for motion */
 @@ -577,3 +631,32 @@ void hos_sdl_rumble_hd(int side, const float value[4]) {
@@ -239,6 +239,3 @@ index f6ad2c51..7799e741 100644
 +    ReleaseSRWLockShared(&state_lock);
 +    return ok;
 +}
--- 
-2.56.0.windows.4
-

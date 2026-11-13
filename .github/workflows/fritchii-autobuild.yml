@@ -9,9 +9,11 @@
 # or the pinned one when nothing is newer, and uploads the artifact; no branch, PR or issue.
 name: Fritchii autobuild
 
+# The 6-hourly schedule is off in this fork: the check runs only when started by hand (or by a
+# push that changes this file). To turn it back on, add under `on:`
+#   schedule:
+#     - cron: "23 */6 * * *"
 on:
-  schedule:
-    - cron: "23 */6 * * *"
   workflow_dispatch:
     inputs:
       tag:

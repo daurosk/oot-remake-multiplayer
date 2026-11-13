@@ -1,0 +1,100 @@
+name: NX2navi mod release
+
+# Builds the NX2navi co-op mod and packs it as "OoT Co-op.nx2mod" (docs/nx2navi-release.md).
+# Only on request: a manual run, or a tag nx2navi-v<version>. No schedule and no push to a
+# branch starts it. Nothing is public afterwards: a release is only ever a DRAFT PRE-RELEASE
+# that a person publishes on GitHub, and only for a tag push or a manual run with "publish".
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Also create a draft pre-release nx2navi-v<version> with the files"
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "nx2navi-v*"
+
+permissions:
+  contents: read
+
+# One run per ref at a time; a second one waits instead of cancelling a release in progress.
+concurrency:
+  group: nx2navi-mod-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # nx2navi/build.py needs a MinGW compiler and git (ENet and doctest are fetched at the
+      # commits cmake/enet.cmake and cmake/doctest.cmake pin). git is on the runner. This is the
+      # toolchain the NX2navi launcher installs: MSYS2 UCRT64 with clang, plus gcc for the
+      # static libstdc++ the programs are linked with, and binutils (objdump) for the import check.
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-clang
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-binutils
+      - name: Version from mod.json
+        id: version
+        run: |
+          version=$(python -c "import json; print(json.load(open('nx2navi/mod/mod.json', encoding='utf-8'))['version'])")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+        shell: bash
+      # Build with the unit tests, pack, check (content guard, build paths) and make the checksums.
+      # For a tag the release maker also refuses a tag that does not match mod.json's version.
+      - name: Build and pack
+        shell: bash
+        env:
+          CXX: ${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin\clang++.exe
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          args=()
+          if [ "$REF_TYPE" = "tag" ]; then args+=(--version "${REF_NAME#nx2navi-v}"); fi
+          python tools/release/make_nx2navi_mod.py --compiler "$CXX" "${args[@]}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nx2navi-mod
+          path: build/nx2navi-release/*
+          if-no-files-found: error
+          retention-days: 30
+
+  # The only job that can write to the repository, and it runs no repository code: it
+  # takes the files the build job made and creates the draft.
+  release:
+    needs: build
+    if: github.event_name == 'push' || inputs.publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nx2navi-mod
+          path: release
+      - name: Create the draft pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+          SHA: ${{ github.sha }}
+        run: |
+          gh release create "nx2navi-v$VERSION" \
+            "release/OoT Co-op.nx2mod" release/SHA256SUMS.txt \
+            --draft --prerelease --target "$SHA" \
+            --title "OoT Co-op for NX2navi $VERSION (pre-release)" \
+            --notes-file release/notes.md

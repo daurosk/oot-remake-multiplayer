@@ -17,13 +17,14 @@ inline constexpr std::size_t kMaxText = 256 * 1024;  // a longer text is refused
 inline constexpr int kMaxDepth = 16;                 // arrays and objects inside each other
 
 struct Value {
+    struct Member;  // one key and its value (defined below: a std::pair of an incomplete Value is refused by gcc 15)
     enum class Kind { Null, Bool, Number, String, Array, Object };
     Kind kind = Kind::Null;
     bool boolean = false;
     double number = 0;
     std::string string;
     std::vector<Value> array;
-    std::vector<std::pair<std::string, Value>> object;  // in the file's order; a key twice: the last counts in Get
+    std::vector<Member> object;  // in the file's order; a key twice: the last counts in Get
 
     // An object's member, nullptr when this is no object or has no such key.
     const Value* Get(std::string_view key) const;
@@ -35,6 +36,12 @@ struct Value {
     static Value Of(std::string text);
     static Value Of(double number);
     static Value Of(bool boolean);
+};
+
+struct Value::Member {
+    std::string first;  // the key
+    Value second;
+    Member(std::string key, Value value) : first(std::move(key)), second(std::move(value)) {}
 };
 
 // The text's value; nothing with `error` set (what and where, plain English) when it is not one JSON value.

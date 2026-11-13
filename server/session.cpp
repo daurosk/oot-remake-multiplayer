@@ -354,6 +354,7 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   c.last_ping = now_us;
   c.reliable_budget = 2.0 * config_.reliable_per_second;
   c.unreliable_budget = 2.0 * config_.unreliable_per_second;
+  c.voice_budget = 2.0 * config_.voice_per_second;
   c.byte_budget = 2.0 * config_.bytes_per_second;
   c.budget_time = now_us;
   if (player_count() == 1) session_game_build_ = hello.game_build_id;
@@ -460,6 +461,10 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     if (e.scene != c.scene) return;  // late, from the scene it left
     send_to_scene(e.scene, id, channel, message);
     ++stats_.relayed;
+    return;
+  }
+  if (auto* voice = std::get_if<VoiceFrame>(&message)) {
+    on_voice(id, c, *voice, now_us);
     return;
   }
   if (std::holds_alternative<PlatformClock>(message) ||
@@ -1781,6 +1786,50 @@ void Session::announce_owner(const ObjectId& oid, const Object& o) {
   send_to_scene(o.scene, std::nullopt, kChannelOwnership, owner_message(oid, o));
 }
 
+void Session::on_voice(ConnectionId id, const Connection& c, VoiceFrame& m,
+                       std::uint64_t now_us) {
+  if (c.scene.empty()) {
+    ++stats_.voice_unplaced;
+    return;
+  }
+  m.player_number = c.number;  // the speaker, as set_sender writes it
+  std::vector<std::uint8_t> bytes;
+  if (encode(m, bytes) != Error::none) return;
+  auto placed = [&](const Connection& p) {
+    return p.position.has_value() &&
+           !(now_us > p.position_at && now_us - p.position_at > config_.position_stale_us);
+  };
+  // The end of a talk spurt goes to the whole scene: a listener who walked
+  // out of range mid-sentence stops at once instead of filling the gap.
+  const bool end = (m.flags & voice::end) != 0;
+  const bool ranged = config_.voice_range_m > 0.0f && !end && placed(c);
+  for (auto& [other, o] : connections_) {
+    if (other == id || o.state != State::joined || o.scene != c.scene) continue;
+    if (end) {
+      o.voices_heard.erase(c.number);
+      actions_.push_back(SendAction{other, kChannelVoice, bytes});
+      continue;
+    }
+    if (ranged && placed(o) && metres(*c.position, *o.position) > config_.voice_range_m) {
+      ++stats_.voice_out_of_range;
+      continue;
+    }
+    if (config_.voice_max_speakers > 0 && !o.voices_heard.contains(c.number)) {
+      std::erase_if(o.voices_heard, [&](const auto& v) {
+        return now_us > v.second && now_us - v.second > config_.voice_quiet_us;
+      });
+      if (o.voices_heard.size() >= config_.voice_max_speakers) {
+        ++stats_.voice_capped;
+        continue;
+      }
+    }
+    o.voices_heard[c.number] = now_us;
+    actions_.push_back(SendAction{other, kChannelVoice, bytes});
+  }
+  ++stats_.voice_relayed;
+  ++stats_.relayed;
+}
+
 void Session::send_to_scene(const std::string& scene, std::optional<ConnectionId> except,
                             std::uint8_t channel, const Message& m) {
   std::vector<std::uint8_t> bytes;
@@ -1826,8 +1875,11 @@ bool Session::within_rate(Connection& c, std::uint8_t channel, std::size_t bytes
   };
   refill(c.reliable_budget, config_.reliable_per_second);
   refill(c.unreliable_budget, config_.unreliable_per_second);
+  refill(c.voice_budget, config_.voice_per_second);
   refill(c.byte_budget, config_.bytes_per_second);
-  double& budget = channel <= kChannelOwnership ? c.reliable_budget : c.unreliable_budget;
+  double& budget = channel <= kChannelOwnership ? c.reliable_budget
+                   : channel == kChannelVoice   ? c.voice_budget
+                                                : c.unreliable_budget;
   const double size = static_cast<double>(bytes);
   // The unreliable channels (poses, samples) may not use the last quarter
   // second of bytes: it stays for the reliable ones (flags, items, chat), so

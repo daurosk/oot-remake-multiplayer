@@ -1,0 +1,16 @@
+#! switches A:LICHII_COOP_VOICE_TEST=tone,B:LICHII_COOP_VOICE_TEST=log
+# hs-voice-off (Hookshot only; docs/voice.md, "Testing"): voice chat is off unless the player turns it
+# on. hs-voice's two games with no LICHII_COOP_VOICE line: A's test tone has nowhere to go, nothing is
+# sent, nothing is heard, no microphone is opened.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-voice-off
+# Grading lines (tools\autotest\groups.py expect=):
+#   expect="A:coop: voice: off \(the default"   expect="B:coop: voice: off \(the default"
+#   expect="A:(?s)\A(?:(?!voice: test: \w+: sent|microphone opened|voice: test: P\d+ heard).)*\Z"
+#   expect="B:(?s)\A(?:(?!voice: test: \w+: sent|microphone opened|voice: test: P\d+ heard).)*\Z"
+# INCONCLUSIVE: no "coop: voice:" line at all (the game was built without patch 0009).
+mark start
+wait 120
+place -35.70 98.10 8.50
+mark near
+wait 900
+mark end

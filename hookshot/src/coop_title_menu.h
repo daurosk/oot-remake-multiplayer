@@ -76,7 +76,7 @@ struct Options {
     bool debug_panel = false;      // LICHII_COOP_DEBUG_PANEL
     bool cheats = false;           // LICHII_COOP_CHEATS
     int max_players = 4;           // max_players (the host's: 2 to kMaxPlayers)
-    bool voice = true;             // LICHII_COOP_VOICE (off: no voice chat)
+    bool voice = false;            // LICHII_COOP_VOICE (ptt or open: proximity voice chat; unset, the default: off)
 
     // From the two files' texts (a missing file: "").
     static Options Read(std::string_view coop_ini, std::string_view options_ini);

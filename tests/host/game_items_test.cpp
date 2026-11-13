@@ -175,7 +175,7 @@ TEST_CASE("game items: every name hashes to its hash, sorted, each once") {
   CHECK(find_item(kWorldInt) == nullptr);
 }
 
-TEST_CASE("game items: Caleb's rule, item by item") {
+TEST_CASE("game items: dauro's rule, item by item") {
   struct Want {
     std::uint32_t hash;
     ItemRule rule;
@@ -820,7 +820,7 @@ TEST_CASE("item grants: a flag the game cannot write is skipped, the item still 
   CHECK(store.stats().granted == 0);
 }
 
-// Issue 130 (Caleb, 2026-11-12: "buying deku shield was not sync'd"). A Deku
+// Issue 130 (dauro, 2026-11-12: "buying deku shield was not sync'd"). A Deku
 // Shield one player buys (Kokiri Shop) or finds reaches every player:
 // PouchData.Weapon_Shield_Deku.StockNum is max, IsGet.Weapon_Shield_Deku any.
 // A shield lost in one game (burnt, a Like Like) is a max drop: it stays in

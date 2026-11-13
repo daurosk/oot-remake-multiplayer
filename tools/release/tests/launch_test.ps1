@@ -519,6 +519,72 @@ try {
     Check ($ini -match '(?m)^server = 26\.1\.2\.3\s*$' -and $ini -match '(?m)^port = 27600\s*$') "host:port: coop.ini has the given port 27600 [$(($ini -split "`n") -match '^(server|port)' -join '|')]"
     Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 300
+    # The host closed the game while the server runs (a player: "the host hookshot batch doesnt work
+    # since the server is already open"): Host.bat and Host-Hookshot.bat join the running session
+    # again with the password start-server.ps1 saved; no new password, the server is left alone.
+    # The fake server: a program that only waits, as this kit's server\coop_server.exe.
+    $kit = Join-Path $tmp 'kit rejoin'; New-Kit $kit 'v0.1.0-beta4' 'old'
+    Copy-KitFile (Join-Path $kitSrc 'Host-Hookshot.bat') (Join-Path $kit 'Host-Hookshot.bat')
+    New-Item -ItemType Directory -Force -Path (Join-Path $kit 'server') | Out-Null
+    $fakeServer = Join-Path $kit 'server\coop_server.exe'
+    Add-Type -TypeDefinition 'public static class CoopFakeServer { public static void Main() { System.Threading.Thread.Sleep(600000); } }' -OutputAssembly $fakeServer -OutputType ConsoleApplication
+    Write-File "$kit\start-server.cmd" "@echo %*> `"%~dp0server-args.txt`"`r`n@exit /b 0`r`n"
+    Write-File "$kit\emulator\user\config\coop.ini" "server = 26.1.2.3`r`nport = 27600`r`nname = Saria`r`npassword = afriendspassword`r`n"
+    $hsGame = Join-Path $kit 'hookshot\game'
+    New-Item -ItemType Directory -Force -Path $hsGame | Out-Null
+    [System.IO.File]::WriteAllBytes((Join-Path $hsGame 'hookshot.exe'), [System.IO.File]::ReadAllBytes((Join-Path $env:SystemRoot 'System32\rundll32.exe')))
+    Write-File (Join-Path $hsGame 'hookshot_coop.dll') 'module'
+    Write-File (Join-Path $hsGame 'coop.ini') "server = 127.0.0.1`r`nport = 27510`r`nname = Saria`r`n"
+    $env:OOT_COOP_UPDATE_API = Join-Path $tmp 'no-such-releases.json'
+    [void](Write-KitHostSession $kit 27633 'SessionPassword123')
+    $server = Start-Process -FilePath $fakeServer -ArgumentList @('--port', '27633', '--password-env', 'OOT_COOP_SERVER_PASSWORD') -WindowStyle Hidden -PassThru
+    Start-Sleep -Milliseconds 500
+    try {
+        foreach ($bat in 'Host.bat', 'Host-Hookshot.bat') {
+            $iniFile = if ($bat -eq 'Host.bat') { "$kit\emulator\user\config\coop.ini" } else { Join-Path $hsGame 'coop.ini' }
+            $out = (cmd /c "`"$kit\$bat`" -NoUpdate < nul" 2>&1) -join '|'
+            $ini = Read-File $iniFile
+            Check ($out -match 'joining that session again as the host' -and $out -match '(Emulator|Hookshot) started') "${bat}, the kit's server running: says it joins the running session again, and the game starts [$out]"
+            Check ($ini -match '(?m)^password = SessionPassword123\s*$' -and $ini -match '(?m)^server = 127\.0\.0\.1\s*$' -and $ini -match '(?m)^port = 27633\s*$') "${bat}, the kit's server running: coop.ini has the saved password and port [$(($ini -split "`n") -match '^(server|port|password)' -join '|')]"
+            Check ($out -notmatch 'new random one' -and $out -notmatch 'Close' -and $out -notmatch 'SessionPassword123') "${bat}, the kit's server running: no new password, no refusal, the password is not printed"
+            Start-Sleep -Milliseconds 500
+            Check (-not $server.HasExited -and -not (Test-Path "$kit\server-args.txt")) "${bat}, the kit's server running: the server is left alone and not started again"
+            Get-Process lichii, hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 300
+        }
+        # The saved session cannot be the running server's (written for another port; no file at
+        # all): refused with what to do, coop.ini untouched, nothing started.
+        [void](Write-KitHostSession $kit 27999 'OtherPassword456')
+        $before = Read-File "$kit\emulator\user\config\coop.ini"
+        $out = (cmd /c "`"$kit\Host.bat`" -NoUpdate < nul" 2>&1) -join '|'
+        Check ($out -match 'Close that window, then start Host\.bat again' -and $out -notmatch 'Emulator started' -and (Read-File "$kit\emulator\user\config\coop.ini") -eq $before) "Host.bat, a saved session for another port: refused, coop.ini untouched [$out]"
+        Remove-Item -LiteralPath (Get-KitHostSessionFile $kit) -Force
+        $out = (cmd /c "`"$kit\Host-Hookshot.bat`" -NoUpdate < nul" 2>&1) -join '|'
+        Check ($out -match 'Close that window, then start Host-Hookshot\.bat again' -and $out -notmatch 'Hookshot started' -and -not (Test-Path "$kit\server-args.txt")) "Host-Hookshot.bat, no saved session: refused, names Host-Hookshot.bat [$out]"
+        # server_password set in coop-options.ini: as before, that password and the running server.
+        Add-Content -LiteralPath "$kit\coop-options.ini" -Value "`r`nserver_password = hunter2"
+        $out = (cmd /c "`"$kit\Host.bat`" -NoUpdate < nul" 2>&1) -join '|'
+        Check ($out -match 'The server from this kit is already running' -and $out -match 'Emulator started' -and (Read-File "$kit\emulator\user\config\coop.ini") -match '(?m)^password = hunter2\s*$') "Host.bat, server_password set and the server running: as before [$out]"
+    } finally {
+        if (-not $server.HasExited) { $server | Stop-Process -Force -ErrorAction SilentlyContinue }
+        Get-Process lichii, hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 300
+    }
+    # The saved session (kit-paths.ps1): which running server it can belong to.
+    $sk = Join-Path $tmp 'kit session'; New-Item -ItemType Directory -Force -Path $sk | Out-Null
+    $now = Get-Date
+    Check ($null -eq (Read-KitHostSession $sk @([pscustomobject]@{ StartTime = $now; CommandLine = '' }))) 'host session: no file -> none'
+    $text = Write-KitHostSession $sk 27510 'pw1'
+    Check ($text -match '(?m)^port = 27510\r?$' -and (Test-Path (Join-Path $sk 'logs\host-session.txt'))) 'host session: written to logs\host-session.txt (not a .log: collect-logs leaves it)'
+    $s = Read-KitHostSession $sk @([pscustomobject]@{ StartTime = $now.AddSeconds(3); CommandLine = '"C:\k\server\coop_server.exe" --port 27510 --password-env X' })
+    Check ($s -and $s.Port -eq 27510 -and $s.Password -eq 'pw1') 'host session: a server on that port started after the file -> its port and password'
+    Check ($null -ne (Read-KitHostSession $sk @([pscustomobject]@{ StartTime = $now.AddSeconds(3); CommandLine = '' }))) 'host session: command line not known -> the start time decides'
+    Check ($null -eq (Read-KitHostSession $sk @([pscustomobject]@{ StartTime = $now.AddMinutes(-5); CommandLine = 'coop_server.exe --port 27510' }))) 'host session: a server older than the file -> none'
+    Check ($null -eq (Read-KitHostSession $sk @([pscustomobject]@{ StartTime = $now.AddSeconds(3); CommandLine = 'coop_server.exe --port 27511' }))) 'host session: a server on another port -> none'
+    Check ($null -eq (Read-KitHostSession $sk @([pscustomobject]@{ StartTime = $now.AddSeconds(3); CommandLine = 'coop_server.exe --join 1.2.3.4:27510 --game-port 27512' }))) 'host session: a join helper -> none'
+    Check ($null -eq (Read-KitHostSession $sk @())) 'host session: no server running -> none'
+    Write-File (Join-Path $sk 'logs\host-session.txt') "started = x`r`nport = 27510`r`npassword = `r`n"
+    Check ($null -eq (Read-KitHostSession $sk @([pscustomobject]@{ StartTime = $now.AddSeconds(3); CommandLine = '' }))) 'host session: a damaged file -> none'
     # The launch files run all on one line (the update may replace them while they run).
     foreach ($f in 'Host.bat', 'Join.bat', 'play.cmd') {
         $last = @(Get-Content (Join-Path $kitSrc $f) | Where-Object { $_ -and $_ -notmatch '^(@echo off|rem )' })

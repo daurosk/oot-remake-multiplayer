@@ -232,6 +232,44 @@ function Read-KitOptions([string]$Path) {
     return $values
 }
 
+# The running server's session, for a host who closed the game and starts Host.bat again
+# (play.ps1 rejoins instead of making a new password). start-server.ps1 writes
+# logs\host-session.txt just before the server starts and removes it when the server ends:
+# when it was written, the port and the join password. The file holds the password, so it is
+# not a .log (collect-logs.ps1 takes only those).
+function Get-KitHostSessionFile([string]$Kit) { Join-Path $Kit 'logs\host-session.txt' }
+function Write-KitHostSession([string]$Kit, [int]$Port, [string]$Password) {
+    $text = "started = $([DateTime]::UtcNow.Ticks)`r`nport = $Port`r`npassword = $Password`r`n"
+    $file = Get-KitHostSessionFile $Kit
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $file) | Out-Null
+    [System.IO.File]::WriteAllText($file, $text, [System.Text.UTF8Encoding]::new($false))
+    return $text
+}
+# The saved session when it can belong to one of $Servers (this kit's running coop_server.exe
+# processes: objects with StartTime and, when known, CommandLine), else $null: the server
+# started after the file was written and, when its command line is known, it is a server on the
+# saved port (not a join helper, not a server started by hand on another port).
+function Read-KitHostSession([string]$Kit, $Servers) {
+    $file = Get-KitHostSessionFile $Kit
+    if (-not (Test-Path -LiteralPath $file)) { return $null }
+    $v = @{}
+    foreach ($line in [System.IO.File]::ReadAllLines($file)) {
+        if ($line -match '^\s*(started|port|password)\s*=\s*(.*?)\s*$') { $v[$Matches[1]] = $Matches[2] }
+    }
+    if ("$($v.started)" -notmatch '^\d{1,19}$' -or "$($v.port)" -notmatch '^\d{1,5}$' -or -not $v.password) { return $null }
+    $port = [int]$v.port
+    if ($port -lt 1 -or $port -gt 65535 -or $v.password -match '\s' -or $v.password.Length -gt 128) { return $null }
+    $written = [DateTime]::new([long]$v.started, [DateTimeKind]::Utc).AddSeconds(-2)
+    foreach ($s in @($Servers)) {
+        if (-not $s -or -not $s.StartTime) { continue }
+        if (([DateTime]$s.StartTime).ToUniversalTime() -lt $written) { continue }
+        $cmd = "$($s.CommandLine)"
+        if ($cmd -and ($cmd -match '--join\b' -or $cmd -notmatch "--port`"?\s+`"?$port\b")) { continue }
+        return [pscustomobject]@{ Port = $port; Password = $v.password }
+    }
+    return $null
+}
+
 # coop-options.ini's server_allow and server_bind (the host's server only; start-server.ps1
 # checks them): an ordered table with Allow and Bind, '' when not set. Password is the join
 # password (server_password): $null when no line without a '#' sets it, or the line is empty

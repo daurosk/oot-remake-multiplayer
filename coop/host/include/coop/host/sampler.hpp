@@ -60,6 +60,12 @@ class Sampler {
   // velocity afresh. The sequence keeps counting.
   void reset();
 
+  // The player changed their colour while the game runs (docs/puppet.md,
+  // "Changing your colour in the game"): the next frame() sends it in
+  // PLAYER_EQUIP. Unset after a colour was sent sends nothing: the others
+  // keep the colour they have until the next start.
+  void set_color(std::optional<std::uint32_t> color) { settings_.color = color; }
+
   // The last messages built, for tests and the debug overlay.
   const std::optional<protocol::PlayerSample>& last_sample() const { return last_sent_; }
   std::uint8_t status_flags() const { return flags_; }

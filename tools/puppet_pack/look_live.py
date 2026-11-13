@@ -14,7 +14,8 @@ One file per colour, `coop_look/<colour>.bin`, beside the pack's `romfs/` (the g
 it). Little-endian:
 
     "COOPLOOK", u32 version (1), u32 count, then per texture:
-    its name in the game (64 bytes, NUL-filled), u64 size, the texels (the BNTX's data block)
+    its name in the game (64 bytes, NUL-filled), u64 offset of the texels in its BNTX (the data
+    block's header is the 16 bytes in front), u64 size, the texels (the BNTX's data block)
 
 Read by hookshot/src/coop_look_tunic.cpp.
 
@@ -36,6 +37,11 @@ def texels(bntx):
     return bntx[start:end]
 
 
+def offset(bntx):
+    """Where texels(bntx) starts in the file."""
+    return _brti(bntx)[1]
+
+
 def pack(textures):
     """[(the texture's name in the game, its BNTX file)] -> the colour's file."""
     out = [MAGIC, struct.pack("<II", VERSION, len(textures))]
@@ -44,12 +50,17 @@ def pack(textures):
         if not 0 < len(n) < NAME_BYTES:
             raise TunicError(f"texture name '{name}' does not fit {NAME_BYTES - 1} bytes")
         data = texels(bntx)
-        out += [n.ljust(NAME_BYTES, b"\0"), struct.pack("<Q", len(data)), data]
+        out += [n.ljust(NAME_BYTES, b"\0"), struct.pack("<QQ", offset(bntx), len(data)), data]
     return b"".join(out)
 
 
 def unpack(blob):
-    """The colour's file -> [(name, texels)]."""
+    """The colour's file -> [(name, texels)] (the offsets: unpack_offsets)."""
+    return [(name, data) for name, _, data in unpack_offsets(blob)]
+
+
+def unpack_offsets(blob):
+    """The colour's file -> [(name, offset, texels)]."""
     if blob[:8] != MAGIC:
         raise TunicError("not a look file")
     version, count = struct.unpack_from("<II", blob, 8)
@@ -58,10 +69,12 @@ def unpack(blob):
     out, at = [], 16
     for _ in range(count):
         name = blob[at:at + NAME_BYTES].rstrip(b"\0").decode("ascii")
-        size = struct.unpack_from("<Q", blob, at + NAME_BYTES)[0]
-        at += NAME_BYTES + 8
+        if at + NAME_BYTES + 16 > len(blob):
+            raise TunicError("the look file is cut short")
+        off, size = struct.unpack_from("<QQ", blob, at + NAME_BYTES)
+        at += NAME_BYTES + 16
         if at + size > len(blob):
             raise TunicError("the look file is cut short")
-        out.append((name, blob[at:at + size]))
+        out.append((name, off, blob[at:at + size]))
         at += size
     return out

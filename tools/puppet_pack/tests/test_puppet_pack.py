@@ -709,6 +709,10 @@ class TunicExtraTest(unittest.TestCase):
         self.assertEqual(look_live.unpack(blob), [("Angin_Tile_A_Alb", look_live.texels(a)),
                                                   ("Mt_Vest_Player_Adult_Alb", bc1_block(1, 2))])
         self.assertEqual(len(look_live.texels(a)), 9 * 16)
+        # each texture's texels with where they start in its file: the data block's header in front
+        offs = [o for _, o, _ in look_live.unpack_offsets(blob)]
+        self.assertEqual(offs, [look_live.offset(a), look_live.offset(b)])
+        self.assertEqual(a[offs[0] - 16:offs[0] - 12], b"BRTD")
         with self.assertRaises(tunic.TunicError):
             look_live.unpack(blob[:-1])
         with self.assertRaises(tunic.TunicError):

@@ -51,6 +51,17 @@ inline constexpr std::uint64_t kInfoVtable = 0x84c0d7d8;
 // The balloons (UIBalloonMessageScreen, vtable 0x84c042e8): 16 parts.
 inline constexpr std::uint64_t kBalloonVtable = 0x84c042e8;
 inline constexpr std::size_t kBalloonParts = 16;
+inline constexpr std::uint64_t kBalloonPartTable = 0xc60;  // 16 x {part, type anim, in/out anim}, 0x20 apart (f_807906c0)
+inline constexpr std::uint64_t kBalloonPartStride = 0x20;
+inline constexpr std::uint64_t kPartRootPane = 0x80229650;  // (part + 0x40) -> the part's root pane
+inline constexpr std::uint64_t kPaneShow = 0x8022aea0;      // (pane, 0/1)
+inline constexpr std::uint64_t kPaneXY = 0x6c;               // f32 x, y: where f_8022a3e0 keeps them
+inline constexpr std::uint64_t kPaneFlags = 0xa8;            // u32: bit 8 another kind of pane, bit 20 tell the layout
+inline constexpr std::uint64_t kPaneMarkA = 0x815457d0;      // (pane, bits) and (pane): what f_8022a3e0 calls after
+inline constexpr std::uint64_t kPaneMarkB = 0x8154d540;      //   a move, so the layout places it again
+// The layout's size: the game's projection gives points in it, the centre at 0, y up.
+inline constexpr float kLayoutWidth = 1920.0f;
+inline constexpr float kLayoutHeight = 1080.0f;
 // Every screen: its layout, and the UI manager's screen list.
 inline constexpr std::uint64_t kScreenLayout = 0x28;
 inline constexpr std::uint64_t kUiManagerGot = 0x84c9e098;  // **this: the UI manager
@@ -193,7 +204,8 @@ public:
     static constexpr std::size_t kSlotBytes = 256;
     static constexpr std::size_t kSlotText = kSlotBytes - sizeof(Ref) - 1;
     static constexpr std::size_t kSlots = 48;
-    static constexpr std::size_t kBlockBytes = kSlotBytes * kSlots;
+    static constexpr std::size_t kRingBytes = kSlotBytes * kSlots;
+    static constexpr std::size_t kBlockBytes = kRingBytes + kSlotBytes * 16;  // the ring, then the fixed slots
 
     void SetBlock(std::uint64_t base) { base_ = base; }
     bool HasBlock() const { return base_ != 0; }
@@ -202,10 +214,16 @@ public:
     // Writes the text (cut to kSlotText at a character) and its Ref; the
     // Ref's guest address, or 0 when it could not be written.
     std::uint64_t Put(Game& game, std::string_view text);
+    // A fixed slot after the ring (a tag's name: the game keeps showing it from there), written only
+    // when the text changes. The Ref's address, or 0.
+    static constexpr std::size_t kFixed = 16;
+    std::uint64_t PutFixed(Game& game, std::size_t index, std::string_view text);
 
 private:
     std::uint64_t base_ = 0;
     std::size_t next_ = 0;
+    std::array<std::string, 16> fixed_{};
+    std::array<bool, 16> fixed_set_{};
 };
 
 // ---------------------------------------------------------------- game steps
@@ -235,5 +253,48 @@ bool ShowNotice(Game& game, TextRing& ring, const Shown& notice);
 // The game's projection of a world point: 1920x1080 screen point, or nothing
 // when it is behind the camera or there is no camera.
 std::optional<std::array<float, 2>> Project(Game& game, std::uint64_t scratch, const std::array<float, 3>& world);
+
+// ---------------------------------------------------------------- tags on the game's balloons
+// A name tag where the overlay would draw it: CoopHook::Marker's tag point in the pixels of the scene
+// (width x height).
+struct TagSpot {
+    std::string name;
+    float x = 0.0f, y = 0.0f;  // bottom centre of the name, from the top left, y down
+    float alpha = 1.0f;
+};
+// A scene pixel as a point of the game's layout (centre 0, y up, addr::kLayoutWidth x kLayoutHeight).
+std::array<float, 2> LayoutPoint(float x, float y, float width, float height);
+
+// One balloon part per tag, from the last part down (the game takes its own from the first), at most
+// kMaxTags; spots come far to near (as CoopHook::Markers), so the nearest get parts first.
+struct PartTag {
+    std::size_t part = 0;  // 0..15
+    std::string name;      // cleaned
+    std::array<float, 2> at{};  // layout point
+};
+std::vector<PartTag> PlanParts(const std::vector<TagSpot>& far_to_near, float width, float height);
+
+// The balloon screen's 16 parts (0 where there is none).
+std::array<std::uint64_t, addr::kBalloonParts> BalloonParts(Game& game, std::uint64_t screen);
+// The part's root pane, or 0.
+std::uint64_t PartRoot(Game& game, std::uint64_t part);
+// Moves a pane to a layout point as f_8022a3e0 does (x, y kept in the pane, then the layout told).
+bool MovePane(Game& game, std::uint64_t pane, const std::array<float, 2>& at);
+bool ShowPane(Game& game, std::uint64_t pane, bool shown);
+
+// Keeps the tags on the game's balloons: each frame on the game's thread. Parts it used and no longer
+// needs are hidden again. False when the balloon screen is not there.
+class Balloons {
+public:
+    bool Step(Game& game, TextRing& ring, const std::vector<TagSpot>& far_to_near, float width, float height);
+    void HideAll(Game& game);
+    std::size_t shown() const { return used_.size(); }
+
+private:
+    std::uint64_t screen_ = 0;
+    std::vector<std::uint64_t> used_;  // the root panes shown last frame
+    std::array<std::string, addr::kBalloonParts> named_{};       // the name each part was given
+    std::array<std::uint64_t, addr::kBalloonParts> named_on_{};  // ... on which part object
+};
 
 }  // namespace CoopNativeUi

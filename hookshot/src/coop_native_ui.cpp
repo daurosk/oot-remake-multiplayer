@@ -400,3 +400,147 @@ bool EndLine(Game& game, const TextRing& ring) {
 }
 
 }  // namespace CoopNativeUi
+
+namespace CoopNativeUi {
+
+std::uint64_t TextRing::PutFixed(Game& game, std::size_t index, std::string_view text) {
+    if (base_ == 0 || index >= kFixed) {
+        return 0;
+    }
+    const std::uint64_t slot = base_ + kRingBytes + index * kSlotBytes;
+    const std::string cut = Clean(text, kSlotText);
+    if (fixed_set_[index] && fixed_[index] == cut) {
+        return slot;
+    }
+    std::string bytes = cut;
+    bytes.push_back('\0');
+    Ref ref;
+    ref.text = slot + sizeof(Ref);
+    ref.bytes = static_cast<std::uint32_t>(cut.size());
+    if (!game.Write(ref.text, bytes.data(), bytes.size()) || !game.Write(slot, &ref, sizeof ref)) {
+        fixed_set_[index] = false;
+        return 0;
+    }
+    fixed_[index] = cut;
+    fixed_set_[index] = true;
+    return slot;
+}
+
+std::array<float, 2> LayoutPoint(float x, float y, float width, float height) {
+    if (!(width > 0.0f) || !(height > 0.0f)) {
+        return {0.0f, 0.0f};
+    }
+    return {(x / width - 0.5f) * addr::kLayoutWidth, (0.5f - y / height) * addr::kLayoutHeight};
+}
+
+std::vector<PartTag> PlanParts(const std::vector<TagSpot>& far_to_near, float width, float height) {
+    std::vector<PartTag> out;
+    for (auto it = far_to_near.rbegin(); it != far_to_near.rend() && out.size() < kMaxTags; ++it) {
+        if (!(it->alpha > 0.0f) || !std::isfinite(it->x) || !std::isfinite(it->y)) {
+            continue;
+        }
+        PartTag t;
+        t.part = addr::kBalloonParts - 1 - out.size();
+        t.name = Clean(it->name, kSpeakerBytes);
+        t.at = LayoutPoint(it->x, it->y, width, height);
+        out.push_back(std::move(t));
+    }
+    return out;
+}
+
+std::array<std::uint64_t, addr::kBalloonParts> BalloonParts(Game& game, std::uint64_t screen) {
+    std::array<std::uint64_t, addr::kBalloonParts> parts{};
+    for (std::size_t i = 0; i < parts.size(); ++i) {
+        std::uint64_t p = 0;
+        if (screen != 0 && game.Read(screen + addr::kBalloonPartTable + i * addr::kBalloonPartStride, &p, sizeof p)) {
+            parts[i] = p;
+        }
+    }
+    return parts;
+}
+
+std::uint64_t PartRoot(Game& game, std::uint64_t part) {
+    if (part == 0) {
+        return 0;
+    }
+    const auto root = game.Call(addr::kPartRootPane, {part + 0x40, 0, 0, 0, 0});
+    return root ? *root : 0;
+}
+
+bool MovePane(Game& game, std::uint64_t pane, const std::array<float, 2>& at) {
+    std::uint32_t flags = 0;
+    if (pane == 0 || !game.Read(pane + addr::kPaneFlags, &flags, sizeof flags) || (flags & (1u << 8)) != 0) {
+        return false;  // (bit 8: a pane kind that keeps its place elsewhere; not a balloon's)
+    }
+    float now[2] = {};
+    if (game.Read(pane + addr::kPaneXY, now, sizeof now) && now[0] == at[0] && now[1] == at[1]) {
+        return true;
+    }
+    if (!game.Write(pane + addr::kPaneXY, at.data(), sizeof(float) * 2)) {
+        return false;
+    }
+    if ((flags & (1u << 20)) == 0) {
+        return true;
+    }
+    std::uint32_t word[2] = {};
+    if (!game.Read(pane, word, sizeof word)) {
+        return false;
+    }
+    const std::uint32_t mark = word[1] & 0x40u;
+    if ((mark & ~word[0]) != 0) {
+        const std::uint32_t set = word[0] | mark;
+        game.Write(pane, &set, sizeof set);
+        game.Call(addr::kPaneMarkA, {pane, mark & ~word[0], 0, 0, 0});
+    }
+    return game.Call(addr::kPaneMarkB, {pane, 0, 0, 0, 0}).has_value();
+}
+
+bool ShowPane(Game& game, std::uint64_t pane, bool shown) {
+    return pane != 0 && game.Call(addr::kPaneShow, {pane, shown ? 1u : 0u, 0, 0, 0}).has_value();
+}
+
+bool Balloons::Step(Game& game, TextRing& ring, const std::vector<TagSpot>& far_to_near, float width, float height) {
+    const std::uint64_t screen = ScreenByVtable(game, addr::kBalloonVtable);
+    if (screen != screen_) {
+        screen_ = screen;
+        used_.clear();  // a new screen (a load): the old panes are gone with it
+        named_on_ = {};
+    }
+    if (screen == 0) {
+        return false;
+    }
+    const auto parts = BalloonParts(game, screen);
+    std::vector<std::uint64_t> now;
+    for (const auto& tag : PlanParts(far_to_near, width, height)) {
+        const std::uint64_t part = parts[tag.part];
+        const std::uint64_t ref = ring.PutFixed(game, tag.part, tag.name);
+        if (part == 0 || ref == 0) {
+            continue;
+        }
+        if (named_on_[tag.part] != part || named_[tag.part] != tag.name) {
+            game.Call(addr::kSetPaneText, {part, addr::kNameT_Text_00, ref, 1, 0});
+            named_on_[tag.part] = part;
+            named_[tag.part] = tag.name;
+        }
+        const std::uint64_t root = PartRoot(game, part);
+        if (root != 0 && MovePane(game, root, tag.at) && ShowPane(game, root, true)) {
+            now.push_back(root);
+        }
+    }
+    for (const std::uint64_t old : used_) {
+        if (std::find(now.begin(), now.end(), old) == now.end()) {
+            ShowPane(game, old, false);
+        }
+    }
+    used_ = std::move(now);
+    return true;
+}
+
+void Balloons::HideAll(Game& game) {
+    for (const std::uint64_t pane : used_) {
+        ShowPane(game, pane, false);
+    }
+    used_.clear();
+}
+
+}  // namespace CoopNativeUi

@@ -14,7 +14,8 @@ functions (`f_<address>`).
 |---|---|---|
 | A chat line | the in-game message window: the speaker's name over the line | `MessageInGame_00` (`T_Name_00`, `T_Message_00`) |
 | A room notice ("Saria joined") | the banner | `SimpleInfo_00` (`T_Text_00`) |
-| A name tag (next step) | an NPC balloon over the other player's Link; the game has 16 | `BalloonMessage_00` (`Pa_BalloonMessage_00`..`15`) |
+| What you type | the in-game message window: "you", the text and a caret, changing as you type | `MessageInGame_00` |
+| A name tag (on with `LICHII_COOP_NATIVE_TAGS=1` until seen in game) | an NPC balloon over the other player's Link; the game has 16 | `BalloonMessage_00` (`Pa_BalloonMessage_00`..`15`) |
 
 ## How
 
@@ -35,13 +36,22 @@ functions (`f_<address>`).
   go first.
 - A notice: the banner screen is found in the UI manager's list (`**0x84c9e098`, count `+8`, screens `+0x10`) by its
   vtable (`0x84c0d7d8`); our text goes into `T_Text_00`, then its open call.
-- Tags: the game's projection `f_80235ec0(out xy, &world, &depth)` (1920x1080) places them; it is what the game's
-  balloons use, so no camera of our own is needed.
+- Typing: while the chat box is open the typed line is on the message window; a change swaps only the text (no
+  opening animation again), closing the box ends it at once, and lines that come meanwhile go to the banner.
+- Tags: one balloon part per tag, from part 15 down (the game takes its own balloons from part 0), the nearest players
+  first, at most 15. A part's name is in its `T_Text_00` (a fixed text slot each, set only when it changes); its root
+  pane (`f_80229650(part + 0x40)`) is moved as the game's `f_8022a3e0` moves one (x, y at `+0x6c`, then the layout
+  told) and shown with `f_8022aea0`. The point comes from the tag the overlay would draw (the game's camera, hs-tags),
+  turned into the layout's points (1920x1080, centre 0, y up), which is also what the game's projection
+  `f_80235ec0` gives its balloons. While the balloons carry the tags, the drawn head tags are off (edge arrows stay).
 - Colours: players 1 to 16 each have their own (`CoopNativeUi::Colour`; 1 to 4 as the protocol's slot colours).
 
 ## Switches
 
 - `LICHII_COOP_NATIVE_UI=0`: the old look (chat drawn over the picture) only.
+- `LICHII_COOP_NATIVE_TAGS=1`: name tags on the game's balloons.
+- `LICHII_COOP_NATIVE_PROBE=1`: every 3 s the balloon screen into the log (the game's balloon requests with their
+  point, distance and text; the 16 parts' root panes; each tag's scene and layout point).
 - Until the game's window has shown one line, the drawn chat lines stay as well (the title, a load, a game build
   without the window). While the chat box is open the drawn lines show too.
 
@@ -50,6 +60,8 @@ functions (`f_<address>`).
 - `coop: native ui: chat through the game's message window (texts at 0x...)`
 - `coop: native ui: first chat line shown by the game (message window|banner)`
 - `coop: native ui: the game's message window is not free now; the line waits`
+- `coop: native ui: typing in the game's message window`
+- `coop: native ui: name tags on the game's balloons (N shown)`
 - `coop: native ui: the game gave no memory for its texts; drawn chat only`
 
 Check in game: `tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-native-chat`.

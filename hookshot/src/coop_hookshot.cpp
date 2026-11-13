@@ -236,6 +236,86 @@ struct Native {
 Native g_native;  // the game's thread only
 std::atomic<bool> g_native_chat{false};  // the game's window has shown a line: no drawn chat lines
 std::atomic<bool> g_native_typing{false};  // the typed line is on the game's window: no drawn box
+std::atomic<bool> g_native_tags{false};  // the game's balloons carry the name tags: no drawn head tags
+CoopNativeUi::Balloons g_balloons;  // the game's thread only
+
+// LICHII_COOP_NATIVE_TAGS=1: name tags on the game's balloons (not yet seen in game, so off by default).
+// LICHII_COOP_NATIVE_PROBE=1: every 3 s the balloon screen as the game has it, into the log (its
+// requests: where the game puts a balloon, its distance and text; and the 16 parts' root panes).
+void NativeTags(CoopNativeUi::Game& game, std::uint64_t now) {
+    static const bool on = Env("LICHII_COOP_NATIVE_TAGS") == "1";
+    static const bool probe = Env("LICHII_COOP_NATIVE_PROBE") == "1";
+    static std::uint64_t probe_ms = 0;
+    const auto markers = CoopHook::CurrentMarkers();
+    if (on) {
+        std::vector<CoopNativeUi::TagSpot> spots;
+        if (markers) {
+            for (const auto& m : markers->items) {
+                if (!m.edge && !m.self && !m.tag.empty()) {
+                    spots.push_back({m.tag, m.tag_x, m.tag_y, m.alpha});
+                }
+            }
+        }
+        const bool up = g_balloons.Step(game, g_native.ring, spots, markers ? markers->width : 0.0f,
+                                        markers ? markers->height : 0.0f);
+        if (up && g_balloons.shown() > 0 && !g_native_tags.exchange(true)) {
+            LOG_INFO(Core, "coop: native ui: name tags on the game's balloons ({} shown)", g_balloons.shown());
+        }
+    }
+    if (!probe || now < probe_ms + 3000) {
+        return;
+    }
+    probe_ms = now;
+    const std::uint64_t screen = CoopNativeUi::ScreenByVtable(game, CoopNativeUi::addr::kBalloonVtable);
+    if (screen == 0) {
+        LOG_INFO(Core, "coop: native probe: no balloon screen");
+        return;
+    }
+    float range = 0.0f;
+    CoopRuntime::Read(screen + 0x2ac, &range, sizeof range);
+    std::string list;
+    std::uint64_t node = 0;
+    CoopRuntime::Read(screen + 0x2b0, &node, sizeof node);
+    for (int n = 0; n < 16 && node != 0 && node != screen + 0x2b0; ++n) {
+        const std::uint64_t e = node - 0x88;
+        float xy[2] = {}, dist = 0.0f, time[2] = {};
+        std::uint64_t handle = 0, text = 0;
+        std::int32_t type = 0;
+        char words[48] = {};
+        CoopRuntime::Read(e + 0x8, &handle, sizeof handle);
+        CoopRuntime::Read(e + 0x20, xy, sizeof xy);
+        CoopRuntime::Read(e + 0x28, &dist, sizeof dist);
+        CoopRuntime::Read(e + 0x30, &text, sizeof text);
+        CoopRuntime::Read(e + 0x48, &type, sizeof type);
+        CoopRuntime::Read(e + 0x50, time, sizeof time);
+        if (text != 0) {
+            CoopRuntime::Read(text, words, sizeof words - 1);
+        }
+        list += fmt::format(" [{:#x} handle {:#x} at {:.0f},{:.0f} dist {:.1f} type {} time {:.0f}/{:.0f} \"{}\"]", e,
+                            handle, xy[0], xy[1], dist, type, time[0], time[1], CoopNativeUi::Clean(words, 40));
+        CoopRuntime::Read(node, &node, sizeof node);
+    }
+    LOG_INFO(Core, "coop: native probe: balloon screen {:#x} range {:.1f} requests:{}", screen, range,
+             list.empty() ? " none" : list);
+    const auto parts = CoopNativeUi::BalloonParts(game, screen);
+    std::string panes;
+    for (std::size_t i = 0; i < parts.size(); ++i) {
+        const std::uint64_t root = CoopNativeUi::PartRoot(game, parts[i]);
+        std::uint32_t flags = 0;
+        float xy[2] = {};
+        CoopRuntime::Read(root + CoopNativeUi::addr::kPaneFlags, &flags, sizeof flags);
+        CoopRuntime::Read(root + CoopNativeUi::addr::kPaneXY, xy, sizeof xy);
+        panes += fmt::format(" {}:{:#x}/{:#x} f{:#x} {:.0f},{:.0f}", i, parts[i], root, flags, xy[0], xy[1]);
+    }
+    LOG_INFO(Core, "coop: native probe: parts{}", panes);
+    if (markers) {
+        for (const auto& m : markers->items) {
+            const auto at = CoopNativeUi::LayoutPoint(m.tag_x, m.tag_y, markers->width, markers->height);
+            LOG_INFO(Core, "coop: native probe: tag \"{}\" scene {:.0f},{:.0f} of {:.0f}x{:.0f} -> layout {:.0f},{:.0f}{}",
+                     m.tag, m.tag_x, m.tag_y, markers->width, markers->height, at[0], at[1], m.edge ? " (edge)" : "");
+        }
+    }
+}
 
 // The chat box open: the typed line live in the game's window (speaker "you", a caret); lines that come
 // meanwhile go to the banner. True while the box has the window.
@@ -306,6 +386,7 @@ void NativeStep(void* ctx) {
         lines.push_back({l.text, l.notice, l.age_ms});
     }
     g_native.feed.Update(lines, now);
+    NativeTags(game, now);
     if (NativeTyping(game, now)) {
         return;
     }
@@ -554,6 +635,9 @@ CoopDraw::Scene DrawScene() {
         s.chat = CoopDraw::ShownChat(CoopHook::ChatLines(), s.box.has_value());
     }
     s.markers = CoopHook::CurrentMarkers();
+    if (s.markers && g_native_tags.load()) {  // the game's balloons carry the head tags (NativeTags)
+        std::erase_if(s.markers->items, [](const CoopHook::Marker& m) { return !m.edge && !m.self; });
+    }
     bool list = false, panel = false;
     {
         std::lock_guard lock(g_keys_mutex);

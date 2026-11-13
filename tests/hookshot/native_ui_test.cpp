@@ -383,3 +383,122 @@ TEST_CASE("native ui: the typed line refreshes without opening the window again,
     CHECK_FALSE(ui::EndLine(g, ring));
     CHECK(g.Get<float>(kScreen + ui::addr::kInGameTime) == 50.0f);
 }
+
+TEST_CASE("native ui: scene pixels to the game's layout points") {
+    const auto c = ui::LayoutPoint(960.0f, 540.0f, 1920.0f, 1080.0f);
+    CHECK(c[0] == 0.0f);
+    CHECK(c[1] == 0.0f);
+    const auto tl = ui::LayoutPoint(0.0f, 0.0f, 1536.0f, 864.0f);  // Hookshot's scene size in a run
+    CHECK(tl[0] == -960.0f);
+    CHECK(tl[1] == 540.0f);  // y up
+    const auto br = ui::LayoutPoint(1536.0f, 864.0f, 1536.0f, 864.0f);
+    CHECK(br[0] == 960.0f);
+    CHECK(br[1] == -540.0f);
+    CHECK(ui::LayoutPoint(1.0f, 1.0f, 0.0f, 0.0f)[0] == 0.0f);
+}
+
+TEST_CASE("native ui: tags take balloon parts from the last one down, nearest first, at most 15") {
+    std::vector<ui::TagSpot> spots;
+    for (int i = 0; i < 17; ++i) {  // far to near: P0 the farthest
+        spots.push_back({"P" + std::to_string(i), 100.0f + i, 200.0f, 1.0f});
+    }
+    spots[16].alpha = 0.0f;  // faded out: no part
+    auto parts = ui::PlanParts(spots, 1920.0f, 1080.0f);
+    REQUIRE(parts.size() == ui::kMaxTags);
+    CHECK(parts[0].part == 15);
+    CHECK(parts[0].name == "P15");  // the nearest one shown
+    CHECK(parts[14].part == 1);     // part 0 stays the game's
+    CHECK(parts[14].name == "P1");
+    CHECK(parts[0].at[0] == doctest::Approx(115.0f - 960.0f));
+    CHECK(parts[0].at[1] == doctest::Approx(340.0f));
+}
+
+TEST_CASE("native ui: a fixed text slot is written only when its text changes") {
+    FakeGame g;
+    ui::TextRing ring;
+    ring.SetBlock(kBlock);
+    const auto a = ring.PutFixed(g, 3, "Saria");
+    REQUIRE(a == kBlock + ui::TextRing::kRingBytes + 3 * ui::TextRing::kSlotBytes);
+    CHECK(ring.Owns(a));
+    CHECK(g.Text(g.Get<ui::Ref>(a).text) == "Saria");
+    g.mem.erase(a + sizeof(ui::Ref));  // were it written again, this byte would come back
+    CHECK(ring.PutFixed(g, 3, "Saria") == a);
+    CHECK(g.mem.count(a + sizeof(ui::Ref)) == 0);
+    ring.PutFixed(g, 3, "Mido");
+    CHECK(g.Text(g.Get<ui::Ref>(a).text) == "Mido");
+    CHECK(ring.PutFixed(g, 16, "x") == 0);
+}
+
+TEST_CASE("native ui: a pane moves as the game moves it, and the layout is told") {
+    FakeGame g;
+    constexpr std::uint64_t kPane = 0x97000000;
+    g.Zero(kPane, 0x100);
+    g.Put<std::uint32_t>(kPane + ui::addr::kPaneFlags, 1u << 20);
+    g.Put<std::uint32_t>(kPane + 4, 0x40);
+    REQUIRE(ui::MovePane(g, kPane, {12.5f, -40.0f}));
+    CHECK(g.Get<float>(kPane + ui::addr::kPaneXY) == 12.5f);
+    CHECK(g.Get<float>(kPane + ui::addr::kPaneXY + 4) == -40.0f);
+    CHECK(g.Get<std::uint32_t>(kPane) == 0x40);
+    REQUIRE(g.calls.size() == 2);
+    CHECK(g.calls[0].function == ui::addr::kPaneMarkA);
+    CHECK(g.calls[0].x[1] == 0x40);
+    CHECK(g.calls[1].function == ui::addr::kPaneMarkB);
+    // The same place again: nothing more.
+    REQUIRE(ui::MovePane(g, kPane, {12.5f, -40.0f}));
+    CHECK(g.calls.size() == 2);
+    // Another kind of pane (bit 8): left alone.
+    g.Put<std::uint32_t>(kPane + ui::addr::kPaneFlags, 1u << 8);
+    CHECK_FALSE(ui::MovePane(g, kPane, {1.0f, 1.0f}));
+}
+
+TEST_CASE("native ui: the balloons step names, places and shows parts, and hides the ones no longer used") {
+    FakeGame g;
+    constexpr std::uint64_t kBalloon = 0x98000000;
+    constexpr std::uint64_t kPart = 0x99000000;  // part i at kPart + i * 0x1000
+    constexpr std::uint64_t kRoot = 0x9a000000;  // its root pane at kRoot + i * 0x1000
+    g.Put<std::uint64_t>(ui::addr::kUiManagerGot, kUi + 0x100);
+    g.Put<std::uint64_t>(kUi + 0x100, kUi);
+    g.Put<std::uint32_t>(kUi + ui::addr::kUiCount, 1);
+    g.Put<std::uint64_t>(kUi + ui::addr::kUiScreens, kUiList);
+    g.Put<std::uint64_t>(kUiList, kBalloon);
+    g.Put<std::uint64_t>(kBalloon, ui::addr::kBalloonVtable);
+    for (std::uint64_t i = 0; i < 16; ++i) {
+        g.Put<std::uint64_t>(kBalloon + ui::addr::kBalloonPartTable + i * ui::addr::kBalloonPartStride, kPart + i * 0x1000);
+        g.Zero(kRoot + i * 0x1000, 0x100);
+    }
+    // The pretend game's root-pane call: part 14 or 15 by the argument.
+    ui::TextRing ring;
+    ring.SetBlock(kBlock);
+    ui::Balloons balloons;
+    // FakeGame returns one value per function: give part 15's root.
+    g.returns[ui::addr::kPartRootPane] = kRoot + 15 * 0x1000;
+    std::vector<ui::TagSpot> spots = {{"Saria", 960.0f, 540.0f, 1.0f}};
+    REQUIRE(balloons.Step(g, ring, spots, 1920.0f, 1080.0f));
+    CHECK(balloons.shown() == 1);
+    bool named = false, rooted = false, shown = false;
+    for (const auto& c : g.calls) {
+        named |= c.function == ui::addr::kSetPaneText && c.x[0] == kPart + 15 * 0x1000 &&
+                 c.x[1] == ui::addr::kNameT_Text_00;
+        rooted |= c.function == ui::addr::kPartRootPane && c.x[0] == kPart + 15 * 0x1000 + 0x40;
+        shown |= c.function == ui::addr::kPaneShow && c.x[0] == kRoot + 15 * 0x1000 && c.x[1] == 1;
+    }
+    CHECK(named);
+    CHECK(rooted);
+    CHECK(shown);
+    // Next frame, same name: no new text call.
+    g.calls.clear();
+    REQUIRE(balloons.Step(g, ring, spots, 1920.0f, 1080.0f));
+    for (const auto& c : g.calls) {
+        CHECK(c.function != ui::addr::kSetPaneText);
+    }
+    // Nobody to tag: the part is hidden again.
+    g.calls.clear();
+    REQUIRE(balloons.Step(g, ring, {}, 1920.0f, 1080.0f));
+    CHECK(balloons.shown() == 0);
+    REQUIRE(g.calls.size() == 1);
+    CHECK(g.calls[0].function == ui::addr::kPaneShow);
+    CHECK(g.calls[0].x[1] == 0);
+    // No balloon screen (a load): false.
+    g.Put<std::uint64_t>(kBalloon, 0x84000000);
+    CHECK_FALSE(balloons.Step(g, ring, spots, 1920.0f, 1080.0f));
+}

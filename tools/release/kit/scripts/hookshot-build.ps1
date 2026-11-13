@@ -1,5 +1,5 @@
-# Builds a co-op Hookshot game on this PC from your own copy of the game, then puts co-op in it.
-# Build-Hookshot-Coop.bat runs this. Hookshot (github.com/NotRexed/Hookshot, GPL-3.0) is a static
+# Builds a co-op Longshot game on this PC from your own copy of the game, then puts co-op in it.
+# Build-Hookshot-Coop.bat runs this. Longshot (git.magicbean.dev/MagicBeanDev/Longshot, Team MagicBean, GPL-3.0; it continues Hookshot) is a static
 # recompilation of the game: it is built here, from your files, and never leaves this PC.
 #
 #   Build-Hookshot-Coop.bat                         finds your .nup (as make-puppet-pack.cmd does), else asks
@@ -109,6 +109,8 @@ if ($pin.commit -notmatch '^[0-9a-f]{40}$') { Fail "hookshot\PIN: commit=$($pin.
 # (Longshot lives on Team MagicBean's Forgejo; its release files and source archive come from there)
 if ($pin.repo -notmatch '^(https://git\.magicbean\.dev)/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(\.git)?$') { Fail "hookshot\PIN: repo=$($pin.repo) is not a git.magicbean.dev repository." }
 $repoUrl = "$($Matches[1])/$($Matches[2])"
+# (Forgejo's API archive: the web /archive/ path answers 404 since 2026-11-13; same bytes, so it is tried first)
+$apiUrl = "$($Matches[1])/api/v1/repos/$($Matches[2])"
 # The source archive's SHA-256 in TOOLS.txt is for one commit: it must be PIN's.
 if ($toolsPin.source_commit -ne $pin.commit) {
     Fail "hookshot\TOOLS.txt pins the source archive of $($toolsPin.source_commit), but hookshot\PIN says $($pin.commit). This kit is broken: tell the co-op testers."
@@ -174,7 +176,7 @@ if ($toolsReady) {
     # Forgejo's source archive at PIN's commit, checked against TOOLS.txt's source_sha256 (a copy
     # already here is checked too, and fetched again when it differs).
     $sourceZip = Join-Path $downloads "longshot-$($pin.commit).zip"
-    Get-Download "$repoUrl/archive/$($pin.commit).zip" $sourceZip $toolsPin.source_sha256.ToLowerInvariant() "Longshot's source archive differs from the one this kit was made with"
+    Get-Download @("$apiUrl/archive/$($pin.commit).zip", "$repoUrl/archive/$($pin.commit).zip") $sourceZip $toolsPin.source_sha256.ToLowerInvariant() "Longshot's source archive differs from the one this kit was made with"
 
     Write-Host '  unpacking ...'
     $staging = "$tools.new"

@@ -6,6 +6,7 @@
 release=v3.0.0-rc.2
 lock_sha256=ec162218fa808e8e3cf82cdbbf867166d1c748defaba9443b3ecb643337d6560
 # Longshot's source: Forgejo's zip archive of hookshot\PIN's commit
-# (https://git.magicbean.dev/MagicBeanDev/Longshot/archive/<commit>.zip) and its SHA-256. Moves with the pin.
+# (https://git.magicbean.dev/api/v1/repos/MagicBeanDev/Longshot/archive/<commit>.zip; the web /archive/ path
+# answers 404 since 2026-11-13, same bytes) and its SHA-256. Moves with the pin.
 source_commit=e7ed2f7a6526cd6b841b86678b3ac96eb6e5b1c8
 source_sha256=fa51b343c0baf3f5726aa568f2dba63afdb9428d602d4228691a194bbd7e0968

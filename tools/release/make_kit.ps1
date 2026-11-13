@@ -339,11 +339,11 @@ $source = @(
 )
 if ($hookshotNote) {
     $source += @(
-        'Hookshot (experimental): NotRexed''s static recompilation, GPL-3.0. Not in this kit:',
+        'Longshot (experimental): Team MagicBean''s static recompilation (it continues Hookshot), GPL-3.0. Not in this kit:',
         'Build-Hookshot-Coop.bat downloads it and builds it on your PC from your own game:',
-        "  https://github.com/NotRexed/Hookshot/tree/$hookshotNote",
+        "  https://git.magicbean.dev/MagicBeanDev/Longshot/src/commit/$hookshotNote",
         '  with the patches in hookshot\patches (also hookshot/patches in the co-op repo), and',
-        '  the build tools of the Hookshot release named in hookshot\TOOLS.txt.',
+        '  the build tools of the Longshot release named in hookshot\TOOLS.txt.',
         '  hookshot\hookshot_coop.dll is built from the co-op repo above (CMake target hookshot_coop).',
         ''
     )

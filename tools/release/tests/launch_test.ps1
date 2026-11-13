@@ -619,8 +619,8 @@ try {
 # --- Hookshot: what the kit's game needs before it starts, and the port check-hosting checks ---
 $hk = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-hs-need-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 try {
-    Write-File (Join-Path $hk 'hookshot\PIN') "repo=https://github.com/NotRexed/Hookshot`ncommit=4aee23659b9436dab2cd7be1ac07333c06246b7c`n"
-    Write-File (Join-Path $hk 'hookshot\TOOLS.txt') "release=v2.2.0-rc.1`nsetup_sha256=b3`n"
+    Write-File (Join-Path $hk 'hookshot\PIN') "runtime=Longshot`nrepo=https://git.magicbean.dev/MagicBeanDev/Longshot`ncommit=e7ed2f7a6526cd6b841b86678b3ac96eb6e5b1c8`n"
+    Write-File (Join-Path $hk 'hookshot\TOOLS.txt') "release=v3.0.0-rc.2`nlock_sha256=b3`n"
     Write-File (Join-Path $hk 'hookshot\patches\0001-a.patch') "one`n"
     Write-File (Join-Path $hk 'hookshot\hookshot_coop.dll') 'MODULE 1'
     Check ((Get-KitHookshotNeed $hk) -eq 'game') 'hookshot need: no game built yet -> game'
@@ -640,7 +640,7 @@ try {
     Write-File (Join-Path $g 'coop-built-from.txt') (Get-KitHookshotStamp $hk)
     Write-File (Join-Path $hk 'hookshot\PIN') "repo=x`ncommit=0000000000000000000000000000000000000000`n"
     Check ((Get-KitHookshotNeed $hk) -eq 'pin') 'hookshot need: another pin -> pin (a full build)'
-    Write-File (Join-Path $hk 'hookshot\PIN') "repo=x`ncommit=4aee23659b9436dab2cd7be1ac07333c06246b7c`n"
+    Write-File (Join-Path $hk 'hookshot\PIN') "repo=x`ncommit=e7ed2f7a6526cd6b841b86678b3ac96eb6e5b1c8`n"
     Write-File $pack '{"sound": false}'
     Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: a pack the kit would make again -> module'
     Write-File $pack '{"sound": true, "tunics": {"red": ["x"]}}'

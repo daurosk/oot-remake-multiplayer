@@ -34,3 +34,6 @@ shader/
 .claude/settings.local.json
 __pycache__/
 .worktrees/
+
+# Build and test lock folders (tools/hookshot/hs.py lock): local only
+*.lock/

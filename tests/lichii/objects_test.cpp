@@ -756,7 +756,7 @@ TEST_CASE("objects: a chest beside our Link is shown open too, never removed (is
     Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
     sync.SetPlayer(proto::Vec3{1.5f, 0.0f, 1.0f});  // 0.5 m from the chests
     // Closed beside our Link: shown open (the old rule removed it at once, and
-    // Caleb saw the chest vanish).
+    // Alex saw the chest vanish).
     Seen closed = Chest(0x500);
     closed.animation = proto::Animation{"CloseWait", 0.0f, 1.0f};
     sync.Take(0x3c5bb811b4cf54dd);

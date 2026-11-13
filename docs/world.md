@@ -1,6 +1,6 @@
 # Shared world objects
 
-Caleb (2026-11-09): every world object the same for all players. A pot or crate broken by one player breaks for all; an object moved by one moves for all; a switch pressed or a dungeon event started by one happens for all. This page says how, in the order it is built: breakables first, then switches and doors, then movable blocks, then the Water Temple's water level. Enemies are [objects.md](objects.md); objects players make (bombs, arrows) are the spawn-sync work.
+Alex (2026-11-09): every world object the same for all players. A pot or crate broken by one player breaks for all; an object moved by one moves for all; a switch pressed or a dungeon event started by one happens for all. This page says how, in the order it is built: breakables first, then switches and doors, then movable blocks, then the Water Temple's water level. Enemies are [objects.md](objects.md); objects players make (bombs, arrows) are the spawn-sync work.
 
 Game build e0f3ccfaf50065ae (1.1.1). **Checked** means read from the romfs or the code; **live** means seen in a run.
 
@@ -46,10 +46,10 @@ Seen on the way:
 
 ### Not done yet
 
-- Drops: each game runs its own death, so each drops its own rupee or heart. Caleb wants one drop for one player (the one who broke it). Next: hold the copy's drop (the drop component, or remove the dropped `Obj_Rupee_*` that appears where a copy died).
+- Drops: each game runs its own death, so each drops its own rupee or heart. Alex wants one drop for one player (the one who broke it). Next: hold the copy's drop (the drop component, or remove the dropped `Obj_Rupee_*` that appears where a copy died).
 - Signposts (above), and pots and grass cut by the sword: not seen in a run yet. A pot that breaks with its life read at 0 goes through the life path; one removed at once goes through the gone rule, which needs it to have moved: a pot cut where it stands would be missed. Next live check: a pot.
 - Lifted and carried objects (a pot or rock in Link's hands) are not moved on the other screen; only the break is shared. Movables are the step after switches.
-- Grass, 2026-11-09: Caleb cut grass in Hyrule Field (build e2ed2aa) and it stayed on the other screen. That build shared no grass there: the field has no `Obj_Plant_Grass_*` at all (two logs with `LICHII_COOP_DEBUG_OBJECTS=1`), only 13 `Land_kokiri_Plant_A_02_DropFixed_03` near the Kokiri side, now on the list. Not checked in a game: that this grass leaves the list when cut. The rest of the field's grass is not an actor: no actor of it is on the list while it stands (the Foliage module probably draws it). Where its cut state lives is not known, so it is not shared. Next: one run with the debug switch where grass is cut, then read what changed.
+- Grass, 2026-11-09: Alex cut grass in Hyrule Field (build e2ed2aa) and it stayed on the other screen. That build shared no grass there: the field has no `Obj_Plant_Grass_*` at all (two logs with `LICHII_COOP_DEBUG_OBJECTS=1`), only 13 `Land_kokiri_Plant_A_02_DropFixed_03` near the Kokiri side, now on the list. Not checked in a game: that this grass leaves the list when cut. The rest of the field's grass is not an actor: no actor of it is on the list while it stands (the Foliage module probably draws it). Where its cut state lives is not known, so it is not shared. Next: one run with the debug switch where grass is cut, then read what changed.
 - Grass and signs cut by the other player: the owner may be a game where that grass is far away. Works the same way, not checked.
 
 ## Switches and doors (next)

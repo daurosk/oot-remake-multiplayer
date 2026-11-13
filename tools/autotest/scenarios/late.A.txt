@@ -1,5 +1,5 @@
 # late: A loads the save and stands; B loads the same save about 30 s later, so A's puppet in B
-# is made while B runs its own after-load event (parked under the floor), as in Caleb's
+# is made while B runs its own after-load event (parked under the floor), as in Alex's
 # 2026-11-09 run. Then the steps of back.A.txt. Run with -NoLoad.
 #! noload
 wait 1200

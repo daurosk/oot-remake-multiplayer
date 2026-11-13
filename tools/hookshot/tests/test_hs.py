@@ -435,6 +435,12 @@ class LockTest(unittest.TestCase):
         self.assertGreaterEqual(sum(self.slept), 25)
         self.assertIn("held by a", self.msgs[-1])
 
+    def test_owner_txt_never_holds_the_pc_name(self):
+        self.assertTrue(self.take("hs", "integrator"))
+        host = self.owner("build-hs.lock")["host"]
+        self.assertEqual(host, hs.host_id())
+        self.assertNotIn(hs.socket.gethostname(), host)
+
     def test_a_shell_lock_has_no_pid_and_goes_stale_by_age_only(self):
         # `hs.py lock acquire` ends at once: its own pid must not make the lock stale (review must-fix 1).
         self.assertTrue(hs.lock_acquire(self.root, "emu", "integrator", 0, 4.0, lambda pid: False, self.sleep,

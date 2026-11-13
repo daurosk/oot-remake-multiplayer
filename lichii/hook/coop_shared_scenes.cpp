@@ -91,13 +91,13 @@ void Joiner::Visit(const std::string& scene) {
 }
 
 void Joiner::Started(std::uint8_t player, const std::string& name, const std::string& scene,
-                     std::optional<Vec3> starter, std::uint64_t now_us) {
+                     std::optional<Vec3> starter, std::uint64_t now_us, std::optional<int> room) {
     for (const Pending& p : pending_) {
         if (p.name == name && p.scene == scene) {
             return;  // two players started it: one is enough
         }
     }
-    pending_.push_back(Pending{player, name, scene, starter, now_us});
+    pending_.push_back(Pending{player, name, scene, starter, now_us, room});
 }
 
 bool Joiner::Ours(const std::string& name, const std::string& scene) {
@@ -132,6 +132,16 @@ std::string Joiner::Why(const Pending& p, const Here& here, bool played) const {
             char text[64];
             std::snprintf(text, sizeof text, "too far: %.0f m from them", d);
             return text;
+        }
+        if (here.dungeon) {
+            // Never from another room of a dungeon: it is not loaded here.
+            if (p.room && here.room) {
+                if (*p.room != *here.room) {
+                    return "they are in another room of this dungeon";
+                }
+            } else if (d > kNoRoomM) {
+                return "their room in this dungeon is not known (no room table: make the puppet pack again)";
+            }
         }
     }
     if (!here.can_start || !here.link || here.scene.empty()) {

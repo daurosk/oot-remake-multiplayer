@@ -40,6 +40,12 @@ bool IsShared(std::string_view name);
 // Kokiri bridge and Saria are about 20 m apart; the Deku Tree's clearing is
 // about 40 m across.
 inline constexpr float kRoomM = 30.0f;
+// In a dungeon 30 m reaches through walls into other rooms, and the game has
+// only the rooms around Link loaded: a cutscene started from another room
+// shows a black picture until it ends (a player report, 2026-11-12). There the
+// starter must be in our room (Here::room, Started's room: coop_rooms.h);
+// where a room is not known (no room table), only this near.
+inline constexpr float kNoRoomM = 8.0f;
 // How long a start waits while our game cannot take it (our own event, a
 // menu, a pause, a load) before it is skipped: a cutscene joined later than
 // this would be far behind the starter's.
@@ -52,15 +58,18 @@ struct Here {
     std::string scene;          // empty: not known (a load)
     bool can_start = false;     // Link read, no event running, not paused, no menu
     std::optional<Vec3> link;   // our Link's place
+    bool dungeon = false;       // the scene is a dungeon (rooms loaded one by one)
+    std::optional<int> room;    // our Link's room there, if known
     std::uint64_t now_us = 0;
 };
 
 class Joiner {
 public:
     // Another player's game started `name` in `scene`; `starter` is where
-    // that player was last seen (nothing: not known, so not joined).
+    // that player was last seen (nothing: not known, so not joined), and
+    // `room` the dungeon room of that place, if known.
     void Started(std::uint8_t player, const std::string& name, const std::string& scene,
-                 std::optional<Vec3> starter, std::uint64_t now_us);
+                 std::optional<Vec3> starter, std::uint64_t now_us, std::optional<int> room = std::nullopt);
     // Our own game started `name` (found by our watch). Returns whether to
     // send it to the others: not when we only joined another player's start
     // (it would come back to them) or already sent it this visit.
@@ -101,6 +110,7 @@ private:
         std::string scene;
         std::optional<Vec3> starter;
         std::uint64_t at_us;
+        std::optional<int> room;
     };
     // "" to start now, "wait", or why it is skipped.
     std::string Why(const Pending& p, const Here& here, bool played) const;

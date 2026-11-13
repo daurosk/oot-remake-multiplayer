@@ -632,7 +632,12 @@ public:
             if (view.position) {
                 link = std::array<float, 3>{(*view.position)[0], (*view.position)[1], (*view.position)[2]};
             }
-            if (const auto name = live_decider_.Next(held_events, hold_scene_, running, link)) {
+            // Never for a place in another room than ours: not loaded here.
+            const CoopLiveEvents::RoomOf room_of = [&](const std::array<float, 3>& at) -> std::optional<int> {
+                const auto guess = DungeonRooms().Nearest(hold_scene_, at);
+                return guess ? std::optional<int>(guess->room) : std::nullopt;
+            };
+            if (const auto name = live_decider_.Next(held_events, hold_scene_, running, link, &room_of)) {
                 LOG_INFO(Core, "coop: dungeon: starting the event {} here (another player played it)", *name);
                 std::lock_guard lock(live_mutex_);
                 live_requester_.Want(*name, hold_scene_);  // no age limit: started when near, as before
@@ -1592,6 +1597,13 @@ private:
     std::uint64_t presents_ = 0;
     coop::host::LoadMend load_mend_;  // issue 138: when ItemFlagStore grants and mends
 
+    // The dungeon rooms' table (coop_rooms.txt of the puppet pack), read once
+    // at its first use; empty without a pack (then no room is known).
+    static const CoopRooms::Table& DungeonRooms() {
+        static const CoopRooms::Table rooms = CoopFairy::RoomTable();
+        return rooms;
+    }
+
     // Shared story cutscenes (coop_shared_scenes.h): a story cutscene
     // our game starts goes to the others in our scene (DUNGEON_EVENT, as a
     // gimmick event's start); one another player started near us plays here
@@ -1614,7 +1626,13 @@ private:
                         starter = r.position;
                     }
                 }
-                shared_joiner_.Started(e.player_number, e.name, e.scene, starter, now_us);
+                std::optional<int> room;
+                if (starter) {
+                    if (const auto guess = DungeonRooms().Nearest(e.scene, *starter)) {
+                        room = guess->room;
+                    }
+                }
+                shared_joiner_.Started(e.player_number, e.name, e.scene, starter, now_us, room);
             }
         }
         const bool running = reading && reading->event_running.value_or(false);
@@ -1631,6 +1649,14 @@ private:
         here.can_start = reading && !running &&
                          (status & (proto::status::paused | proto::status::in_menu | proto::status::loading)) == 0;
         here.now_us = now_us;
+        // In a dungeon only a starter in our own room is joined (the other
+        // rooms are not loaded here: a black picture until the cutscene ends).
+        if (shared_joiner_.Waiting() != 0 && here.link && CoopDungeon::IsDungeonScene(here.scene)) {
+            here.dungeon = true;
+            if (const auto guess = DungeonRooms().Nearest(here.scene, *here.link)) {
+                here.room = guess->room;
+            }
+        }
         // Our own start: found in the event session on a few early frames.
         if (memory && !here.scene.empty()) {
             static const std::vector<std::string_view> names = [] {

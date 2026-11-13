@@ -257,3 +257,75 @@ TEST_CASE("save transfer: the host's slot goes only into the co-op folder, never
   CHECK(ReadFile(own / "account.sav") == Bytes{3});
   CHECK(fs::exists(own / "account.sav"));  // copied, not moved
 }
+
+TEST_CASE("save transfer: which save folder a game plays from (issue 167)") {
+  using coop::host::save::folder_choice;
+  using coop::host::save::FolderChoice;
+  // a fixed folder (the emulator): LICHII_COOP_HOST_SAVE (play.ps1: 1 for a join by address or invite code, 0 for
+  // a host) decides
+  CHECK(folder_choice(true, false, false, false, false) == FolderChoice::coop);
+  CHECK(folder_choice(false, false, true, false, false) == FolderChoice::own);
+  // switchable (Hookshot): the session's role, never the variable (the title menu may Host or Join after any start)
+  CHECK(folder_choice(true, true, true, true, false) == FolderChoice::own);    // started as a join, then hosted
+  CHECK(folder_choice(false, true, true, false, false) == FolderChoice::coop); // started as a host, then joined
+  CHECK(folder_choice(true, true, false, false, false) == FolderChoice::wait);
+  // a fixed folder (the emulator) without it: the player's own saves, whatever coop.ini says
+  CHECK(folder_choice(std::nullopt, false, true, false, false) == FolderChoice::own);
+  // switchable (Hookshot): the session decides, once connected to a host
+  CHECK(folder_choice(std::nullopt, true, false, false, false) == FolderChoice::wait);
+  CHECK(folder_choice(std::nullopt, true, true, false, false) == FolderChoice::coop);   // a title-menu Join or an invite
+  CHECK(folder_choice(std::nullopt, true, true, true, false) == FolderChoice::own);     // the host, even with an old
+                                                                                         // friend's address in coop.ini
+  CHECK(folder_choice(std::nullopt, true, true, false, true) == FolderChoice::own);     // joined with a save loaded
+}
+
+TEST_CASE("save transfer: a co-op folder is emptied of slots before the host's save comes (issue 167)") {
+  namespace fs = std::filesystem;
+  const fs::path base = fs::temp_directory_path() / "coop-clear-slots-test";
+  std::error_code ec;
+  fs::remove_all(base, ec);
+  const fs::path coop = base / "0123-coop", own = base / "0123";
+  for (const char* d : {"slot_00", "slot_03", "other"}) fs::create_directories(coop / d);
+  std::ofstream(coop / "slot_00" / "progress.sav") << "an older host's save";
+  std::ofstream(coop / "option.sav") << "settings";
+  fs::create_directories(own / "slot_00");
+  CHECK(coop::host::save::clear_coop_slots(coop) == 2);
+  CHECK_FALSE(fs::exists(coop / "slot_00"));
+  CHECK_FALSE(fs::exists(coop / "slot_03"));
+  CHECK(fs::exists(coop / "other"));       // not a slot: left
+  CHECK(fs::exists(coop / "option.sav"));  // the player's settings stay
+  CHECK(coop::host::save::clear_coop_slots(own) == -1);   // never the player's own folder
+  CHECK(fs::exists(own / "slot_00"));
+  CHECK(coop::host::save::clear_coop_slots(base / "none-coop") == 0);
+  fs::remove_all(base, ec);
+}
+
+TEST_CASE("save transfer: the folder is chosen again for each session, never with a save loaded") {
+  using coop::host::save::decide_again;
+  CHECK(decide_again(true, true, false));     // Join, back to the title, then Host: chosen again
+  CHECK_FALSE(decide_again(true, false, false));  // the same session (or a reconnect): kept
+  CHECK_FALSE(decide_again(true, true, true));    // Link in the game: no switch
+  CHECK_FALSE(decide_again(false, true, false));  // nothing chosen yet
+}
+
+TEST_CASE("save transfer: two Join sessions in one run each ask once and get the save") {
+  const Bytes packed = save::pack(Slot(2));
+  save::GuestSession s;
+  for (int session = 0; session < 2; ++session) {
+    if (session == 1) {
+      CHECK(coop::host::save::decide_again(true, true, false));
+      s = save::GuestSession{};   // (CoopSave: what decide_again resets)
+    }
+    CHECK_FALSE(s.asked);   // this session's ask has not gone out: it will
+    CHECK_FALSE(s.ready);
+    s.asked = true;         // the ask goes out once
+    const auto parts = save::split(packed, 20 + static_cast<std::uint32_t>(session), proto::SaveReason::join, 1);
+    std::size_t completes = 0;
+    for (const auto& p : parts) {
+      if (s.assembler.add(Relayed(p, 1), 1) == save::Assembler::Result::complete) ++completes;
+    }
+    CHECK(completes == 1);
+    CHECK(s.assembler.take() == packed);
+    s.ready = true;
+  }
+}

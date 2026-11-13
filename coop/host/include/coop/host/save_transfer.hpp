@@ -176,4 +176,37 @@ enum class WriteResult {
 WriteResult write_coop_save(const std::filesystem::path& coop_dir, const SaveSlot& slot,
                             const std::filesystem::path& own_dir);
 
+// Which save folder a game plays from (issue 167). Never from coop.ini's address: an invite join is 127.0.0.1
+// (the join helper) and an old address may be a friend's while this player now hosts.
+// - Where the save folder can be switched while the game runs (Hookshot's patch 0008): the session decides at the
+//   first connection that has a host, whatever the start was (the title menu can Host or Join after any start): a guest
+//   plays from the co-op folder, the host from its own. A game that already has a save loaded (Link in the game) keeps
+//   its own: a switch then would mix two saves. `env` is not used there.
+// - Where it is fixed when the game starts (the emulator): `env`, LICHII_COOP_HOST_SAVE when set (play.ps1: 1 for a
+//   join, by address or invite; 0 for a host; or coop-options.ini), else its own.
+enum class FolderChoice { wait, own, coop };
+FolderChoice folder_choice(std::optional<bool> env, bool can_switch, bool connected, bool is_host, bool in_game);
+// Where the folder can be switched, the choice is per SESSION (the title menu: Join, back to the title, then Host in
+// the same run plays from its own saves again): a choice made goes when the session that made it is over (`over`: a
+// new client, or the client idle, stopped or refused; a reconnect is not), but never with a save loaded (Link in
+// the game: no switch then).
+bool decide_again(bool decided, bool over, bool in_game);
+
+// A guest's save state for ONE session (CoopSave): the ask sent, the parts coming in, a slot that came before the
+// save folder was open, whether the host's save is written, the "stuck" note said. A new session starts from a
+// fresh one (GuestSession{}), so a second Join in the same run asks again and gets the save again.
+struct GuestSession {
+  Assembler assembler;
+  std::optional<SaveSlot> unwritten;
+  bool asked = false;
+  bool ready = false;
+  bool said_stuck = false;
+  std::uint64_t last_part_us = 0;
+};
+
+// The slot_NN folders of a co-op save folder taken away, so it holds nothing until the host's save comes (a guest
+// switching to it must not find an older host's save and load that). Refuses a folder that is not a co-op one.
+// Returns the folders removed, or -1.
+int clear_coop_slots(const std::filesystem::path& coop_dir);
+
 }  // namespace coop::host::save

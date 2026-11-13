@@ -498,3 +498,75 @@ TEST_CASE("title menu: a colour the row does not list survives a Save that only 
     m.options().Write(coop, opt);
     CHECK(IniGet(opt, "color") == "red");
 }
+
+TEST_CASE("title menu: after Join the host's save loads in one step") {
+    AutoLoad a;
+    CHECK_FALSE(a.active());
+    CHECK(a.Line().empty());
+    a.Start(1000, "Saria");
+    CHECK(a.active());
+    CHECK(a.Line() == "Getting Saria's save...");
+    // waiting for the save: no presses
+    auto t = a.Step(2000, false, true, false);
+    CHECK_FALSE(t.press_a);
+    CHECK_FALSE(t.focus_continue);
+    // the save is here, the title is up: Continue shown (a first-time joiner's title opened without it), the
+    // cursor to it, then A pressed now and then
+    t = a.Step(3000, true, true, false);
+    CHECK(a.Line() == "Loading Saria's save...");
+    t = a.Step(3050, true, true, false);
+    CHECK(t.reveal_continue);
+    CHECK_FALSE(t.focus_continue);
+    CHECK_FALSE(t.press_a);
+    CHECK_FALSE(a.Step(3100, true, true, false).reveal_continue);   // once
+    t = a.Step(3300, true, true, false);
+    CHECK(t.focus_continue);
+    CHECK_FALSE(t.press_a);   // (the cursor first)
+    t = a.Step(3600, true, true, false);
+    CHECK(t.press_a);
+    CHECK_FALSE(t.focus_continue);   // once only
+    t = a.Step(3450, true, false, false);   // held 120 ms, then let go (the title may be gone: the file list)
+    CHECK_FALSE(t.press_a);
+    t = a.Step(3300 + 120 + AutoLoad::kPressEveryMs + 150, true, false, false);
+    t = a.Step(3300 + 2 * AutoLoad::kPressEveryMs, true, false, false);
+    int presses = 0;
+    for (std::uint64_t ms = 4000; ms < 10000; ms += 20) {
+        presses += a.Step(ms, true, false, false).press_a ? 1 : 0;
+    }
+    CHECK(presses > 10);   // (A held in a few short presses, about every 1.2 s)
+    CHECK(presses < 60);
+    // Link is in the game: done, nothing more pressed, no line
+    a.Step(10000, true, false, true);
+    CHECK_FALSE(a.active());
+    CHECK(a.Line().empty());
+    CHECK_FALSE(a.Step(10500, true, false, false).press_a);
+}
+
+TEST_CASE("title menu: no host's save, or no way in: a plain line and no endless presses") {
+    AutoLoad a;
+    a.Start(0, "");
+    a.Step(AutoLoad::kWaitSaveMs + 1, false, true, false);
+    CHECK_FALSE(a.active());
+    CHECK(a.Line() == "your friend's save did not arrive: choose a file to play.");
+    AutoLoad b;
+    b.Start(0, "Saria");
+    b.Step(100, true, true, false);
+    b.Step(100 + AutoLoad::kLoadMs + 1, true, true, false);
+    CHECK_FALSE(b.active());
+    CHECK(b.Line() == "Press Continue to play Saria's save.");
+    CHECK_FALSE(b.Step(100 + AutoLoad::kLoadMs + 500, true, true, false).press_a);
+}
+
+TEST_CASE("title menu: with no Continue under the cursor AutoLoad presses nothing on the title") {
+    CHECK_FALSE(AutoLoad::PressAllowed(true, 0));    // New Game focused (Continue hidden: the cursor could not go there)
+    CHECK_FALSE(AutoLoad::PressAllowed(true, -1));   // nothing focused
+    CHECK_FALSE(AutoLoad::PressAllowed(true, 4));    // one of our rows
+    CHECK(AutoLoad::PressAllowed(true, AutoLoad::kContinue));
+    CHECK(AutoLoad::PressAllowed(false, 0));         // the title gone: the file list takes the A
+    // and AutoLoad then gives up with the plain line, no endless presses
+    AutoLoad a;
+    a.Start(0, "Saria");
+    a.Step(10, true, true, false);
+    a.Step(AutoLoad::kLoadMs + 20, true, true, false);
+    CHECK(a.Line() == "Press Continue to play Saria's save.");
+}

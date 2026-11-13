@@ -491,6 +491,72 @@ std::vector<std::string> PlainStatus(const HostView& v) {
     }
 }
 
+void AutoLoad::Start(std::uint64_t now_ms, std::string host) {
+    phase_ = Phase::kWait;
+    host_ = Trim(host).empty() ? std::string("your friend") : std::string(Trim(host));
+    since_ = now_ms;
+    next_press_ = 0;
+    focused_ = false;
+    revealed_ = false;
+}
+
+AutoLoad::Tick AutoLoad::Step(std::uint64_t now_ms, bool host_save_ready, bool title_up, bool in_game) {
+    Tick t;
+    if (in_game && active()) {
+        phase_ = Phase::kDone;   // (Link is in: the host's save, or a file the player chose)
+        return t;
+    }
+    if (phase_ == Phase::kWait) {
+        if (host_save_ready && title_up) {
+            phase_ = Phase::kLoad;
+            since_ = now_ms;
+            next_press_ = now_ms + 600;   // (Continue shown, then the cursor, then A)
+        } else if (now_ms - since_ >= kWaitSaveMs) {
+            phase_ = Phase::kNoSave;
+        }
+        return t;
+    }
+    if (phase_ != Phase::kLoad) {
+        return t;
+    }
+    if (now_ms - since_ >= kLoadMs) {
+        phase_ = Phase::kStuck;
+        return t;
+    }
+    if (!revealed_ && title_up) {
+        revealed_ = true;
+        t.reveal_continue = true;
+        return t;
+    }
+    if (!focused_ && title_up && now_ms - since_ >= 300) {
+        focused_ = true;
+        t.focus_continue = true;
+    }
+    if (now_ms >= next_press_) {
+        if (now_ms < next_press_ + kPressHoldMs) {
+            t.press_a = true;
+        } else {
+            next_press_ = now_ms + kPressEveryMs;
+        }
+    }
+    return t;
+}
+
+std::string AutoLoad::Line() const {
+    switch (phase_) {
+    case Phase::kWait:
+        return "Getting " + host_ + "'s save...";
+    case Phase::kLoad:
+        return "Loading " + host_ + "'s save...";
+    case Phase::kNoSave:
+        return host_ + "'s save did not arrive: choose a file to play.";
+    case Phase::kStuck:
+        return "Press Continue to play " + host_ + "'s save.";
+    default:
+        return {};
+    }
+}
+
 // ---------------------------------------------------------------------------
 
 void Menu::Open(const Options& options, Page page) {

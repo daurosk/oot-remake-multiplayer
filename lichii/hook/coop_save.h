@@ -10,6 +10,7 @@
 // its own save load (once the game has saved after it).
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 namespace coop::net {
@@ -19,11 +20,22 @@ struct Event;
 
 namespace CoopSave {
 
-// Whether this game uses the co-op save folder, decided once (the first call):
-// LICHII_COOP_HOST_SAVE=1 or 0 if set; else on when coop.ini names a server
-// that is not this PC (Join.bat), off for 127.0.0.1 or no server (Host.bat,
-// single player).
+// Whether this game uses the co-op save folder. Where the folder is fixed when
+// the game starts (the emulator): LICHII_COOP_HOST_SAVE=1 (play.ps1 sets it
+// for a join, by address or invite code), else its own saves. Never from
+// coop.ini's address (save::folder_choice). Where it can be switched while
+// the game runs (SetSwitch: Hookshot), the session decides it in OnFrame.
 bool UseCoopFolder();
+
+// Hookshot (patch 0008): the folder the account save is mounted from now ("" none yet), and a re-mount of it
+// from another folder (true when done). With them, a guest switches to <folder>-coop when it joins.
+void SetSwitch(std::function<std::string()> root, std::function<bool(const std::string&)> remount);
+
+// Each frame: whether Link is in the game (a loaded save): no switch then.
+void NoteInGame(bool in_game);
+
+// The host's save has been written into this game's co-op folder (a title menu may load it now).
+bool HostSaveReady();
 
 // The emulator's save folder path for a user's account save (relative to the
 // NAND, "/user/save/0000000000000000/<user>/<title>"): with the co-op folder

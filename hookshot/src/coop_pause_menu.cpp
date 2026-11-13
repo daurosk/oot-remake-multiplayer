@@ -64,6 +64,27 @@ const char* const kByLauncher =
 
 }  // namespace
 
+const std::vector<Command>& Commands() {
+    static const std::vector<Command> list = {
+        {"/teleport", "Lists the other players, with their numbers."},
+        {"/teleport <player>",
+         "Takes you to that player: the whole name, the start of it, or the player's number (/teleport 2). In another "
+         "place, talk to someone or read a sign within a minute to travel. Not during a cutscene, a talk or a boss "
+         "fight."},
+        {"/tp <player>", "The same as /teleport."},
+        {"/pvp", "Says whether players can hurt each other (PvP) in this game."},
+        {"/pvp on, /pvp off", "The host only: lets players hurt each other, or stops it, for everyone."},
+    };
+    return list;
+}
+
+std::string ChatKeyWords(const std::string& chat_key) {
+    std::string k = chat_key.empty() ? std::string("T") : chat_key;
+    std::string low = k;
+    std::transform(low.begin(), low.end(), low.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return low == "off" ? std::string("Off") : k;
+}
+
 // ---------------------------------------------------------------------------
 // The pages' rows.
 
@@ -113,6 +134,7 @@ std::vector<Menu::Line> Menu::Lines() const {
         out.push_back({Action("Local co-op"), Act::kOpenLocal, "Two players on this PC."});
         out.push_back({Action("Settings"), Act::kOpenSettings,
                        "Your name, Link's look, how many players can join your game, and voice chat."});
+        out.push_back({Action("Commands"), Act::kOpenCommands, "The chat's commands, and the key that opens the chat."});
         break;
     case Page::kHost:
         if (host) {
@@ -164,6 +186,19 @@ std::vector<Menu::Line> Menu::Lines() const {
         out.push_back({Note("Split screen: two players on this PC."), Act::kNone, {}});
         out.push_back({Note("Coming in the next test release."), Act::kNone, {}});
         break;
+    case Page::kCommands: {
+        const std::string key = ChatKeyWords(options_.chat_key);
+        out.push_back({Action("Open the chat", key), Act::kCommand,
+                       key == "Off" ? "The chat key is off (LICHII_COOP_CHAT_KEY=off in coop-options.ini): set a key "
+                                      "there (a letter, a digit, or F1 to F12) to chat."
+                                    : "Press " + key + " in the game to open the chat box; Enter sends, Esc closes. "
+                                      "A line that starts with / is a command, not chat. Another key: "
+                                      "LICHII_COOP_CHAT_KEY in coop-options.ini."});
+        for (const Command& c : Commands()) {
+            out.push_back({Action(c.typed), Act::kCommand, c.help});
+        }
+        break;
+    }
     case Page::kSettings:
         out.push_back({Action("Your name", typing_ ? options_.name + "_" : options_.name), Act::kName,
                        "The name the other players see: 1 to 16 characters, typed with the keyboard."});
@@ -254,6 +289,7 @@ void Menu::Open(Page page) {
     case Page::kJoin: act = Act::kOpenJoin; break;
     case Page::kLocal: act = Act::kOpenLocal; break;
     case Page::kSettings: act = Act::kOpenSettings; break;
+    case Page::kCommands: act = Act::kOpenCommands; break;
     }
     Go(Page::kMain, act);
     note_.clear();
@@ -420,6 +456,9 @@ bool Menu::Press(Input input) {
         case Page::kSettings:
             Go(Page::kMain, Act::kOpenSettings);
             break;
+        case Page::kCommands:
+            Go(Page::kMain, Act::kOpenCommands);
+            break;
         }
         return true;
     case Input::kPaste:
@@ -454,6 +493,11 @@ void Menu::Decide(Act act) {
         break;
     case Act::kOpenSettings:
         Go(Page::kSettings);
+        break;
+    case Act::kOpenCommands:
+        Go(Page::kCommands);
+        break;
+    case Act::kCommand:   // (a line to read: its help says it)
         break;
     case Act::kCopyInvite:
         request_ = Request{Request::Kind::kCopyInvite, {}};
@@ -643,6 +687,9 @@ View Menu::view() const {
     case Page::kSettings:
         v.help_title = "Settings";
         break;
+    case Page::kCommands:
+        v.help_title = "Commands";
+        break;
     }
     if (!note_.empty()) {
         v.help = Joined(note_);
@@ -669,7 +716,9 @@ View Menu::view() const {
         return v;
     }
     if (line != nullptr) {
-        if (line->row.kind == RowKind::kAction) {
+        if (line->act == Act::kCommand) {
+            // (nothing to press: the row is read)
+        } else if (line->row.kind == RowKind::kAction) {
             v.confirm = line->row.value.empty() ? "Open" : line->act == Act::kName ? "Type" : "Choose";
         } else {
             v.change = "Change";

@@ -63,6 +63,14 @@ inline bool HasPadButtons(const HosCoopApi* api) {
            api->pad_buttons != nullptr;
 }
 
+// The title's Multiplayer menu can keep the module loaded with no server in
+// coop.ini: the table has patch 0004's scratch (its title hooks and pad are
+// there too) and LICHII_COOP_TITLE_MENU is not 0.
+inline bool TitleMenuPossible(const HosCoopApi* api, const std::string& env) {
+    return api != nullptr && api->size >= offsetof(HosCoopApi, scratch) + sizeof(api->scratch) &&
+           api->scratch != nullptr && env != "0";
+}
+
 // What a call of hos_coop_frame does. CoopHook::OnFrame runs once per
 // present, as the emulator runs it at the guest's present (loads and pause
 // included); a Hookshot built from an older patch never calls the present

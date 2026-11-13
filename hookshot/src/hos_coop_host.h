@@ -23,7 +23,7 @@ typedef struct HosCoopHostOptions {
     const char *name;       /* this player's nickname, 1 to 16 characters; NULL: coop.ini's */
     const char *password;   /* the join password; NULL or "": a new random one (shown in the status, in the invite) */
     uint16_t port;          /* the game port; 0: 27510. A few after it are tried when it is taken. */
-    uint8_t upnp;           /* 1 only after the player said yes to opening the port on the router */
+    uint8_t upnp;           /* 1: ask the router to open the port (UPnP); the title menu's Host always asks */
     uint8_t invite;         /* 1: ask a public STUN server for this PC's address and make an invite code */
     uint8_t pvp;            /* 1: players can hurt each other */
     const char *relay_via;  /* a relay "host[:port]"; NULL or "": none */

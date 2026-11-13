@@ -51,6 +51,11 @@ typedef struct HosCoopApi {
        game's window, any thread: GetAsyncKeyState's on Windows, the SDL window's keys on Linux (as nn_hid.c reads
        them: nothing while the window does not have the keyboard). */
     int (*key_down)(uint32_t vk);
+    /* Added with the title menu (check size covers it): copies `n` bytes (at most 256) into the game's stack, above
+       where the next call()'s stack words go, for that call's pointers (a name, room for a result); their guest address,
+       0 when they do not fit. Only with the ctx of a hook that may call(), for the next call made with it. With it,
+       call() also points x8 (where a function puts a result it returns in memory) at 128 free bytes of that stack. */
+    uint64_t (*scratch)(void *ctx, const void *data, size_t n);
 } HosCoopApi;
 
 /* The module's exports (extern "C"). */
@@ -72,5 +77,16 @@ typedef int (*hos_coop_keys_taken_fn)(void);               /* any thread, often:
    Hookshot does nothing more with it (a click taken does not capture the mouse for the camera). */
 enum { HOS_COOP_MOUSE_MOVE = 0, HOS_COOP_MOUSE_LEFT = 1, HOS_COOP_MOUSE_WHEEL_UP = 2, HOS_COOP_MOUSE_WHEEL_DOWN = 3 };
 typedef int (*hos_coop_mouse_fn)(float fx, float fy, int event);   /* the window's thread */
+/* The title menu (optional exports, docs/hookshot.md "The title menu"):
+   - the pad: player 1's buttons (Switch NpadButton bits) and sticks (left x, y, right x, y) as Hookshot made them,
+     at each read of the pads (several a frame), before the game gets them; it returns the buttons the game gets and
+     may clear the sticks (nn_hid.c npad_states);
+   - the title screen: nx2/coop_hooks.py calls it from the game's UITitleScreen on the game's calc thread, with a ctx
+     call() may use, as hos_coop_frame's; `screen` is the screen object, `event` one of HOS_COOP_TITLE_*. */
+#define HOS_COOP_TITLE_GONE 0    /* its deleting destructor (0x834267a0, main+0x34067a0) */
+#define HOS_COOP_TITLE_SETUP 1   /* its set-up, its buttons made (0x834267d0, main+0x34067d0: vtable slot 93) */
+#define HOS_COOP_TITLE_STEP 2    /* its active step (0x83426d70, main+0x3406d70: vtable slot 96) */
+typedef uint64_t (*hos_coop_pad_fn)(uint64_t buttons, int32_t stick[4]);   /* the game's input thread */
+typedef void (*hos_coop_title_fn)(void *ctx, uint64_t screen, int event);   /* the game's calc thread */
 
 #endif

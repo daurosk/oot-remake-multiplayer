@@ -371,7 +371,7 @@ if ($Game) { [System.IO.File]::WriteAllText((Join-Path $hs 'game-files.txt'), "$
 if ($packFrom -and (Test-Path -LiteralPath $packFrom) -and (Test-Path -LiteralPath $packTool)) {
     Write-Host '  building the puppet pack ...'
     $ErrorActionPreference = 'Continue'
-    & $python -I -B $packTool --romfs $packFrom --mod-dir $mod 2>&1 | ForEach-Object { "    $_" }
+    & $python -I -B $packTool --romfs $packFrom --mod-dir $mod --title-rows 2>&1 | ForEach-Object { "    $_" }
     $code = $LASTEXITCODE
     $ErrorActionPreference = 'Stop'
     if ($code -ne 0) { Write-Host '  The puppet pack was not built (said why above): other players show as stand-ins.' -ForegroundColor Yellow }

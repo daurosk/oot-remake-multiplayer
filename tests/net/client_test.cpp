@@ -907,7 +907,9 @@ TEST_CASE("client: every refusal reason the protocol has is named") {
   CHECK(refuse_reason_text(proto::RefuseReason::name_taken) == "name taken");
   CHECK(refuse_reason_text(proto::RefuseReason::bad_name) == "bad name");
   CHECK(refuse_reason_text(proto::RefuseReason::bad_password).starts_with("wrong join password"));
-  CHECK(refuse_reason_text(static_cast<proto::RefuseReason>(7)) == "unknown reason");
+  CHECK(refuse_reason_text(proto::RefuseReason::kicked).starts_with("the host took you out"));
+  CHECK(refuse_reason_text(proto::RefuseReason::banned).starts_with("the host banned you"));
+  CHECK(refuse_reason_text(static_cast<proto::RefuseReason>(9)) == "unknown reason");
 }
 
 TEST_CASE("client: send_chat sends CHAT and refuses empty, long or bad text") {

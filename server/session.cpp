@@ -315,7 +315,7 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
     refuse(id, c, RefuseReason::bad_name, now_us);
     return;
   }
-  if (lobby_banned(hello.nickname, c.address)) {
+  if (lobby_banned(lobby_id(hello.nickname, hello.player_key, std::nullopt, 0), c.address)) {
     ++stats_.lobby_banned;
     refuse(id, c, RefuseReason::banned, now_us, "banned by the host");
     return;
@@ -371,6 +371,7 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   c.state = State::joined;
   c.number = welcome.player_number;
   c.nickname = hello.nickname;
+  c.player_key = hello.player_key;
   c.last_ping = now_us;
   c.reliable_budget = 2.0 * config_.reliable_per_second;
   c.unreliable_budget = 2.0 * config_.unreliable_per_second;
@@ -2071,23 +2072,32 @@ void Session::on_lobby(ConnectionId id, const LobbyAction& a, std::uint64_t now_
     answer(LobbyResultCode::no_player);
     return;
   }
-  if (*target == id) {
+  if (same_game(*target, id)) {  // the host, or a split-screen seat of its own game
     answer(LobbyResultCode::is_host);
     return;
   }
   Connection& t = connections_.at(*target);
-  const std::string key = name_key(t.nickname);
+  const std::string key = lobby_id(t);
   const std::string who = "player " + std::to_string(t.number) + " (" + t.nickname + ")";
   if (a.action == LobbyActionKind::kick || a.action == LobbyActionKind::ban) {
     const bool ban = a.action == LobbyActionKind::ban;
     if (ban) {
-      banned_names_.insert(key);
-      if (t.address && (ipv4_of(*t.address) >> 24) != 127) banned_addresses_.insert(*t.address);
+      banned_ids_.insert(key);
+      // Without a key (and so by name): the address too, as a last resort.
+      if (!t.player_key && !t.parent && t.address && (ipv4_of(*t.address) >> 24) != 127) {
+        banned_addresses_.insert(*t.address);
+      }
     }
-    // REFUSED first, so the game knows not to join again, then the close;
-    // the others get PLAYER_LEFT, kicked.
-    send(*target, kChannelSession, Refused{ban ? RefuseReason::banned : RefuseReason::kicked});
-    actions_.push_back(DisconnectAction{*target});
+    if (t.parent) {
+      // A split-screen seat: its game stays; it is told its seat left (the
+      // others get PLAYER_LEFT from remove_player).
+      send(*t.parent, kChannelSession, PlayerLeft{t.number, LeaveReason::kicked});
+    } else {
+      // REFUSED first, so the game knows not to join again, then the close;
+      // the others get PLAYER_LEFT, kicked.
+      send(*target, kChannelSession, Refused{ban ? RefuseReason::banned : RefuseReason::kicked});
+      actions_.push_back(DisconnectAction{*target});
+    }
     remove_player(*target, LeaveReason::kicked, now_us,
                   ban ? "banned by the host" : "kicked by the host");
     ++stats_.lobby_done;
@@ -2124,14 +2134,34 @@ void Session::on_lobby(ConnectionId id, const LobbyAction& a, std::uint64_t now_
 
 std::uint8_t Session::lobby_mutes_of(const Connection& c) const {
   if (lobby_mutes_.empty()) return 0;
-  const auto it = lobby_mutes_.find(name_key(c.nickname));
+  const auto it = lobby_mutes_.find(lobby_id(c));
   return it == lobby_mutes_.end() ? 0 : it->second;
 }
 
-bool Session::lobby_banned(const std::string& nickname,
-                           std::optional<std::uint32_t> address) const {
-  return banned_names_.contains(name_key(nickname)) ||
-         (address && banned_addresses_.contains(*address));
+std::string Session::lobby_id(const std::string& nickname, const std::optional<PlayerKey>& key,
+                              std::optional<ConnectionId> parent, std::uint8_t seat) const {
+  if (parent) {
+    const auto it = connections_.find(*parent);
+    if (it == connections_.end()) return "n:" + name_key(nickname);
+    const Connection& game = it->second;
+    return lobby_id(game.nickname, game.player_key, std::nullopt, 0) + "/seat" + std::to_string(seat);
+  }
+  if (!key) return "n:" + name_key(nickname);
+  static constexpr char kHex[] = "0123456789abcdef";
+  std::string id = "k:";
+  for (const std::uint8_t b : *key) {
+    id += kHex[b >> 4];
+    id += kHex[b & 15];
+  }
+  return id;
+}
+
+std::string Session::lobby_id(const Connection& c) const {
+  return lobby_id(c.nickname, c.player_key, c.parent, c.seat);
+}
+
+bool Session::lobby_banned(const std::string& id, std::optional<std::uint32_t> address) const {
+  return banned_ids_.contains(id) || (address && banned_addresses_.contains(*address));
 }
 
 std::optional<ConnectionId> Session::connection_of(std::uint8_t number) const {
@@ -2270,7 +2300,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     difficulty_told_ = {};
     mod_settings_.reset();
     lobby_mutes_.clear();
-    banned_names_.clear();
+    banned_ids_.clear();
     banned_addresses_.clear();
     flags_.clear();
     objects_.clear();
@@ -2440,6 +2470,9 @@ void Session::local_join(ConnectionId id, Connection& c, const LocalJoin& j, std
     answer.reason = RefuseReason::bad_name;
   } else if (holder_of(j.nickname)) {
     answer.reason = RefuseReason::name_taken;
+  } else if (lobby_banned(lobby_id(j.nickname, std::nullopt, id, j.seat), std::nullopt)) {
+    ++stats_.lobby_banned;  // the Lobby: this game's seat was banned
+    answer.reason = RefuseReason::banned;
   } else if (player_count() >= max_players()) {
     answer.reason = RefuseReason::server_full;
   } else {

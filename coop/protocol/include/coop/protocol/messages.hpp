@@ -187,6 +187,12 @@ inline constexpr std::uint8_t kPlayerSelf = 0;
 // HELLO, client to server. The protocol version is always the first two bytes
 // of the body, in every protocol version, so a server can refuse a client
 // whose HELLO it cannot otherwise read (see hello_protocol_version).
+// A player's own key (protocol 11, the Lobby): 16 random bytes a kit makes
+// once and keeps (player-key.txt beside coop.ini), so the host's mutes and
+// bans follow the player, not the name. Only the server sees it.
+inline constexpr std::size_t kPlayerKeyBytes = 16;
+using PlayerKey = std::array<std::uint8_t, kPlayerKeyBytes>;
+
 struct Hello {
   std::uint16_t protocol_version = kProtocolVersion;
   std::string build_id;       // emulator or recomp, and its version
@@ -203,6 +209,9 @@ struct Hello {
   // does not swap the players' numbers (and with them their colours and
   // every object's owner). Nothing on a game's first join.
   std::optional<std::uint8_t> previous_number{};
+  // Protocol 11: the player's own key (PlayerKey), 16 bytes after the
+  // previous number (or after what comes before it when that is not sent).
+  std::optional<PlayerKey> player_key{};
   bool operator==(const Hello&) const = default;
 };
 

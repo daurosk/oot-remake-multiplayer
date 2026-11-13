@@ -275,3 +275,38 @@ TEST_CASE("settings: color, a name or #RRGGBB") {
   CHECK(errors[0].find("LICHII_COOP_COLOR") != std::string::npos);
   CHECK(s.color == 0x30D040u);  // kept
 }
+
+TEST_CASE("settings: the player key is 32 hex digits, kept in its own file and made once") {
+    using CoopHook::LoadPlayerKey;
+    using CoopHook::ParsePlayerKey;
+    using CoopHook::PlayerKeyText;
+    CHECK_FALSE(ParsePlayerKey(""));
+    CHECK_FALSE(ParsePlayerKey("00112233445566778899aabbccddeef"));    // 31
+    CHECK_FALSE(ParsePlayerKey("00112233445566778899aabbccddeeffx"));  // 33
+    CHECK_FALSE(ParsePlayerKey("g0112233445566778899aabbccddeeff"));
+    const auto key = ParsePlayerKey("  00112233445566778899AABBCCDDEEFF\r\n");
+    REQUIRE(key);
+    CHECK((*key)[0] == 0x00);
+    CHECK((*key)[10] == 0xaa);
+    CHECK((*key)[15] == 0xff);
+    CHECK(PlayerKeyText(*key) == "00112233445566778899aabbccddeeff");
+
+    const auto dir = std::filesystem::temp_directory_path() / "coop-player-key-test";
+    std::filesystem::remove_all(dir);
+    const auto file = dir / "player-key.txt";
+    std::string note;
+    const auto made = LoadPlayerKey(file, note);
+    CHECK(note.find("a new player key was made") == 0);
+    REQUIRE(std::filesystem::is_regular_file(file));
+    note.clear();
+    CHECK(LoadPlayerKey(file, note) == made);  // kept: the same key next time
+    CHECK(note.empty());
+    {
+        std::ofstream broken(file, std::ios::binary | std::ios::trunc);
+        broken << "not a key";
+    }
+    const auto again = LoadPlayerKey(file, note);
+    CHECK(again != made);  // a broken file gets a new one (16 random bytes: never the same)
+    CHECK(note.find("a new player key was made") == 0);
+    std::filesystem::remove_all(dir);
+}

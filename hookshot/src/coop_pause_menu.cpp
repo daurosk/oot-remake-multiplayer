@@ -77,7 +77,7 @@ const std::vector<Command>& Commands() {
         // The Lobby (docs/play-online.md "Lobby"): the same as the Lobby tab's buttons.
         {"/kick <player>", "The host only: takes that player out of the game. They can join again."},
         {"/ban <player>",
-         "The host only: takes that player out, and their name and address cannot join again until the host stops "
+         "The host only: takes that player out, and they cannot join again, under any name, until the host stops "
          "hosting."},
         {"/mute <player>",
          "The host: nobody hears that player's voice or sees their chat (the server stops passing them on); add "

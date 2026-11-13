@@ -200,7 +200,7 @@ std::vector<Tab::Line> Tab::Lines() const {
         action("Kick", confirm_ == Act::kKick ? "Press again to kick" : "", Act::kKick,
                "Takes them out of the game. They can join again.");
         action("Ban for this session", confirm_ == Act::kBan ? "Press again to ban" : "", Act::kBan,
-               "Takes them out; their name and address cannot join again until you stop hosting.");
+               "Takes them out; they cannot join again, under any name, until you stop hosting.");
     }
     return out;
 }

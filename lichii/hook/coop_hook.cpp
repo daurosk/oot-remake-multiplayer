@@ -258,6 +258,7 @@ public:
         config.hello.game_build_id = std::string(kGameBuildId);
         config.hello.game_version = std::string(kGameVersion);
         config.hello.nickname = settings_.name;
+        config.hello.player_key = settings_.player_key;
         config.join_password = settings_.password;
         client_ = std::make_unique<coop::net::Client>(std::move(config));
         if (!client_->start()) {
@@ -1976,6 +1977,21 @@ Coop* Get() {
 
 } // namespace
 
+// The Lobby (docs/protocol.md "Lobby"): the player's own key, from
+// player-key.txt beside coop.ini (made there once), so the host's mutes and
+// bans follow the player and not the name.
+static void WithPlayerKey(Settings& settings) {
+    if (settings.player_key) {
+        return;
+    }
+    std::string note;
+    settings.player_key =
+        LoadPlayerKey(Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "player-key.txt", note);
+    if (!note.empty()) {
+        LOG_INFO(Core, "coop: {}", note);
+    }
+}
+
 void Start() {
     std::lock_guard lock(g_mutex);
     if (g_started || g_shut_down) {
@@ -2015,6 +2031,7 @@ void Start() {
     if (g_chosen_color) {
         settings.color = *g_chosen_color;
     }
+    WithPlayerKey(settings);
     auto coop = std::make_unique<Coop>(std::move(settings));
     if (coop->Begin()) {
         g_coop = std::move(coop);
@@ -2060,6 +2077,7 @@ bool Begin(Settings settings) {
     if (g_chosen_color) {
         settings.color = *g_chosen_color;
     }
+    WithPlayerKey(settings);
     auto coop = std::make_unique<Coop>(std::move(settings));
     if (!coop->Begin()) {
         return false;

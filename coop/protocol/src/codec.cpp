@@ -231,6 +231,7 @@ Error encode_body(const Hello& m, Writer& w) {
     if (!valid_player(*m.previous_number)) return Error::bad_value;
     w.u8(*m.previous_number);
   }
+  if (m.player_key) w.bytes(m.player_key->data(), m.player_key->size());
   return Error::none;
 }
 
@@ -995,16 +996,23 @@ Error decode_body(Reader& r, Hello& m) {
   COOP_TRY(r.str(m.game_version, kMaxGameVersionChars));
   COOP_TRY(r.str(m.nickname, kMaxNicknameChars));
   if (m.nickname.empty()) return Error::bad_value;
-  // Nothing more, the key share, the previous number (protocol 10), or both
-  // in that order; anything else is trailing bytes.
-  if (r.left() == kKeyShareBytes || r.left() == kKeyShareBytes + 1) {
+  // Then, each when sent and in this order: the key share (32 bytes), the
+  // previous number (1, protocol 10), the player key (16, protocol 11). The
+  // sizes left tell them apart (0, 1, 16, 17, 32, 33, 48, 49); anything else
+  // is trailing bytes.
+  const auto left_is = [&](std::size_t a, std::size_t b) { return r.left() == a || r.left() == b; };
+  if (left_is(kKeyShareBytes, kKeyShareBytes + 1) ||
+      left_is(kKeyShareBytes + kPlayerKeyBytes, kKeyShareBytes + 1 + kPlayerKeyBytes)) {
     COOP_TRY(read_array(r, m.key_share.emplace()));
   }
-  if (r.left() == 1) {
+  if (left_is(1, 1 + kPlayerKeyBytes)) {
     std::uint8_t n = 0;
     COOP_READ(r.u8(n));
     if (!valid_player(n)) return Error::bad_value;
     m.previous_number = n;
+  }
+  if (r.left() == kPlayerKeyBytes) {
+    COOP_TRY(read_array(r, m.player_key.emplace()));
   }
   return Error::none;
 }

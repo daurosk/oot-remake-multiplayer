@@ -4966,3 +4966,106 @@ TEST_CASE("local players: seats' envelopes do not use up their game's own messag
   REQUIRE(got.size() == 1);
   CHECK(got[0].player_number == 1);
 }
+
+// --- The Lobby: by the player key (HELLO, protocol 11), not the name ---
+
+namespace {
+
+PlayerKey key_of(std::uint8_t n) {
+  PlayerKey k{};
+  k.fill(n);
+  return k;
+}
+
+// Connects and sends a HELLO with this player key; returns the REFUSED, if any.
+std::optional<Refused> join_keyed(Harness& h, ConnectionId id, const std::string& name, std::uint8_t key,
+                                  std::optional<std::uint32_t> address = std::nullopt) {
+  h.connect(id, address);
+  Hello hello = hello_from(name);
+  hello.player_key = key_of(key);
+  h.receive(id, hello, kChannelSession);
+  const auto refused = all_to<Refused>(h, id);
+  if (!refused.empty()) return refused.front();
+  REQUIRE_FALSE(all_to<Welcome>(h, id).empty());
+  return std::nullopt;
+}
+
+}  // namespace
+
+TEST_CASE("lobby: a muted player who comes back under another name, with the same key, is still muted") {
+  Harness h;
+  REQUIRE_FALSE(join_keyed(h, 1, "Link", 1));
+  REQUIRE_FALSE(join_keyed(h, 2, "Zelda", 2));
+  h.receive(1, LobbyAction{LobbyActionKind::mute_chat, 2}, kChannelSession);
+  h.session.disconnected(2, h.now);
+  h.collect();
+  h.clear();
+  REQUIRE_FALSE(join_keyed(h, 3, "NotZelda", 2));
+  h.clear();
+  h.receive(3, Chat{0, "new name"}, kChannelSession);
+  CHECK(h.to(1).empty());
+  CHECK(h.session.stats().chat_muted == 1);
+  // Someone else who takes the muted name, with their own key: not muted.
+  h.session.disconnected(3, h.now);
+  h.collect();
+  REQUIRE_FALSE(join_keyed(h, 4, "Zelda", 9));
+  h.clear();
+  h.receive(4, Chat{0, "hi"}, kChannelSession);
+  CHECK(all_to<Chat>(h, 1).size() == 1);
+}
+
+TEST_CASE("lobby: a ban follows the key: a new name does not get in, others behind the same router do") {
+  Harness h;
+  constexpr std::uint32_t kHome = 0x0A00A8C0;  // 192.168.0.10 in ENet's memory order
+  REQUIRE_FALSE(join_keyed(h, 1, "Link", 1));
+  REQUIRE_FALSE(join_keyed(h, 2, "Zelda", 2, kHome));
+  h.clear();
+  h.receive(1, LobbyAction{LobbyActionKind::ban, 2}, kChannelSession);
+  CHECK(h.session.player_count() == 1);
+  h.clear();
+  CHECK(join_keyed(h, 3, "Sheik", 2, kHome) == Refused{RefuseReason::banned});  // renamed: still out
+  h.clear();
+  CHECK_FALSE(join_keyed(h, 4, "Impa", 4, kHome));  // a housemate, own key: in (no address ban)
+  h.clear();
+  CHECK_FALSE(join_keyed(h, 5, "Zelda", 5));        // another player called Zelda: in
+  CHECK(h.session.stats().lobby_banned == 1);
+}
+
+TEST_CASE("lobby: over the relay (this PC's address) a ban follows the key too") {
+  Harness h;
+  constexpr std::uint32_t kLoopback = 0x0100007F;
+  REQUIRE_FALSE(join_keyed(h, 1, "Link", 1, kLoopback));
+  REQUIRE_FALSE(join_keyed(h, 2, "Zelda", 2, kLoopback));
+  h.receive(1, LobbyAction{LobbyActionKind::ban, 2}, kChannelSession);
+  h.clear();
+  CHECK(join_keyed(h, 3, "Sheik", 2, kLoopback) == Refused{RefuseReason::banned});
+  h.clear();
+  CHECK_FALSE(join_keyed(h, 4, "Saria", 3, kLoopback));
+}
+
+TEST_CASE("lobby: a split-screen seat is kicked alone, its game stays and is told, never the host's own seat") {
+  Harness h;
+  REQUIRE_FALSE(join_keyed(h, 1, "Link", 1));
+  REQUIRE_FALSE(join_keyed(h, 2, "Zelda", 2));
+  h.receive(2, LocalJoin{1, "Saria"}, kChannelSession);
+  h.receive(1, LocalJoin{1, "Mido"}, kChannelSession);
+  REQUIRE(h.session.player_count() == 4);
+  h.clear();
+  h.receive(1, LobbyAction{LobbyActionKind::kick, 4}, kChannelSession);  // Mido: the host's own seat
+  CHECK(all_to<LobbyResult>(h, 1) ==
+        std::vector<LobbyResult>{LobbyResult{LobbyActionKind::kick, 4, LobbyResultCode::is_host}});
+  h.clear();
+  h.receive(1, LobbyAction{LobbyActionKind::ban, 3}, kChannelSession);  // Saria, Zelda's seat
+  CHECK(h.session.player_count() == 3);
+  CHECK(h.dropped.empty());  // Zelda's game stays
+  CHECK(all_to<PlayerLeft>(h, 2) == std::vector<PlayerLeft>{PlayerLeft{3, LeaveReason::kicked}});
+  CHECK(all_to<PlayerLeft>(h, 1) == std::vector<PlayerLeft>{PlayerLeft{3, LeaveReason::kicked}});
+  // The banned seat cannot come back on that game, under any name.
+  h.clear();
+  h.receive(2, LocalJoin{1, "Ruto"}, kChannelSession);
+  CHECK(local_joined_to(h, 2).reason == RefuseReason::banned);
+  // Another seat of that game can.
+  h.clear();
+  h.receive(2, LocalJoin{2, "Ruto"}, kChannelSession);
+  CHECK(local_joined_to(h, 2).player_number != 0);
+}

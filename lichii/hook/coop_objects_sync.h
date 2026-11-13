@@ -196,6 +196,17 @@ bool IsRolled(std::string_view name);
 bool IsHatchingEgg(std::string_view name);
 bool IsHatchling(std::string_view name);
 
+// Boss minions (native boss sync, docs/dungeons-boss.md): an enemy a boss makes
+// in the fight (King Dodongo's babies, Big Octo's children). With native boss
+// sync every game's boss runs the same spawn action, so each would make its
+// own. Only the game that owns the boss (its maker, the nearest boss of that
+// name within kMinionReachM) keeps and shares them (OBJECT_SPAWN of a made
+// id, as a rolled enemy); the others delete their own and make the owner's.
+// No owner known for the maker: as before (matched by order, SceneSpawnId).
+// Empty when the name is no boss minion; else the maker's actor name.
+std::string_view MinionMaker(std::string_view name);
+inline constexpr float kMinionReachM = 40.0f;
+
 // A placed actor that may come into being in one game only, after the scene
 // loaded: the Gold Skulltula a player shakes out of a tree. Its owner names
 // it with OBJECT_SPAWN of its placed id; a game without that placement makes
@@ -752,6 +763,8 @@ private:
     // our scene whose Link is within kRollNearM of it (or whose place we do not
     // know), else us.
     std::uint8_t RollerFor(std::uint8_t self, const coop::protocol::Vec3& at, std::uint64_t now_us) const;
+    // The owner of the nearest `maker` within kMinionReachM of `at` (0: none known).
+    std::uint8_t MinionOwner(std::string_view maker, const coop::protocol::Vec3& at) const;
     // Eggs we owned that left the walk alive, waiting kHatchWindowUs for the
     // hatchling that came out of them.
     struct Egg {

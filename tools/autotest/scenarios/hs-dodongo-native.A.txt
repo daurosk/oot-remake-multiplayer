@@ -1,0 +1,67 @@
+# hs-dodongo-native (Hookshot, branch native-boss-dodongo): King Dodongo with native boss sync
+# (docs/dungeons-boss.md, "Native boss sync"): A owns him, B's copy takes A's brain and action verbs
+# through the game's own functions; his babies and fire are made only by A's game.
+# NEEDS a hookshot.exe whose hook table has rows 4 and 5 (hookshot/src/hos_coop_bosses.h); without them
+# the log says "native sync off ... not wrapped" and the run is INCONCLUSIVE.
+# Route: both warp into the boss rush's Dodongo room (DodongoStage: it places its own King Dodongo, as
+# gohma-sync's GohmaStage; no kit save is from before him). A throws a bomb into his mouth when he
+# inhales, three times; B throws its own bombs a little later. Fallback with a real save: Caleb's own
+# save before King Dodongo as a CALEB TEST (the boss room of DodongoCavern).
+# PASS (proof lines):
+#  1. Both: "coop: bosses: native sync on (brain verbs wrapped, action verbs wrapped)".
+#  2. A: "coop: bosses: Enemy_DungeonBoss_Dodongo: native boss sync on (BSA 0x..., ours)"; B the same with "a copy".
+#  3. B: "Enemy_DungeonBoss_Dodongo: the owner's verbs came (brain N): the copy's own brain is skipped from now".
+#  4. Every 10 s: A "ours sent N brain + N action verbs" growing; B "N own skipped, N brain + N action verbs put in"
+#     growing, and "N own minions not made" once he calls his babies.
+#  5. Babies: A "share" a made Enemy_DungeonBoss_Dodongo_SpawnBabyDodongo (OBJECT_SPAWN); B makes it as a copy;
+#     never two babies at one spot on B's screen (screenshots b-babies).
+#  6. Fire: one fire stream on both screens (DungeonBossDodongo_Bullet_*: "not made: a copy enemy's own shot" in B).
+#  7. Screenshots a-bomb1..3 / b-bomb1..2: the same action on both (walking, inhaling, rolling, stunned).
+#  8. A bomb swallowed on either screen stuns him on both; B's sword on the stunned head -> "share damage" in B
+#     and A's life for him falls. One death and one outro (Dm_DodongoCave_BossOut) for both.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 600
+mark start
+warp DodongoStage DodongoStage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-in
+give bombs
+wait 120
+assign Bomb
+wait 120
+mark a-ready
+wait 1800               # the intro, then he walks
+press ZL 10             # lock on to him
+wait 30
+press ZR                # pull a bomb
+wait 120
+hold ZL+LSTICK_UP 60    # toward his mouth
+press A                 # throw
+mark a-bomb1
+wait 1500
+press ZR
+wait 120
+hold ZL+LSTICK_UP 60
+press A
+mark a-bomb2
+wait 1500
+press ZR
+wait 120
+hold ZL+LSTICK_UP 60
+press A
+mark a-bomb3
+wait 1800
+mark a-babies
+wait 2400
+mark end

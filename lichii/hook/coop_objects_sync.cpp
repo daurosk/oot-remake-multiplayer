@@ -372,6 +372,16 @@ bool IsHatchling(std::string_view name) {
     return name == "Enemy_Gohma_Larva";
 }
 
+std::string_view MinionMaker(std::string_view name) {
+    // Made by the boss's own spawn action in the fight (Pack/Actor; the
+    // Dodongo's: its AI node ExecuteDungeonBossDodongoSpawnBaby). The parts a
+    // boss makes as it loads (Attention actors, Barinade's jellyfish, Morpha's
+    // tentacle) are each game's own and follow their root (PartRules).
+    if (name == "Enemy_DungeonBoss_Dodongo_SpawnBabyDodongo") return "Enemy_DungeonBoss_Dodongo";
+    if (name == "Enemy_Shabom_BigOctoChild") return "Enemy_MiddleBoss_BigOcto";
+    return {};
+}
+
 bool IsAnnounced(std::string_view name) {
     return name == "Enemy_Skulltula_Gold";
 }
@@ -617,6 +627,23 @@ std::uint8_t Sync::DeciderOf(std::uint8_t self, std::uint64_t now_us) const {
         }
     }
     return decider;
+}
+
+std::uint8_t Sync::MinionOwner(std::string_view maker, const proto::Vec3& at) const {
+    std::uint8_t owner = 0;
+    float best = kMinionReachM;
+    for (const auto& [address, o] : objects_) {
+        if (o.name != maker) {
+            continue;
+        }
+        const float d = Distance(o.position, at);
+        const auto own = owners_.find(o.id);
+        if (d <= best && own != owners_.end() && own->second.player != 0) {
+            best = d;
+            owner = own->second.player;
+        }
+    }
+    return owner;
 }
 
 std::uint8_t Sync::RollerFor(std::uint8_t self, const proto::Vec3& at, std::uint64_t now_us) const {
@@ -1433,6 +1460,33 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 }
                 continue;
             }
+        } else if (const std::string_view maker = MinionMaker(s->name);
+                   !maker.empty() && MinionOwner(maker, s->position) != 0) {
+            if (MinionOwner(maker, s->position) == self) {
+                // Our boss made it: share it (the others make it from this).
+                o.id = {proto::ObjectKind::made, self, ++made_counter_};
+                owners_[o.id] = {self, 0};
+                proto::ObjectSpawn spawn;
+                spawn.id = o.id;
+                spawn.actor = o.name;
+                spawn.state = StateOf(o, now_us);
+                send.emplace_back(std::move(spawn));
+            } else {
+                // Another game's boss: ours is a copy's own spawn (deleted),
+                // unless it is the owner's being made here, not yet bound.
+                const bool waiting = std::any_of(decided_.begin(), decided_.end(), [&](const auto& e) {
+                    const Decided& d = e.second;
+                    return d.address == 0 && !d.removed && d.name == s->name &&
+                           now_us - d.got_us < kCreateWaitUs && Distance(d.position, s->position) < kClaimDistance;
+                });
+                if (!waiting) {
+                    if (!refused_.contains(s->address)) {
+                        ++refused_count_;
+                    }
+                    refused.insert(s->address);
+                }
+                continue;
+            }
         } else if (IsHatchling(s->name) && Hatch(self, *s, send)) {
             // Out of an egg we own: shared as a made enemy.
             o.id = {proto::ObjectKind::made, self, ++made_counter_};
@@ -1904,7 +1958,8 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 continue;
             }
             if (made && (spawn->id.maker == self || spawn->id.maker == 0 ||
-                         !(IsRolled(spawn->actor) || IsHatchling(spawn->actor)))) {
+                         !(IsRolled(spawn->actor) || IsHatchling(spawn->actor) ||
+                           !MinionMaker(spawn->actor).empty()))) {
                 continue;
             }
             if (!made && (!IsAnnounced(spawn->actor) || find(spawn->id) != nullptr ||

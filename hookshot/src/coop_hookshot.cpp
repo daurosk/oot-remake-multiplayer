@@ -46,6 +46,7 @@
 #include "coop_hud.h"
 #include "coop_hud_hearts.h"
 #include "coop_live_events.h"
+#include "coop_objects_sync.h"
 #include "coop_png.h"
 #include "coop_puppet.h"
 #include "coop_puppet_config.h"
@@ -298,9 +299,9 @@ void LogBossNative() {
     said_ms = now;
     said = c;
     LOG_INFO(Core, "coop: bosses: ours sent {} brain + {} action verbs ({} by plug); copies: {} own skipped, {} brain + "
-                   "{} action verbs put in ({} waited for a node), {} busy",
+                   "{} action verbs put in ({} waited for a node), {} own minions not made, {} busy",
              c.owner_brain, c.owner_action, c.plug_actions, c.copy_skipped, c.brain_applied, c.action_applied,
-             c.action_waiting, c.busy);
+             c.action_waiting, c.minions_stopped, c.busy);
 }
 
 void RunCalls(void* ctx) {
@@ -837,7 +838,9 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         const std::uint64_t shooter = std::exchange(t_shooter, 0);
         const bool shot = e.from != 0 && e.from == CoopRuntime::MainBase() + kShootCreateReturn;
         t_create_stop = !t_own_call && name[0] != 0 &&
-                        CoopEnemyShots::StopAtCreate(name, {place[0], place[1], place[2]}, shot ? shooter : 0);
+                        (CoopEnemyShots::StopAtCreate(name, {place[0], place[1], place[2]}, shot ? shooter : 0) ||
+                         // Native boss sync: a copy boss's own minion (the owner's comes as a copy).
+                         CoopBossNative::TheTable().CopyMakes(CoopObjects::MinionMaker(name)));
         if (t_create_stop) {
             e.flags |= CoopActorEvents::kStopped;
         }

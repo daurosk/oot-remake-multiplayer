@@ -238,6 +238,23 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool own) {
     return true;
 }
 
+bool Table::CopyMakes(std::string_view maker) {
+    if (maker.empty()) {
+        return false;
+    }
+    std::unique_lock lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock() || !brain_on_) {
+        return false;
+    }
+    for (const auto& [bsa, e] : by_bsa_) {
+        if (e.name == maker && e.role == Role::copy && e.wanted) {
+            ++counts_.minions_stopped;
+            return true;
+        }
+    }
+    return false;
+}
+
 std::optional<BossBsa> Table::OwnerState(std::uint64_t actor) const {
     std::lock_guard lock(mutex_);
     const Entry* e = FindActor(actor);

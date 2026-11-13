@@ -239,3 +239,17 @@ TEST_CASE("native boss: the request block is asked again for a new game, not for
     CHECK(c->function == kMain + 0x100000 + addr::kMalloc);
     CHECK(addr::kActionTaken == 0);  // (a skipped request answers as a taken one: hookshot's wrap 5)
 }
+
+TEST_CASE("native boss: a copy boss's own minion is not made, the owner's own is") {
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Boss{kActor, kBsa, Role::copy, "Enemy_DungeonBoss_Dodongo"}});
+    CHECK_FALSE(t.CopyMakes("Enemy_DungeonBoss_Dodongo"));  // no owner's verbs yet: as before
+    t.Receive(kActor, BossBsa{1, 2, false, std::nullopt});
+    CHECK(t.CopyMakes("Enemy_DungeonBoss_Dodongo"));
+    CHECK_FALSE(t.CopyMakes("Enemy_DungeonBoss_Gohma"));
+    CHECK_FALSE(t.CopyMakes(""));  // (no minion)
+    CHECK(t.Totals().minions_stopped == 1);
+    t.Publish({Boss{kActor, kBsa, Role::owner, "Enemy_DungeonBoss_Dodongo"}});
+    CHECK_FALSE(t.CopyMakes("Enemy_DungeonBoss_Dodongo"));
+}

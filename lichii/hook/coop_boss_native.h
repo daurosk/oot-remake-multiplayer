@@ -28,6 +28,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
@@ -96,6 +97,7 @@ struct Counts {
     std::uint64_t action_applied = 0; // owner's actions put into a copy
     std::uint64_t action_waiting = 0; // owner's actions waiting for the copy's own node
     std::uint64_t busy = 0;           // a wrap that found the table busy (the game ran its own)
+    std::uint64_t minions_stopped = 0; // a copy boss's own minion not made (the owner's comes)
 };
 
 class Table {
@@ -116,6 +118,11 @@ public:
     // a busy table lets the game run its own.
     bool OnBrainVerb(std::uint64_t bsa, std::int32_t verb, bool force, bool own);
     bool OnActionVerb(std::uint64_t bsa, const Request& request, bool own);
+
+    // A create request (any game thread): true when a boss named `maker` is a
+    // copy here that takes its owner's verbs, so its own minion is not made
+    // (the owner's comes as a copy; CoopObjects::MinionMaker). Never blocks.
+    bool CopyMakes(std::string_view maker);
 
     // The owner's state to send for one of our bosses; nothing before its
     // first change was seen.

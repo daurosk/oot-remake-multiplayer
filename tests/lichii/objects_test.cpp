@@ -2,6 +2,8 @@
 // No emulator code: each walk is a list of actors.
 #include <doctest/doctest.h>
 
+#include <ostream>  // doctest prints string_view through it
+
 #include <cstring>
 #include <array>
 #include <optional>
@@ -3403,4 +3405,53 @@ TEST_CASE("objects: an event's townsperson is let go kEventNpcKeepUs after the e
     REQUIRE(flags);
     CHECK((*flags & kTargeting) == 0);
     CHECK(sync.OwnerAt(0x999) == 0);
+}
+
+TEST_CASE("objects: a boss's minion is made by the game that owns the boss, the others make that one (native boss sync)") {
+    const std::string dodongo = "Enemy_DungeonBoss_Dodongo";
+    const std::string baby = "Enemy_DungeonBoss_Dodongo_SpawnBabyDodongo";
+    CHECK(CoopObjects::MinionMaker(baby) == dodongo);
+    CHECK(CoopObjects::MinionMaker("Enemy_Shabom_BigOctoChild") == "Enemy_MiddleBoss_BigOcto");
+    CHECK(CoopObjects::MinionMaker("Enemy_DungeonBoss_Dodongo_Attention").empty());  // made by each game's boss
+    CHECK(CoopObjects::MinionMaker("Enemy_Stalchild").empty());
+
+    // A owns King Dodongo: its baby is shared as a made id.
+    Sync a;
+    Seen boss_a = Enemy(0x100, 0x77, 40, 0.0f, dodongo);
+    Tick(a, 0, {boss_a}, 1);
+    const proto::ObjectId boss_id = *a.IdOf(0x100);
+    Own(a, boss_id, 1);
+    Tick(a, 50 * kMs, {boss_a}, 1);  // (the owner is known long before a baby comes)
+    const Step made = Tick(a, 100 * kMs, {boss_a, Enemy(0x110, ~0ULL, 4, 5.0f, baby)}, 1);
+    const auto spawns = All<proto::ObjectSpawn>(made);
+    REQUIRE(spawns.size() == 1);
+    CHECK(spawns[0].id.kind == proto::ObjectKind::made);
+    CHECK(spawns[0].id.maker == 1);
+    CHECK(spawns[0].actor == baby);
+    CHECK(a.Removes().empty());
+
+    // B's copy of the boss (owned by A) makes its own baby too: deleted, not shared.
+    Sync b;
+    Seen boss_b = Enemy(0x200, 0x77, 40, 0.0f, dodongo);
+    Tick(b, 0, {boss_b}, 2);
+    Own(b, boss_id, 1);
+    Tick(b, 50 * kMs, {boss_b}, 2);
+    const Step own = Tick(b, 100 * kMs, {boss_b, Enemy(0x210, ~0ULL, 4, 5.2f, baby)}, 2);
+    CHECK(All<proto::ObjectSpawn>(own).empty());
+    CHECK_FALSE(b.IdOf(0x210));
+    CHECK(b.Removes() == std::vector<std::uint64_t>{0x210});
+    // A's spawn reaches B: B makes A's baby.
+    b.Receive(spawns[0]);
+    Tick(b, 150 * kMs, {boss_b}, 2);
+    const auto creates = b.Creates();
+    REQUIRE(creates.size() == 1);
+    CHECK(creates[0].name == baby);
+    CHECK(b.OwnerOf(spawns[0].id) == 1);
+
+    // No owner known for the boss: as before (matched by order, a placed id).
+    Sync c;
+    const Step lone = Tick(c, 100 * kMs, {Enemy(0x310, ~0ULL, 4, 5.0f, baby)}, 1);
+    CHECK(All<proto::ObjectSpawn>(lone).empty());
+    REQUIRE(c.IdOf(0x310));
+    CHECK(c.IdOf(0x310)->kind == proto::ObjectKind::placed);
 }

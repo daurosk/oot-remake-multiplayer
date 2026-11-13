@@ -394,6 +394,19 @@ if ($gpl) { Write-Host $gpl }
 # Built-in graphics only: point to the 30 FPS button (docs/setup.md, "Low frame rate").
 $speed = Get-GpuSpeedHint $cardQuery
 if ($speed) { Write-Host $speed }
+# No puppet pack, or an old one: made now, before the start, so the other players can be seen (puppet-pack.ps1,
+# what make-puppet-pack.cmd runs: it finds the game files in the emulator's game list, else asks once). A pack
+# that cannot be made is said, and the game starts anyway (the others show as markers).
+$packJson = Join-Path (Get-KitLoadDir $user) '0400486024DEC000\coop-puppet\coop_puppet.json'
+if (Test-KitPuppetPackStale $packJson (Join-Path $kit 'tools\puppet_pack')) {
+    Write-Host 'The puppet pack (how you see the other players) is missing or old: making it now (about a minute) ...'
+    $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+    & $ps -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'puppet-pack.ps1')
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host 'The puppet pack could not be made (above: why). The game starts; the other players show only as markers.'
+        Wait-AnyKey 30
+    }
+}
 # The pack hints, your own tunic (#202), the puppets off without a pack (kit-paths.ps1, the same for Hookshot above).
 [void](Use-KitPuppetPack (Join-Path (Get-KitLoadDir $user) '0400486024DEC000\coop-puppet\coop_puppet.json') (Join-Path $kit 'tools\puppet_pack') @(
     'Puppet pack: not made yet, so the other players show only as markers.',

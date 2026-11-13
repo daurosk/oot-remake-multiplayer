@@ -530,7 +530,8 @@ function Get-KitHookshotStamp([string]$Kit) {
 #   'game'    no game built yet (the first build, 10 to 45 minutes)
 #   'pin'     the kit moved to another Hookshot release or pin (a full game build, about 15 minutes)
 #   'patches' the co-op patches changed (the game built again, only what changed: a few minutes)
-#   'module'  the co-op module or the puppet pack tool changed (co-op put in again: seconds to a minute)
+#   'module'  the co-op module changed, or the puppet pack is missing or stale (co-op and the pack put in
+#             again: seconds to a minute; without a pack the other players cannot be shown)
 #   ''        nothing: start the game
 function Get-KitHookshotNeed([string]$Kit) {
     $game = Get-KitHookshotGame $Kit
@@ -539,7 +540,8 @@ function Get-KitHookshotNeed([string]$Kit) {
     $stampFile = Join-Path $game 'coop-built-from.txt'
     $have = if (Test-Path -LiteralPath $stampFile) { [System.IO.File]::ReadAllText($stampFile) } else { '' }
     $want = Get-KitHookshotStamp $Kit
-    if ($want -and $have -ne $want) {
+    if (-not $want) { return '' }   # (a kit without hookshot\PIN or TOOLS.txt cannot build: nothing to do here)
+    if ($have -ne $want) {
         $base = { param($s) (@($s -split "`n") | Where-Object { $_ -match '^(release|commit)=' }) -join "`n" }
         if ((& $base $have) -ne (& $base $want)) { return 'pin' }
         return 'patches'
@@ -554,8 +556,16 @@ function Get-KitHookshotNeed([string]$Kit) {
         }
     }
     $manifest = Join-Path $exeDir 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json'
-    if ((Test-Path -LiteralPath $manifest) -and (Get-PuppetPackHint $manifest (Join-Path $Kit 'tools\puppet_pack'))) { return 'module' }
+    if (Test-KitPuppetPackStale $manifest (Join-Path $Kit 'tools\puppet_pack')) { return 'module' }
     return ''
+}
+
+# A puppet pack to make (again) before the game starts: none there, or one Get-PuppetPackHint calls old (no sound,
+# no tunics, another pack tool). Without it the other players cannot be shown (a player report: "in game but we
+# can't see each other"), so the launchers make it themselves, for the emulator and Hookshot alike.
+function Test-KitPuppetPackStale([string]$Manifest, [string]$ToolDir) {
+    if (-not (Test-Path -LiteralPath $Manifest)) { return $true }
+    return [bool](Get-PuppetPackHint $Manifest $ToolDir)
 }
 
 # The line said before Build-Hookshot-Coop runs by itself for that need.
@@ -564,7 +574,7 @@ function Get-KitHookshotNeedText([string]$Need) {
         'game' { 'The Hookshot game is not built yet: building it now from your game (10 to 45 minutes, once; the PC stays usable).' }
         'pin' { 'This update moves to a new Hookshot: updating the game (about 15 minutes; the PC stays usable).' }
         'patches' { 'This update changes the Hookshot game a little: updating it (a few minutes).' }
-        'module' { 'Putting the updated co-op into the Hookshot game (seconds to a minute).' }
+        'module' { 'Putting the updated co-op and the puppet pack into the Hookshot game (seconds to a minute).' }
         default { '' }
     }
 }

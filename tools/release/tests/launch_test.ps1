@@ -532,6 +532,9 @@ try {
     Write-File (Join-Path $g 'hookshot.exe') 'exe'
     Write-File (Join-Path $g 'coop-built-from.txt') (Get-KitHookshotStamp $hk)
     Write-File (Join-Path $g 'hookshot_coop.dll') 'MODULE 1'
+    Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: no puppet pack -> module (the pack is made)'
+    $pack = Join-Path $g 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json'
+    Write-File $pack '{"sound": true, "tunics": {"red": ["x"]}}'
     Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: the game as the kit wants it -> nothing'
     Write-File (Join-Path $hk 'hookshot\hookshot_coop.dll') 'MODULE 2'
     Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: a new module -> module (seconds)'
@@ -542,10 +545,12 @@ try {
     Write-File (Join-Path $hk 'hookshot\PIN') "repo=x`ncommit=0000000000000000000000000000000000000000`n"
     Check ((Get-KitHookshotNeed $hk) -eq 'pin') 'hookshot need: another pin -> pin (a full build)'
     Write-File (Join-Path $hk 'hookshot\PIN') "repo=x`ncommit=4aee23659b9436dab2cd7be1ac07333c06246b7c`n"
-    Write-File (Join-Path $g 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') '{"sound": false}'
+    Write-File $pack '{"sound": false}'
     Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: a pack the kit would make again -> module'
-    Remove-Item -LiteralPath (Join-Path $g 'mods') -Recurse -Force
+    Write-File $pack '{"sound": true, "tunics": {"red": ["x"]}}'
     Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: up to date again'
+    Check ((Test-KitPuppetPackStale (Join-Path $hk 'none\coop_puppet.json') (Join-Path $hk 'no-tool')) -and
+        -not (Test-KitPuppetPackStale $pack (Join-Path $hk 'no-tool'))) 'pack stale: a missing pack yes, a current one no'
     # the game somewhere else (hs.py, -Out): game-folder.txt, and a builder's bin\ layout
     $other = Join-Path $hk 'elsewhere'
     Write-File (Join-Path $hk 'hookshot\game-folder.txt') "$other`n"

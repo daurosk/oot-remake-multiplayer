@@ -1282,8 +1282,13 @@ public:
                     world_.ForgetKept();
                 }
             }
-            // door-unlock: opened locks stay and get a lent key, unless asked otherwise.
-            static const bool delete_locks = EnvFlag("LICHII_COOP_LOCK_DELETE");
+            // A lock another player opened is deleted here, as before door-unlock. Keeping it with a lent
+            // key (LICHII_COOP_LOCK_DELETE=0) is off: in a two-game run the lent key was shared to the
+            // other players as a found key, so the group ended with more keys than it had.
+            static const bool delete_locks = [] {
+                const char* v = std::getenv("LICHII_COOP_LOCK_DELETE");
+                return v == nullptr || std::string_view(v) != "0";
+            }();
             world_.SetDeleteLocks(delete_locks);
             world_.Tick(*scene, self, server_now_us, seen, player_, world);
             for (auto& m : world.send) {

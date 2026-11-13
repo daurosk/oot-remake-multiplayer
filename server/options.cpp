@@ -93,6 +93,17 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
         line.allowed.push_back(*r);
         start = comma + 1;
       }
+    } else if (arg == "--owner") {
+      const std::string value = has_value ? args[i + 1] : std::string();
+      if (value == "nearest") {
+        line.owner_nearest = true;
+      } else if (value == "classic") {
+        line.owner_nearest = false;
+      } else {
+        error = "--owner needs nearest or classic";
+        return std::nullopt;
+      }
+      ++i;
     } else if (arg == "--pvp") {
       const std::string value = has_value ? args[i + 1] : std::string();
       if (value == "on" || value == "1" || value == "yes") {
@@ -211,6 +222,9 @@ const char* usage() {
          "                   and Cloudflare's free ones)\n"
          "  --join ADDRESS:PORT [--game-port N]  Join.bat's helper for an invite\n"
          "                   code: the game connects to 127.0.0.1:N (27512)\n"
+         "  --owner nearest|classic  nearest: an enemy belongs to the game of the\n"
+         "                   player nearest it, in a fight too, so it goes for\n"
+         "                   that player; classic (default): the fight keeps it\n"
          "  --pvp on|off     players can hurt each other (default: off); the\n"
          "                   host can change it in the game with /pvp\n";
 }

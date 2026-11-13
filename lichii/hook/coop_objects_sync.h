@@ -125,6 +125,19 @@ bool IsShared(std::string_view name);
 // own. Any thread; meant to be set once, before sharing starts.
 void ShareFriendly(bool on);
 
+// Every enemy's AS slots, not only a boss's (off by default: the emulator
+// build's behaviour). An enemy's body animation is not all in slot 0: a
+// Stalchild walks on slots 1 and 2 ("Wait" / "WaitUpper", "WalkUpper") and
+// uses slot 0 only for whole-body one-shots ("Appear", "NoWeaponAttack"),
+// after which slot 0 plays nothing. With only slot 0 copied, and the copy's
+// own AI left out (the NX2navi port), a copy kept the last one-shot for good
+// and slid about in it. On: the owner sends every slot of an Enemy_ actor,
+// empty ones too; a copy plays each on its slot, an empty name clears the
+// slot, and no frame is set (the word the notes took for the frame does not
+// run with the animation). Any thread; meant to be set once, before sharing.
+void EnemySlots(bool on);
+bool EnemySlots();
+
 // A puzzle or minigame each game runs on its own (issues 149, 151): the Scrub Brothers
 // (hit 2, 3, 1), the Lost Woods stage scrubs, and the fishing pond's owner.
 // Their state is kept in the game's own code from its own player; only the

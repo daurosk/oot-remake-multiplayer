@@ -369,6 +369,9 @@ void Configure(const Options& options, void (*log)(const char* line)) {
     CoopPuppet::PlannerSettings settings;
     settings.debug = options.test_puppet;
     settings.debug_anim = options.debug_anim;
+    // Always the plain puppet: this port's pack has no tunic colours (the shared code would ask
+    // for CoopPuppet_<Age>_<Colour> six times, about 20 s, before it fell back to the plain one).
+    settings.tunics = false;
     CoopPuppet::Configure(std::move(settings), options.verbose, [](const std::string& line) {
         if (g_log != nullptr) {
             // The director's lines start with "coop: "; the DLL's log adds that itself.

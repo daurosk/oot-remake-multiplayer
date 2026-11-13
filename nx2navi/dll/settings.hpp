@@ -15,7 +15,10 @@ namespace CoopNx2navi {
 
 struct Settings {
     CoopHook::Settings coop;      // server, port, name, password
-    bool share_progress = false;  // items and flags; off unless the file says 1
+    // Shared progress and world state (progress.hpp): items, songs, keys, chests, one-time
+    // pickups, dungeon switches, doors, cleared rooms, story flags, as the emulator build shares
+    // them. On unless the file says 0 (since coop-dll 0.9).
+    bool share_progress = true;
     // The in-game panel and chat box, in a game with NX2navi's plugin
     // interface (overlay.hpp); on unless the file says 0.
     bool overlay = true;
@@ -43,6 +46,15 @@ struct Settings {
     // nothing.
     int objects_ai_hold = 3;
     bool objects_world = true;  // objects_world = 0: no field-grass game calls
+    // The join password of a session whose host set none. The shared server and protocol give
+    // every session one (it lets players in and makes the traffic keys), so "no password" on
+    // the home network is this fixed, public word on both sides: the host's server is started
+    // with it and a joiner whose password is empty sends it. Anyone who can reach the host's
+    // address and port can then join; a host who sets a password of its own is as before.
+    static constexpr const char* kOpenPassword = "oot-coop-open";
+    static std::string JoinPassword(const std::string& typed) {
+        return typed.empty() ? std::string(kOpenPassword) : typed;
+    }
     // time = 0: each game keeps its own clock. On: every game shows the host's time of day
     // (lichii/hook/coop_time, docs/time.md). Needs objects = 1 (the frame step's callers).
     bool time = true;

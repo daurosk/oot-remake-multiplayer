@@ -28,6 +28,9 @@
 
 #include "mp_saves.hpp"
 #include "overlay_model.hpp"
+#include "steam_menu.hpp"
+#include "steam_model.hpp"
+#include "steam_net.hpp"
 #include "third_party/plugin_api.h"
 
 namespace CoopNx2navi::TitleMenu {
@@ -108,6 +111,7 @@ Menu::State g_state;
 Menu::FlatJson g_settings;
 bool g_registered = false;
 bool g_open = false;
+std::atomic<bool> g_page_shown{false};  // g_open, for PageOpen
 bool g_dirty = false;         // the page shows something older than the state
 bool g_label_stale = false;   // the title entry's text is in the other language
 int g_title = 0;
@@ -172,6 +176,57 @@ int g_typing_forced = 0;  // 0 by the device, 1 always ours (pad), 2 always the 
 bool g_replace_pages = false;
 std::uint64_t g_replacing_until_ms = 0;  // a page is being replaced: updates wait
 
+// --- Over Steam (steam_net.hpp, steam_menu.hpp) ---
+
+// What can be said of Steam without signing in, looked up when the page opens.
+Menu::SteamAvail g_steam_precheck = Menu::SteamAvail::old_game;
+std::uint64_t g_steam_synced_ms = 0;
+
+// Under g_m: what steam_net.hpp knows, into the pages. True when a page shows
+// something else for it.
+bool SyncSteam() {
+    const SteamNet::View v = SteamNet::Get();
+    std::vector<std::string> members;
+    for (const SteamNet::Member& m : v.members) {
+        members.push_back(m.name);
+    }
+    std::vector<Menu::SteamInvite> invites;
+    for (const SteamNet::Invitation& i : v.invites) {
+        invites.push_back({i.from, i.room});
+    }
+    const bool hosting = v.owner && v.link == SteamNet::Link::ready;
+    static bool said = false;
+    if (hosting != said) {
+        // Counts only: a room's id, a Steam id and a friend's name are never logged.
+        said = hosting;
+        if (hosting) {
+            Log("menu: Host over Steam shows the room's ID (%u characters), %u player%s and %u friend%s to invite",
+                static_cast<unsigned>(v.room.size()), static_cast<unsigned>(v.members.size()),
+                v.members.size() == 1 ? "" : "s", static_cast<unsigned>(v.friends), v.friends == 1 ? "" : "s");
+        }
+    }
+    return Menu::SteamPages::Update(g_state, v.started ? v.avail : g_steam_precheck, v.name,
+                                    hosting ? v.room : std::string(), hosting ? std::move(members)
+                                                                              : std::vector<std::string>(),
+                                    hosting ? SteamNet::Friends() : std::vector<Menu::SteamFriend>(),
+                                    std::move(invites));
+}
+
+std::string ClipboardText() {
+    std::string out;
+    if (!OpenClipboard(nullptr)) {
+        return out;
+    }
+    if (const HANDLE data = GetClipboardData(CF_UNICODETEXT)) {
+        if (const auto* text = static_cast<const wchar_t*>(GlobalLock(data))) {
+            out = Utf8(std::wstring(text, wcsnlen(text, 64)));
+            GlobalUnlock(data);
+        }
+    }
+    CloseClipboard();
+    return out;
+}
+
 // --- Settings ---
 
 std::filesystem::path GameSaveDir();
@@ -186,6 +241,12 @@ void SaveSettings() {
     // language is the game's; "language" overrides it, written by hand).
     g_settings.Erase("menu_language");
     g_settings.Erase("menu_language_game");
+    // The name typed on a Steam page; without it the Steam name is used.
+    if (g_state.steam.own_name.empty()) {
+        g_settings.Erase("steam_name");
+    } else {
+        g_settings.SetString("steam_name", g_state.steam.own_name);
+    }
     const auto keep = [](const char* plain, const char* kept, const std::string& password) {
         // Only when it differs from the add-on's clear one: that one stays the add-on's.
         if (g_settings.String(plain).value_or("") == password) {
@@ -489,6 +550,14 @@ void LoadSettings() {
     g_state.saves_on = NX2_HAS(g_api, Nx2PluginApi, restart) && g_api->restart != nullptr &&
                        Environment(L"OOT_COOP_MP_SAVES") != "0";
     g_state.save = g_settings.String("mp_save").value_or("");
+    // Over Steam: the name typed for it, and whether Steam can be used at all.
+    g_state.steam.own_name = g_settings.String("steam_name").value_or("");
+    if (!Menu::ValidName(g_state.steam.own_name)) {
+        g_state.steam.own_name.clear();
+    }
+    SteamNet::Init(g_api, g_log.load());
+    g_steam_precheck = SteamNet::Precheck();
+    SyncSteam();
 
     // The game's language, unless the player chose one on the page.
     const Nx2GameInfo* info = g_api->game_info();
@@ -508,7 +577,7 @@ void LoadSettings() {
 #if NX2_PLUGIN_API_VERSION >= 5
     // Interface version 5 says the language the game runs in ("fr", "fr-CA",
     // "en-US", ...): that, not our own reading of the settings.
-    if (info != nullptr && info->size == sizeof(Nx2GameInfo) && info->language != nullptr &&
+    if (info != nullptr && NX2_HAS(info, Nx2GameInfo, language) && info->language != nullptr &&
         *info->language != 0) {
         game = Menu::LangFromCode(info->language);
     }
@@ -676,6 +745,29 @@ void OnFrame(const Nx2Frame*, void*) {
     bool close = false;
     {
         std::lock_guard lock(g_m);
+        if (g_open && NowMs() - g_steam_synced_ms >= 250) {
+            // The room, its players, the friends and the invitations as they are now.
+            g_steam_synced_ms = NowMs();
+            if (SyncSteam() && g_state.editing == Menu::Field::none) {
+                g_dirty = true;
+            }
+            // An invitation accepted in Steam's own window: joined as if chosen here.
+            if (const std::string asked = SteamNet::TakeAsked();
+                !asked.empty() && !g_request && g_state.editing == Menu::Field::none &&
+                (g_state.phase == Menu::Phase::idle || g_state.phase == Menu::Phase::failed)) {
+                Request request;
+                request.steam = true;
+                request.name = Menu::SteamPages::PlayerName(g_state);
+                request.room = asked;
+                g_state.steam.room = asked;
+                g_state.page = Menu::Page::steam_join;
+                g_state.phase = Menu::Phase::connecting;
+                g_state.message = Menu::T(g_state.lang, Menu::Text::steam_entering);
+                Log("menu: an invitation accepted in Steam: joining its room");
+                g_request = std::move(request);
+                g_dirty = true;
+            }
+        }
         refresh = g_open && g_dirty;
         if (g_open && g_close_at_ms != 0 && NowMs() >= g_close_at_ms) {
             g_close_at_ms = 0;
@@ -811,6 +903,11 @@ void OnEvent(const Nx2MenuEvent* event, void*) {
     bool close = false;
     bool relabel = false;
     std::string copy;
+    std::string copy_room;      // over Steam: the hosted room's id, never logged
+    bool paste_room = false;
+    bool steam_start = false;   // a Steam page opened: sign in
+    bool steam_idle = false;    // the page closed: sign out unless a session needs Steam
+    std::uint64_t invite_id = 0;
     std::vector<int> gone;
     {
         std::lock_guard lock(g_m);
@@ -830,12 +927,6 @@ void OnEvent(const Nx2MenuEvent* event, void*) {
                 request.name = g_state.name;
                 request.port = static_cast<std::uint16_t>(std::strtol(g_state.port.c_str(), nullptr, 10));
                 if (request.host) {
-                    if (g_state.host_password.empty()) {
-                        // The server starts only with a join password (it encrypts the traffic).
-                        std::random_device random;
-                        g_state.host_password = Menu::NewPassword((static_cast<std::uint64_t>(random()) << 32) | random());
-                        Log("menu: no join password was set: a new one was made (the Host page shows it)");
-                    }
                     request.password = g_state.host_password;
                     g_state.phase = Menu::Phase::starting_server;
                     if (g_state.saves_on) {
@@ -858,6 +949,35 @@ void OnEvent(const Nx2MenuEvent* event, void*) {
                 g_request = std::move(request);
                 break;
             }
+            case Menu::Action::steam_open: steam_start = true; break;
+            case Menu::Action::start_steam_host:
+            case Menu::Action::start_steam_join: {
+                Request request;
+                request.steam = true;
+                request.host = action == Menu::Action::start_steam_host;
+                request.name = Menu::SteamPages::PlayerName(g_state);
+                if (request.host) {
+                    g_state.phase = Menu::Phase::starting_server;
+                    if (g_state.saves_on) {
+                        request.save = g_state.save;
+                        const Menu::SaveInfo* chosen = Menu::FindSave(g_state, g_state.save);
+                        request.save_empty = chosen != nullptr && chosen->empty;
+                    }
+                } else {
+                    request.room = g_state.steam.join_room;
+                    g_state.phase = Menu::Phase::connecting;
+                    g_state.message = Menu::T(g_state.lang, Menu::Text::steam_entering);
+                }
+                SaveSettings();
+                Log("menu: %s over Steam chosen (name '%s'%s%s%s)", request.host ? "Start" : "Join",
+                    request.name.c_str(), request.save.empty() ? "" : ", multiplayer save '",
+                    request.save.c_str(), request.save.empty() ? "" : "'");
+                g_request = std::move(request);
+                break;
+            }
+            case Menu::Action::copy_room: copy_room = g_state.steam.hosted_room; break;
+            case Menu::Action::paste_room: paste_room = true; break;
+            case Menu::Action::invite_friend: invite_id = g_state.steam.invite_id; break;
             case Menu::Action::copy_address:
                 if (!g_state.addresses.empty()) {
                     copy = g_state.addresses[g_state.address_shown % g_state.addresses.size()].address;
@@ -922,8 +1042,10 @@ void OnEvent(const Nx2MenuEvent* event, void*) {
             }
             Menu::Closed(g_state);
             g_open = false;
+            g_page_shown = false;
             g_close_at_ms = 0;
             gone = TakePageCallbacks();
+            steam_idle = !g_request.has_value();
             if (g_label_stale && g_title > 0) {
                 // The title entry in the language just chosen.
                 gone.push_back(g_title);
@@ -946,6 +1068,31 @@ void OnEvent(const Nx2MenuEvent* event, void*) {
         const bool ok = CopyToClipboard(copy);
         Log("menu: address %s %s", copy.c_str(), ok ? "copied to the clipboard" : "shown (the clipboard refused it)");
     }
+    if (steam_start) {
+        SteamNet::Start();
+        std::lock_guard lock(g_m);
+        SyncSteam();
+    }
+    if (!copy_room.empty()) {
+        const bool ok = CopyToClipboard(copy_room);
+        Log("menu: the room ID was %s", ok ? "copied to the clipboard" : "not taken by the clipboard");
+        std::lock_guard lock(g_m);
+        Menu::SteamPages::Copied(g_state, ok);
+    }
+    if (paste_room) {
+        const std::string text = ClipboardText();
+        std::lock_guard lock(g_m);
+        Menu::SteamPages::Pasted(g_state, text);
+        Log("menu: paste: the clipboard %s", g_state.steam.room.empty() ? "holds no room ID" : "gave a room ID");
+    }
+    if (invite_id != 0) {
+        const bool ok = SteamNet::Invite(invite_id);
+        std::lock_guard lock(g_m);
+        Menu::SteamPages::Invited(g_state, ok);
+    }
+    if (steam_idle) {
+        SteamNet::StopIfIdle();
+    }
     if (replace && Replace()) {
         refresh = false;
     }
@@ -967,12 +1114,15 @@ void OnSelect(void*) {
         }
         Menu::Closed(g_state);
         LoadSaves();
+        g_steam_precheck = SteamNet::Precheck();
+        SyncSteam();
         Build(b);
     }
     const int opened = g_api->open_menu(&b.menu);
     std::lock_guard lock(g_m);
     if (opened == 1) {
         g_open = true;
+        g_page_shown = true;
         g_dirty = false;
         g_close_at_ms = 0;
         AddPageCallbacks();
@@ -1047,6 +1197,10 @@ void Close() {
     api->close_menu();
 }
 
+bool PageOpen() {
+    return g_page_shown.load(std::memory_order_relaxed);
+}
+
 Menu::Lang Language() {
     std::lock_guard lock(g_m);
     return g_state.lang;
@@ -1069,6 +1223,7 @@ void Shutdown() {
         }
         g_registered = false;
         g_open = false;
+        g_page_shown = false;
     }
     for (const int handle : gone) {
         g_api->remove(handle);

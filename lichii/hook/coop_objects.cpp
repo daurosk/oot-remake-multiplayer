@@ -679,7 +679,23 @@ public:
             const float frame =
                 FrameAfter(p.frame, rate, static_cast<std::int64_t>(since) * 1000);
             const std::string slot_name = SlotName(guest, controller, p.slot);
-            if (slot_name == p.name) {
+            if (EnemySlots()) {
+                // EnemySlots: the owner's commands are followed as they change. A one-shot
+                // ("NoWeaponAttack") leaves its name in the slot when it has ended, on the
+                // owner as on the copy, so the name alone does not say that the owner
+                // plays it AGAIN: the owner's slot going from another name (or none) to
+                // this one does. An empty wish plays nothing (the ended one-shot gives
+                // the body back to the other slots by itself). No frame is set.
+                auto& wished = last_wish_[key];
+                const bool again = wished.first && wished.second != p.name;
+                wished = {true, p.name};
+                // Played when the owner changed to it, or when the copy shows another one
+                // (its own first updates chose it).
+                if (p.name.empty() || (!again && slot_name == p.name)) {
+                    continue;
+                }
+            }
+            if (!EnemySlots() && slot_name == p.name) {
                 auto& checked = checked_sample_[key];
                 if (checked == p.sample) {
                     continue;
@@ -755,7 +771,9 @@ public:
                 last = {p.name, now_ms};
             }
             checked_sample_[key] = p.sample;
-            frame_after_ = std::make_tuple(p.address, p.slot, frame);
+            if (!EnemySlots()) {
+                frame_after_ = std::make_tuple(p.address, p.slot, frame);
+            }
             CoopPuppet::Call c;
             c.function = main_ + kPlayAs;
             c.x[0] = block_ + kBlockRequest;
@@ -999,6 +1017,8 @@ private:
     u64 want_ms_ = 0;
     std::optional<std::tuple<u64, std::int32_t, float>> frame_after_;  // actor, slot, frame: set after the play
     std::unordered_map<u64, std::uint64_t> checked_sample_;  // actor: sample time checked
+    // EnemySlots: the owner's command last wished per copy and slot (seen, name).
+    std::unordered_map<u64, std::pair<bool, std::string>> last_wish_;
     std::unordered_map<u64, std::pair<std::string, u64>> played_at_;  // actor: name, ms
     std::vector<std::pair<u64, std::string>> took_over_;  // copies whose own AI changed slot 0, and to what
     std::unordered_map<std::string, u64> cells_;
@@ -2142,6 +2162,10 @@ private:
                 s.animation = Animation(r, a);
                 if (IsBoss(s.name)) {
                     s.slots = OtherSlots(r, a);  // issue 150
+                } else if (EnemySlots() && s.name.starts_with("Enemy_")) {
+                    // Every slot, and slot 0 also when it plays nothing (EnemySlots).
+                    s.animation = AnimationAt(r, a, 0, true);
+                    s.slots = OtherSlots(r, a);
                 }
                 if (const auto value = LifeValue(r, a)) {
                     const auto life = r.Get<s32>(value->first + 8);

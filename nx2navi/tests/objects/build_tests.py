@@ -24,7 +24,7 @@ import build as nx  # noqa: E402  (nx2navi/build.py, used as a library)
 REPO = nx.REPO
 
 # The port of shared enemies, and what it compiles unchanged from the emulator hook.
-PORT = ['nx2navi/dll/objects/emu_port.cpp', 'nx2navi/dll/objects/hold.cpp', 'nx2navi/dll/objects/brain.cpp', 'nx2navi/dll/objects/anim_probe.cpp',
+PORT = ['nx2navi/dll/objects/emu_port.cpp', 'nx2navi/dll/objects/hold.cpp', 'nx2navi/dll/objects/brain.cpp', 'nx2navi/dll/objects/anim_probe.cpp', 'nx2navi/dll/objects/world_probe.cpp',
         'nx2navi/dll/objects/objects.cpp']
 # Compiled unchanged from the emulator hook: what the DLL does not have yet...
 HOOK = ['lichii/hook/' + n for n in (

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "save_sync.hpp"
+#include "settings.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -220,7 +221,7 @@ Fetched Fetch(const FetchOptions& options, const std::atomic<bool>& stop,
     config.hello.game_build_id = options.game_build_id;
     config.hello.game_version = options.game_version;
     config.hello.nickname = options.name;
-    config.join_password = options.password;
+    config.join_password = Settings::JoinPassword(options.password);
     coop::net::Client client(std::move(config));
     if (!client.start()) {
         Log("save: ENet did not start");

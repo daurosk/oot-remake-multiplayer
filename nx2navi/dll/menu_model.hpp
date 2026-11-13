@@ -39,6 +39,18 @@
 //   6 Copy my solo save        6 Delete (chosen twice)
 //   7 Back                     7 Back
 //
+// Over Steam (steam_menu.hpp has the four pages; State::steam what they show):
+//
+//   Host over Steam            Join over Steam            Invite a friend / Invitations
+//   0 Name                     0 Name                     0 <friend> / <invitation>
+//   1 Room ID (copies it)      1 Room ID (typed)          1 ...
+//   2 Invite a friend          2 Paste                    2 ...
+//   3 Players                  3 Invitations              3 ...
+//   4 Save                     4 Save (the host's)        4 More
+//   5 ----                     5 ----                     5 ----
+//   6 Start                    6 Join                     6 Room ID / how many
+//   7 Back                     7 Back                     7 Back
+//
 // Multiplayer saves (mp_saves.hpp) are the saves co-op is played on; the
 // player's own saves are never written by a session. The model only knows
 // their names and dates (State::saves, filled by its owner) and says what is
@@ -84,10 +96,7 @@ Lang DetectLang(std::string_view env_lang, std::string_view ini_text, std::strin
 
 bool ValidName(std::string_view name);          // 1 to 16 code points, no control characters
 bool ValidPort(std::string_view port);          // 1 to 65535, digits only
-bool ValidPassword(std::string_view password);
-// A join password for a host who set none: every session has one since the server asks for it
-// (it also makes the traffic keys). 8 characters a player can read out; `seed` from a random source.
-std::string NewPassword(std::uint64_t seed);  // 1 to 128 bytes, no spaces or control characters
+bool ValidPassword(std::string_view password);  // 1 to 128 bytes, no spaces or control characters
 // "loopback", "link-local", "hamachi", "radmin", "tailscale", "lan", "public",
 // or "" when it is not a usable IPv4 address.
 std::string AddressKind(std::string_view address);
@@ -155,7 +164,10 @@ private:
 
 // --- The pages ---
 
-enum class Page : std::uint8_t { main, host, join, saves, save };
+enum class Page : std::uint8_t {
+    main, host, join, saves, save,
+    steam_host, steam_join, steam_friends, steam_invites,  // steam_menu.hpp
+};
 enum class RowKind : std::uint8_t { action, separator, text };
 struct Row {
     RowKind kind = RowKind::action;
@@ -180,6 +192,8 @@ enum class Field : std::uint8_t {
     none, name, address, port, host_password, join_password,
     save_new,     // the name of a new multiplayer save
     save_rename,  // another name for the save shown
+    steam_name,   // the player's name in a session over Steam ("" is the Steam name)
+    room,         // the id of the Steam room to join
 };
 
 // A multiplayer save as the pages show it (MpSaves::Entry, with the date as text).
@@ -219,7 +233,62 @@ enum class Action : std::uint8_t {
     none, redraw, begin_edit, start_host, start_join, close, copy_address,
     save_op,      // State::pending says what to do with a save's files
     save_chosen,  // State::save changed: to be kept for the next start
+    // Over Steam (steam_menu.hpp).
+    steam_open,         // a Steam page opens: Steam is to be signed in to
+    start_steam_host,
+    start_steam_join,   // State::steam.join_room says which room
+    copy_room,          // the hosted room's id to the clipboard
+    paste_room,         // the clipboard's text is wanted: SteamPages::Pasted
+    invite_friend,      // State::steam.invite_id says whom
 };
+
+// Whether Steam can be used, for the two Steam entries and their pages.
+enum class SteamAvail : std::uint8_t {
+    old_game,     // this NX2navi has no Steam for mods (plugin interface version 7)
+    checking,     // signing in
+    ready,
+    no_library,   // steam_api64.dll is not beside the game
+    old_library,  // the one beside the game is too old
+    no_client,    // Steam is not running, or not signed in
+    game_coop,    // NX2navi's own co-op is on and has Steam
+    in_use,       // another mod has Steam
+    other,
+};
+// Why a room was not made, not entered, or lost.
+enum class SteamFail : std::uint8_t {
+    none, unavailable, create, no_room, full, refused, not_ours, host_silent, version, lost, server, other,
+};
+struct SteamFriend {
+    std::uint64_t id = 0;
+    std::string name;
+    bool online = false;
+    bool in_app = false;  // shown as playing the app the game signs in as: an invite reaches the game
+    bool operator==(const SteamFriend&) const = default;
+};
+struct SteamInvite {
+    std::string from;  // the friend's name, "" unknown
+    std::string room;  // the room's id
+    bool operator==(const SteamInvite&) const = default;
+};
+// What the Steam pages show, filled by the owner (title_menu.cpp from steam_net.hpp).
+struct SteamState {
+    SteamAvail avail = SteamAvail::old_game;
+    std::string name;         // the player's Steam name as a co-op name, "" unknown
+    std::string own_name;     // typed on a Steam page: used instead of the Steam name
+    std::string room;         // Join: the room id typed or pasted, as SteamModel::RoomId makes it
+    std::string hosted_room;  // the id of the room this game hosts, "" none
+    std::vector<std::string> members;  // the players in that room, the host first
+    std::vector<SteamFriend> friends;
+    std::vector<SteamInvite> invites;  // the newest first
+    std::size_t friend_first = 0;      // the first friend / invitation the list page shows
+    std::size_t invite_first = 0;
+    std::string note;         // a sentence about the last press (copied, invited, nothing to paste)
+    // For the owner, with the action that asks for it.
+    std::uint64_t invite_id = 0;
+    std::string join_room;
+    bool operator==(const SteamState&) const = default;
+};
+inline constexpr std::size_t kSteamListed = 4;  // friends or invitations on a list page at a time
 
 struct State {
     Lang lang = Lang::en;
@@ -264,6 +333,7 @@ struct State {
     std::string save_note;         // a sentence about the saves (a refused name, a failed copy)
     Page saves_from = Page::main;  // where the list page goes back to
     PendingOp pending;             // for the owner: TakePending
+    SteamState steam;              // over Steam (steam_menu.hpp)
 };
 
 // The saves as they are on disk now. A chosen or shown save that is gone is
@@ -342,7 +412,9 @@ enum class Text : std::uint8_t {
     save_op_failed,         // a save could not be made, copied, renamed or deleted
     save_in_use,            // not while the game runs on that save
     restarting_new,         // a joiner: the host is beginning a new game; the game restarts for one too
-    last = restarting_new,
+    steam_making,           // over Steam: the room is being made
+    steam_entering,         // over Steam: entering the host's room
+    last = steam_entering,
 };
 const char* T(Lang lang, Text text);
 

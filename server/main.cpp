@@ -295,6 +295,7 @@ int main(int argc, char** argv) {
     }
     options.session.join_password = line->password;
     options.session.pvp = line->pvp;
+    options.session.nearest_owner = line->owner_nearest;
     if (line->owner_hold_ms) options.session.owner_hold_us = std::uint64_t{*line->owner_hold_ms} * 1000;
     options.bind = line->bind;
     options.session.log = [](const std::string& text) {
@@ -321,6 +322,9 @@ int main(int argc, char** argv) {
       std::printf("coop_server: players must give the join password to join; the traffic is encrypted\n");
       if (line->pvp) {
         std::printf("coop_server: PvP is on: players can hurt each other\n");
+      }
+      if (line->owner_nearest) {
+        std::printf("coop_server: enemies belong to the nearest player's game (--owner nearest)\n");
       }
       if (!line->allowed.empty()) {
         std::printf("coop_server: only the %u address range(s) given with --allow may connect\n",

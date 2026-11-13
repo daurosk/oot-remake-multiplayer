@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "menu_model.hpp"
+#include "steam_menu.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -45,15 +46,11 @@ const char* W(Lang lang, const Words& w) {
 }
 
 constexpr Words kTitleMain{"Multiplayer", "Multijoueur"};
-constexpr Words kHostSteam{"Host over Steam", "Héberger sur Steam"};
 constexpr Words kHostLocal{"Host over Local Network", "Héberger en réseau local"};
-constexpr Words kJoinSteam{"Join over Steam", "Rejoindre via Steam"};
 constexpr Words kJoinLocal{"Join over Local Network", "Rejoindre en réseau local"};
 constexpr Words kUnavailable{"Unavailable", "Indisponible"};
 constexpr Words kOpen{"Open", "Ouvrir"};
 // Captions: two lines of at most 46 characters (the box does not wrap).
-constexpr Words kSteamWhy{"Not available yet:\nit needs Valve's Steamworks SDK.",
-    "Pas encore disponible :\nil faut le SDK Steamworks de Valve."};
 constexpr Words kHostLocalWhy{"Starts the co-op server on this PC and plays.\nYour friends join with this PC's address.",
     "Lance le serveur co-op sur ce PC et y joue.\nVos amis rejoignent avec l'adresse de ce PC."};
 constexpr Words kJoinLocalWhy{"Joins a friend's game with their address.\nYou play on their save; yours is kept.",
@@ -210,6 +207,8 @@ constexpr Words kTexts[] = {
     /* save_op_failed */ {"That could not be done with the save\n(coop-nx2navi.log says why).", "Impossible pour cette sauvegarde\n(coop-nx2navi.log dit pourquoi)."},
     /* save_in_use */ {"The game runs on this save:\nnot while it does.", "Le jeu tourne sur cette sauvegarde :\npas pendant ce temps."},
     /* restarting_new */ {"The host begins a new game. The game restarts:\nthen start a new game too.", "L'hôte commence une partie. Le jeu redémarre :\ncommencez une nouvelle partie vous aussi."},
+    /* steam_making */ {"Making the Steam room...", "Création du salon Steam..."},
+    /* steam_entering */ {"Entering the host's Steam room...", "Entrée dans le salon Steam de l'hôte..."},
 };
 
 // The alphabets of the gamepad's typing.
@@ -217,12 +216,14 @@ constexpr std::string_view kNameChars =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 -_";
 constexpr std::string_view kAddressChars = "0123456789.:abcdefghijklmnopqrstuvwxyz-";
 constexpr std::string_view kPortChars = "0123456789";
+constexpr std::string_view kRoomChars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";  // a Steam room's id
 constexpr std::string_view kPasswordChars =
     "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-_.!";
 
 // A field whose text is a name: any character, counted in code points.
 bool NameLike(Field field) {
-    return field == Field::name || field == Field::save_new || field == Field::save_rename;
+    return field == Field::name || field == Field::save_new || field == Field::save_rename ||
+           field == Field::steam_name;
 }
 bool SaveField(Field field) {
     return field == Field::save_new || field == Field::save_rename;
@@ -232,7 +233,9 @@ std::string_view Alphabet(Field field) {
     switch (field) {
     case Field::name:
     case Field::save_new:
-    case Field::save_rename: return kNameChars;
+    case Field::save_rename:
+    case Field::steam_name: return kNameChars;
+    case Field::room: return kRoomChars;
     case Field::address: return kAddressChars;
     case Field::port: return kPortChars;
     default: return kPasswordChars;
@@ -243,7 +246,9 @@ std::size_t MaxOf(Field field) {
     switch (field) {
     case Field::name:
     case Field::save_new:
-    case Field::save_rename: return kMaxName;
+    case Field::save_rename:
+    case Field::steam_name: return kMaxName;
+    case Field::room: return 9;  // "ABCD-2345"
     case Field::address: return kMaxAddress;
     case Field::port: return 5;
     default: return kMaxPassword;
@@ -314,7 +319,8 @@ Row FieldRow(const State& s, Field field, const Words& label, const Words& why) 
         case Field::address: value = s.address; break;
         case Field::port: value = s.port; break;
         case Field::host_password:
-            // Shown as it is: the host has to give it to the others. Empty: one is made at Start.
+            // Shown as it is: the host has to give it to the others. Empty: none (anyone who
+            // reaches the address and port can join; settings.hpp kOpenPassword).
             value = s.host_password.empty() ? W(s.lang, kNone) : s.host_password;
             break;
         case Field::join_password: value = W(s.lang, s.join_password.empty() ? kNone : kSet); break;
@@ -838,6 +844,9 @@ void FlatJson::Erase(std::string_view key) {
 // --- The pages ---
 
 std::string Title(const State& s) {
+    if (SteamPages::Is(s.page)) {
+        return SteamPages::Title(s);
+    }
     switch (s.page) {
     case Page::host: return W(s.lang, kHostLocal);
     case Page::join: return W(s.lang, kJoinLocal);
@@ -871,6 +880,9 @@ const SaveInfo* FindSave(const State& s, std::string_view folder) {
 }
 
 Field FieldAt(Page page, std::size_t row) {
+    if (SteamPages::Is(page)) {
+        return SteamPages::FieldAt(page, row);
+    }
     if (page == Page::host) {
         return row == 0 ? Field::name : row == 1 ? Field::port : row == 2 ? Field::host_password : Field::none;
     }
@@ -891,17 +903,18 @@ Field FieldAt(Page page, std::size_t row) {
 }
 
 std::vector<Row> Rows(const State& s) {
+    if (SteamPages::Is(s.page)) {
+        return SteamPages::Rows(s);
+    }
     std::vector<Row> rows;
     rows.reserve(kRows);
     Row separator;
     separator.kind = RowKind::separator;
     if (s.page == Page::main) {
-        Row steam_host = Button(kHostSteam, W(s.lang, kUnavailable), W(s.lang, kSteamWhy), s.lang);
-        Row steam_join = Button(kJoinSteam, W(s.lang, kUnavailable), W(s.lang, kSteamWhy), s.lang);
-        steam_host.disabled = steam_join.disabled = s.dim_steam;
-        rows.push_back(std::move(steam_host));
+        // Over Steam (steam_menu.hpp): "Open", or "Unavailable" and why.
+        rows.push_back(SteamPages::HostEntry(s));
         rows.push_back(Button(kHostLocal, W(s.lang, kOpen), W(s.lang, kHostLocalWhy), s.lang));
-        rows.push_back(std::move(steam_join));
+        rows.push_back(SteamPages::JoinEntry(s));
         rows.push_back(Button(kJoinLocal, W(s.lang, kOpen), W(s.lang, kJoinLocalWhy), s.lang));
         Row saves = Button(kSaves,
                            !s.saves_on        ? W(s.lang, kUnavailable)
@@ -1024,20 +1037,6 @@ std::vector<Row> Rows(const State& s) {
         rows.push_back(Button(kBack, W(s.lang, kBack), W(s.lang, kBackWhy), s.lang));
     }
     return rows;
-}
-
-std::string NewPassword(std::uint64_t seed) {
-    // Easy to read out and to type with a gamepad: no 0/o, 1/l/i.
-    static constexpr std::string_view kLetters = "abcdefghjkmnpqrstuvwxyz23456789";
-    std::string out;
-    std::uint64_t x = seed * 0x9e3779b97f4a7c15ull + 0x632be59bd9b4e019ull;
-    for (int i = 0; i < 8; ++i) {
-        x ^= x >> 29;
-        x *= 0xbf58476d1ce4e5b9ull;
-        x ^= x >> 32;
-        out.push_back(kLetters[static_cast<std::size_t>(x % kLetters.size())]);
-    }
-    return out;
 }
 
 bool ReadyToHost(const State& s, std::string& why) {
@@ -1164,9 +1163,9 @@ Action ActivateSave(State& s, std::size_t row) {
         if (!s.saves_on) {
             return armed ? Action::redraw : Action::none;
         }
-        // Chosen: on to the Host page, the cursor on Start.
+        // Chosen: on to the Host page (the one the saves were opened from), the cursor on Start.
         s.save = shown->folder;
-        s.page = Page::host;
+        s.page = s.saves_from == Page::steam_host ? Page::steam_host : Page::host;
         s.focus = static_cast<std::uint32_t>(1 + kRowGo);
         s.address_copied = false;
         if (!Busy(s.phase)) {
@@ -1247,8 +1246,8 @@ void OpDone(State& s, const PendingOp& op, bool ok, std::string_view folder, std
         if (FindSave(s, now) != nullptr && s.saves_on) {
             s.save = now;
         }
-        if (s.saves_from == Page::host) {
-            s.page = Page::host;
+        if (s.saves_from == Page::host || s.saves_from == Page::steam_host) {
+            s.page = s.saves_from;
             s.focus = static_cast<std::uint32_t>(1 + kRowExtra);
         } else {
             ShowInList(s, now);
@@ -1280,6 +1279,9 @@ Action Activate(State& s, std::size_t row) {
     if (s.page == Page::save) {
         return ActivateSave(s, row);
     }
+    if (SteamPages::List(s.page)) {
+        return SteamPages::Activate(s, row);  // every row of a list page is its own
+    }
     if (row == kRowExtra) {
         // The multiplayer saves, from any of the three pages.
         if (!s.saves_on) {
@@ -1288,8 +1290,13 @@ Action Activate(State& s, std::size_t row) {
         OpenSaves(s, s.page);
         return Action::redraw;
     }
+    if (SteamPages::Is(s.page)) {
+        return SteamPages::Activate(s, row);
+    }
     if (s.page == Page::main) {
         switch (row) {
+        case 0:
+        case 2: return SteamPages::Open(s, row == 0);
         case 1:
         case 3:
             s.page = row == 1 ? Page::host : Page::join;
@@ -1301,7 +1308,7 @@ Action Activate(State& s, std::size_t row) {
             s.address_copied = false;
             return Action::redraw;
         case kRowBack: return Action::close;
-        default: return Action::none;  // the Steam rows and the status: nothing to do
+        default: return Action::none;  // the status: nothing to do
         }
     }
     if (row == kRowBack) {
@@ -1372,6 +1379,7 @@ void Closed(State& s) {
     s.save_note.clear();
     s.save_shown.clear();
     s.pending = {};
+    s.steam.note.clear();
     if (!Busy(s.phase)) {
         s.phase = Phase::idle;
         s.message.clear();
@@ -1400,6 +1408,8 @@ void BeginEdit(State& s, Field field) {
     case Field::name: s.edit = s.name; break;
     case Field::address: s.edit = s.address; break;
     case Field::port: s.edit = s.port; break;
+    case Field::steam_name:
+    case Field::room: s.edit = SteamPages::EditStart(s, field); break;
     default: s.edit.clear(); break;  // a password is typed anew, never shown again
     }
 }
@@ -1514,6 +1524,8 @@ bool CommitEdit(State& s) {
         password = text;
         return true;
     }
+    case Field::steam_name:
+    case Field::room: return SteamPages::Commit(s, field, text);
     case Field::save_new:
     case Field::save_rename: {
         const SaveInfo* shown = FindSave(s, s.save_shown);

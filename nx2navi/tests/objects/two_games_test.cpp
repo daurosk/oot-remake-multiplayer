@@ -49,6 +49,8 @@ struct Actor {
     std::int32_t life = 0;
     std::int32_t max = 0;
     bool listed = true;  // on the game's actor list
+    std::optional<proto::Animation> animation;   // AS slot 0, as the walk reads it
+    std::vector<proto::SlotAnimation> slots;      // the other slots
 };
 
 struct Game {
@@ -187,6 +189,8 @@ private:
             s.hash = actor.hash;
             s.position = actor.position;
             s.life = proto::ObjectLife{actor.life, actor.max};
+            s.animation = actor.animation;
+            s.slots = actor.slots;
             seen.push_back(s);
         }
         g.sync.SetPlayer(g.link);
@@ -381,6 +385,121 @@ TEST_CASE("two games: a kill by the player who does not own the enemy (runs s2, 
     CHECK(w.b.At(kAddrB).life == 0);
     CHECK(w.b.deleted == std::vector<std::uint64_t>{kAddrB});
     CHECK(w.a.deleted.empty());
+}
+
+// coop-dll 0.8: every AS slot of an enemy (CoopObjects::EnemySlots). A Stalchild walks on slots 1 and
+// 2 with nothing in slot 0; 0.7 wished slot 0 alone and nothing at all while it was empty.
+TEST_CASE("two games: a copy is wished every slot of its owner's enemy, an empty slot 0 too") {
+    const auto wishes = [](World& w) {
+        std::vector<CoopObjects::PlayWish> all, out;
+        w.b.sync.Plays(w.now, all);
+        for (const auto& p : all) {
+            if (p.address == kAddrB) {
+                out.push_back(p);
+            }
+        }
+        std::sort(out.begin(), out.end(), [](const auto& x, const auto& y) { return x.slot < y.slot; });
+        return out;
+    };
+    const auto walking = [](Actor& a) {
+        a.animation = proto::Animation{"", 0.0f, 1.0f};
+        a.slots = {{1, proto::Animation{"Walk", 0.0f, 1.0f}}, {2, proto::Animation{"WalkUpper", 0.0f, 1.0f}}};
+    };
+    SUBCASE("on (the NX2navi port)") {
+        CoopObjects::EnemySlots(true);
+        World w;
+        w.a.link = {0, 0, 0};
+        w.b.link = {30, 0, 0};
+        walking(w.a.Add(kAddrA, "Enemy_Stalchild", kReDead, {0, 0, 5}, 2));
+        w.b.Add(kAddrB, "Enemy_Stalchild", kReDead, {0, 0, 5}, 2);
+        w.Run(2 * kS);
+        REQUIRE(w.Owner(kReDead) == 1);
+        auto got = wishes(w);
+        REQUIRE(got.size() == 3);
+        CHECK(got[0].slot == 0);
+        CHECK(got[0].name.empty());  // nothing in slot 0: said, so the next one-shot is seen as new
+        CHECK(got[1].name == "Walk");
+        CHECK(got[2].name == "WalkUpper");
+        // The owner's enemy attacks: slot 0 gets the one-shot, the others play nothing.
+        w.a.At(kAddrA).animation = proto::Animation{"NoWeaponAttack", 0.0f, 1.0f};
+        w.a.At(kAddrA).slots = {{1, proto::Animation{"", 0.0f, 1.0f}}, {2, proto::Animation{"", 0.0f, 1.0f}}};
+        w.Run(kS / 2);
+        got = wishes(w);
+        REQUIRE(got.size() == 3);
+        CHECK(got[0].name == "NoWeaponAttack");
+        CHECK(got[1].name.empty());
+        // And walks again: the one-shot's name stays in the owner's slot 0 in the game; the walk
+        // reads what is there, so the copy is wished the same.
+        w.a.At(kAddrA).slots = {{1, proto::Animation{"Walk", 0.0f, 1.0f}}, {2, proto::Animation{"WalkUpper", 0.0f, 1.0f}}};
+        w.Run(kS / 2);
+        got = wishes(w);
+        REQUIRE(got.size() == 3);
+        CHECK(got[1].name == "Walk");
+    }
+    SUBCASE("off (the shared code's default): slot 0 alone, and nothing while it is empty") {
+        CoopObjects::EnemySlots(false);
+        World w;
+        w.a.link = {0, 0, 0};
+        w.b.link = {30, 0, 0};
+        walking(w.a.Add(kAddrA, "Enemy_Stalchild", kReDead, {0, 0, 5}, 2));
+        w.b.Add(kAddrB, "Enemy_Stalchild", kReDead, {0, 0, 5}, 2);
+        w.Run(2 * kS);
+        CHECK(wishes(w).empty());
+    }
+    CoopObjects::EnemySlots(false);
+}
+
+// The mod's server rule (`--owner nearest`, SessionConfig::nearest_owner): an enemy's AI goes for
+// its own game's Link only, so the nearest player's game owns it, in a fight too.
+TEST_CASE("two games, nearest owner: the nearest player's game gets the enemy within 2 s, in a fight too") {
+    coop::server::SessionConfig config;
+    config.nearest_owner = true;
+    World w(config);
+    w.a.link = {0, 0, 0};
+    w.b.link = {0, 0, 50};
+    w.a.Add(kAddrA, "Enemy_ReDead", kReDead, {0, 0, 5}, 12);
+    w.b.Add(kAddrB, "Enemy_ReDead", kReDead, {0, 0, 5}, 12);
+    w.Run(4 * kS);
+    REQUIRE(w.Owner(kReDead) == 1);
+    w.a.At(kAddrA).life = 11;  // A hits it: a fight, which the classic rule keeps for 12 s and more
+    w.Run(kS);
+    w.a.link = {0, 0, 30};  // A steps back 25 m, B comes within 1 m
+    w.b.link = {0, 0, 6};
+    const auto took = w.RunUntil(5 * kS, [&] { return w.Owner(kReDead) == 2; });
+    REQUIRE(took.has_value());
+    MESSAGE("in a fight, the nearest player's game had it " << *took / 1000 << " ms after becoming the nearest");
+    CHECK(*took <= 2 * kS);
+    // And back, as fast, when A is the nearest again.
+    w.b.link = {0, 0, 40};
+    w.a.link = {0, 0, 4};
+    const auto back = w.RunUntil(5 * kS, [&] { return w.Owner(kReDead) == 1; });
+    REQUIRE(back.has_value());
+    CHECK(*back <= 2500'000);  // the 1.5 s between two changes
+}
+
+TEST_CASE("two games, nearest owner: two players side by side do not pass an enemy to and fro") {
+    coop::server::SessionConfig config;
+    config.nearest_owner = true;
+    World w(config);
+    w.a.link = {0, 0, 0};
+    w.b.link = {2, 0, 0};
+    w.a.Add(kAddrA, "Enemy_ReDead", kReDead, {0, 0, 5}, 12);
+    w.b.Add(kAddrB, "Enemy_ReDead", kReDead, {0, 0, 5}, 12);
+    w.Run(4 * kS);
+    REQUIRE(w.Owner(kReDead) == 1);
+    const std::size_t before = w.Count<proto::ObjectOwner>(w.to_a);
+    // B is nearer by less than the margin (2.5 m), then A, a few times: it stays A's.
+    for (int i = 0; i < 6; ++i) {
+        w.b.link = {i % 2 == 0 ? 0.5f : 2.0f, 0, i % 2 == 0 ? 1.5f : 0.0f};  // 3.5 m or 5.4 m from it; A 5.0 m
+        w.Run(2 * kS);
+        CHECK(w.Owner(kReDead) == 1);
+    }
+    // No change of owner was told in all that time (the 10 s repeats aside).
+    CHECK(w.Count<proto::ObjectOwner>(w.to_a) - before <= 2);
+    // Clearly nearer (3 m against 5 m is not; 1 m against 5 m is): B's.
+    w.b.link = {0, 0, 4};
+    const auto took = w.RunUntil(4 * kS, [&] { return w.Owner(kReDead) == 2; });
+    CHECK(took.has_value());
 }
 
 TEST_CASE("two games: where the nearest player's game does NOT get the enemy") {

@@ -54,6 +54,7 @@
 #include <cwchar>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -72,6 +73,14 @@
 #include "ai_probe.hpp"
 #include "guest_memory.hpp"
 #include "objects/objects.hpp"
+#include "progress.hpp"
+#include "puppet_fx.hpp"
+#include "upstream.hpp"
+#ifdef COOP_UPSTREAM
+#include "coop_puppet.h"
+#include "coop_puppet_sound.h"
+#include "coop_hud.h"
+#endif
 #include "objects/scene_gate.hpp"
 #include "coop/host/scene.hpp"
 #include "coop_pose.h"
@@ -82,12 +91,14 @@
 #include "save_sync.hpp"
 #include "settings.hpp"
 #include "teleport.hpp"
+#include "steam_menu.hpp"
+#include "steam_net.hpp"
 #include "title_menu.hpp"
 #include "third_party/plugin_api.h"
 
 namespace {
 
-constexpr const char* kBuildId = "nx2navi coop-dll 0.7";
+constexpr const char* kBuildId = "nx2navi coop-dll 0.9";
 constexpr auto kFrame = std::chrono::microseconds(16'667);  // 60 a second
 constexpr auto kStatusEvery = std::chrono::seconds(10);
 
@@ -215,10 +226,41 @@ bool SleepUntil(Clock::time_point when) {
 // game-thread callback has (the plugin interface's read and write).
 class GuestView final : public coop::host::WritableGameMemory {
 public:
-    GuestView(CoopPuppet::Guest& guest, std::uint64_t main) : guest_(guest), main_(main) {}
+    GuestView(CoopPuppet::Guest& guest, std::uint64_t main) : guest_(guest), main_(main) {
+        const Nx2PluginApi* api = CoopNx2navi::Overlay::Api();
+        if (api != nullptr && NX2_HAS(api, Nx2PluginApi, map_range) && api->map_range != nullptr) {
+            map_ = api->map_range;
+            for (Page& page : pages_) {
+                page.number = ~std::uint64_t{0};
+            }
+        }
+    }
     std::uint64_t main_base() const override { return main_; }
+    // Shared progress reads some 40,000 small values a frame (2,265 flags, each
+    // found by a search in the game's tables). The interface's `read` checks
+    // the game's mapping at every call; `map_range` checks a page once and
+    // hands back a pointer that is good until this callback returns (NX2navi
+    // docs/plugins.md, "Memory"), so a page is asked for once a frame and
+    // every read in it is a copy. The pointer is the game's own memory: a
+    // write through the interface shows in it at once.
     bool read(std::uint64_t address, std::span<std::uint8_t> out) override {
-        return address >= 0x10000 && guest_.Read(address, out.data(), out.size());
+        if (address < 0x10000) {
+            return false;
+        }
+        const std::size_t size = out.size();
+        if (map_ != nullptr && size != 0 && ((address ^ (address + size - 1)) >> 12) == 0) {
+            const std::uint64_t number = address >> 12;
+            Page& page = pages_[number & (kPages - 1)];
+            if (page.number != number) {
+                page.number = number;
+                page.at = static_cast<const std::uint8_t*>(map_(number << 12, 4096, 0));
+            }
+            if (page.at != nullptr) {
+                std::memcpy(out.data(), page.at + (address & 0xfff), size);
+                return true;
+            }
+        }
+        return guest_.Read(address, out.data(), size);
     }
     bool write(std::uint64_t address, std::span<const std::uint8_t> data) override {
         return address >= 0x10000 && guest_.Write(address, data.data(), data.size());
@@ -242,8 +284,15 @@ public:
     }
 
 private:
+    static constexpr std::size_t kPages = 1024;
+    struct Page {
+        std::uint64_t number;
+        const std::uint8_t* at;
+    };
     CoopPuppet::Guest& guest_;
     std::uint64_t main_;
+    void* (*map_)(std::uint64_t, std::size_t, int) = nullptr;
+    Page pages_[kPages];
 };
 
 // Reads are kept by page for a frame (guest_memory.hpp). A write decides from
@@ -284,6 +333,9 @@ private:
 std::filesystem::path g_folder;
 void EnsureTitleEntry();
 
+#ifdef COOP_UPSTREAM
+#include "coop_up.inc"
+#else
 class Coop {
 public:
     // `welcome`: what the title menu's page says once the server let us in (a
@@ -291,7 +343,8 @@ public:
     explicit Coop(CoopNx2navi::Settings settings, std::string welcome = {})
         : settings_(std::move(settings)),
           welcome_(std::move(welcome)),
-          notifier_([this](std::uint8_t number) { return Name(number); }) {}
+          notifier_([this](std::uint8_t number) { return Name(number); },
+                    &CoopNx2navi::Progress::ExtraNotice) {}
 
     bool Begin() {
         coop::net::ClientConfig config;
@@ -301,7 +354,7 @@ public:
         config.hello.game_build_id = std::string(CoopGameBuild::kPrimary.id);
         config.hello.game_version = std::string(CoopGameBuild::kPrimary.version);
         config.hello.nickname = settings_.coop.name;
-        config.join_password = settings_.coop.password;
+        config.join_password = CoopNx2navi::Settings::JoinPassword(settings_.coop.password);
         client_ = std::make_unique<coop::net::Client>(std::move(config));
         if (!client_->start()) {
             g_log.Line("ENet did not start; co-op is off");
@@ -309,20 +362,19 @@ public:
             return false;
         }
         coop::host::SessionSettings session;
-        if (settings_.share_progress) {
-            // The player's items, as the emulator hook shares them without a
-            // list file (docs/items.md). The hook's own additions (dungeons,
-            // story, chests, one-time pickups) need its object walk and are
-            // not shared here.
-            session.shared = coop::host::item_shared_flags();
-            load_mend_.set_clock([] { return SteadyUs(); });
-        }
+        // Shared progress and world state, as the emulator hook wires it
+        // (progress.hpp): items, songs, keys, chests, one-time pickups, dungeon
+        // switches, doors, cleared rooms, story flags.
+        progress_.Configure(session, settings_.share_progress, [](const std::string& line) {
+            g_log.Line("%s", line.c_str());
+        });
         session.clock = [] { return SteadyUs(); };
         session.on_event = [this](const coop::net::Event& event, coop::net::Client& client) {
             OnEvent(event);
             CoopNx2navi::Puppet::OnEvent(event);
             CoopNx2navi::Teleport::OnEvent(event, client);
             CoopNx2navi::Objects::OnEvent(event);
+            progress_.OnEvent(event);
             CoopNx2navi::SaveSync::OnEvent(event, client);
         };
         {
@@ -392,11 +444,12 @@ public:
             }
         }
         session_ = std::make_unique<coop::host::Session>(*client_, std::move(session));
+        progress_.Started(*session_);
         // The line the launcher's menu looks for ("coop: on, server").
         g_log.Line("on, server %s:%u as '%s', join password %s, shared progress %s",
                    settings_.coop.server.c_str(), static_cast<unsigned>(settings_.coop.port),
                    settings_.coop.name.c_str(), settings_.coop.password.empty() ? "none" : "set",
-                   settings_.share_progress ? "on (experimental)" : "off");
+                   settings_.share_progress ? "on" : "off (share_progress = 0)");
         g_state = 1;
         CoopNx2navi::Overlay::SetMinimap(settings_.minimap,
                                          Environment(L"OOT_COOP_DEBUG_MINIMAP") == L"1");
@@ -762,32 +815,24 @@ private:
     void Frame(coop::host::WritableGameMemory* memory, CoopNx2navi::Memory* cache) {
         const auto now = Clock::now();
         std::optional<coop::host::PlayerReading> reading;
-        std::optional<coop::host::GameFlagStore> game_store;
-        std::optional<coop::host::ItemFlagStore> items;
         std::optional<FreshWrites> store;
+        coop::host::WritableGameMemory* game = nullptr;  // the game's memory this frame, when trusted
         if (trusted_ && memory != nullptr) {
             coop::host::PlayerReader reader(*memory, &drawn_);
             session_->set_scene_readable(reader.read_scene().has_value());
             reading = reader.read();
             WatchLife(*memory, reader, reading.has_value());
-            if (settings_.share_progress) {
-                // As the hook does: item flags are merged, not overwritten,
-                // and grants wait for a loaded save (docs/items.md).
-                game_store.emplace(*memory);
-                const bool mend = load_mend_.frame(reading.has_value());
-                items.emplace(*game_store, &load_mend_);
-                if (mend) {
-                    if (const auto raised = items->mend(); raised != 0) {
-                        g_log.Line("items: %llu capacities mended after a load",
-                                   static_cast<unsigned long long>(raised));
-                    }
-                }
-                store.emplace(*items, cache);
-            }
+            game = memory;
         } else {
             session_->set_scene_readable(false);
         }
+        // The stores the hook puts between the session and the game's flags
+        // (items merged, quests ordered, room gimmicks held): progress.cpp.
+        if (coop::host::FlagStore* flags = progress_.Before(game, *session_, reading)) {
+            store.emplace(*flags, cache);
+        }
         const auto report = session_->frame(reading, store ? &*store : nullptr);
+        progress_.After(game, *session_, report, reading);
         connected_ = report.connected;
         queued_ += report.queued;
         sent_ += report.queued;
@@ -836,6 +881,7 @@ private:
             const auto now_ms = static_cast<std::uint64_t>(SteadyUs() / 1000);
             for (const std::string& line : notifier_.Take(report.received, self_.load(), now_ms)) {
                 g_log.Line("notice: %s", line.c_str());
+                CoopNx2navi::Overlay::Notice(line);  // "Saria got the Hookshot", "opened a chest"
             }
         }
         if (report.host_reset) {
@@ -1029,6 +1075,7 @@ private:
         }
         line += CoopNx2navi::Puppet::StatusText();
         line += CoopNx2navi::Objects::StatusText();
+        line += progress_.StatusText();
         g_log.Line("%s", line.c_str());
     }
 
@@ -1172,7 +1219,7 @@ private:
     std::mutex frame_mutex_;
     CoopNx2navi::Memory memory_;
     coop::host::PlayerReader::DrawnState drawn_{};
-    coop::host::LoadMend load_mend_;
+    CoopNx2navi::Progress progress_;
     coop::host::Notifier notifier_;
     bool refused_ = false;
     unsigned looks_ = 0;
@@ -1209,6 +1256,8 @@ private:
     std::atomic<int> link_{static_cast<int>(CoopNx2navi::Ui::Link::connecting)};
     unsigned failed_ = 0;
 };
+
+#endif  // COOP_UPSTREAM
 
 HMODULE ThisModule() {
     HMODULE module = nullptr;
@@ -1321,8 +1370,10 @@ enum class ServerStart { started, already_running, missing, failed };
 // with the game: at the exit callback, and through a job object when the game
 // is killed. A server of this mod that already runs (the launcher's) is used
 // as it is and left running.
+// `this_pc_only` (a session over Steam, steam_net.hpp): it listens on 127.0.0.1
+// alone, and a server that already runs is no use (its password is another).
 ServerStart StartServer(const std::filesystem::path& folder, std::uint16_t port,
-                        const std::string& password) {
+                        const std::string& password, bool this_pc_only = false) {
     std::lock_guard lock(g_server_mutex);
     const std::filesystem::path exe = folder / L"bin" / L"oot-coop-server.exe";
     std::error_code ec;
@@ -1341,11 +1392,13 @@ ServerStart StartServer(const std::filesystem::path& folder, std::uint16_t port,
         return ServerStart::already_running;
     }
     std::wstring command = L"\"" + exe.wstring() + L"\" --port " + std::to_wstring(port);
-    EnvPairs extra;
-    if (!password.empty()) {
-        command += L" --password-env OOT_COOP_SERVER_PASSWORD";
-        extra.emplace_back(L"OOT_COOP_SERVER_PASSWORD", Wide(password));
+    if (this_pc_only) {
+        command += L" --bind 127.0.0.1";
     }
+    EnvPairs extra;
+    // Always one: with none set, the open word every joiner without a password sends.
+    command += L" --password-env OOT_COOP_SERVER_PASSWORD";
+    extra.emplace_back(L"OOT_COOP_SERVER_PASSWORD", Wide(CoopNx2navi::Settings::JoinPassword(password)));
     std::vector<wchar_t> environment = EnvironmentWith(extra);
     SECURITY_ATTRIBUTES inherit{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
     const HANDLE log = CreateFileW((folder / L"coop-server.log").c_str(), GENERIC_WRITE,
@@ -1570,7 +1623,7 @@ CoopNx2navi::Settings SettingsFromFile(const std::filesystem::path& folder) {
     if (const auto text = ReadFile(folder / L"settings.json")) {
         json.Parse(*text);
     }
-    s.share_progress = json.Bool("share_progress").value_or(false);
+    s.share_progress = json.Bool("share_progress").value_or(true);
     s.overlay = json.Bool("overlay").value_or(true);
     s.puppet = json.Bool("puppet").value_or(true);
     s.join_at_host = json.Bool("join_at_host").value_or(true);
@@ -1683,6 +1736,10 @@ std::filesystem::path PathOf(const char* utf8) {
                            : std::filesystem::path();
 }
 
+// The id of the Steam room this game joined from its Multiplayer page ("" over
+// the local network): the game started again for the host's save enters it again.
+std::string g_steam_room;
+
 enum class HostSave { restarting, own_save, refused, no_answer };
 
 // A joiner takes the host's save before anything is loaded (save_sync.hpp): it
@@ -1785,6 +1842,20 @@ HostSave TakeHostSave(const std::filesystem::path& folder, const CoopNx2navi::Se
                    {L"OOT_COOP_INI", ini.wstring()},
                    {L"OOT_COOP_SAVE_READY", L"1"},
                    {L"OOT_COOP_PASSWORD", Wide(settings.coop.password)}};
+    if (!g_steam_room.empty()) {
+        // Over Steam: the address and the password above are this process's own
+        // (a local port, the room's secret); the next one asks the room again.
+        extra.back().second.clear();
+        extra.emplace_back(L"OOT_COOP_STEAM_JOIN", Wide(g_steam_room));
+    } else if (!Environment(L"OOT_COOP_STEAM_JOIN").empty()) {
+        extra.emplace_back(L"OOT_COOP_STEAM_JOIN", L"");  // not the one an earlier start left
+    }
+    // A joiner's next start never hosts, whatever an earlier start of this game did.
+    for (const wchar_t* left : {L"OOT_COOP_STEAM_HOST", L"OOT_COOP_MP_HOST"}) {
+        if (!Environment(left).empty()) {
+            extra.emplace_back(left, L"");
+        }
+    }
     if (!RestartGame(std::move(extra))) {
         why = Menu::T(lang, Menu::Text::restart_failed);
         return HostSave::own_save;
@@ -1800,6 +1871,84 @@ void EnsureTitleEntry() {
     done = true;
     HookExit();
     CoopNx2navi::TitleMenu::Register(CoopNx2navi::Overlay::Api(), g_folder, LogLine);
+}
+
+// --- Over Steam (steam_net.hpp): the same session, carried through Steam ---
+
+// Waits for the game's interface (the game hands it over at its start, or
+// answers once its main module is mapped). False when the DLL is to stop.
+bool WaitInterface() {
+    for (int tries = 0; tries < 600 && !HaveInterface(); ++tries) {
+        if (SleepUntil(Clock::now() + std::chrono::milliseconds(100))) {
+            return false;
+        }
+    }
+    if (!HaveInterface()) {
+        return false;
+    }
+    EnsureTitleEntry();  // the page's language, and steam_net's start
+    return true;
+}
+
+bool SteamSleep(unsigned ms) {
+    return SleepUntil(Clock::now() + std::chrono::milliseconds(ms));
+}
+
+void SteamFailed(CoopNx2navi::Menu::SteamFail fail, const char* what) {
+    namespace Menu = CoopNx2navi::Menu;
+    g_log.Line("steam: %s: not done (reason %d)", what, static_cast<int>(fail));
+    CoopNx2navi::TitleMenu::SetPhase(
+        Menu::Phase::failed, Menu::SteamPages::WhyFailed(CoopNx2navi::TitleMenu::Language(), fail));
+}
+
+// The host: the co-op server on 127.0.0.1 with a join password made for this
+// room, a Steam room, and the members' datagrams carried between the two.
+// `settings` then leads this game's own client to that server.
+bool SteamHost(const std::filesystem::path& folder, CoopNx2navi::Settings& settings) {
+    namespace Menu = CoopNx2navi::Menu;
+    if (!WaitInterface()) {
+        return false;
+    }
+    CoopNx2navi::TitleMenu::SetPhase(
+        Menu::Phase::starting_server, Menu::T(CoopNx2navi::TitleMenu::Language(), Menu::Text::steam_making));
+    const auto session = CoopNx2navi::SteamNet::HostSession(
+        [&](std::uint16_t port, const std::string& secret) {
+            return StartServer(folder, port, secret, true) == ServerStart::started;
+        },
+        SteamSleep);
+    if (!session.ok) {
+        StopServer();
+        SteamFailed(session.fail, "host over Steam");
+        return false;
+    }
+    settings.coop.server = "127.0.0.1";
+    settings.coop.port = session.port;
+    settings.coop.password = session.secret;
+    settings.host_save = false;
+    g_log.Line("steam: hosting over Steam: the room is open to your Steam friends, to invitations and "
+               "to its ID (shown on the title screen's Multiplayer page, Host over Steam)");
+    return true;
+}
+
+// A joiner: into the host's room, and `settings` then leads this game's client
+// to the local port whose datagrams go to the host through Steam.
+bool SteamJoin(const std::string& room, CoopNx2navi::Settings& settings) {
+    namespace Menu = CoopNx2navi::Menu;
+    if (!WaitInterface()) {
+        return false;
+    }
+    CoopNx2navi::TitleMenu::SetPhase(
+        Menu::Phase::connecting, Menu::T(CoopNx2navi::TitleMenu::Language(), Menu::Text::steam_entering));
+    const auto session = CoopNx2navi::SteamNet::JoinSession(room, SteamSleep);
+    if (!session.ok) {
+        SteamFailed(session.fail, "join over Steam");
+        return false;
+    }
+    settings.coop.server = "127.0.0.1";
+    settings.coop.port = session.port;
+    settings.coop.password = session.secret;
+    g_steam_room = room;
+    return true;
 }
 
 void Main(HMODULE module) {
@@ -1819,6 +1968,9 @@ void Main(HMODULE module) {
     // This game was started again by its own Multiplayer page to host on a
     // multiplayer save (below): the server is ours to start.
     const bool host_on_save = Environment(L"OOT_COOP_MP_HOST") == L"1";
+    // ... over Steam; or to join the Steam room whose host's save is in already.
+    const bool steam_host = Environment(L"OOT_COOP_STEAM_HOST") == L"1";
+    const std::string steam_join = Utf8(Environment(L"OOT_COOP_STEAM_JOIN"));
     if (save_ready) {
         g_log.Line("save: this game was started again for the host's save (save folder %s%s)",
                    Utf8(Environment(L"NX2NAVI_SAVE_DIR")).c_str(),
@@ -1834,7 +1986,9 @@ void Main(HMODULE module) {
     if (settings && host_on_save) {
         g_log.Line("host: this game was started again to host on a multiplayer save (save folder %s)",
                    Utf8(Environment(L"NX2NAVI_SAVE_DIR")).c_str());
-        const ServerStart started = StartServer(folder, settings->coop.port, settings->coop.password);
+        const ServerStart started =
+            steam_host ? (SteamHost(folder, *settings) ? ServerStart::started : ServerStart::failed)
+                       : StartServer(folder, settings->coop.port, settings->coop.password);
         if (started == ServerStart::missing || started == ServerStart::failed) {
             g_log.Line("host: no server, so no session; the title screen's Multiplayer entry can try again");
             settings.reset();
@@ -1844,6 +1998,11 @@ void Main(HMODULE module) {
             }
             welcome = Menu::T(TitleMenu::Language(), Menu::Text::hosting_done);
         }
+    }
+    if (settings && save_ready && !steam_join.empty() && !SteamJoin(steam_join, *settings)) {
+        g_log.Line("join: the host's Steam room was not entered again; the title screen's Multiplayer "
+                   "entry can try again");
+        settings.reset();
     }
     bool said_idle = false;
     while (true) {
@@ -1861,6 +2020,11 @@ void Main(HMODULE module) {
                 TitleMenu::SetPhase(Menu::Phase::failed, why);
                 g_log.Line("join: not joined; the title screen's Multiplayer entry can try again");
                 settings.reset();
+                if (!g_steam_room.empty()) {
+                    // Over Steam: out of the host's room, so that Join can enter one again.
+                    CoopNx2navi::SteamNet::Leave();
+                    g_steam_room.clear();
+                }
                 break;
             case HostSave::own_save:
                 welcome = why.empty() ? Menu::T(TitleMenu::Language(), Menu::Text::no_host_save) : why;
@@ -1914,11 +2078,19 @@ void Main(HMODULE module) {
                                     Menu::T(lang, request->save_empty ? Menu::Text::host_restarting_new
                                                                       : Menu::Text::host_restarting));
                 SleepUntil(Clock::now() + std::chrono::milliseconds(1500));  // the sentence is read
-                if (WriteIni(host_ini, chosen) &&
-                    RestartGame({{L"NX2NAVI_SAVE_DIR", save_dir.wstring()},
-                                 {L"OOT_COOP_INI", host_ini.wstring()},
-                                 {L"OOT_COOP_MP_HOST", L"1"},
-                                 {L"OOT_COOP_PASSWORD", Wide(request->password)}})) {
+                EnvPairs next{{L"NX2NAVI_SAVE_DIR", save_dir.wstring()},
+                              {L"OOT_COOP_INI", host_ini.wstring()},
+                              {L"OOT_COOP_MP_HOST", L"1"},
+                              {L"OOT_COOP_PASSWORD", Wide(request->password)}};
+                // Over Steam the next start makes the room; over the local network it must
+                // not, whatever an earlier start of this game left in the environment.
+                if (request->steam || !Environment(L"OOT_COOP_STEAM_HOST").empty()) {
+                    next.emplace_back(L"OOT_COOP_STEAM_HOST", request->steam ? L"1" : L"");
+                }
+                if (!Environment(L"OOT_COOP_STEAM_JOIN").empty()) {
+                    next.emplace_back(L"OOT_COOP_STEAM_JOIN", L"");
+                }
+                if (WriteIni(host_ini, chosen) && RestartGame(std::move(next))) {
                     while (!SleepUntil(Clock::now() + std::chrono::seconds(1))) {
                     }
                     return;  // the game is closing; nothing more in this process
@@ -1927,7 +2099,18 @@ void Main(HMODULE module) {
                 continue;
             }
         }
-        if (request->host) {
+        if (request->steam) {
+            // Over Steam: no address, no port and no password of the player's.
+            chosen.coop.password.clear();
+            if (request->host ? !SteamHost(folder, chosen) : !SteamJoin(request->room, chosen)) {
+                continue;  // the page says why
+            }
+            chosen.host_save = !request->host;
+            welcome = Menu::T(lang, request->host ? Menu::Text::hosting_done : Menu::Text::joined_done);
+            if (request->host) {
+                TitleMenu::SetPhase(Menu::Phase::connecting, Menu::T(lang, Menu::Text::connecting));
+            }
+        } else if (request->host) {
             const ServerStart started = StartServer(folder, request->port, request->password);
             if (started == ServerStart::missing || started == ServerStart::failed) {
                 TitleMenu::SetPhase(Menu::Phase::failed,
@@ -1997,8 +2180,11 @@ __declspec(dllexport) int coop_nx2navi_state() {
 __declspec(dllexport) int coop_nx2navi_stop(unsigned wait_ms) {
     // The game's callbacks first, so none runs into a DLL about to unload.
     CoopNx2navi::Overlay::Shutdown();
+#ifndef COOP_UPSTREAM
     CoopNx2navi::Puppet::Shutdown();
+#endif
     CoopNx2navi::TitleMenu::Shutdown();
+    CoopNx2navi::SteamNet::Shutdown();
     if (const int handle = g_exit_handle.exchange(0); handle > 0) {
         if (const Nx2PluginApi* api = CoopNx2navi::Overlay::Api()) {
             api->remove(handle);

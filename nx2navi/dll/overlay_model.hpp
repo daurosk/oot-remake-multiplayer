@@ -41,7 +41,13 @@ struct Local {
     bool child = false;       // our Link is the child (the others in our scene are the same age)
     std::optional<std::string> scene;
     Vec3 position{};
+    int max_life = 0;         // our own most life in quarter hearts (0 not read): two rows of hearts above 40
 };
+
+// Where the other players' block starts, as a share of the game picture's height: right under the
+// game's own hearts, magic bar and item row, which end at about 0.27 (one row of hearts) and one
+// heart row lower when our Link has more than ten hearts.
+inline float PeerBlockTop(int own_max_life) { return own_max_life > 40 ? 0.335f : 0.29f; }
 
 // Another player, from the client's room and from presence.
 struct Peer {
@@ -51,7 +57,57 @@ struct Peer {
     bool fresh = false;  // a sample came within kStaleUs
     std::optional<std::string> scene;
     std::optional<Vec3> position;  // where presence shows the player now
+    // Their hearts in quarter hearts, from their last PLAYER_LIFE (max 0: none came yet), and how long
+    // ago they last lost some, in ms (a large number: never): their name tag is red for a moment then.
+    int life = 0;
+    int max_life = 0;
+    std::uint64_t hurt_ago_ms = ~std::uint64_t{0};
+    // Their magic (the game's PlayerStatus.MP of MPMax), from their PLAYER_EXTRA; max 0: not told.
+    int magic = 0;
+    int max_magic = 0;
 };
+
+// How long a player's name tag stays red after they lost life, and the red's share then (1 at the
+// loss, 0 from kHurtFlashMs on).
+inline constexpr std::uint64_t kHurtFlashMs = 700;
+inline float HurtFlash(std::uint64_t hurt_ago_ms) {
+    return hurt_ago_ms >= kHurtFlashMs ? 0.0f
+                                       : 1.0f - static_cast<float>(hurt_ago_ms) / static_cast<float>(kHurtFlashMs);
+}
+// The other players' hearts under our own (the plain look: no picture of the game's): how many
+// quarters of heart `index` (0 first) are filled, 0 to 4.
+inline int HeartQuarters(int life, int index) {
+    const int q = life - 4 * index;
+    return q < 0 ? 0 : q > 4 ? 4 : q;
+}
+
+// The game's own heart picture drawn for 0 to 4 quarters: the parts of the full heart that show, as
+// fractions of the picture (the game's quarter masks are its quadrants: one quarter is the top left,
+// two the left half, three everything but the top right). Returns how many rectangles (0 to 2).
+struct UvRect {
+    float u0 = 0.0f, v0 = 0.0f, u1 = 0.0f, v1 = 0.0f;
+};
+inline int HeartFill(int quarters, UvRect out[2]) {
+    switch (quarters) {
+    case 1: out[0] = {0.0f, 0.0f, 0.5f, 0.5f}; return 1;
+    case 2: out[0] = {0.0f, 0.0f, 0.5f, 1.0f}; return 1;
+    case 3: out[0] = {0.0f, 0.0f, 0.5f, 1.0f}; out[1] = {0.5f, 0.5f, 1.0f, 1.0f}; return 2;
+    case 4: out[0] = {0.0f, 0.0f, 1.0f, 1.0f}; return 1;
+    default: return 0;
+    }
+}
+// The filled share of another player's magic bar, 0 to 1 (0 when their game told none).
+inline float MagicShare(int magic, int max_magic) {
+    if (max_magic <= 0 || magic <= 0) {
+        return 0.0f;
+    }
+    return magic >= max_magic ? 1.0f : static_cast<float>(magic) / static_cast<float>(max_magic);
+}
+
+// The panel's own texts: English, or French in a French game (the hook's notices, "Host got the
+// map", stay as the hook writes them). Any thread.
+void SetFrench(bool on);
+bool French();
 
 struct Snapshot {
     Link link = Link::connecting;

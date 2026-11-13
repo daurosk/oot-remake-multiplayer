@@ -118,6 +118,7 @@ enum class MessageType : std::uint16_t {
   player_ride = 385,  // 385 to 389: riding Epona (docs/protocol.md, "Riding")
   platform_clock = 400,  // 400 to 404: moving platforms' clocks (docs/protocol.md, "Moving platforms")
   platform_counter = 401,  // looping platforms' pause counters (docs/protocol.md, "Moving platforms")
+  player_extra = 420,  // 420 to 424: small per-player extras relayed as they come (docs/protocol.md, "Player extras")
 };
 
 // PLAYER_SAMPLE component ids.
@@ -1291,6 +1292,21 @@ struct PlatformCounter {
   bool operator==(const PlatformCounter&) const = default;
 };
 
+// PLAYER_EXTRA (no protocol version change: a game that does not know the
+// type drops it): a small piece of data about the sender that the server only
+// relays to everyone else, with the sender's number in the player field. The
+// kinds are the games' own; the server does not read them. Kinds so far
+// (the NX2navi port, nx2navi/README.md "Puppet sounds"): 1 a sound the
+// sender's Link started (data: the asset's name), 2 the sender's magic
+// (data: u16 now, u16 most, little endian).
+inline constexpr std::size_t kMaxPlayerExtraBytes = 96;
+struct PlayerExtra {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
+  std::uint8_t kind = 0;
+  std::vector<std::uint8_t> data;  // up to kMaxPlayerExtraBytes
+  bool operator==(const PlayerExtra&) const = default;
+};
+
 struct DungeonEvent {
   std::uint8_t player_number = kPlayerSelf;
   std::string scene;
@@ -1309,7 +1325,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin,
                              JoinChallenge, JoinProof, SaveAsk, SavePart, PlayerLife,
                              PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim, DungeonEvent, PlayerRide,
-                             OcarinaNote, PlatformClock, PlatformCounter>;
+                             OcarinaNote, PlatformClock, PlatformCounter, PlayerExtra>;
 
 MessageType type_of(const Message& message);
 

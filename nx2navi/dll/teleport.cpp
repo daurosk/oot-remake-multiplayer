@@ -159,6 +159,7 @@ struct Glue {
     struct Goto {
         std::uint64_t after_us = 0;
         CoopTeleport::Vec to;
+        std::optional<float> yaw;  // degrees about the vertical: where Link then faces (atan2(x, z))
     };
     std::vector<Goto> gotos;
     std::uint64_t in_game_us = 0;
@@ -284,6 +285,11 @@ void Logic(Glue& g, CoopPuppet::Guest& guest, std::uint64_t main) {
                 g.Log("teleport: test goto %.1f %.1f %.1f", static_cast<double>(it->to.x),
                       static_cast<double>(it->to.y), static_cast<double>(it->to.z));
                 g.move = it->to;
+                g.move_facing.reset();
+                if (it->yaw) {
+                    const float half = *it->yaw * 0.01745329f / 2.0f;
+                    g.move_facing = coop::protocol::Quat{0.0f, std::sin(half), 0.0f, std::cos(half)};
+                }
                 g.gotos.erase(it);
                 break;
             }
@@ -494,8 +500,11 @@ void TestGoto(std::string_view spec) {
         float x = 0.0f;
         float y = 0.0f;
         float z = 0.0f;
-        if (std::sscanf(part.c_str(), "%lf:%f,%f,%f", &at, &x, &y, &z) == 4 && at >= 0.0) {
-            g.gotos.push_back({static_cast<std::uint64_t>(at * 1e6), CoopTeleport::Vec{x, y, z}});
+        float yaw = 0.0f;
+        const int read = std::sscanf(part.c_str(), "%lf:%f,%f,%f,%f", &at, &x, &y, &z, &yaw);
+        if (read >= 4 && at >= 0.0) {
+            g.gotos.push_back({static_cast<std::uint64_t>(at * 1e6), CoopTeleport::Vec{x, y, z},
+                               read == 5 ? std::optional<float>(yaw) : std::nullopt});
         }
     }
     if (!g.gotos.empty()) {
@@ -746,10 +755,8 @@ std::optional<CoopPuppet::Call> Step(CoopPuppet::Guest& guest, bool after_call, 
             // where there is a wall or a ledge behind (runs f3, f4).
             if (turned) {
                 const Nx2PluginApi* api = CoopNx2navi::Overlay::Api();
-                // The size must be this header's own: version 5 was still being
-                // built when this was written (NOTES.md), and a table of
-                // another length is not known to have this member here.
-                if (api != nullptr && api->version == 5 && api->size == sizeof(Nx2PluginApi) &&
+                // Version 5 or later (version 6's table is longer: asked for by member).
+                if (api != nullptr && api->version >= 5 && NX2_HAS(api, Nx2PluginApi, camera_reset) &&
                     api->camera_reset != nullptr) {
                     g.Log(api->camera_reset() == 1
                               ? "teleport: the camera is put behind Link (the plugin interface's "

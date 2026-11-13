@@ -19,6 +19,7 @@
 #include "core/core.h"
 #include "emu_port.hpp"
 #include "anim_probe.hpp"
+#include "world_probe.hpp"
 #include "brain.hpp"
 #include "hold.hpp"
 #include "plugin_api_v2.h"
@@ -177,6 +178,9 @@ void OnStep(Nx2HookCall* call, void*) {
     if (AnimProbe::On()) {
         AnimProbe::Step(ThePort(), main, NowMs(), [](const std::string& line) { Log(line); });
     }
+    if (WorldProbe::On()) {
+        WorldProbe::Step(ThePort(), main, NowMs(), [](const std::string& line) { Log(line); });
+    }
     const auto us = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - begin)
             .count());
@@ -250,6 +254,12 @@ bool Activate(const Nx2PluginApi* api) {
         SetEnv("LICHII_COOP_DEBUG_OBJECTS", "1");
     }
     CoopObjects::ShareFriendly(g_options.friendly);
+    // Every AS slot of an enemy is copied (a copy's own AI is left out here, so nothing else
+    // animates it): OOT_COOP_ENEMY_SLOTS=0 puts the shared code's slot 0 alone back.
+    {
+        const char* slots = std::getenv("OOT_COOP_ENEMY_SLOTS");
+        CoopObjects::EnemySlots(slots == nullptr || std::string_view(slots) != "0");
+    }
     SetPort(&ThePort());
     SetLog([](const std::string& line) {
         // The hook's lines start with "coop: "; the DLL's log adds that itself.

@@ -22,6 +22,8 @@
 #include "menu_model.hpp"
 #include "mp_saves.hpp"
 #include "overlay_model.hpp"
+#include "puppet_fx.hpp"
+#include "coop/protocol/codec.hpp"
 #include "save_sync.hpp"
 #include "settings.hpp"
 #include "teleport_auto.hpp"
@@ -53,11 +55,11 @@ TEST_CASE("nx2navi settings: the four keys and share_progress") {
   CHECK(s.share_progress);
 }
 
-TEST_CASE("nx2navi settings: shared progress is off unless the file says 1") {
+TEST_CASE("nx2navi settings: shared progress is on unless the file says 0") {
   std::vector<std::string> errors;
-  CHECK_FALSE(ParseSettings("server = 1.2.3.4\nname = A\n", errors).share_progress);
+  CHECK(ParseSettings("server = 1.2.3.4\nname = A\n", errors).share_progress);  // on unless 0
   CHECK_FALSE(ParseSettings("server = 1.2.3.4\nshare_progress = 0\n", errors).share_progress);
-  CHECK_FALSE(ParseSettings("server = 1.2.3.4\n# share_progress = 1\n", errors).share_progress);
+  CHECK(ParseSettings("server = 1.2.3.4\n# share_progress = 0\n", errors).share_progress);
   CHECK(errors.empty());
 }
 
@@ -2016,4 +2018,137 @@ TEST_CASE("nx2navi teleport: no regroup for the host, with follow off, or when o
   const auto go = b.Tick(In("Kokiri"), false, others, 22 * kSecond + 1);
   REQUIRE(go);
   CHECK(go->player == 3);
+}
+
+TEST_CASE("the other players' hearts: quarters per heart, and the red moment after a hit") {
+    namespace Ui = CoopNx2navi::Ui;
+    // 6 hearts with 4 and a quarter left: the first full, the second a quarter, the rest empty.
+    CHECK(Ui::HeartQuarters(5, 0) == 4);
+    CHECK(Ui::HeartQuarters(5, 1) == 1);
+    CHECK(Ui::HeartQuarters(5, 2) == 0);
+    CHECK(Ui::HeartQuarters(0, 0) == 0);
+    CHECK(Ui::HeartQuarters(24, 5) == 4);
+    // The name tag is red at the loss and plain again 0.7 s later; a player who never lost life has none.
+    CHECK(Ui::HurtFlash(0) == doctest::Approx(1.0f));
+    CHECK(Ui::HurtFlash(350) == doctest::Approx(0.5f));
+    CHECK(Ui::HurtFlash(Ui::kHurtFlashMs) == 0.0f);
+    CHECK(Ui::HurtFlash(Ui::Peer{}.hurt_ago_ms) == 0.0f);
+}
+
+TEST_CASE("a struck puppet is red as the game's own Link: the damage ratio over time") {
+    namespace Fx = CoopNx2navi::PuppetFx;
+    // The game's own values at 30 frames a second (two ticks a frame): 1, 1, 0.9957, 0.7059, 0.2423, then 0.
+    CHECK(Fx::DamageRatio(0) == doctest::Approx(0.5f));
+    CHECK(Fx::DamageRatio(33) == doctest::Approx(1.0f).epsilon(0.01));
+    CHECK(Fx::DamageRatio(67) == doctest::Approx(1.0f));
+    CHECK(Fx::DamageRatio(100) == doctest::Approx(0.99568f).epsilon(0.01));
+    CHECK(Fx::DamageRatio(133) == doctest::Approx(0.70593f).epsilon(0.02));
+    CHECK(Fx::DamageRatio(167) == doctest::Approx(0.24233f).epsilon(0.03));
+    CHECK(Fx::DamageRatio(200) == 0.0f);
+    CHECK(Fx::DamageRatio(Fx::kFlashMs) == 0.0f);
+    for (std::uint64_t ms = 0; ms < 300; ++ms) {
+        CHECK(Fx::DamageRatio(ms) >= 0.0f);
+        CHECK(Fx::DamageRatio(ms) <= 1.0f);
+    }
+    // The optional blink: hidden first, shown again every other 66 ms, always shown once it is over.
+    CHECK_FALSE(Fx::BlinkShown(0));
+    CHECK(Fx::BlinkShown(70));
+    CHECK_FALSE(Fx::BlinkShown(140));
+    CHECK(Fx::BlinkShown(Fx::kBlinkMs));
+}
+
+TEST_CASE("our Link's sounds and magic for the other games: names, the budget, the magic bytes") {
+    namespace Fx = CoopNx2navi::PuppetFx;
+    CHECK(Fx::SoundName("Damage_S_01"));
+    CHECK(Fx::SoundName("FootStep"));
+    CHECK_FALSE(Fx::SoundName(""));
+    CHECK_FALSE(Fx::SoundName("a b"));
+    CHECK_FALSE(Fx::SoundName("../x"));
+    CHECK_FALSE(Fx::SoundName(std::string(64, 'a')));
+    CHECK(Fx::SoundName(std::string(63, 'a')));
+    Fx::SoundBudget budget;
+    int taken = 0;
+    for (int i = 0; i < 100; ++i) {
+        taken += budget.Take(5000 + i) ? 1 : 0;
+    }
+    CHECK(taken == Fx::kSoundsPerSecond);
+    CHECK(budget.Take(6000));  // the next second
+    const auto bytes = Fx::EncodeMagic(30, 48);
+    REQUIRE(bytes.size() == 4);
+    const auto magic = Fx::DecodeMagic(bytes);
+    REQUIRE(magic);
+    CHECK(magic->now == 30);
+    CHECK(magic->most == 48);
+    CHECK(Fx::DecodeMagic(Fx::EncodeMagic(99, 48))->now == 48);  // never more than the most
+    CHECK_FALSE(Fx::DecodeMagic({1, 2, 3}));
+    // PLAYER_EXTRA goes through the codec as it is.
+    coop::protocol::PlayerExtra extra{0, Fx::kExtraMagic, bytes};
+    std::vector<std::uint8_t> packet;
+    REQUIRE(coop::protocol::encode(coop::protocol::Message{extra}, packet) == coop::protocol::Error::none);
+    coop::protocol::Message back;
+    REQUIRE(coop::protocol::decode(packet, back) == coop::protocol::Error::none);
+    REQUIRE(std::holds_alternative<coop::protocol::PlayerExtra>(back));
+    CHECK(std::get<coop::protocol::PlayerExtra>(back) == extra);
+    extra.data.assign(coop::protocol::kMaxPlayerExtraBytes + 1, 0);
+    packet.clear();
+    CHECK(coop::protocol::encode(coop::protocol::Message{extra}, packet) != coop::protocol::Error::none);
+}
+
+TEST_CASE("the other players' hearts in the game's look: which part of the heart picture shows, and the magic") {
+    namespace Ui = CoopNx2navi::Ui;
+    Ui::UvRect part[2];
+    CHECK(Ui::HeartFill(0, part) == 0);
+    REQUIRE(Ui::HeartFill(1, part) == 1);  // the top left quadrant
+    CHECK(part[0].u1 == 0.5f);
+    CHECK(part[0].v1 == 0.5f);
+    REQUIRE(Ui::HeartFill(2, part) == 1);  // the left half
+    CHECK(part[0].u1 == 0.5f);
+    CHECK(part[0].v1 == 1.0f);
+    REQUIRE(Ui::HeartFill(3, part) == 2);  // everything but the top right
+    CHECK(part[1].u0 == 0.5f);
+    CHECK(part[1].v0 == 0.5f);
+    REQUIRE(Ui::HeartFill(4, part) == 1);
+    CHECK(part[0].u1 == 1.0f);
+    CHECK(part[0].v1 == 1.0f);
+    CHECK(Ui::MagicShare(0, 48) == 0.0f);
+    CHECK(Ui::MagicShare(24, 48) == doctest::Approx(0.5f));
+    CHECK(Ui::MagicShare(60, 48) == 1.0f);
+    CHECK(Ui::MagicShare(10, 0) == 0.0f);  // their game told no magic: no bar
+}
+
+TEST_CASE("the other players' block starts under the game's own HUD, one heart row lower above ten hearts") {
+    namespace Ui = CoopNx2navi::Ui;
+    CHECK(Ui::PeerBlockTop(0) == doctest::Approx(0.29f));
+    CHECK(Ui::PeerBlockTop(40) == doctest::Approx(0.29f));
+    CHECK(Ui::PeerBlockTop(44) > Ui::PeerBlockTop(40));
+}
+
+TEST_CASE("the panel's own texts are French in a French game") {
+    namespace Ui = CoopNx2navi::Ui;
+    Ui::Snapshot s;
+    s.link = Ui::Link::connected;
+    s.self = 1;
+    s.self_name = "Zelda";
+    s.local.game_found = true;
+    s.local.in_game = true;
+    s.local.scene = "HyruleField_Adult";
+    Ui::Peer peer;
+    peer.number = 2;
+    peer.name = "Saria";
+    peer.known = true;
+    peer.fresh = true;
+    peer.scene = "HyruleField_Adult";
+    peer.position = Ui::Vec3{10.0f, 0.0f, 0.0f};
+    s.peers.push_back(peer);
+    CHECK_FALSE(Ui::French());
+    CHECK(Ui::LinkLine(s) == "Co-op: connected as P1 \"Zelda\"");
+    CHECK(Ui::PeerLine(peer, s.local) == "P2 Saria: HyruleField_Adult, 10.0 units, east");
+    Ui::SetFrench(true);
+    CHECK(Ui::LinkLine(s) == "Coop : connecté en tant que J1 \"Zelda\"");
+    CHECK(Ui::LocalLine(s.local) == "Vous : HyruleField_Adult");
+    CHECK(Ui::PeerLine(peer, s.local) == "J2 Saria : HyruleField_Adult, 10.0 m, est");
+    peer.fresh = false;
+    CHECK(Ui::PeerLine(peer, s.local) == "J2 Saria : hors du jeu");
+    Ui::SetFrench(false);
+    CHECK(Ui::LocalLine(s.local) == "You: HyruleField_Adult");
 }

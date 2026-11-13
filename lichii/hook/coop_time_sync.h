@@ -44,13 +44,23 @@ namespace CoopTime {
 // Seconds from a to b the short way round midnight (-43200 to 43199).
 std::int32_t Ahead(std::uint32_t a, std::uint32_t b);
 
+// A build may narrow the drift that is set while playing and how often (the NX2navi port: there the
+// game's time flags never go back to 0 after a set, so no nudge is ever written, and a guest whose
+// load took seven real seconds stayed fifteen in-game minutes behind for good).
+#ifndef LICHII_COOP_TIME_RESYNC_SECONDS
+#define LICHII_COOP_TIME_RESYNC_SECONDS 3'600
+#endif
+#ifndef LICHII_COOP_TIME_SET_EVERY_US
+#define LICHII_COOP_TIME_SET_EVERY_US 60'000'000
+#endif
+
 class Sync {
 public:
     static constexpr std::uint64_t kSendEveryUs = 1'000'000;
     static constexpr std::uint32_t kDriftSeconds = 120;  // two in-game minutes: on joining, a jump
-    static constexpr std::uint32_t kResyncSeconds = 3'600;  // one in-game hour: while playing
+    static constexpr std::uint32_t kResyncSeconds = LICHII_COOP_TIME_RESYNC_SECONDS;  // one in-game hour: while playing
     static constexpr std::uint32_t kJumpSeconds = 1'800;  // half an hour in one read
-    static constexpr std::uint64_t kSetEveryUs = 60'000'000;
+    static constexpr std::uint64_t kSetEveryUs = LICHII_COOP_TIME_SET_EVERY_US;
     static constexpr std::uint64_t kRunningForUs = 2'000'000;  // our clock runs: no change, not indoors
     static constexpr std::uint64_t kQuietAfterSetUs = 3'000'000;  // our own set is no jump
     static constexpr std::uint32_t kNudgeSeconds = 60;  // half a real second: closer is in sync

@@ -136,6 +136,18 @@ void ShareFriendly(bool on) {
     g_share_friendly.store(on, std::memory_order_relaxed);
 }
 
+namespace {
+std::atomic<bool> g_enemy_slots{false};
+}
+
+void EnemySlots(bool on) {
+    g_enemy_slots.store(on, std::memory_order_relaxed);
+}
+
+bool EnemySlots() {
+    return g_enemy_slots.load(std::memory_order_relaxed);
+}
+
 bool IsShared(std::string_view name) {
     if (IsOwnPuzzle(name)) return false;  // before the Npc_ rule: the pond owner is one
     // Enemy shots (Enemy_MoblinClub_ShockWave is named like an enemy)
@@ -2172,6 +2184,26 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
         }
         const Received& last = o.received.back();
         const auto& wanted = last.animation;
+        // EnemySlots: an enemy's empty slots are wishes too (the slot is cleared).
+        const bool every_slot = o.reacts && EnemySlots();
+        if (every_slot && wanted) {
+            const std::int64_t age = std::clamp<std::int64_t>(
+                static_cast<std::int64_t>(now_us - last.time) - static_cast<std::int64_t>(kBehindUs),
+                -static_cast<std::int64_t>(kBehindUs), static_cast<std::int64_t>(kExtrapolateUs));
+            const auto wish = [&](const proto::Animation& a, std::int32_t slot) {
+                const float r = std::isfinite(a.rate) && a.rate > 0.0f ? a.rate : 1.0f;
+                out.push_back({address, a.name, r, FrameAfter(a.frame, r, age), last.time, slot, {}});
+            };
+            // Just hit here: the copy's own game shows the hit first (as below).
+            if (!(o.react_at != 0 && now_us < o.react_at + kReactHoldUs &&
+                  wanted->name == o.react_over)) {
+                wish(*wanted, 0);
+            }
+            for (const proto::SlotAnimation& s : last.slots) {
+                wish(s.animation, s.slot);
+            }
+            continue;
+        }
         if (!wanted || wanted->name.empty()) {
             continue;
         }

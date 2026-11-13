@@ -55,6 +55,13 @@ struct CommandLine {
   std::uint16_t game_port = 27512;
   // --pvp on|off: players hurt each other (docs/play-online.md, "PvP").
   bool pvp = false;
+  // --owner nearest|classic: who owns a shared enemy (SessionConfig::nearest_owner). The NX2navi
+  // mod's server is built with nearest as its default (COOP_SERVER_OWNER_NEAREST).
+#ifdef COOP_SERVER_OWNER_NEAREST
+  bool owner_nearest = true;
+#else
+  bool owner_nearest = false;
+#endif
   bool help = false;
 };
 

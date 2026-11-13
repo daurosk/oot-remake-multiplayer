@@ -24,7 +24,7 @@ REPO = Path(__file__).resolve().parents[2]
 BIN = REPO / 'build' / 'nx2navi' / 'bin'
 DLL = BIN / 'coop_nx2navi.dll'
 SERVER = BIN / 'oot-coop-server.exe'
-DEFAULT_PASSWORD = 'test-default'   # for the cases that are not about the password
+DEFAULT_PASSWORD = 'oot-coop-open'   # the open word of a session without a password (settings.hpp)
 FAKE = BIN / 'coop_nx2navi_fake_game.exe'
 # The stand-in built as a game with NX2navi's plugin interface (fake_game.cpp,
 # COOP_FAKE_PLUGIN_HOST): it records what the DLL draws.
@@ -85,7 +85,8 @@ class Case(unittest.TestCase):
             lines.append(f'overlay = {overlay}')
         if puppet is not None:
             lines.append(f'puppet = {puppet}')
-        lines.append(f'password = {password or DEFAULT_PASSWORD}')
+        if password:
+            lines.append(f'password = {password}')   # none: the DLL sends the open word
         lines += list(more)
         (folder / 'coop.ini').write_bytes(('\r\n'.join(lines) + '\r\n').encode('utf-8'))
         env = dict(os.environ)
@@ -212,7 +213,7 @@ class Case(unittest.TestCase):
         code, out, log = self.finish(*self.player('Saria', '--no-game', '--seconds', '4',
                                                   password='right-one', share=True))
         self.assertEqual(code, 0, out + log)
-        self.assertIn('shared progress on (experimental)', log)
+        self.assertIn('shared progress on', log)
         self.assertIn('welcomed as player 1', log)
         self.assertRegex(log, r'stopped; \d+ frames, 0 with the player, 0 messages sent')
 
@@ -260,7 +261,7 @@ class Case(unittest.TestCase):
             self.assertEqual(log.count('plugin interface version 1 from nx2navi_plugin_init (game 111'),
                              1)
             self.assertEqual(log.count('overlay: on'), 1)
-            self.assertEqual(log.count('coop-dll 0.7 in'), 1)   # one thread, one log
+            self.assertEqual(log.count('coop-dll 0.9 in'), 1)   # one thread, one log
             self.assertIn('overlay: on (bottom left; F9 hides and shows it, Enter opens the chat box)',
                           log)
             # This stand-in serves interface version 1: no function hooks, so no map markers.
@@ -625,6 +626,14 @@ class Case(unittest.TestCase):
         self.assertIn(f"coop: on, server 127.0.0.1:{self.port} as 'Saria'", log)
         self.assertIn('coop: welcomed as player 1', log)
         self.assertIn('puppet: off (puppet = 0 in coop.ini)', log)   # the launcher's toggles hold
+        # A session started from the page shares enemies unless the player turned them off: the
+        # settings file says nothing about them here, so they are on (as time of day and drops are),
+        # and the coop.ini the mod writes for the session says so.
+        self.assertNotIn('objects: off (objects = 0', log)
+        self.assertRegex(log, r'objects: (on \(shared enemies|off: shared enemies need the plugin interface)')
+        ini = (folder / 'coop.ini').read_text(encoding='utf-8')
+        self.assertIn('objects = 1', ini)
+        self.assertNotIn('objects = 0', ini)
         self.assertIn('menu: page closed', log)
         # The second visit: the session is said, and Start does not start another.
         self.assertTrue(any("6 action 'État' = 'Hébergement (J1)'" in r[6] for _, _, r in pages), out)

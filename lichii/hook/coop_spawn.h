@@ -378,7 +378,12 @@ public:
     static constexpr std::uint64_t kNameCell = 0x40;
     static constexpr std::size_t kNameCells = 32;
     static constexpr std::uint64_t kBlockSize = kSlots * kSlotSize + kNameCells * kNameCell;
-    static constexpr std::uint64_t kCreateTimeoutMs = 3000;
+    // A build may give its own wait (the NX2navi port: two games on one PC make an enemy's first copy in more
+    // than 3 s right after a load).
+#ifndef LICHII_COOP_SPAWN_CREATE_TIMEOUT_MS
+#define LICHII_COOP_SPAWN_CREATE_TIMEOUT_MS 3000
+#endif
+    static constexpr std::uint64_t kCreateTimeoutMs = LICHII_COOP_SPAWN_CREATE_TIMEOUT_MS;
     static constexpr std::uint64_t kRemakeDelayMs = 1000;  // see Copy::remakes
 
     // Present thread.

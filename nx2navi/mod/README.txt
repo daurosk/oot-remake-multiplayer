@@ -16,7 +16,7 @@ French game). It opens a page of the game's own menu:
         password; Join connects, takes the host's save and restarts the game
         on it: choose Continue and you stand next to the host. Your own saves
         are never touched (the host's save goes into coop-save in this folder).
-  Host / Join over Steam    shown, not available yet.
+  Host / Join over Steam    done inside the game: title screen, Multiplayer.
 Typing: choose a field, type on the keyboard, Enter confirms, Esc cancels. With
 a gamepad alone: up and down change the last character, right adds one, left
 removes one, A confirms, B cancels.

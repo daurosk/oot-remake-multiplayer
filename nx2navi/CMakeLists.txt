@@ -14,6 +14,8 @@ add_library(coop_nx2navi_lib STATIC
   dll/menu_model.cpp
   dll/save_sync.cpp
   dll/mp_saves.cpp
+  dll/steam_model.cpp
+  dll/steam_menu.cpp
   # No emulator code in it (tests/CMakeLists.txt builds it the same way).
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_settings.cpp
 )
@@ -23,14 +25,16 @@ target_include_directories(coop_nx2navi_lib PUBLIC
 target_link_libraries(coop_nx2navi_lib PUBLIC coop_host coop_net PRIVATE coop_warnings)
 
 add_library(coop_nx2navi SHARED dll/coop_dll.cpp dll/overlay.cpp dll/puppet.cpp dll/teleport.cpp
-  dll/title_menu.cpp dll/ai_probe.cpp
+  dll/title_menu.cpp dll/ai_probe.cpp dll/progress.cpp dll/steam_net.cpp
+  ../lichii/hook/coop_chests.cpp ../lichii/hook/coop_story.cpp ../lichii/hook/coop_quests.cpp
+  ../lichii/hook/coop_quest.cpp ../lichii/hook/coop_shared_scenes.cpp
   ../lichii/hook/coop_puppet.cpp ../lichii/hook/coop_pose.cpp ../lichii/hook/coop_camera.cpp
   # Teleport's rules and the event request: the hook's own, no emulator code.
   ../lichii/hook/coop_teleport.cpp ../lichii/hook/coop_live_events.cpp
   ../lichii/hook/coop_live_places.cpp
   # Shared enemies and boss rooms (dll/objects/INTEGRATION.md): the hook's files unchanged,
   # against the stand-in emulator headers in dll/objects/shim.
-  dll/objects/objects.cpp dll/objects/emu_port.cpp dll/objects/hold.cpp dll/objects/brain.cpp dll/objects/anim_probe.cpp
+  dll/objects/objects.cpp dll/objects/emu_port.cpp dll/objects/hold.cpp dll/objects/brain.cpp dll/objects/anim_probe.cpp dll/objects/world_probe.cpp
   ../lichii/hook/coop_objects.cpp ../lichii/hook/coop_objects_sync.cpp ../lichii/hook/coop_world.cpp
   ../lichii/hook/coop_spawn.cpp ../lichii/hook/coop_projectiles.cpp ../lichii/hook/coop_pickups.cpp
   ../lichii/hook/coop_ocarina.cpp ../lichii/hook/coop_cheat_items.cpp ../lichii/hook/coop_flags.cpp
@@ -51,6 +55,7 @@ endif()
 
 if(COOP_BUILD_TESTS AND TARGET coop_tests)
   target_sources(coop_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/nx2navi_test.cpp")
+  target_sources(coop_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/steam_test.cpp")
   target_link_libraries(coop_tests PRIVATE coop_nx2navi_lib)
   # The stand-in game process for nx2navi/tests/test_dll.py.
   add_executable(coop_nx2navi_fake_game tests/fake_game.cpp)

@@ -41,6 +41,10 @@ struct Request {
     // on a save folder: the session then runs on the player's own saves.
     std::string save;
     bool save_empty = false;  // that save has no slot yet: a game to begin
+    // Over Steam (steam_net.hpp): no address, port or password; Join names the
+    // host's room by its id.
+    bool steam = false;
+    std::string room;
 };
 
 // Adds the title entry when the interface has it (version 3 with open_menu).
@@ -56,6 +60,9 @@ std::optional<Request> TakeRequest();
 void SetPhase(Menu::Phase phase, std::string message = {}, std::uint8_t player = 0);
 // Closes the page, as the player's "back" does. Any thread.
 void Close();
+// Whether the page shows now (one atomic load: for the overlay, which leaves
+// its panel out meanwhile; the page's rows are where the panel is). Any thread.
+bool PageOpen();
 // The menu's language (the game's, unless the player chose another).
 Menu::Lang Language();
 

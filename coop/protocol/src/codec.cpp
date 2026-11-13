@@ -1574,6 +1574,28 @@ Error decode_body(Reader& r, OcarinaNote& m) {
   return Error::none;
 }
 
+Error encode_body(const PlayerExtra& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number) || m.data.size() > kMaxPlayerExtraBytes) return Error::bad_value;
+  w.u8(m.player_number);
+  w.u8(m.kind);
+  w.u8(static_cast<std::uint8_t>(m.data.size()));
+  w.bytes(m.data.data(), m.data.size());
+  return Error::none;
+}
+
+Error decode_body(Reader& r, PlayerExtra& m) {
+  m = PlayerExtra{};
+  std::uint8_t size = 0;
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(m.kind));
+  COOP_READ(r.u8(size));
+  if (!valid_player_or_self(m.player_number) || size > kMaxPlayerExtraBytes) return Error::bad_value;
+  std::span<const std::uint8_t> part;
+  COOP_READ(r.take(size, part));
+  m.data.assign(part.begin(), part.end());
+  return Error::none;
+}
+
 Error decode_body(Reader& r, TimeOfDay& m) {
   m = TimeOfDay{};
   COOP_READ(r.u8(m.player_number));
@@ -2251,6 +2273,7 @@ MessageType type_of(const Message& message) {
       MessageType::ocarina_note,
       MessageType::platform_clock,
       MessageType::platform_counter,
+      MessageType::player_extra,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -2327,6 +2350,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::save_part:
     case MessageType::pvp_mode:
     case MessageType::ocarina_note:
+    case MessageType::player_extra:
       return channel == kChannelSession;
     case MessageType::flag_set:
     case MessageType::flag_state:
@@ -2425,6 +2449,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::pvp_hit:
     case MessageType::pvp_hurt:
     case MessageType::ocarina_note:
+    case MessageType::player_extra:
       return true;
   }
   return false;
@@ -2461,7 +2486,8 @@ auto* player_field(M& message) {
                       std::is_same_v<T, PlayerRide> ||
                       std::is_same_v<T, OcarinaNote> ||
                       std::is_same_v<T, PlatformClock> ||
-                      std::is_same_v<T, PlatformCounter>) {
+                      std::is_same_v<T, PlatformCounter> ||
+                      std::is_same_v<T, PlayerExtra>) {
           field = &m.player_number;
         }
       },
@@ -2551,6 +2577,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::flag_reset: return decode_as<FlagReset>(body, out);
     case MessageType::flag_origin: return decode_as<FlagOrigin>(body, out);
     case MessageType::ocarina_note: return decode_as<OcarinaNote>(body, out);
+    case MessageType::player_extra: return decode_as<PlayerExtra>(body, out);
     case MessageType::save_ask: return decode_as<SaveAsk>(body, out);
     case MessageType::save_part: return decode_as<SavePart>(body, out);
     case MessageType::pvp_mode: return decode_as<PvpMode>(body, out);

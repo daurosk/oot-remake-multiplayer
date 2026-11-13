@@ -356,8 +356,8 @@ name = @NAME@
 # password: the join password, when the host set one. The password itself never goes
 #         over the network, only a proof of it.
 password = @PASSWORD@
-# share_progress: 1 shares items and flags with the other players (experimental in
-#         this port: it writes into your running save and is not verified). 0: off.
+# share_progress: 1 shares items, songs, keys, opened chests, dungeon switches and doors and
+#         story flags with the other players (every player should use the same). 0: off.
 share_progress = @SHARE@
 # overlay: 1 shows the co-op panel and chat box inside the game (an NX2navi build
 #         with its plugin interface; an older build ignores it). F9 hides the panel
@@ -395,7 +395,7 @@ JOIN_STEAM = 'Join over Steam'
 JOIN_LOCAL = 'Join over Local Network'
 
 
-def write_coop_ini(path, server, port, name, password='', share_progress=False, overlay=True,
+def write_coop_ini(path, server, port, name, password='', share_progress=True, overlay=True,
                    puppet=True, follow='host', join_at_host=True, objects=True, host_save=False):
     """Writes coop.ini. An empty server, name or password leaves that line commented
     out, so co-op is off without an error in the log. CRLF, UTF-8, no byte order mark."""
@@ -493,10 +493,10 @@ def make_puppet_pack(mod_dir, game_dir, log=lambda text: None):
 
 # --- The server process ---
 
-def new_password():
-    """A join password for a host who set none: 8 characters that read out well."""
-    import secrets
-    return ''.join(secrets.choice('abcdefghjkmnpqrstuvwxyz23456789') for _ in range(8))
+# The join password of a session whose host set none (dll/settings.hpp kOpenPassword): the
+# server gives every session one, so "none" is this public word on both sides. The DLL sends
+# it when coop.ini has no password.
+OPEN_PASSWORD = 'oot-coop-open'
 
 
 def server_command(exe, port, allow='', bind='', password=''):
@@ -512,10 +512,8 @@ def server_command(exe, port, allow='', bind='', password=''):
         if not re.fullmatch(r'\d{1,3}(\.\d{1,3}){3}', bind):
             raise ValueError(f"server_bind: '{bind}' is not an IPv4 address (25.1.2.3).")
         args += ['--bind', bind]
-    env = {}
-    if password:
-        env[PASSWORD_ENV] = password
-        args += ['--password-env', PASSWORD_ENV]
+    env = {PASSWORD_ENV: password or OPEN_PASSWORD}
+    args += ['--password-env', PASSWORD_ENV]
     return args, env
 
 
@@ -606,7 +604,7 @@ class Multiplayer:
     # coop-options.ini there), the passwords included, as plain text.
     def _load(self):
         defaults = {'name': '', 'port': DEFAULT_PORT, 'host_address': '', 'join_password': '',
-                    'server_password': '', 'share_progress': False, 'overlay': True, 'puppet': True,
+                    'server_password': '', 'share_progress': True, 'overlay': True, 'puppet': True,
                     'follow': 'host', 'join_at_host': True, 'objects': True, 'host_save': True,
                     'stop_server_with_game': False,
                     'server_allow': '', 'server_bind': ''}
@@ -703,21 +701,23 @@ class Multiplayer:
 
     # The ways two games find each other. 'local' is the co-op server on the host's PC, reached
     # by address (ENet over UDP: a home network, a virtual LAN or a forwarded port); the player
-    # chooses a name in its two screens. 'steam' is not built: it needs Valve's Steamworks SDK,
-    # which this project cannot ship. When it comes, it is one more entry here: the name is the
-    # Steam persona name (no name row), and a lobby or invite takes the place of the address,
-    # port and password rows; host_rows / join_rows and _play then take the transport.
+    # chooses a name in its two screens. 'steam' is done inside the game, not here: the game's
+    # title screen has Multiplayer > Host on Steam / Join on Steam (the game's own Steam link:
+    # NX2navi's plugin interface version 7, with Steam running), where the friends list and the
+    # invites are. So these two rows are shown, cannot be chosen, and say where to go.
     TRANSPORTS = ('steam', 'local')
-    STEAM_UNAVAILABLE = 'not available yet'
+    STEAM_UNAVAILABLE = 'in the game: title screen'
 
     def transport_available(self, transport):
         return transport == 'local'
 
     def main_rows(self):
         api = self.api
-        steam = ('Steam hosting is not available yet in this build: it needs Valve\'s Steamworks '
-                 'SDK, which is not part of it. Use the Local Network entry; it also works over '
-                 'the internet with a virtual LAN (Radmin VPN, Hamachi, Tailscale).')
+        steam = ('Hosting and joining over Steam is done inside the game: start the game, and on '
+                 'its title screen choose Multiplayer, then Host on Steam or Join on Steam (Steam '
+                 'must be running; an NX2navi build with its Steam link is needed). The Local '
+                 'Network entries here work without Steam, also over the internet with a virtual '
+                 'LAN (Radmin VPN, Hamachi, Tailscale).')
         rows = [
             # Shown, not selectable: a value row with no action.
             api.value(HOST_STEAM, lambda: self.STEAM_UNAVAILABLE, desc=steam),
@@ -746,11 +746,11 @@ class Multiplayer:
             api.text('Port', lambda: str(self.settings['port']), self.set_port,
                      desc=f'The server\'s UDP port. The usual one is {DEFAULT_PORT}.',
                      prompt='UDP port, 1 to 65535'),
-            api.toggle('Shared Progress (experimental)', lambda: bool(self.settings['share_progress']),
+            api.toggle('Shared Progress', lambda: bool(self.settings['share_progress']),
                        self.set_share_progress,
-                       desc='Shares items and flags with the other players. Experimental: it writes '
-                            'into your running save from outside the game and is not verified in '
-                            'this port. Back up your save first. Every player should use the same setting.'),
+                       desc='Items, songs, keys, opened chests, dungeon switches and doors and story '
+                            'flags are the same for every player: what one finds, all get. '
+                            'Every player should use the same setting.'),
             api.toggle('In-Game Overlay', lambda: bool(self.settings['overlay']), self.set_overlay,
                        desc='Shows the other players (scene, distance) and a chat box inside the game. '
                             'Needs an NX2navi build with its plugin interface; an older build plays '
@@ -947,12 +947,6 @@ class Multiplayer:
         if not exe.is_file():
             self.api.message(f'The co-op server is missing: {exe}\nInstall the mod again.')
             return False
-        if not self.settings['server_password']:
-            # The server starts only with a join password (it also encrypts the traffic): a host
-            # who set none gets a new one, kept and shown with the addresses to give.
-            self.settings['server_password'] = new_password()
-            self._save()
-            self.api.log('co-op: no join password was set: a new one was made (Join Password row)')
         try:
             args, extra = server_command(exe, self.settings['port'], self.settings['server_allow'],
                                          self.settings['server_bind'], self.settings['server_password'])

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "overlay_model.hpp"
 
+#include <atomic>
+
 #include <algorithm>
 #include <cmath>
 #include <initializer_list>
@@ -19,44 +21,55 @@ std::string Compass(double dx, double dz) {
     }
     static constexpr const char* kNames[8] = {"north",  "north-east", "east",  "south-east",
                                               "south",  "south-west", "west",  "north-west"};
-    return kNames[static_cast<int>(std::floor(degrees / 45.0 + 0.5)) % 8];
+    static constexpr const char* kNoms[8] = {"nord", "nord-est", "est", "sud-est", "sud", "sud-ouest", "ouest", "nord-ouest"};
+    return (French() ? kNoms : kNames)[static_cast<int>(std::floor(degrees / 45.0 + 0.5)) % 8];
 }
+
+namespace {
+std::atomic<bool> g_french{false};
+// The panel's own texts in the game's language (English, or French in a French game).
+const char* T(const char* english, const char* french) { return g_french.load(std::memory_order_relaxed) ? french : english; }
+}  // namespace
+
+void SetFrench(bool on) { g_french.store(on, std::memory_order_relaxed); }
+bool French() { return g_french.load(std::memory_order_relaxed); }
 
 std::string LinkLine(const Snapshot& s) {
     switch (s.link) {
     case Link::connected:
-        return "Co-op: connected as P" + std::to_string(s.self) + " \"" + s.self_name + "\"";
+        return std::string(T("Co-op: connected as P", "Coop : connect\u00e9 en tant que J")) + std::to_string(s.self) +
+               " \"" + s.self_name + "\"";
     case Link::lost:
-        return "Co-op: server lost, retrying " + s.server;
+        return T("Co-op: server lost, retrying ", "Coop : serveur perdu, nouvel essai ") + s.server;
     case Link::refused:
-        return "Co-op: refused by the server (" + s.refused + ")";
+        return T("Co-op: refused by the server (", "Coop : refus\u00e9 par le serveur (") + s.refused + ")";
     case Link::connecting:
     default:
-        return "Co-op: connecting to " + s.server + "...";
+        return T("Co-op: connecting to ", "Coop : connexion \u00e0 ") + s.server + "...";
     }
 }
 
 std::string LocalLine(const Local& local) {
     if (!local.game_found) {
-        return "You: game not found yet";
+        return T("You: game not found yet", "Vous : jeu pas encore trouv\u00e9");
     }
     if (!local.in_game) {
-        return "You: not in game (title screen, load or menu)";
+        return T("You: not in game (title screen, load or menu)", "Vous : hors du jeu (\u00e9cran titre, chargement ou menu)");
     }
-    return "You: " + (local.scene ? *local.scene : std::string("unknown scene"));
+    return T("You: ", "Vous : ") + (local.scene ? *local.scene : std::string(T("unknown scene", "lieu inconnu")));
 }
 
 std::string PeerLine(const Peer& peer, const Local& local) {
-    std::string line = "P" + std::to_string(peer.number) + " " +
-                       (peer.name.empty() ? std::string("?") : peer.name) + ": ";
+    std::string line = T("P", "J") + std::to_string(peer.number) + " " +
+                       (peer.name.empty() ? std::string("?") : peer.name) + T(": ", " : ");
     if (!peer.known) {
-        return line + "joining";
+        return line + T("joining", "arrive");
     }
     if (!peer.fresh) {
-        return line + "not in game";
+        return line + T("not in game", "hors du jeu");
     }
     if (!peer.scene || peer.scene->empty()) {
-        return line + "in game, scene unknown";
+        return line + T("in game, scene unknown", "en jeu, lieu inconnu");
     }
     line += *peer.scene;
     const bool same = local.in_game && local.scene && *local.scene == *peer.scene;
@@ -67,10 +80,10 @@ std::string PeerLine(const Peer& peer, const Local& local) {
         const double distance = std::sqrt(dx * dx + dy * dy + dz * dz);
         if (std::isfinite(distance)) {
             char buffer[48];
-            std::snprintf(buffer, sizeof(buffer), ", %.1f units", distance);
+            std::snprintf(buffer, sizeof(buffer), T(", %.1f units", ", %.1f m"), distance);
             line += buffer;
             const std::string way = Compass(dx, dz);
-            line += way.empty() ? std::string(", right here") : ", " + way;
+            line += way.empty() ? std::string(T(", right here", ", juste ici")) : ", " + way;
         }
     }
     return line;
@@ -173,14 +186,14 @@ std::vector<Line> Panel(const Snapshot& s, const std::deque<Notice>& notices, co
         return -1;
     };
     if (s.link == Link::connected && s.peers.empty()) {
-        lines.push_back({"Nobody else is here yet", Role::peer});
+        lines.push_back({T("Nobody else is here yet", "Personne d'autre pour l'instant"), Role::peer});
     }
     if (chat.open) {
         for (const std::string& line : chat.history) {
             lines.push_back({line, Role::chat, 1.0f, colour_of(line)});
         }
         lines.push_back({"> " + chat.input + "_", Role::input});
-        lines.push_back({"Enter sends, Esc cancels", Role::hint});
+        lines.push_back({T("Enter sends, Esc cancels", "Entr\u00e9e : envoyer, \u00c9chap : annuler"), Role::hint});
         return lines;
     }
     for (const Notice& notice : notices) {
@@ -189,7 +202,7 @@ std::vector<Line> Panel(const Snapshot& s, const std::deque<Notice>& notices, co
             lines.push_back({notice.text, Role::notice, alpha, colour_of(notice.text)});
         }
     }
-    lines.push_back({"Enter: chat   F9: hide", Role::hint});
+    lines.push_back({T("Enter: chat   F9: hide", "Entr\u00e9e : discussion   F9 : masquer"), Role::hint});
     return lines;
 }
 

@@ -19,10 +19,14 @@
 #include <cstdio>
 #include <deque>
 #include <mutex>
+#include <string>
+#include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
 #include "third_party/plugin_api.h"
+#include "title_menu.hpp"
 
 namespace CoopNx2navi::Overlay {
 namespace {
@@ -425,12 +429,199 @@ void DrawNameTags(const Nx2Draw* d, const Ui::Snapshot& snapshot) {
                     static_cast<double>(ph), static_cast<double>(alpha));
             }
         }
+        // Red for a moment when that player lost life (their Link's own red flash is not on the puppet).
+        const float hurt = Ui::HurtFlash(peer.hurt_ago_ms);
+        const auto mix = [hurt](int from, int to) {
+            return static_cast<int>(static_cast<float>(from) + static_cast<float>(to - from) * hurt + 0.5f);
+        };
         d->rect_filled(box->x0, box->y0, box->x1, box->y1,
-                       NX2_RGBA(0, 0, 0, static_cast<int>(150.0f * alpha + 0.5f)), 4.0f * scale);
+                       NX2_RGBA(mix(0, 200), 0, 0, static_cast<int>((150.0f + 80.0f * hurt) * alpha + 0.5f)),
+                       4.0f * scale);
         d->text(box->x, box->y, size,
-                NX2_RGBA(kPeerRgb[colour][0], kPeerRgb[colour][1], kPeerRgb[colour][2],
+                NX2_RGBA(mix(kPeerRgb[colour][0], 255), mix(kPeerRgb[colour][1], 255), mix(kPeerRgb[colour][2], 255),
                          static_cast<int>(255.0f * alpha + 0.5f)),
                 peer.name.c_str());
+    }
+}
+
+// --- The game's look for the block below (plugin interface version 6: pictures and fonts) ---
+//
+// The heart is the game's own (its layout archive's HeartW_00, its dark base and its shadow, read by
+// the runtime straight from the player's game files: "romfs:<archive>#<texture>"), the name is in the
+// game's HUD font. Nothing of the game is in the mod. The pictures are loaded once on a thread of
+// their own (the runtime unpacks the archive for each, about 0.4 s); the font is loaded at the size
+// the picture's height asks for and again when that changes. Until they are there, on an older game,
+// or with OOT_COOP_HUD=plain, the plain look below is drawn.
+struct HudArt {
+    std::atomic<int> state{0};  // 0 not asked, 1 loading, 2 there, 3 not to be had
+    int full = 0, base = 0, shadow = 0;
+    int font = 0;        // the presenting thread
+    int font_px = 0;
+    bool font_failed = false;
+};
+HudArt g_hud;
+
+void LoadHudArt() {
+    static constexpr char kArchive[] = "romfs:UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.bntx.zs#";
+    const Nx2PluginApi* api = g_api;
+    const auto load = [api](const char* name) {
+        std::uint32_t wh[2] = {0, 0};
+        return api->texture_load((std::string(kArchive) + name).c_str(), 0, wh);
+    };
+    g_hud.full = load("HeartW_00_ASTC4x4");
+    g_hud.base = load("HeartBase_00");
+    g_hud.shadow = load("HeartSh_00");
+    const bool ok = g_hud.full > 0 && g_hud.base > 0;
+    Log(ok ? "hud: the game's own heart pictures are loaded (interface version 6): the other players' hearts "
+             "are drawn in the game's look"
+           : "hud: the game's heart pictures could not be loaded; the other players' hearts keep the plain look");
+    g_hud.state = ok ? 2 : 3;
+}
+
+// True once the game's pictures are there; asks for them at the first call.
+bool GameLook(const Nx2Draw* d) {
+    if (g_api == nullptr || g_api->version < 6 || !NX2_HAS(g_api, Nx2PluginApi, font_free) ||
+        !NX2_HAS(d, Nx2Draw, text_font_size) || d->image == nullptr) {
+        return false;
+    }
+    int state = g_hud.state.load();
+    if (state == 0) {
+        wchar_t value[16] = {};
+        const DWORD n = GetEnvironmentVariableW(L"OOT_COOP_HUD", value, 16);
+        if (n > 0 && n < 16 && std::wstring_view(value) == L"plain") {
+            g_hud.state = 3;
+            return false;
+        }
+        int expected = 0;
+        if (g_hud.state.compare_exchange_strong(expected, 1)) {
+            std::thread(LoadHudArt).detach();
+        }
+        return false;
+    }
+    return state == 2;
+}
+
+// The game's HUD font at `px` window pixels (0: none, the overlay's own font is used).
+int HudFont(int px) {
+    if (g_hud.font_failed || px < 6) {
+        return 0;
+    }
+    if (g_hud.font != 0 && g_hud.font_px == px) {
+        return g_hud.font;
+    }
+    if (g_hud.font != 0) {
+        g_api->font_free(g_hud.font);
+    }
+    g_hud.font = g_api->font_load("romfs:Font2/Scalable/CetraDisplayPro-Medium.Nin_Ounce_NVN2.bfotf.zs",
+                                  static_cast<float>(px), NX2_FONT_EXACT);
+    g_hud.font_px = px;
+    if (g_hud.font == 0) {
+        g_hud.font_failed = true;
+        Log("hud: the game's font could not be loaded; names keep the overlay's font");
+    }
+    return g_hud.font;
+}
+
+// One player's block in the game's look; returns the y of the next block.
+float DrawPeerBlockGame(const Nx2Draw* d, const Ui::Peer& peer, int colour, float x, float y, float u) {
+    const int name_px = static_cast<int>(26.0f * u + 0.5f);
+    const float heart = 40.0f * u, step = 31.0f * u;  // the picture has a margin: the heart itself is 0.6 of it
+    const std::uint32_t name_rgba = NX2_RGBA(kPeerRgb[colour][0], kPeerRgb[colour][1], kPeerRgb[colour][2], 255);
+    const int font = HudFont(name_px);
+    float line = static_cast<float>(name_px);
+    if (font != 0) {
+        d->text_font(font, x, y, 0.0f, name_rgba, NX2_RGBA(0, 0, 0, 170), peer.name.c_str());
+    } else {
+        d->text(x, y, static_cast<float>(name_px), name_rgba, peer.name.c_str());
+    }
+    float top = y + line + 4.0f * u;
+    const int hearts = std::min((peer.max_life + 3) / 4, 20);
+    for (int i = 0; i < hearts; ++i) {
+        const float hx = x - 7.0f * u + static_cast<float>(i % 10) * step;
+        const float hy = top - 5.0f * u + static_cast<float>(i / 10) * step;
+        if (g_hud.shadow > 0) {
+            d->image(g_hud.shadow, hx, hy, hx + heart, hy + heart, 0.0f, 0.0f, 1.0f, 1.0f, NX2_RGBA(0, 0, 0, 140));
+        }
+        d->image(g_hud.base, hx, hy, hx + heart, hy + heart, 0.0f, 0.0f, 1.0f, 1.0f, NX2_RGBA(46, 34, 34, 217));
+        Ui::UvRect part[2];
+        const int parts = Ui::HeartFill(Ui::HeartQuarters(peer.life, i), part);
+        for (int p = 0; p < parts; ++p) {
+            d->image(g_hud.full, hx + heart * part[p].u0, hy + heart * part[p].v0, hx + heart * part[p].u1,
+                     hy + heart * part[p].v1, part[p].u0, part[p].v0, part[p].u1, part[p].v1,
+                     NX2_RGBA(255, 255, 255, 255));
+        }
+    }
+    top += static_cast<float>((hearts + 9) / 10) * step + 6.0f * u;
+    if (peer.max_magic > 0) {
+        // Their magic, as the game's own bar: a dark frame, the green filled from the left.
+        const float w = 5.0f * step, h = 9.0f * u;
+        d->rect_filled(x - 2.0f * u, top - 2.0f * u, x + w + 2.0f * u, top + h + 2.0f * u, NX2_RGBA(16, 16, 16, 200),
+                       4.0f * u);
+        const float share = Ui::MagicShare(peer.magic, peer.max_magic);
+        if (share > 0.0f) {
+            d->rect_filled(x, top, x + w * share, top + h, NX2_RGBA(60, 214, 96, 255), 2.5f * u);
+            d->rect_filled(x, top, x + w * share, top + h * 0.4f, NX2_RGBA(150, 240, 170, 110), 2.5f * u);
+        }
+        top += h + 6.0f * u;
+    }
+    return top + 8.0f * u;
+}
+
+// The other players' hearts under our own hearts and magic bar: a line per player (three at most),
+// the name in the player's colour, then the hearts, smaller than the game's. The plain look: each
+// heart is a dark rounded square filled red from the left by its quarters (the game's own heart
+// pictures and font need pictures and a font file from the interface, which version 5 has not).
+// Placed by the game's picture (as the hook's CoopHudLayout: the first line at 0.38 of the picture's
+// height, 40 of 1080 from its left), so it sits under the game's hearts at any window size, with
+// bars or without.
+void DrawPeerHearts(const Nx2Draw* d, const Ui::Snapshot& snapshot) {
+    if (d->menu_open != 0 || !snapshot.local.in_game || snapshot.local.event) {
+        return;  // the game hides its own hearts then too (a cutscene, a talk), or its menu covers them
+    }
+    float px = 0.0f, py = 0.0f, ph = d->height;
+    if (NX2_HAS(d, Nx2Draw, picture_height) && d->picture_width > 0.0f && d->picture_height > 0.0f) {
+        px = d->picture_x, py = d->picture_y, ph = d->picture_height;
+    }
+    const float u = ph / 1080.0f;
+    const float x = px + 40.0f * u;
+    float y = py + Ui::PeerBlockTop(snapshot.local.max_life) * ph;
+    const float name_px = 24.0f * u;
+    const float heart = 20.0f * u, step = 24.0f * u;
+    const bool game_look = GameLook(d);
+    int shown = 0;
+    for (const Ui::Peer& peer : snapshot.peers) {
+        const int colour = Ui::PeerColour(snapshot.self, peer.number);
+        if (colour < 0 || peer.name.empty() || peer.max_life <= 0 || shown >= 3) {
+            continue;
+        }
+        ++shown;
+        if (game_look) {
+            y = DrawPeerBlockGame(d, peer, colour, x, y, u);
+            continue;
+        }
+        float wh[2] = {0, 0};
+        d->text_size(name_px, peer.name.c_str(), wh);
+        const int hearts = std::min((peer.max_life + 3) / 4, 20);
+        const float width = std::max(wh[0], static_cast<float>(std::min(hearts, 10)) * step);
+        const int rows = (hearts + 9) / 10;
+        const float hurt = Ui::HurtFlash(peer.hurt_ago_ms);
+        const float top = y + name_px + 6.0f * u;
+        d->rect_filled(x - 6.0f * u, y - 4.0f * u, x + width + 6.0f * u, top + static_cast<float>(rows) * step + 2.0f * u,
+                       NX2_RGBA(static_cast<int>(160.0f * hurt), 0, 0, 110), 6.0f * u);
+        d->text(x, y, name_px, NX2_RGBA(kPeerRgb[colour][0], kPeerRgb[colour][1], kPeerRgb[colour][2], 255),
+                peer.name.c_str());
+        for (int i = 0; i < hearts; ++i) {
+            const float hx = x + static_cast<float>(i % 10) * step;
+            const float hy = top + static_cast<float>(i / 10) * step;
+            d->rect_filled(hx, hy, hx + heart, hy + heart, NX2_RGBA(40, 10, 10, 230), 5.0f * u);
+            const int q = Ui::HeartQuarters(peer.life, i);
+            if (q > 0) {
+                d->rect_filled(hx + 2.0f * u, hy + 2.0f * u,
+                               hx + 2.0f * u + (heart - 4.0f * u) * static_cast<float>(q) / 4.0f, hy + heart - 2.0f * u,
+                               NX2_RGBA(232, 40, 40, 255), q == 4 ? 4.0f * u : 2.0f * u);
+            }
+        }
+        y = top + static_cast<float>(rows) * step + 12.0f * u;
     }
 }
 
@@ -484,8 +675,11 @@ void OnOverlay(const Nx2Draw* d, void*) {
     }
     if (g_tags.load(std::memory_order_relaxed)) {
         DrawNameTags(d, for_map);
+        DrawPeerHearts(d, for_map);
     }
-    if (!panel) {
+    // Not over the title screen's Multiplayer page: its rows are where the panel is,
+    // and the page says the session's state itself.
+    if (!panel || TitleMenu::PageOpen()) {
         return;
     }
     const float scale = d->scale > 0.0f ? d->scale : 1.0f;

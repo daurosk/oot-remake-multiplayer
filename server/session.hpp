@@ -133,6 +133,20 @@ struct SessionConfig {
   // it has said so for handover_chased_us, wherever the owner's enemy
   // stands. The owner saying the same is a fight, which keeps it.
   std::uint64_t handover_chased_us = 500'000;
+  // `--owner nearest` (off by default; the NX2navi mod's server turns it on):
+  // an enemy's AI goes only for its own game's Link, so "the enemy goes for
+  // the nearest player" means the nearest player's game owns it, in a fight
+  // too. With this on, an object that is no boss goes to the player within
+  // nearest_reach_m of it who is at least nearest_margin_m nearer than its
+  // owner (the margin keeps it from flipping between two players side by
+  // side), once that has held for nearest_hold_us and nearest_cooldown_us
+  // after its last change. The fight lock, the chase rule and the slower
+  // distance rule above are then not used for it.
+  bool nearest_owner = false;
+  float nearest_reach_m = 60.0f;
+  float nearest_margin_m = 2.5f;
+  std::uint64_t nearest_hold_us = 500'000;
+  std::uint64_t nearest_cooldown_us = 1'500'000;
   // Issue 151 (fishing-3): a fish (an object some game listed in FISH_LURE)
   // goes to the game whose lure is nearest it, not by the distance rule and
   // never held by a fight lock. Its owner keeps it while the fish is hooked,
@@ -328,6 +342,7 @@ struct Stats {
   std::uint64_t handover_asked = 0;       // HANDOVER_ASK sent to an owner
   std::uint64_t handover_unanswered = 0;  // moved with the last relayed sample
   std::uint64_t handover_chased = 0;      // asked because a copy chased its player
+  std::uint64_t handover_nearest = 0;     // asked for the nearest player (nearest_owner)
   std::uint64_t fish_to_lure = 0;         // a fish asked over to the nearest lure (issue 151)
   std::uint64_t spawns_replayed = 0;      // OBJECT_SPAWN sent again to a player entering
   std::uint64_t owners_refreshed = 0;     // OBJECT_OWNER repeated (owner_refresh_us)

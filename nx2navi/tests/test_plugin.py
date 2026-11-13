@@ -233,8 +233,9 @@ class Rules(unittest.TestCase):
 
     def test_server_command(self):
         args, env = plugin.server_command('srv.exe', 27510)
-        self.assertEqual(args, ['srv.exe', '--port', '27510'])
-        self.assertEqual(env, {})
+        # No password set: the open word (every session has a password; none = this public one).
+        self.assertEqual(args, ['srv.exe', '--port', '27510', '--password-env', plugin.PASSWORD_ENV])
+        self.assertEqual(env, {plugin.PASSWORD_ENV: plugin.OPEN_PASSWORD})
         args, env = plugin.server_command('srv.exe', 4000, allow='25.1.2.3, 26.0.0.0/8', bind=' 25.9.9.9 ',
                                           password='secret')
         self.assertEqual(args, ['srv.exe', '--port', '4000', '--allow', '25.1.2.3', '--allow', '26.0.0.0/8',
@@ -338,8 +339,9 @@ class Menus(unittest.TestCase):
         for label in ('Host over Steam', 'Join over Steam'):
             row = by_label[label]
             self.assertIsNone(row.get('on'))
-            self.assertEqual(row['value'](), 'not available yet')
-            self.assertIn('not available yet in this build', row['desc'])
+            self.assertEqual(row['value'](), 'in the game: title screen')
+            self.assertIn('title screen choose Multiplayer', row['desc'])
+            self.assertNotIn('not available', row['desc'])
         plugin_object = plugin.Multiplayer(self.api)
         self.assertFalse(plugin_object.transport_available('steam'))
         self.assertTrue(plugin_object.transport_available('local'))
@@ -356,7 +358,7 @@ class Menus(unittest.TestCase):
 
     def test_host_and_join_menus(self):
         host = rows_by_label(self.open('Host')())
-        for label in ('Player Name', 'Port', 'Shared Progress (experimental)', 'In-Game Overlay',
+        for label in ('Player Name', 'Port', 'Shared Progress', 'In-Game Overlay',
                       'Join Password', 'Addresses For Friends', 'Stop Server With Game', 'Start Hosting'):
             self.assertIn(label, host)
         self.assertEqual(host['In-Game Overlay']['kind'], 'toggle')
@@ -366,10 +368,10 @@ class Menus(unittest.TestCase):
         self.assertTrue(host['Join Password']['secret'])
         self.assertEqual(host['Port']['get'](), '27510')
         self.assertEqual(host['Addresses For Friends']['value'](), '192.168.1.20')   # the home network first, the VPN after it
-        self.assertFalse(host['Shared Progress (experimental)']['get']())
-        self.assertIn('not verified', host['Shared Progress (experimental)']['desc'])
+        self.assertTrue(host['Shared Progress']['get']())   # on unless turned off
+        self.assertIn('every player', host['Shared Progress']['desc'])
         join = rows_by_label(self.open('Join')())
-        for label in ('Player Name', 'Port', 'Shared Progress (experimental)', 'In-Game Overlay',
+        for label in ('Player Name', 'Port', 'Shared Progress', 'In-Game Overlay',
                       "Host's Address", 'Join Password', 'Join Game'):
             self.assertIn(label, join)
         self.assertTrue(join['Join Password']['secret'])
@@ -398,7 +400,7 @@ class Menus(unittest.TestCase):
         self.assertEqual(rows['Join Password']['get'](), 'set')   # never shown
         rows['Join Password']['set']('-')
         self.assertEqual(self.api.settings['join_password'], '')
-        rows['Shared Progress (experimental)']['set'](True)
+        rows['Shared Progress']['set'](True)
         self.assertTrue(self.api.settings['share_progress'])
         # Follow and the join at the host: on unless turned off; 'anyone' (set by hand) is kept.
         self.assertTrue(rows['Follow The Host Through Exits']['get']())
@@ -467,7 +469,7 @@ class Menus(unittest.TestCase):
         rows['Join Game']['on']()
         self.assertEqual(plugin.read_coop_ini(self.mod / 'coop.ini')['overlay'], '1')
         # Everything else in the file is as before.
-        self.assertEqual(plugin.read_coop_ini(self.mod / 'coop.ini')['share_progress'], '0')
+        self.assertEqual(plugin.read_coop_ini(self.mod / 'coop.ini')['share_progress'], '1')   # on unless turned off
         self.assertEqual(len(self.api.plays), 2)
 
     def test_join_needs_name_and_address(self):
@@ -490,7 +492,7 @@ class Menus(unittest.TestCase):
         ini = self.mod / 'coop.ini'
         self.assertEqual(plugin.read_coop_ini(ini),
                          {'server': '26.1.2.3', 'port': '4000', 'name': 'Saria', 'password': 'letmein',
-                          'share_progress': '0', 'overlay': '1', 'puppet': '1',
+                          'share_progress': '1', 'overlay': '1', 'puppet': '1',
                           'follow': 'host', 'join_at_host': '1', 'objects': '1',
                           # A joiner takes the host's save first (on unless turned off).
                           'host_save': '1'})

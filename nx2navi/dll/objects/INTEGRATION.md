@@ -1,5 +1,7 @@
 # Shared enemies and boss rooms in the NX2navi DLL: wiring it in
 
+**Since 2026-11-13 there is a second build, `build.py --upstream`, in which none of this wiring is used:** every file of `lichii/hook` is built unchanged over `hookshot/compat` and driven by `dll/upstream.cpp` (nx2navi/README.md, "The build that runs upstream's hook unchanged"). Of this folder it keeps `brain.cpp` and `hold.cpp` (the AI hold) and the two probes. What follows describes the older build.
+
 `nx2navi/dll/objects/` ports the emulator hook's shared enemies (docs/objects.md) and boss rooms
 (docs/dungeons-boss.md) to NX2navi's plugin interface **version 2**. The hook's own files are compiled against a
 small set of stand-in emulator headers (`shim/`). Two switches were added to `lichii/hook/coop_objects_sync.{h,cpp}`
@@ -183,6 +185,28 @@ says `hold: N held, ... answers, ... altered`.
 
 ## This port's own rules
 
+(coop-dll 0.8, after the upstream update of 2026-11-13: nx2navi/README.md, "Shared enemies", has the measurements.)
+
+- **Every AS slot of an enemy is copied** (`CoopObjects::EnemySlots(true)`, set in `objects.cpp`; `lichii/hook/coop_objects_sync.h`).
+  The owner's walk fills `Seen::slots` for every `Enemy_` actor (upstream did for bosses) and sends slot 0 also when it plays
+  nothing; `Sync::Plays` wishes every slot; the Mover plays a command when the owner's slot changed to it (`last_wish_`) or the
+  copy shows another one, and sets no frame.
+- **A copy's first 150 AI updates run** (`brain.hpp` `kWarmFrames`, was 45): a Stalchild takes 2.5 s to rise.
+- **The nearest player's game owns an enemy** (`server/`: `SessionConfig::nearest_owner`, `--owner nearest|classic`; the mod's
+  server is compiled with `COOP_SERVER_OWNER_NEAREST`, so nearest is its default; the emulator kit's server is unchanged).
+- **A player away from the host rolls its own Stalchildren**: now the shared code's own rule (`Sync::RollerFor`, 40 m), which
+  replaced this port's `OwnRollsWhenApart`; the `objects_rolls_apart` key is read and ignored.
+- **Time of day and drops**: `CoopTime::Frame` / `OnEvent` and `CoopDrops::Frame` / `OnEvent` are called from `objects.cpp`
+  (`Options::time`, `Options::drops`); `coop_drops.cpp` is compiled with `-DLICHII_COOP` (its game side is under it).
+- **The callers** are added through `CoopCallers::Add` (the shared `coop_callers.h`); the port keeps its own list and loop
+  (`emu_port.cpp`), because the shared stepper asks the puppet director first and the port runs that in `puppet.cpp`.
+- **Research switches**: `OOT_COOP_PROBE_ANIM=1` (each enemy near our Link twice a second: place, facing, slot names, whether
+  its bones moved; and every AS play of a Stalchild, Guay or Tektite), `=2` (also writes each enemy back to one pose every
+  frame: the picture still animates, so a pose written at the frame step is not what is drawn), `=4` (which game function
+  empties a slot: `main+0x37b6420`, called with an object of the AI's, not the controller).
+
+The older rules below are 0.7's.
+
 - **Townspeople and animals are each game's own** (`objects_friendly = 0`, the default; `ShareFriendly(false)`).
   The hook shares every `Npc_` and `Animal_` actor (Malon, Ingo, the horses, the cows, cuccos, fish) like an
   enemy: one owner, the others' copies placed every frame where the owner's is. Only `Enemy_` copies are held
@@ -230,3 +254,9 @@ says `hold: N held, ... answers, ... altered`.
   a network delay. The boss's AI phase is not copied: only place, turn, animation and life follow the owner.
 - Not ported: `coop_spawn.cpp`'s projectile sync (bombs, arrows on other screens), `coop_drops.cpp`,
   `coop_time.cpp`, `coop_live_events.cpp`'s cave caller.
+
+## The build that runs upstream's hook (the default since 2026-11-13)
+
+`build.py` builds `lichii/hook` unchanged and `dll/upstream.cpp` drives it; of this folder it uses `brain.cpp`, `hold.cpp`, `anim_probe.cpp` and `world_probe.cpp` only. Two things of that build belong to shared enemies: the spawner's wait for a copy is 20 s there (`-DLICHII_COOP_SPAWN_CREATE_TIMEOUT_MS=20000`; with the hook's own 3 s the second player of two games on one PC got no Stalchild copies at all), and the hook's `objects: list head` line is logged once a minute. `nx2navi/README.md`, "Since the afternoon of 2026-11-13", has the runs.
+
+Since 14:00 of 2026-11-13 two more things of that build touch what this folder is about: the hook's reads no longer go through a kept `map_range` page (a crash in a load, run `wd1`; every read is the interface's own `read`), and the hook's clock rule is narrowed for this build (`-DLICHII_COOP_TIME_RESYNC_SECONDS=180 -DLICHII_COOP_TIME_SET_EVERY_US=15000000`: a guest's clock is set again when it is three in-game minutes from the host's). An enemy that changes owner still plays its own first animation in the new owner's game (a Stalchild: "Disappear"): not changed.

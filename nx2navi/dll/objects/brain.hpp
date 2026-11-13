@@ -60,7 +60,10 @@ inline constexpr int kHitFrames = 8;                     // updates a copy runs 
 // state (a Stalchild is still "under the ground" to itself, whatever the Mover
 // shows), and the first hit on it was not taken (run e6: the first hit on each
 // of four copies missed, the four later ones on one of them taken).
-inline constexpr int kWarmFrames = 45;
+// 150 since coop-dll 0.8 (was 45): a Stalchild takes about 2.5 s to rise, and a copy whose AI was
+// stopped before that stayed "rising" to itself, which is a state no sword can hit (a human
+// player could not strike a copy at all; the scripted strikes happened to come early).
+inline constexpr int kWarmFrames = 150;
 
 // Hooks the function. False when the interface has no function hooks or the
 // game refused. Any thread. OOT_COOP_BRAIN_SKIP=<hex offset> names another

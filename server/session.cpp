@@ -1655,6 +1655,43 @@ void Session::run_ownership(std::uint64_t now_us) {
       continue;
     }
 
+    // nearest_owner: the nearest player's game owns it, fight or not.
+    if (config_.nearest_owner && !o.boss) {
+      std::optional<ConnectionId> nearest;
+      const auto theirs = distance_to(oc, o, now_us);
+      if (theirs &&
+          (o.changed_at == 0 || now_us - o.changed_at >= config_.nearest_cooldown_us)) {
+        double best = 0;
+        for (ConnectionId other : o.present) {
+          if (other == owner || !has_loaded(other, o)) continue;
+          const Connection& pc = connections_.at(other);
+          if (pc.status & kBusy) continue;
+          const auto mine = distance_to(pc, o, now_us);
+          if (!mine || *mine > config_.nearest_reach_m ||
+              *mine + config_.nearest_margin_m > *theirs) {
+            continue;
+          }
+          if (!nearest || *mine < best) {
+            nearest = other;
+            best = *mine;
+          }
+        }
+      }
+      if (!nearest) {
+        o.candidate.reset();
+        continue;
+      }
+      if (o.candidate != nearest) {
+        o.candidate = nearest;
+        o.candidate_since = now_us;
+      }
+      if (now_us - o.candidate_since >= config_.nearest_hold_us) {
+        ++stats_.handover_nearest;
+        ask_handover(oid, o, *nearest, now_us);
+      }
+      continue;
+    }
+
     const bool settled =
         o.changed_at == 0 || now_us - o.changed_at >= config_.handover_cooldown_us;
     if (!settled || in_fight(o, now_us)) {

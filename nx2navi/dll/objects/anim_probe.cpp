@@ -8,7 +8,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <atomic>
 #include <map>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -132,6 +134,79 @@ void OnAsPlay(Nx2HookCall* call, void*) {
 }
 }  // namespace
 
+namespace {
+// Mode 4: which function empties an AS slot's command name? Each candidate is
+// hooked; around its run the slot names of the Stalchildren near us are read,
+// and a name that went from something to nothing is logged with the function.
+constexpr std::uint64_t kClearCandidates[] = {
+    0x37b5584, 0x37b5690, 0x37b57c0, 0x37b5840, 0x37b58c0, 0x37b59b8, 0x37b5a98, 0x37b5c10, 0x37b5c90,
+    0x37b5e70, 0x37b5ea0, 0x37b5f74, 0x37b6140, 0x37b6170, 0x37b61a0, 0x37b61d0, 0x37b6250, 0x37b62e0,
+    0x37b6360, 0x37b63b0, 0x37b6420, 0x37b6464, 0x37b65d0, 0x37b6610, 0x37b6680, 0x37b6700, 0x37b6750,
+    0x37b67a0, 0x37b6850, 0x37b68b0, 0x37b68f8, 0x37b6948, 0x37b69a4, 0x37b6a40, 0x37b6a9c, 0x37b6bf0,
+    0x37b6c40, 0x37b6ca0, 0x37b6cd0, 0x37b6d40, 0x37b6d80, 0x37b6e20, 0x37b7040, 0x37b7250,
+    0x201f00, 0x2020c0, 0x2021d4, 0x2025c8, 0x2026e0, 0x20287c, 0x202ad0, 0x3abec10};
+std::mutex g_watch_mutex;
+std::uint64_t g_watch[8] = {};  // AS controllers of the Stalchildren near us
+std::atomic<int> g_clear_lines{0};
+
+void SlotNames(const Nx2PluginApi* api, std::uint64_t controller, char out[3][24]) {
+    std::uint64_t array = 0;
+    std::int32_t count = 0;
+    for (int i = 0; i < 3; ++i) {
+        out[i][0] = 0;
+    }
+    if (api->read(controller + 0x18, &count, 4) != 1 || api->read(controller + 0x20, &array, 8) != 1) {
+        return;
+    }
+    for (int i = 0; i < 3 && i < count; ++i) {
+        std::uint64_t slot = 0, name_at = 0;
+        if (api->read(array + 0x48ull * static_cast<std::uint64_t>(i), &slot, 8) == 1 && slot >= 0x1000 &&
+            api->read(slot + 0x10, &name_at, 8) == 1 && name_at >= 0x1000) {
+            api->read(name_at, out[i], 23);
+            out[i][23] = 0;
+        }
+    }
+}
+
+void OnClearCandidate(Nx2HookCall* call, void* user) {
+    const Nx2PluginApi* api = g_hook_api;
+    std::uint64_t watch[8];
+    {
+        std::lock_guard lock(g_watch_mutex);
+        std::memcpy(watch, g_watch, sizeof(watch));
+    }
+    if (api == nullptr || watch[0] == 0 || g_clear_lines.load() > 400) {
+        return;
+    }
+    char before[8][3][24];
+    for (int w = 0; w < 8 && watch[w] != 0; ++w) {
+        SlotNames(api, watch[w], before[w]);
+    }
+    const std::uint64_t x0 = call->x[0], x1 = call->x[1], x2 = call->x[2], lr = call->lr;
+    api->call_original(call);
+    for (int w = 0; w < 8 && watch[w] != 0; ++w) {
+        char after[3][24];
+        SlotNames(api, watch[w], after);
+        for (int i = 0; i < 3; ++i) {
+            if (std::strcmp(before[w][i], after[i]) != 0) {
+                g_clear_lines.fetch_add(1);
+                char line[260];
+                std::snprintf(line, sizeof(line),
+                              "objects: probe: slotchange by main+%#llx (x0 %#llx x1 %#llx x2 %#llx, from main+%#llx): "
+                              "controller %#llx slot %d '%s' -> '%s'",
+                              static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(user)),
+                              static_cast<unsigned long long>(x0), static_cast<unsigned long long>(x1),
+                              static_cast<unsigned long long>(x2), static_cast<unsigned long long>(lr - g_hook_main),
+                              static_cast<unsigned long long>(watch[w]), i, before[w][i], after[i]);
+                if (g_hook_log != nullptr) {
+                    g_hook_log(line);
+                }
+            }
+        }
+    }
+}
+}  // namespace
+
 void InstallHooks(const Nx2PluginApi* api, std::uint64_t main, void (*log)(const std::string&)) {
     if (!On() || api == nullptr || g_hook_api != nullptr) {
         return;
@@ -140,6 +215,13 @@ void InstallHooks(const Nx2PluginApi* api, std::uint64_t main, void (*log)(const
     g_hook_log = log;
     g_hook_main = main;
     api->hook_function(main + 0x2022a0, OnAsPlay, nullptr);
+    if (g_mode == 4) {
+        int hooked = 0;
+        for (const std::uint64_t at : kClearCandidates) {
+            hooked += api->hook_function(main + at, OnClearCandidate, reinterpret_cast<void*>(at)) > 0 ? 1 : 0;
+        }
+        log("objects: probe: " + std::to_string(hooked) + " slot-clear candidates hooked");
+    }
 }
 
 bool On() {
@@ -268,31 +350,43 @@ void Step(GuestPort& port, std::uint64_t main, std::uint64_t now_ms,
         if (Rd(port, actor + 0x270, table) && Rd(port, table + 0x40, as) && Rd(port, as + 0x18, inner) &&
             Rd(port, inner + 0x18, controller) && Rd(port, controller + 0x18, slots) &&
             Rd(port, controller + 0x20, array)) {
-            for (std::int32_t s = 0; s < std::min(slots, 3); ++s) {
-                std::uint64_t slot = 0, name_at = 0, player = 0;
-                char text[40] = {};
-                if (!Rd(port, array + 8 * s, slot) || slot < 0x1000) {
-                    continue;
+            if (g_mode == 4 && name.find("Stalchild") != name.npos) {
+                std::lock_guard lock(g_watch_mutex);
+                bool known = false;
+                int free_at = -1;
+                for (int w = 0; w < 8; ++w) {
+                    known = known || g_watch[w] == controller;
+                    if (g_watch[w] == 0 && free_at < 0) {
+                        free_at = w;
+                    }
                 }
-                if (Rd(port, slot + 0x10, name_at) && name_at >= 0x1000) {
-                    port.Read(name_at, text, sizeof(text) - 1);
-                }
-                Rd(port, slot + 0x48, player);
-                char head_text[120];
-                std::snprintf(head_text, sizeof(head_text), " | slot %d '%s' +0xc0:", s, text);
-                anim += head_text;
-                anim += Hex(port, slot + 0xc0, 16);
-                if (s == 0 && player >= 0x1000) {
-                    anim += " | player:" + Hex(port, player, 40);
+                if (!known && free_at >= 0) {
+                    g_watch[free_at] = controller;
                 }
             }
+            // Slot i is [array + 0x48 * i] (main+0x37b5d70); its command name at +0x10.
+            for (std::int32_t s = 0; s < std::min(slots, 4); ++s) {
+                std::uint64_t slot = 0, name_at = 0;
+                char text[40] = {};
+                if (Rd(port, array + 0x48ull * static_cast<std::uint64_t>(s), slot) && slot >= 0x1000 &&
+                    Rd(port, slot + 0x10, name_at) && name_at >= 0x1000) {
+                    port.Read(name_at, text, sizeof(text) - 1);
+                }
+                anim += s == 0 ? " '" : "|";
+                anim += text;
+            }
+            anim += "'";
         }
-        char line[200];
+        char line[260];
+        std::array<float, 9> rows{};
+        port.Read(actor + 0x328, rows.data(), sizeof(rows));
         std::snprintf(line, sizeof(line),
-                      "objects: probe: %s %#llx %.1f m, %u bones, bones changed in %u of %u frames, "
-                      "freeze kept %u overwritten %u, slots %d",
-                      name.c_str(), static_cast<unsigned long long>(actor), static_cast<double>(distance),
-                      static_cast<unsigned>(bones), t.changed, t.frames, t.kept, t.overwritten, slots);
+                      "objects: probe: %s %#llx at %.1f %.1f %.1f yaw %.0f, %.1f m from us, bones changed in %u of "
+                      "%u frames, slots",
+                      name.c_str(), static_cast<unsigned long long>(actor), static_cast<double>(at[0]),
+                      static_cast<double>(at[1]), static_cast<double>(at[2]),
+                      static_cast<double>(std::atan2(rows[2], rows[8]) * 57.29578f),
+                      static_cast<double>(distance), t.changed, t.frames);
         log(std::string(line) + anim);
         t.frames = t.changed = t.kept = t.overwritten = 0;
     }

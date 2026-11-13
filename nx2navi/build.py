@@ -53,11 +53,17 @@ SERVER = SERVER_LIB + ['server/main.cpp']
 DLL_LIB = ['nx2navi/dll/guest_memory.cpp', 'nx2navi/dll/settings.cpp', 'nx2navi/dll/overlay_model.cpp',
            'nx2navi/dll/teleport_auto.cpp', 'nx2navi/dll/menu_model.cpp', 'nx2navi/dll/save_sync.cpp',
            'nx2navi/dll/mp_saves.cpp',
+           # Over Steam: the pages and what the two games say around the session (no Windows code).
+           'nx2navi/dll/steam_model.cpp', 'nx2navi/dll/steam_menu.cpp',
            'lichii/hook/coop_settings.cpp', 'lichii/hook/coop_colors.cpp']
 # The puppet director and its pose and camera helpers are the emulator hook's own files:
 # they hold no emulator code (lichii/hook/coop_puppet.h).
 DLL_MAIN = ['nx2navi/dll/coop_dll.cpp', 'nx2navi/dll/overlay.cpp', 'nx2navi/dll/puppet.cpp',
             'nx2navi/dll/teleport.cpp', 'nx2navi/dll/title_menu.cpp', 'nx2navi/dll/ai_probe.cpp',
+            'nx2navi/dll/steam_net.cpp',
+            # Shared progress and world state (dll/progress.hpp) and the hook's lists it shares.
+            'nx2navi/dll/progress.cpp', 'lichii/hook/coop_chests.cpp', 'lichii/hook/coop_story.cpp',
+            'lichii/hook/coop_quests.cpp', 'lichii/hook/coop_quest.cpp', 'lichii/hook/coop_shared_scenes.cpp',
             'lichii/hook/coop_puppet.cpp', 'lichii/hook/coop_pose.cpp', 'lichii/hook/coop_camera.cpp',
             # Teleport's rules and the event request, also the hook's own and emulator-free.
             'lichii/hook/coop_teleport.cpp', 'lichii/hook/coop_live_events.cpp',
@@ -65,6 +71,7 @@ DLL_MAIN = ['nx2navi/dll/coop_dll.cpp', 'nx2navi/dll/overlay.cpp', 'nx2navi/dll/
             # Shared enemies and boss rooms (nx2navi/dll/objects/INTEGRATION.md); off unless objects = 1.
             'nx2navi/dll/objects/objects.cpp', 'nx2navi/dll/objects/emu_port.cpp',
             'nx2navi/dll/objects/hold.cpp', 'nx2navi/dll/objects/brain.cpp', 'nx2navi/dll/objects/anim_probe.cpp',
+            'nx2navi/dll/objects/world_probe.cpp',
             'lichii/hook/coop_objects.cpp', 'lichii/hook/coop_objects_sync.cpp',
             'lichii/hook/coop_world.cpp', 'lichii/hook/coop_spawn.cpp',
             'lichii/hook/coop_projectiles.cpp', 'lichii/hook/coop_pickups.cpp',
@@ -81,6 +88,26 @@ DLL_MAIN = ['nx2navi/dll/coop_dll.cpp', 'nx2navi/dll/overlay.cpp', 'nx2navi/dll/
 # Shared drops: its game side is under LICHII_COOP (the other hook files here are built without it).
 DLL_HOOKED = ['lichii/hook/coop_drops.cpp']
 DLL = DLL_LIB + DLL_MAIN
+# The build that runs upstream's hook unchanged, as its Hookshot module does (nx2navi/dll/upstream.hpp):
+# every file lichii/hook/core.cmake lists, but the emulator's cave and the two modules this port answers
+# itself (teleport's game side, the save transfer), over hookshot/compat.
+UP_OWN = ['nx2navi/dll/coop_dll.cpp', 'nx2navi/dll/upstream.cpp', 'nx2navi/dll/overlay.cpp',
+          'nx2navi/dll/teleport.cpp', 'nx2navi/dll/title_menu.cpp', 'nx2navi/dll/steam_net.cpp',
+          'nx2navi/dll/objects/brain.cpp', 'nx2navi/dll/objects/hold.cpp',
+          'nx2navi/dll/objects/anim_probe.cpp', 'nx2navi/dll/objects/world_probe.cpp']
+UP_NOT = {'coop_svc.cpp', 'coop_teleport_game.cpp', 'coop_save.cpp'}
+UP_INCLUDES = ['hookshot/compat', 'coop/include', 'coop/protocol/include', 'coop/net/include',
+               'coop/presence/include', 'coop/host/include', 'coop/overlay/include', 'server', 'lichii/hook',
+               'nx2navi/dll', 'nx2navi/dll/objects']
+
+
+def hook_sources():
+    text = (REPO / 'lichii' / 'hook' / 'core.cmake').read_text(encoding='utf-8')
+    names = []
+    for name in re.findall(r'coop_[a-z0-9_]+\.cpp', text):
+        if name not in UP_NOT and name not in names:
+            names.append(name)
+    return ['lichii/hook/' + n for n in names]
 # The repo's tests that need no emulator file beyond coop_settings.cpp, and this port's.
 TESTS = ['tests/main.cpp', 'tests/smoke_test.cpp',
          'tests/protocol/codec_test.cpp', 'tests/protocol/join_password_test.cpp',
@@ -93,7 +120,7 @@ TESTS = ['tests/main.cpp', 'tests/smoke_test.cpp',
          'tests/server/session_test.cpp', 'tests/server/options_test.cpp',
          'tests/server/loopback_test.cpp',
          'tests/lichii/settings_test.cpp',
-         'nx2navi/tests/nx2navi_test.cpp', 'coop/src/version.cpp']
+         'nx2navi/tests/nx2navi_test.cpp', 'nx2navi/tests/steam_test.cpp', 'coop/src/version.cpp']
 
 
 def say(text):
@@ -106,8 +133,8 @@ def fail(text):
 
 
 def pinned(cmake_file):
-    """(repository, commit) from one of the cmake/ fetch files."""
-    text = (REPO / 'cmake' / cmake_file).read_text(encoding='utf-8')
+    """(repository, commit) from one of the cmake/ fetch files (or another CMake file of the repository)."""
+    text = (REPO / cmake_file if '/' in cmake_file else REPO / 'cmake' / cmake_file).read_text(encoding='utf-8')
     repo = re.search(r'GIT_REPOSITORY\s+(\S+)', text)
     commit = re.search(r'GIT_TAG\s+([0-9a-f]{40})', text)
     if not repo or not commit:
@@ -181,7 +208,8 @@ class Builder:
         self.trim = [f'-ffile-prefix-map={REPO.as_posix()}/=', f'-ffile-prefix-map={REPO}\\=']
         self.headers_changed = max(
             (p.stat().st_mtime for root in ('coop', 'server', 'lichii/hook', 'nx2navi/dll', 'tests')
-             for p in (REPO / root).rglob('*.h*')), default=0)
+             for pattern in ('*.h*', '*.inc')  # coop_up.inc, the hook's tables: included like headers
+             for p in (REPO / root).rglob(pattern)), default=0)
         self.headers_changed = max(self.headers_changed, Path(__file__).stat().st_mtime)
 
     def run(self, args, what):
@@ -193,7 +221,7 @@ class Builder:
             say(done.stderr.strip())   # warnings
         return done
 
-    def compile(self, source, group, extra=()):
+    def compile(self, source, group, extra=(), includes=None):
         """One object file; skipped when it is newer than its source and every header."""
         source = Path(source)
         relative = source.relative_to(REPO) if source.is_relative_to(REPO) else Path(source.name)
@@ -205,14 +233,15 @@ class Builder:
             args = [self.cc, '-O2', '-DNDEBUG', '-w']
         else:
             args = [self.cxx, '-std=c++20', '-O2', '-DNDEBUG', '-Wall', '-Wextra', '-Wpedantic']
-        self.run([*args, *self.trim, *self.include_flags, *extra, '-c', source, '-o', obj],
+        self.run([*args, *self.trim, *(includes if includes is not None else self.include_flags), *extra,
+                  '-c', source, '-o', obj],
                  f'compiling {relative}')
         return obj
 
-    def compile_all(self, sources, group, extra=()):
+    def compile_all(self, sources, group, extra=(), includes=None):
         paths = [s if Path(s).is_absolute() else REPO / s for s in sources]
         with concurrent.futures.ThreadPoolExecutor(self.jobs) as pool:
-            return list(pool.map(lambda s: self.compile(s, group, extra), paths))
+            return list(pool.map(lambda s: self.compile(s, group, extra, includes), paths))
 
     def link(self, out, objects, shared=False, extra=()):
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -239,7 +268,7 @@ class Builder:
         say(f'  imports of {program.name}: {", ".join(dlls)}')
 
 
-def assemble(dll, server):
+def assemble(dll, server, fmt=None):
     """The folder a player drops into <game>/mods/."""
     if MOD_OUT.exists():
         shutil.rmtree(MOD_OUT)
@@ -264,6 +293,12 @@ def assemble(dll, server):
     # The repository's notices, then this mod's own (the plugin interface header).
     notices = (REPO / 'THIRD_PARTY_NOTICES.md').read_text(encoding='utf-8').rstrip('\n') + '\n\n' + \
         (HERE / 'THIRD_PARTY_NOTICES.md').read_text(encoding='utf-8')
+    if fmt is not None:
+        # The DLL that runs upstream's hook holds fmt (MIT, header only): its licence text goes with it, from
+        # the checkout the build used (the commit hookshot/CMakeLists.txt pins, checked by fetch()).
+        licence = (fmt / 'LICENSE').read_text(encoding='utf-8').replace('\r\n', '\n').rstrip('\n')
+        notices = (notices.rstrip('\n') + '\n\n## fmt (in `bin\\coop_nx2navi.dll`): its licence\n\n```\n' +
+                   licence + '\n```\n')
     (MOD_OUT / 'THIRD_PARTY_NOTICES.md').write_bytes(notices.encode('utf-8'))
     say(f'mod folder: {MOD_OUT}')
     for path in sorted(MOD_OUT.rglob('*')):
@@ -275,6 +310,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('--compiler', help='the C++ compiler (g++.exe or clang++.exe of a MinGW toolchain)')
     parser.add_argument('--tests', action='store_true', help='also build and run the unit tests')
+    parser.add_argument('--upstream', action='store_true',
+                        help='(the default since 2026-11-13; kept so that older command lines still work)')
+    parser.add_argument('--own-port', action='store_true',
+                        help="the mod folder gets the older DLL, the port's own wiring (coop-dll 0.9), instead of "
+                             "the one that runs upstream's hook unchanged (dll/upstream.hpp)")
     parser.add_argument('--jobs', type=int, default=os.cpu_count() or 4)
     options = parser.parse_args()
     if os.name != 'nt':
@@ -295,15 +335,32 @@ def main():
     coop_objects = builder.compile_all(COOP, 'coop')
 
     server_lib = builder.compile_all(SERVER_LIB, 'server')
+    # The mod's server gives an enemy to the nearest player's game by default (server/options.hpp;
+    # --owner classic puts the shared code's rule back). The tests' server library is built without it.
     server = builder.link(BUILD / 'bin' / 'oot-coop-server.exe',
-                          builder.compile_all(['server/main.cpp'], 'server') + server_lib +
+                          builder.compile_all(['server/main.cpp', 'server/options.cpp'], 'server_mod',
+                                              ['-DCOOP_SERVER_OWNER_NEAREST']) +
+                          [o for o in server_lib if 'options.cpp' not in o.name] +
                           coop_objects + enet_objects)
     dll_lib = builder.compile_all(DLL_LIB, 'dll')
     dll = builder.link(BUILD / 'bin' / 'coop_nx2navi.dll',
                        builder.compile_all(DLL_MAIN, 'dll') +
                        builder.compile_all(DLL_HOOKED, 'dll_hooked', ['-DLICHII_COOP']) + dll_lib +
                        coop_objects + enet_objects, shared=True)
-    assemble(dll, server)
+    fmt = None
+    if not options.own_port:
+        # fmt (MIT) for the hook's log lines, at the commit hookshot/CMakeLists.txt pins; header-only here.
+        fmt = fetch('fmt', 'hookshot/CMakeLists.txt')
+        up_includes = [f'-I{REPO / i}' for i in UP_INCLUDES] + [
+            f'-isystem{fmt / "include"}', f'-isystem{enet / "include"}', f'-isystem{monocypher / "src"}']
+        up_flags = ['-DLICHII_COOP', '-DCOOP_HOOKSHOT', '-DCOOP_UPSTREAM', '-DFMT_HEADER_ONLY',
+                    '-DLICHII_COOP_VERSION="nx2navi"', '-DLICHII_COOP_SPAWN_CREATE_TIMEOUT_MS=20000', '-DLICHII_COOP_TIME_RESYNC_SECONDS=180', '-DLICHII_COOP_TIME_SET_EVERY_US=15000000', '-Wno-unused-parameter', '-Wno-missing-field-initializers']
+        lib = [o for o in dll_lib if 'coop_settings' not in o.name and 'coop_colors' not in o.name]
+        dll = builder.link(BUILD / 'bin' / 'coop_nx2navi_up.dll',
+                           builder.compile_all(UP_OWN + hook_sources() + ['coop/overlay/src/overlay.cpp', 'coop/src/version.cpp'],
+                                               'dll_up', up_flags, up_includes) + lib +
+                           coop_objects + enet_objects, shared=True)
+    assemble(dll, server, fmt)
 
     if options.tests:
         doctest = fetch('doctest', 'doctest.cmake')
@@ -323,7 +380,7 @@ def main():
         done = subprocess.run([str(tests)], env=builder.env)
         if done.returncode != 0:
             fail('the unit tests failed')
-        for script in ('test_plugin.py', 'test_dll.py'):
+        for script in ('test_plugin.py', 'test_upstream.py', 'test_dll.py'):
             say(f'running nx2navi/tests/{script}')
             if subprocess.run([sys.executable, '-B', str(HERE / 'tests' / script)]).returncode != 0:
                 fail(f'{script} failed')

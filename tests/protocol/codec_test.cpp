@@ -1173,10 +1173,13 @@ TEST_CASE("native boss sync: an object sample carries a boss's brain and action 
                              std::vector<BossChange>{BossChange{8, BossBrain{}}},
                              std::vector<BossChange>{BossChange{0, BossBrain{}}},
                              std::vector<BossChange>(kMaxBossChanges + 1, BossChange{1, BossBrain{}})}) {
+    // In place and put back after (a copy of `s` here made gcc 15's -O2
+    // warn "may be used uninitialized" inside the copied vector, with -Werror).
     Bytes refused;
-    ObjectSample bad_recent = s;
-    bad_recent.state.bsa->recent = recent;
-    CHECK(encode(bad_recent, refused) == Error::bad_value);
+    const std::vector<BossChange> good = s.state.bsa->recent;
+    s.state.bsa->recent = recent;
+    CHECK(encode(s, refused) == Error::bad_value);
+    s.state.bsa->recent = good;
   }
   // No bsa component: none after decoding (older senders).
   Message plain;

@@ -319,6 +319,57 @@ class WarmTest(Fixture):
         self.assertIn("ended before its shaders were prepared", self.out.getvalue())
 
 
+class BuildSpeedTest(Fixture):
+    """hs-build-speed: the pin's shared folders, Hookshot's own jobs, warm shader files seeded (dry runs, no build)."""
+
+    def kit(self, new=True):
+        k = os.path.join(self.tmp, "kit")
+        script = ("param([string]$Game = '', [string]$Out = '', [int]$Jobs = 0, [string]$Tools = '', [string]$Work = '')\n"
+                  if new else "param([string]$Game = '', [string]$Out = '', [int]$Jobs = 0)\n")
+        write(os.path.join(k, "scripts", "hookshot-build.ps1"), script)
+        return k
+
+    def test_pin_of_and_its_folder(self):
+        st = hs.stamp(self.repo)
+        self.assertEqual(hs.pin_of(st), "v2.1.0-%s" % COMMIT[:12])
+        self.assertEqual(hs.pin_of(st.replace("patches=", "patches=other,")), hs.pin_of(st))   # patches: same folder
+        self.assertEqual(hs.pin_dir(st), os.path.join(self.cache, "pins", hs.pin_of(st)))
+        self.assertEqual(hs.pin_of("release=v2.2.0-rc.1\ncommit=4aee23659b9436dab2cd\n"), "v2.2.0-rc.1-4aee23659b94")
+        with self.assertRaises(hs.Fail):
+            hs.pin_of("patches=x")
+        self.assertFalse(hs.CACHE_NAME.match("pins"))   # cache_prune leaves the shared folders alone
+
+    def test_script_args(self):
+        self.assertEqual(hs.build_script_args(os.path.join(self.kit(), "scripts", "hookshot-build.ps1")), {"Tools", "Work"})
+        self.assertEqual(hs.build_script_args(os.path.join(self.kit(False), "scripts", "hookshot-build.ps1")), set())
+        self.assertEqual(hs.build_script_args(os.path.join(self.tmp, "none.ps1")), set())
+
+    def test_a_miss_builds_in_the_pins_folders_with_hookshots_jobs(self):
+        kit = self.kit()
+        hs.build([os.path.join(self.tmp, "A1")], os.path.join(self.tmp, "b"), kit=kit, game="g.nup", repo=self.repo,
+                 dry=True, say=self.say)
+        out = self.out.getvalue()
+        shared = hs.pin_dir(hs.stamp(self.repo))
+        line = [ln for ln in out.splitlines() if ln.startswith("$ ") and "hookshot-build.ps1" in ln][0]
+        self.assertIn('-Tools "%s"' % os.path.join(shared, "tools") if " " in shared else os.path.join(shared, "tools"), line)
+        self.assertIn(os.path.join(shared, "work"), line)
+        self.assertIn(os.path.join(shared, "game"), line)   # the pin's one game folder: the lift key stays the same
+        self.assertIn("would store %s as" % os.path.join(shared, "game"), out)
+        self.assertNotIn(".build", line)
+        self.assertNotIn("-Jobs", line)   # Hookshot's own choice: one compiler per CPU thread
+        self.assertIn("--parallel %d" % (os.cpu_count() or 8), out)   # the module: every thread too
+        self.assertIn("game folder", out)
+
+    def test_an_old_kit_builds_as_before_and_jobs_are_passed_when_asked(self):
+        hs.build([os.path.join(self.tmp, "A1")], os.path.join(self.tmp, "b"), kit=self.kit(False), jobs=12,
+                 repo=self.repo, dry=True, say=self.say)
+        out = self.out.getvalue()
+        line = [ln for ln in out.splitlines() if ln.startswith("$ ") and "hookshot-build.ps1" in ln][0]
+        self.assertNotIn("-Work", line)
+        self.assertIn("-Jobs 12", line)
+        self.assertIn("a full build in the kit's own folders", out)
+        self.assertIn(".build", line)   # an old kit: a new folder, removed after the store
+
 class LockTest(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp()

@@ -14,6 +14,8 @@ release (tools/release/kit/hookshot/TOOLS.txt), the pinned commit (hookshot/PIN)
 (hookshot/patches/*.patch). Those three make the key; the kit's Build-Hookshot-Coop writes the same three lines to
 the game's coop-built-from.txt, so a game folder built by a kit can seed the cache. With the key unchanged, `build`
 copies the cached game into each pair folder and rebuilds only hookshot_coop.dll.
+A miss builds in the pin's shared tools and work folders (cache\\pins\\<release>-<commit>), so only what
+changed is translated and compiled again (hs-build-speed).
 
 The cache is outside the repo: %LOCALAPPDATA%\\oot-coop\\hs-cache\\<key>\\ (or $OOT_COOP_HS_CACHE). Each entry has
 game\\ (the game folder without anything per player), stamp.txt (the three lines) and used.txt (last use).
@@ -103,6 +105,23 @@ def stamp(repo=REPO):
         raise Fail("no hookshot/patches/*.patch")
     hashes = ",".join(sha256_file(os.path.join(pdir, p)) for p in patches)
     return "release=%s\ncommit=%s\npatches=%s" % (tools["release"], pin["commit"], hashes)
+
+
+def pin_of(stamp_text):
+    """'<release>-<commit 12>' of a stamp: what one shared tools and work folder serves (hs-build-speed)."""
+    keys = dict(line.split("=", 1) for line in stamp_text.replace("\r", "").split("\n") if "=" in line)
+    if not keys.get("release") or not keys.get("commit"):
+        raise Fail("a stamp without release= and commit=")
+    return "%s-%s" % (re.sub(r"[^A-Za-z0-9._-]", "_", keys["release"]), keys["commit"][:12])
+
+
+def pin_dir(stamp_text):
+    """The shared folder of a pin: tools/ (Hookshot's tools and patched source), work/ (its build files and object
+    cache) and game/ (THE game folder of the pin, built again in place). Every build of that pin, whatever the patches,
+    goes through it: Hookshot's own lift key and object cache decide what is done again. The game folder must stay the
+    same path: the lift key hashes it (make_game.py: OOT_DUMP, OOT_ROMFS), and it keeps .hookshot_exefs and the prepared
+    shaders. Not a cache entry (cache_prune leaves it); the cache gets a copy of the game folder."""
+    return os.path.join(cache_root(), "pins", pin_of(stamp_text))
 
 
 def key_of(stamp_text):
@@ -646,7 +665,17 @@ def find_dll(build):
     return os.path.join(build, "hookshot", "hookshot_coop.dll")
 
 
-def build(pairs, build_dir, kit=None, game=None, jobs=8, keep=3, repo=REPO, dry=False, say=print, root=None,
+def build_script_args(script):
+    """What the kit's hookshot-build.ps1 takes: a kit made before hs-build-speed has no -Tools/-Work."""
+    try:
+        with open(script, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return set()
+    return {a for a in ("Tools", "Work") if re.search(r"\[string\]\$%s\b" % a, text)}
+
+
+def build(pairs, build_dir, kit=None, game=None, jobs=0, keep=3, repo=REPO, dry=False, say=print, root=None,
           owner="hs-build"):
     """Game from the cache (or built once through a kit and stored), hookshot_coop.dll rebuilt, both into each pair."""
     root = root or main_root(repo)
@@ -661,23 +690,35 @@ def build(pairs, build_dir, kit=None, game=None, jobs=8, keep=3, repo=REPO, dry=
             if not kit:
                 raise Fail("cache miss for %s: pass --kit <a made kit> --game <your .nup/.xci> to build the game once,"
                            " or `cache store --from <a game folder built from this stamp>`" % k)
-            out = os.path.join(cache_root(), k + ".build")
-            cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-                   os.path.join(kit, "scripts", "hookshot-build.ps1"), "-Out", out, "-Jobs", str(jobs)]
+            script = os.path.join(kit, "scripts", "hookshot-build.ps1")
+            shared = pin_dir(st) if build_script_args(script) >= {"Tools", "Work"} else None
+            # (the pin's one game folder, built again in place and kept; an old kit: a new folder, removed after)
+            out = os.path.join(shared, "game") if shared else os.path.join(cache_root(), k + ".build")
+            cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Out", out]
+            if jobs:   # (0: Hookshot's own choice, one compiler per CPU thread as the free memory allows)
+                cmd += ["-Jobs", str(jobs)]
             if game:
                 cmd += ["-Game", game]
-            say("cache: miss; building the game once (about an hour)")
+            if shared:
+                cmd += ["-Tools", os.path.join(shared, "tools"), "-Work", os.path.join(shared, "work")]
+                say("cache: miss; building the pin's game folder %s again in place (only what changed since its last"
+                    " build)" % out)
+            else:
+                say("cache: miss; this kit's hookshot-build.ps1 has no -Tools/-Work (a kit from before hs-build-speed):"
+                    " a full build in the kit's own folders")
             if not run_steps([cmd], [], dry, say):
                 raise Fail("hookshot-build.ps1 failed")
             if dry:
                 say("cache: would store %s as %s" % (out, k))
             else:
                 cache_store(out, repo, say=say)
-                remove_tree(out)
+                if not shared:
+                    remove_tree(out)
         else:
             say("cache: hit %s" % k)
         prefix = [] if dry else msvc_prefix()
-        if not run_steps(unit_steps(build_dir, jobs, repo, target="hookshot_coop"), prefix, dry, say):
+        if not run_steps(unit_steps(build_dir, jobs or os.cpu_count() or 8, repo, target="hookshot_coop"),
+                         prefix, dry, say):
             raise Fail("hookshot_coop did not build")
         dll = find_dll(build_dir)
         for p in pairs:
@@ -742,7 +783,8 @@ def main(argv=None):
     b.add_argument("--build", help="unit build folder (default: <repo>/build)")
     b.add_argument("--kit", help="a made kit: its hookshot-build.ps1 builds the game on a cache miss")
     b.add_argument("--game", help="your game file for that build")
-    b.add_argument("--jobs", type=int, default=8)
+    b.add_argument("--jobs", type=int, default=0,
+                   help="game compilers at once; 0 (default): Hookshot's choice, one per CPU thread as memory allows")
     b.add_argument("--keep", type=int, default=3)
     b.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)

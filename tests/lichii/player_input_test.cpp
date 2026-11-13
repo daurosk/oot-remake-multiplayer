@@ -206,7 +206,7 @@ TEST_CASE("player input: a faster sender's frames are merged, and no press is lo
     CHECK(q.Current().hold == 7);
 }
 
-TEST_CASE("player input: frames survive the wire; runs of a level frame are one entry") {
+TEST_CASE("player input: frames survive the wire, and runs of a level frame are one entry") {
     std::vector<Frame> frames;
     Frame run;
     run.hold = 0x2001;

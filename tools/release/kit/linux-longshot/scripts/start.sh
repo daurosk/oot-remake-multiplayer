@@ -108,7 +108,8 @@ apps=${XDG_DATA_HOME:-$HOME/.local/share}/applications
 entry=$apps/oot-coop.desktop
 if [[ -d $(dirname "$apps") && -z ${OOT_COOP_NO_SHORTCUT-} ]] && ! grep -qF -- "$KIT/start-oot-coop.sh" "$entry" 2>/dev/null; then
     mkdir -p "$apps"
-    q=${KIT//\\/\\\\}; q=${q//\"/\\\"}
+    # (the desktop entry spec: inside "...", \ " ` $ are escaped with a backslash)
+    q=${KIT//\\/\\\\}; q=${q//\"/\\\"}; q=${q//\`/\\\`}; q=${q//\$/\\\$}
     {
         echo '[Desktop Entry]'
         echo 'Type=Application'

@@ -156,7 +156,10 @@ for rel in "${files[@]}"; do
         continue
     fi
     keep_old "$rel" || restore
-    mkdir -p "$KIT/$(dirname "$rel")" && cp -p -- "$new/$rel" "$KIT/$rel" || restore
+    # (beside, then renamed over: start.sh, which runs this, is read by bash as it goes and keeps
+    # reading its old file; writing into that file would change the script under its feet)
+    mkdir -p "$KIT/$(dirname "$rel")" && cp -p -- "$new/$rel" "$KIT/$rel.update-new" &&
+        mv -f -- "$KIT/$rel.update-new" "$KIT/$rel" || restore
 done
 chmod +x "$KIT/start-oot-coop.sh" "$KIT"/scripts/*.sh 2>/dev/null || true
 rm -f "$KIT/$MARKER"

@@ -38,7 +38,8 @@ die() { echo "make_kit_linux: $*" >&2; exit 1; }
 [[ -f $module ]] || die "--module: no hookshot_coop.so at '$module'"
 [[ -f $server ]] || die "--server: no coop_server at '$server'"
 [[ -d $licenses ]] || die "--licenses: no build folder at '$licenses'"
-file -b "$module" 2>/dev/null | grep -q 'ELF 64-bit.*x86-64.*shared object' || die "$module is not an x86-64 Linux shared object"
+kind=$(file -b "$module" 2>/dev/null)   # ("ELF 64-bit LSB shared object, x86-64, ...")
+[[ $kind == *'ELF 64-bit'* && $kind == *'shared object'* && $kind == *x86-64* ]] || die "$module is not an x86-64 Linux shared object"
 file -b "$server" 2>/dev/null | grep -q 'ELF 64-bit.*x86-64' || die "$server is not an x86-64 Linux program"
 enet_licence=$licenses/_deps/enet-src/LICENSE
 fmt_licence=$(find "$licenses/_deps" "$repo/build"*/_deps -maxdepth 2 -path '*fmt-src/LICENSE*' -type f 2>/dev/null | head -n1 || true)

@@ -19,7 +19,7 @@
 namespace CoopTitleMenu {
 
 // ---------------------------------------------------------------------------
-// Settings files: `key = value` lines (coop.ini beside hookshot.exe, the kit's
+// Settings files: `key = value` lines (coop.ini beside longshot.exe, the kit's
 // coop-options.ini). Comments and everything else are kept as they are.
 
 // The value of the last line `key = value` without a '#' or ';' in front (the

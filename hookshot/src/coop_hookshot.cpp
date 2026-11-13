@@ -10,7 +10,7 @@
 //   cave asks them one at a time through `svc #0xf4` (coop_svc.cpp);
 // - the AI hold reads the same table the emulator's hold cave reads
 //   (coop_hold.h), at the same place in main;
-// - settings: coop.ini beside hookshot.exe, then the LICHII_COOP_* variables,
+// - settings: coop.ini beside longshot.exe, then the LICHII_COOP_* variables,
 //   as in the emulator (the kit's launcher sets them from coop-options.ini).
 #include "coop_hookshot.h"
 
@@ -112,7 +112,7 @@ std::string CreateName(const CoopPuppet::Call& c) {
     return std::string(name);
 }
 
-// Our patch 0002 (nx2/coop_puppet_guard.py) is in this hookshot.exe: its log text is in the exe's read-only data.
+// Our patch 0002 (nx2/coop_puppet_guard.py) is in this longshot.exe: its log text is in the exe's read-only data.
 // (Linux: always true, see the end.)
 bool PuppetGuardInExe() {
 #ifdef _WIN32
@@ -146,7 +146,7 @@ bool Refused(const CoopPuppet::Call& c) {
     static const bool allow = [] {
         const bool guard = PuppetGuardInExe();
         const bool on = CoopHookshot::AllowLinkPuppets(Env("LICHII_COOP_HOOKSHOT_LINK_PUPPETS"), guard);
-        LOG_INFO(Core, "coop: Hookshot: other players as Link {} (puppet guard {} this hookshot.exe{})",
+        LOG_INFO(Core, "coop: Hookshot: other players as Link {} (puppet guard {} this longshot.exe{})",
                  on ? "on" : "off", guard ? "in" : "NOT in",
                  guard ? "" : ": build it again with Build-Hookshot-Coop for patch 0002");
         return on;
@@ -162,7 +162,7 @@ bool Refused(const CoopPuppet::Call& c) {
     if (!said) {
         said = true;
         LOG_WARNING(Core,
-                    "coop: Hookshot: {} not made (this hookshot.exe has no puppet guard, or "
+                    "coop: Hookshot: {} not made (this longshot.exe has no puppet guard, or "
                     "LICHII_COOP_HOOKSHOT_LINK_PUPPETS=0); other players show as their fairy",
                     actor);
     }
@@ -594,7 +594,7 @@ bool KeysTaken() {
     return box || cheats;
 }
 
-// This game's controller and keyboard (coop_input.h): hookshot.exe's patch 0015 exports the choice; the kit's
+// This game's controller and keyboard (coop_input.h): longshot.exe's patch 0015 exports the choice; the kit's
 // LICHII_COOP_PAD and LICHII_COOP_KEYBOARD set it. Applied before co-op may turn itself off, so two games on one PC
 // keep their own pads either way (the choice stays in the exe). An exe without patch 0015: every pad counts.
 void UseInputSelect() {
@@ -744,7 +744,7 @@ void DrawWithLook(const HosCoopDraw& d) {
 }  // namespace CoopHookshot
 
 extern "C" {
-// The host's save for a guest (issue 167): hookshot.exe's patch 0008 exports the account save's folder and a
+// The host's save for a guest (issue 167): longshot.exe's patch 0008 exports the account save's folder and a
 // re-mount of it; with them a guest switches to the co-op folder when it joins (CoopSave, save::folder_choice).
 // An exe without patch 0008: CoopSave as on a fixed folder (LICHII_COOP_HOST_SAVE, else the player's own).
 void UseSaveSwitch() {

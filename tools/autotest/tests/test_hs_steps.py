@@ -314,7 +314,7 @@ class HookshotGamesTest(unittest.TestCase):
                 f.write("base")
             stand_in = (os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "cmd.exe") if hs.WINDOWS
                         else sys.executable)   # ends at once on an empty stdin
-            shutil.copy2(stand_in, os.path.join(g, "hookshot.exe" if hs.WINDOWS else "hookshot"))
+            shutil.copy2(stand_in, os.path.join(g, "longshot.exe" if hs.WINDOWS else "longshot"))
             self.games[x] = g
         restored, said = [], []
 
@@ -345,7 +345,7 @@ class HookshotGamesTest(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_fresh_log_each_start_and_the_old_one_kept(self):
-        log = os.path.join(self.games["B"], "hookshot_log.txt")
+        log = os.path.join(self.games["B"], "longshot_log.txt")
         with open(log, "w") as f:
             f.write("an old run\n")
         self.g.start("B", "pw", wait=False)
@@ -366,7 +366,7 @@ class HookshotGamesTest(unittest.TestCase):
         self.g.finish()
 
     def test_log_is_the_captured_output_when_the_game_writes_no_file(self):
-        # Hookshot writes hookshot_log.txt only when its stderr goes nowhere; here stderr is game-out-<x>-<n>.txt.
+        # Hookshot writes longshot_log.txt only when its stderr goes nowhere; here stderr is game-out-<x>-<n>.txt.
         self.g.start("A", "", wait=False)
         self.g.procs["A"].wait(30)
         with open(os.path.join(self.out, "game-out-A-1.txt"), "w") as f:

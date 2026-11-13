@@ -42,12 +42,12 @@ class Fixture(unittest.TestCase):
 
     def game(self, name="built", stamp=None):
         g = os.path.join(self.tmp, name)
-        write(os.path.join(g, "hookshot.exe"), "exe")
+        write(os.path.join(g, "longshot.exe"), "exe")
         write(os.path.join(g, "data", "image.bin"), "img")
         write(os.path.join(g, "hookshot_coop.dll"), "old dll")
         write(os.path.join(g, "coop.ini"), "server = me")
         write(os.path.join(g, "user", "save.bin"), "save")
-        write(os.path.join(g, "hookshot_shaders.bin"), "shaders of the builder")
+        write(os.path.join(g, "longshot_shaders.bin"), "shaders of the builder")
         write(os.path.join(g, "coop-built-from.txt"), stamp if stamp is not None else hs.stamp(self.repo))
         return g
 
@@ -93,19 +93,19 @@ class CacheTest(Fixture):
     def test_store_then_restore_keeps_per_player_files(self):
         k = hs.cache_store(self.game(), self.repo, say=self.say)
         cached = os.path.join(self.cache, k, "game")
-        self.assertTrue(os.path.isfile(os.path.join(cached, "hookshot.exe")))
+        self.assertTrue(os.path.isfile(os.path.join(cached, "longshot.exe")))
         self.assertTrue(os.path.isfile(os.path.join(cached, "data", "image.bin")))
         for per in ("hookshot_coop.dll", "coop.ini", "user"):
             self.assertFalse(os.path.exists(os.path.join(cached, per)), per)
         pair = os.path.join(self.tmp, "hookshot-A")
         write(os.path.join(pair, "coop.ini"), "server = pair")
         write(os.path.join(pair, "autotest-save", "s.bin"), "baseline")
-        write(os.path.join(pair, "hookshot_shaders.bin"), "pair's own shaders")
+        write(os.path.join(pair, "longshot_shaders.bin"), "pair's own shaders")
         self.assertTrue(hs.cache_restore(pair, self.repo, say=self.say))
-        self.assertTrue(os.path.isfile(os.path.join(pair, "hookshot.exe")))
+        self.assertTrue(os.path.isfile(os.path.join(pair, "longshot.exe")))
         with open(os.path.join(pair, "coop.ini")) as f:
             self.assertEqual(f.read(), "server = pair")
-        with open(os.path.join(pair, "hookshot_shaders.bin")) as f:
+        with open(os.path.join(pair, "longshot_shaders.bin")) as f:
             self.assertEqual(f.read(), "pair's own shaders")
         self.assertTrue(os.path.isfile(os.path.join(pair, "autotest-save", "s.bin")))
 
@@ -154,7 +154,7 @@ class CacheTest(Fixture):
         old = []
         for i in range(4):
             d = os.path.join(self.cache, "%020x" % (0xa0 + i))
-            write(os.path.join(d, "game", "hookshot.exe"), "x")
+            write(os.path.join(d, "game", "longshot.exe"), "x")
             write(os.path.join(d, "stamp.txt"), "s%d" % i)
             write(os.path.join(d, "used.txt"), "t")
             t = time.time() - 1000 + i * 10   # old3 newest of the old ones
@@ -186,20 +186,20 @@ class WarmTest(Fixture):
     """The shader warm-up: which files, the copy, the restore of a pair that held another build, and the start
     (a fake game process and bridge: no Hookshot)."""
 
-    WARM = ("hookshot_pipelines.bin", "hookshot_pipelines.bin.built", "hookshot_prepared.bin",
-            "hookshot_programs.bin", "hookshot_programs.idx", "mkw_vk_pipelines.bin", "mkw_vk_pipelines_play_1.bin")
+    WARM = ("longshot_pipelines.bin", "longshot_pipelines.bin.built", "longshot_prepared.bin",
+            "longshot_programs.bin", "longshot_programs.idx", "mkw_vk_pipelines.bin", "mkw_vk_pipelines_play_1.bin")
 
     def warmed(self, name="warm"):
         g = self.game(name)
         for n in self.WARM:
             write(os.path.join(g, n), "warm " + n)
-        write(os.path.join(g, "hookshot_pipelines.bin.built.warming"), "1\n")   # not a warm file
+        write(os.path.join(g, "longshot_pipelines.bin.built.warming"), "1\n")   # not a warm file
         return g
 
     def test_warm_files_are_the_preparations_caches_only(self):
         g = self.warmed()
         self.assertEqual(hs.warm_files(g), sorted(self.WARM))
-        for n in ("hookshot_shaders.bin", "hookshot_pipeline_states_shipped.bin", "hookshot_log.txt", "image.bin"):
+        for n in ("longshot_shaders.bin", "hookshot_pipeline_states_shipped.bin", "longshot_log.txt", "image.bin"):
             self.assertFalse(hs.WARM_FILES.match(n), n)
         for n in self.WARM:
             self.assertTrue(hs.RUNTIME_CACHE.match(n), n)   # never overwritten in a pair of the same build
@@ -207,32 +207,32 @@ class WarmTest(Fixture):
     def test_spread_overwrites_and_drops_another_starts_play_files(self):
         src = self.warmed()
         dst = self.game("pair")
-        write(os.path.join(dst, "hookshot_prepared.bin"), "cold")
+        write(os.path.join(dst, "longshot_prepared.bin"), "cold")
         write(os.path.join(dst, "mkw_vk_pipelines_play_4.bin"), "a play file of another start")
         self.assertEqual(hs.warm_spread(src, [dst, src], say=self.say), len(self.WARM))   # src itself is skipped
-        with open(os.path.join(dst, "hookshot_prepared.bin")) as f:
-            self.assertEqual(f.read(), "warm hookshot_prepared.bin")
+        with open(os.path.join(dst, "longshot_prepared.bin")) as f:
+            self.assertEqual(f.read(), "warm longshot_prepared.bin")
         self.assertFalse(os.path.exists(os.path.join(dst, "mkw_vk_pipelines_play_4.bin")))
         self.assertEqual(hs.warm_files(dst), sorted(self.WARM))
 
     def test_spread_refuses_a_folder_whose_preparation_did_not_finish(self):
         src = self.warmed()
-        os.unlink(os.path.join(src, "hookshot_pipelines.bin.built"))
+        os.unlink(os.path.join(src, "longshot_pipelines.bin.built"))
         with self.assertRaises(hs.Fail):
             hs.warm_spread(src, [self.game("pair")], say=self.say)
 
     def test_restore_replaces_the_runtime_caches_of_another_build(self):
         k = hs.cache_store(self.warmed("new"), self.repo, say=self.say)
         same = self.game("same")
-        write(os.path.join(same, "hookshot_prepared.bin"), "this build's own, newer")
+        write(os.path.join(same, "longshot_prepared.bin"), "this build's own, newer")
         hs.cache_restore(same, self.repo, say=self.say)
-        with open(os.path.join(same, "hookshot_prepared.bin")) as f:
+        with open(os.path.join(same, "longshot_prepared.bin")) as f:
             self.assertEqual(f.read(), "this build's own, newer")   # same build: kept, as before
         old = self.game("old", stamp="release=v2.1.0\ncommit=x\npatches=old")
-        write(os.path.join(old, "hookshot_prepared.bin"), "another translator's")
+        write(os.path.join(old, "longshot_prepared.bin"), "another translator's")
         hs.cache_restore(old, self.repo, say=self.say)
-        with open(os.path.join(old, "hookshot_prepared.bin")) as f:
-            self.assertEqual(f.read(), "warm hookshot_prepared.bin")
+        with open(os.path.join(old, "longshot_prepared.bin")) as f:
+            self.assertEqual(f.read(), "warm longshot_prepared.bin")
         self.assertIn("held another build", self.out.getvalue())
         with open(os.path.join(old, "coop.ini")) as f:
             self.assertEqual(f.read(), "server = me")   # per-player files still kept

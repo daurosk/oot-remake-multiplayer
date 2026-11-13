@@ -1,4 +1,4 @@
-From 8cf37ce6e1c8f6d9a6feee06f6bf7e491588dfb6 Mon Sep 17 00:00:00 2001
+From 633d6f115c778ef5ff02507b603f5b35f10e1248 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Fri, 13 Nov 2026 01:34:58 -0900
 Subject: [PATCH] Co-op menu tabs: the module's tabs lead the menu's strip
@@ -242,7 +242,7 @@ index 59acc4be..17c4cf0d 100644
 +
  }  // namespace mkwvk::coop
 diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
-index 10e332b9..c720daef 100644
+index 93b6f540..7cc538be 100644
 --- a/gpu/vk/vk_menu.cpp
 +++ b/gpu/vk/vk_menu.cpp
 @@ -15,6 +15,9 @@
@@ -255,7 +255,7 @@ index 10e332b9..c720daef 100644
  #include <atomic>
  #include <chrono>
  #include <cmath>
-@@ -1547,6 +1550,20 @@ void outputs_sync() {
+@@ -1590,6 +1593,20 @@ void outputs_sync() {
  
  int cur_tab = TAB_GRAPHICS;
  int tab_selected[TAB_COUNT + 1] = {};   // (and the Motion page's)
@@ -276,19 +276,19 @@ index 10e332b9..c720daef 100644
  bool is_motion_row(const Row& r) { return r.tab == TAB_CONTROLS && !r.value && !strcmp(r.name, "Motion"); }
  
  // ---- the rows that take a restart: their values at the start (menu_init, the GPU's at menu_set_gpu_count) ----
-@@ -1636,8 +1653,9 @@ bool menu_refresh = false;
+@@ -1679,8 +1696,9 @@ bool menu_refresh = false;
  int marquee_pos = 0, marquee_max = 0;
  int64_t marquee_next = 0;
  constexpr int64_t kMarqueeStep = 150000000LL, kMarqueeRest = 1200000000LL;   // (ns)
--// (hookshot) the mouse (menu_tick): the tab strip's part under the cursor (a tab 0 to TAB_COUNT - 1, TAB_COUNT the previous,
+-// (longshot) the mouse (menu_tick): the tab strip's part under the cursor (a tab 0 to TAB_COUNT - 1, TAB_COUNT the previous,
 -// TAB_COUNT + 1 the next; -1 none); the slider held with the left button (its row in the tab, -1 none)
-+// (hookshot) the mouse (menu_tick): the tab strip's part under the cursor (a place in the strip from 0, kHoverPrev the
++// (longshot) the mouse (menu_tick): the tab strip's part under the cursor (a place in the strip from 0, kHoverPrev the
 +// previous, kHoverNext the next; -1 none); the slider held with the left button (its row in the tab, -1 none)
 +constexpr int kHoverPrev = 1000, kHoverNext = 1001;
  int hover_tab = -1;
  int drag_row = -1;
  bool mouse_read = false;   // (the menu has read the mouse since it opened)
-@@ -2465,12 +2483,13 @@ double fps_target_ms() {
+@@ -2519,12 +2537,13 @@ double fps_target_ms() {
      return fps_stats::target_ms_for(cap, fifo, fifo ? (display_refresh_mhz() + 500) / 1000 : 0);
  }
  menu_hit::Map hits;      // (the menu's controls as last drawn: the mouse's, menu_tick)
@@ -306,7 +306,7 @@ index 10e332b9..c720daef 100644
  float ease_step = 0;     // (this drawing's share of the way: the time since the last one)
  
  ui::Ctx ui_ctx(uint32_t w, uint32_t h) {
-@@ -2963,25 +2982,104 @@ void row_value_cell(ui::Ctx& c, const Row& r, ImVec2 va, ImVec2 vb, bool selecte
+@@ -3017,25 +3036,104 @@ void row_value_cell(ui::Ctx& c, const Row& r, ImVec2 va, ImVec2 vb, bool selecte
      }
  }
  
@@ -416,7 +416,7 @@ index 10e332b9..c720daef 100644
          if (shown || i == hover_tab) {
              c.d->AddRectFilled(ImVec2(x, 0), ImVec2(x + tw[i], hh - 3 * s), shown ? ui::kTabInset : ui::alpha(ui::kTabInset, 0.35f));
              if (shown) {
-@@ -2989,7 +3087,7 @@ void draw_options(ui::Ctx& c) {
+@@ -3043,7 +3141,7 @@ void draw_options(ui::Ctx& c) {
                  c.d->AddLine(ImVec2(x + tw[i] - 1, 0), ImVec2(x + tw[i] - 1, hh - 3 * s), ui::rgba(52, 34, 16), std::max(1.0f, s));
              }
          }
@@ -425,7 +425,7 @@ index 10e332b9..c720daef 100644
          hits.add(x, 0, x + tw[i], hh, menu_hit::kTab, i);
          x += tw[i];
      }
-@@ -3005,6 +3103,10 @@ void draw_options(ui::Ctx& c) {
+@@ -3058,6 +3156,10 @@ void draw_options(ui::Ctx& c) {
          const float fit = ui::fit_px(px, opts.menu_size == 3 ? px : kVersionMinPt * s, 0.5f * s, room, width);
          if (fit > 0) ui::text_mid(c, c.f.body, fit, c.safe, ty, ui::kBannerInk, ver.c_str());
      }
@@ -436,7 +436,7 @@ index 10e332b9..c720daef 100644
      // the rows, in the column; the help beside it
      float cx0, cx1, hx0, hx1;
      bool narrow;
-@@ -4432,7 +4534,7 @@ void game_lang_tick() {
+@@ -4621,7 +4723,7 @@ void game_lang_tick() {
          return -1;
      }();
      if (row < 0 || opts.game_lang == i18n::game_lang_index()) return;
@@ -445,7 +445,7 @@ index 10e332b9..c720daef 100644
                          tab_row_to_global(cur_tab, tab_selected[cur_tab]) == row;
      if (on_row) return;
      if (!i18n::set_game_language(opts.game_lang)) {
-@@ -4488,6 +4590,58 @@ void outputs_follow_screen() {
+@@ -4677,6 +4779,58 @@ void outputs_follow_screen() {
           dm::ratio_name({sw, sh}).c_str(), added);
  }
  
@@ -504,7 +504,7 @@ index 10e332b9..c720daef 100644
  void menu_tick() {
      std::lock_guard lk(menu_mu);   // (the control bridge's settings: menu_setting_set)
      share_finish();   // (Save my pipeline list's worker, done)
-@@ -4629,6 +4783,23 @@ void menu_tick() {
+@@ -4818,6 +4972,23 @@ void menu_tick() {
      // ESC alone (the gamepad's back is Esc only while it is open, above). The press that opened it does not go back a page
      // below; with the compact menu key held it opens the compact bar, as Insert and F1 do (tune_mode). No
      // control can be bound to Esc, so nothing in play changes; the window gives the captured mouse back on the close)
@@ -528,7 +528,7 @@ index 10e332b9..c720daef 100644
      const bool esc_opens = opts.menu_shortcut == 2 && press[5] && !open_now.load();
      if (esc_opens) press[5] = false;
      if ((press[0] || press[6]) && open_now.load() && page == 5) {
-@@ -4798,11 +4969,13 @@ void menu_tick() {
+@@ -4987,11 +5158,13 @@ void menu_tick() {
              else teleport_choice = std::clamp(teleport_step_rows(teleport_choice, rows) + (press[4] - press[3]), 0, kTeleports - 1);
              if (teleport_choice != was) teleport_follow = true, changed = true;
          }
@@ -544,7 +544,7 @@ index 10e332b9..c720daef 100644
              if (ht != hover_tab) hover_tab = ht, changed = true;
              int& sel = tab_selected[cur_tab];
              const bool on_row = hit.part == menu_hit::kRow || hit.part == menu_hit::kSlider;
-@@ -4825,7 +4998,7 @@ void menu_tick() {
+@@ -5014,7 +5187,7 @@ void menu_tick() {
              if ((ptr.pressed & HOS_MOUSE_LEFT) && drag_row < 0) {
                  if (hit.part == menu_hit::kTabPrev) tab_left = true;
                  else if (hit.part == menu_hit::kTabNext) tab_right = true;
@@ -553,7 +553,7 @@ index 10e332b9..c720daef 100644
                  else if (hit.part == menu_hit::kSlider) {
                      Row& d = rows[tab_row_to_global(cur_tab, hit.index)];
                      drag_row = hit.index;
-@@ -4862,7 +5035,10 @@ void menu_tick() {
+@@ -5051,7 +5224,10 @@ void menu_tick() {
          else if (press[5]) open_now = false, tune_mode = false;
          // (the tabs: LB and RB, Q and E, or Tab; from the Motion page, as from Controls)
          if ((tab_left || tab_right) && cur_tab == TAB_MOTION) cur_tab = TAB_CONTROLS;
@@ -565,14 +565,11 @@ index 10e332b9..c720daef 100644
          else if (tab_right) cur_tab = (cur_tab + 1) % TAB_COUNT, changed = true;
          const int tab_count = tab_row_count(cur_tab);
          int& selected = tab_selected[cur_tab];
-@@ -4924,6 +5100,7 @@ void menu_tick() {
+@@ -5113,6 +5289,7 @@ void menu_tick() {
              changed = true;
          }
      }
 +    coop_tell();   // (oot-remake-multiplayer: the module's tab shown or gone this tick)
-     {   // (hookshot) the window lets the mouse go while the menu is open, and takes it back after (host/display.c)
+     {   // (longshot) the window lets the mouse go while the menu is open, and takes it back after (host/display.c)
          static bool told = false;
          const bool now_open = open_now.load();
--- 
-2.56.0.windows.4
-

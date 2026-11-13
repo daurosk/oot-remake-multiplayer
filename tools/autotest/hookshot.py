@@ -720,12 +720,12 @@ def restore_save(game):
 
 
 def exe_dir(game):
-    return os.path.join(game, "bin") if os.path.isfile(os.path.join(game, "bin", "hookshot.exe")) else game
+    return os.path.join(game, "bin") if os.path.isfile(os.path.join(game, "bin", "longshot.exe")) else game
 
 
 def find_log(game):
     for d in (exe_dir(game), game):
-        p = os.path.join(d, "hookshot_log.txt")
+        p = os.path.join(d, "longshot_log.txt")
         if os.path.isfile(p):
             return p
     return None
@@ -760,7 +760,7 @@ def run(a):
             time.sleep(1)
         for i, x in enumerate(tags):
             g = games[x]
-            if not os.path.isfile(os.path.join(exe_dir(g), "hookshot.exe" if WINDOWS else "hookshot")):
+            if not os.path.isfile(os.path.join(exe_dir(g), "longshot.exe" if WINDOWS else "longshot")):
                 raise FileNotFoundError("no Hookshot game in %s" % g)
             if not a.no_restore:
                 say("%s: save baseline %s" % (x, "restored" if restore_save(g) else "none (autotest-save missing)"))
@@ -779,7 +779,7 @@ def run(a):
                         continue
                     k = k[2:]
                 env[k] = v
-            exe = os.path.join(exe_dir(g), "hookshot.exe" if WINDOWS else "hookshot")
+            exe = os.path.join(exe_dir(g), "longshot.exe" if WINDOWS else "longshot")
             with open(os.path.join(out, "game-out-%s.txt" % x), "wb") as go:
                 kw = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {"start_new_session": True}
                 procs[x] = subprocess.Popen([exe], cwd=exe_dir(g), env=env, stdin=subprocess.DEVNULL, stdout=go,
@@ -886,8 +886,8 @@ def run(a):
             if server:
                 server.terminate()
         for x in tags:
-            # Hookshot writes hookshot_log.txt only when its stderr goes nowhere; here stderr is game-out-<x>.txt, so
-            # that is the log (an old hookshot_log.txt in the folder is from another run). The game's file otherwise.
+            # Hookshot writes longshot_log.txt only when its stderr goes nowhere; here stderr is game-out-<x>.txt, so
+            # that is the log (an old longshot_log.txt in the folder is from another run). The game's file otherwise.
             go = os.path.join(out, "game-out-%s.txt" % x)
             lp = go if os.path.isfile(go) and os.path.getsize(go) > 0 else find_log(games[x])
             if lp:

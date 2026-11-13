@@ -6,7 +6,7 @@
 
 run.ps1 -Runtime hookshot calls `run` when the scenario is a steps file. The verbs (run.ps1's Run-Steps):
   start A [B]           boot the games named (again: a running one is ended first), with the save baseline put back
-                        and a fresh hookshot_log.txt (the old one kept as hookshot_log-<x>-<n>.txt); wait until each
+                        and a fresh longshot_log.txt (the old one kept as hookshot_log-<x>-<n>.txt); wait until each
                         logs "coop: welcomed as player"
   load A [B]            title to the save in each (hookshot.py to_play); the `#! start` regex checked after it
   play A f [B f]        play scenarios/<f> in A (and B), both at once, and wait for both
@@ -358,11 +358,11 @@ class HookshotGames:
         self.commands = {x: os.path.join(out, "commands-%s.txt" % x) for x in games}
 
     def _log_path(self, x):
-        return os.path.join(self.hk.exe_dir(self.games[x]), "hookshot_log.txt")
+        return os.path.join(self.hk.exe_dir(self.games[x]), "longshot_log.txt")
 
     def _run_log(self, x):
-        """This run's log: the game's hookshot_log.txt (start() removes an older one), else game-out-<x>-<n>.txt.
-        Hookshot writes hookshot_log.txt only when its stderr goes nowhere (started from its icon); here stderr is
+        """This run's log: the game's longshot_log.txt (start() removes an older one), else game-out-<x>-<n>.txt.
+        Hookshot writes longshot_log.txt only when its stderr goes nowhere (started from its icon); here stderr is
         captured, so its log is in game-out."""
         if os.path.isfile(self._log_path(x)) or not self.runs[x]:
             return self._log_path(x)
@@ -431,7 +431,7 @@ class HookshotGames:
                     continue
                 k = k[2:]
             env[k] = v
-        exe = os.path.join(hk.exe_dir(g), "hookshot.exe" if WINDOWS else "hookshot")
+        exe = os.path.join(hk.exe_dir(g), "longshot.exe" if WINDOWS else "longshot")
         go = open(os.path.join(self.out, "game-out-%s-%d.txt" % (x, self.runs[x])), "wb")
         kw = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {"start_new_session": True}
         self.procs[x] = subprocess.Popen([exe], cwd=hk.exe_dir(g), env=env, stdin=subprocess.DEVNULL, stdout=go,

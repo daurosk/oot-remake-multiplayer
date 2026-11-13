@@ -476,7 +476,7 @@ try {
     $kit = Join-Path $tmp 'kit hookshot'; New-Kit $kit 'v0.1.0-beta4' 'hs'
     $hsGame = Join-Path $kit 'hookshot\game'
     New-Item -ItemType Directory -Force -Path $hsGame | Out-Null
-    [System.IO.File]::WriteAllBytes((Join-Path $hsGame 'hookshot.exe'), [System.IO.File]::ReadAllBytes((Join-Path $env:SystemRoot 'System32\rundll32.exe')))
+    [System.IO.File]::WriteAllBytes((Join-Path $hsGame 'longshot.exe'), [System.IO.File]::ReadAllBytes((Join-Path $env:SystemRoot 'System32\rundll32.exe')))
     Write-File (Join-Path $hsGame 'hookshot_coop.dll') 'module'
     $hsPack = Join-Path $hsGame 'mods\contents\0400486024DEC000\coop-puppet'
     New-Item -ItemType Directory -Force -Path (Join-Path $hsPack 'coop_self') | Out-Null
@@ -551,7 +551,7 @@ try {
     Write-File "$kit\emulator\user\config\coop.ini" "server = 26.1.2.3`r`nport = 27600`r`nname = Saria`r`npassword = afriendspassword`r`n"
     $hsGame = Join-Path $kit 'hookshot\game'
     New-Item -ItemType Directory -Force -Path $hsGame | Out-Null
-    [System.IO.File]::WriteAllBytes((Join-Path $hsGame 'hookshot.exe'), [System.IO.File]::ReadAllBytes((Join-Path $env:SystemRoot 'System32\rundll32.exe')))
+    [System.IO.File]::WriteAllBytes((Join-Path $hsGame 'longshot.exe'), [System.IO.File]::ReadAllBytes((Join-Path $env:SystemRoot 'System32\rundll32.exe')))
     Write-File (Join-Path $hsGame 'hookshot_coop.dll') 'module'
     Write-File (Join-Path $hsGame 'coop.ini') "server = 127.0.0.1`r`nport = 27510`r`nname = Saria`r`n"
     $env:OOT_COOP_UPDATE_API = Join-Path $tmp 'no-such-releases.json'
@@ -619,13 +619,13 @@ try {
 # --- Hookshot: what the kit's game needs before it starts, and the port check-hosting checks ---
 $hk = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-hs-need-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 try {
-    Write-File (Join-Path $hk 'hookshot\PIN') "repo=https://github.com/NotRexed/Hookshot`ncommit=4aee23659b9436dab2cd7be1ac07333c06246b7c`n"
-    Write-File (Join-Path $hk 'hookshot\TOOLS.txt') "release=v2.2.0-rc.1`nsetup_sha256=b3`n"
+    Write-File (Join-Path $hk 'hookshot\PIN') "runtime=Longshot`nrepo=https://git.magicbean.dev/MagicBeanDev/Longshot`ncommit=e7ed2f7a6526cd6b841b86678b3ac96eb6e5b1c8`n"
+    Write-File (Join-Path $hk 'hookshot\TOOLS.txt') "release=v3.0.0-rc.2`nlock_sha256=b3`n"
     Write-File (Join-Path $hk 'hookshot\patches\0001-a.patch') "one`n"
     Write-File (Join-Path $hk 'hookshot\hookshot_coop.dll') 'MODULE 1'
     Check ((Get-KitHookshotNeed $hk) -eq 'game') 'hookshot need: no game built yet -> game'
     $g = Join-Path $hk 'hookshot\game'
-    Write-File (Join-Path $g 'hookshot.exe') 'exe'
+    Write-File (Join-Path $g 'longshot.exe') 'exe'
     Write-File (Join-Path $g 'coop-built-from.txt') (Get-KitHookshotStamp $hk)
     Write-File (Join-Path $g 'hookshot_coop.dll') 'MODULE 1'
     Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: no puppet pack -> module (the pack is made)'
@@ -640,7 +640,7 @@ try {
     Write-File (Join-Path $g 'coop-built-from.txt') (Get-KitHookshotStamp $hk)
     Write-File (Join-Path $hk 'hookshot\PIN') "repo=x`ncommit=0000000000000000000000000000000000000000`n"
     Check ((Get-KitHookshotNeed $hk) -eq 'pin') 'hookshot need: another pin -> pin (a full build)'
-    Write-File (Join-Path $hk 'hookshot\PIN') "repo=x`ncommit=4aee23659b9436dab2cd7be1ac07333c06246b7c`n"
+    Write-File (Join-Path $hk 'hookshot\PIN') "repo=x`ncommit=e7ed2f7a6526cd6b841b86678b3ac96eb6e5b1c8`n"
     Write-File $pack '{"sound": false}'
     Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: a pack the kit would make again -> module'
     Write-File $pack '{"sound": true, "tunics": {"red": ["x"]}}'
@@ -651,8 +651,8 @@ try {
     $other = Join-Path $hk 'elsewhere'
     Write-File (Join-Path $hk 'hookshot\game-folder.txt') "$other`n"
     Check ((Get-KitHookshotGame $hk) -eq $other -and (Get-KitHookshotNeed $hk) -eq 'moved') 'hookshot need: game-folder.txt is followed; its game gone -> moved'
-    Write-File (Join-Path $other 'bin\hookshot.exe') 'exe'
-    Check ((Get-KitHookshotExe $other) -eq (Join-Path $other 'bin\hookshot.exe')) 'hookshot exe: bin\ first'
+    Write-File (Join-Path $other 'bin\longshot.exe') 'exe'
+    Check ((Get-KitHookshotExe $other) -eq (Join-Path $other 'bin\longshot.exe')) 'hookshot exe: bin\ first'
     # hs-missing (a tester read "No co-op Hookshot game" as "couldn't find Hookshot"): antivirus took the module
     Remove-Item -LiteralPath (Join-Path $hk 'hookshot\hookshot_coop.dll')
     Check ((Get-KitHookshotNeed $hk) -eq 'quarantine') 'hookshot need: the module in neither the kit nor the game -> quarantine (no build)'
@@ -712,7 +712,7 @@ try {
     # built for an older pin: the rebuild offer
     $g = Join-Path $hm 'hookshot\game'
     Write-File (Join-Path $hm 'hookshot\game-folder.txt') "$g`n"
-    Write-File (Join-Path $g 'hookshot.exe') 'exe'
+    Write-File (Join-Path $g 'longshot.exe') 'exe'
     Write-File (Join-Path $g 'hookshot_coop.dll') 'MODULE'
     Write-File (Join-Path $g 'coop-built-from.txt') "release=v2.1.0`ncommit=0000000000000000000000000000000000000000`npatches="
     $out = & $runHs 'join'

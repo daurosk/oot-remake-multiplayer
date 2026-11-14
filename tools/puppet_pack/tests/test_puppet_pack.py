@@ -1783,6 +1783,14 @@ class MapCapturesTest(unittest.TestCase):
         rows = map_captures.render(map_captures.captures(self.CAPTURE, self.MENU)).splitlines()
         self.assertEqual([r for r in rows if not r.startswith("#")], self.ROWS)
 
+    def test_floors_in_their_number_order(self):
+        cap = {"MapCaptureParamArray": [{"CameraPos": {"X": 0.0, "Y": 200.0, "Z": 0.0}, "Height": 10.0,
+                                         "CaptureParamData": {str(i).zfill(1 if i > 9 else 2): {"MapCaptureParam": {"Near": float(i)}}
+                                                              for i in (10, 2, 0, 1)}}]}
+        menu = {"MapMenuParamArray": [{"LocationName": "Tower", "BancName": ["Tower", "Tower"]}]}
+        c = map_captures.captures(cap, menu)[0]
+        self.assertEqual([n for n, _f in c["floors"]], [0.0, 1.0, 2.0, 10.0])
+
     def test_missing_files_give_an_empty_table(self):
         d = tempfile.mkdtemp()
         try:

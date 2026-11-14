@@ -222,8 +222,8 @@ std::vector<Menu::Line> Menu::Lines() const {
                        "Talk with players near your Link through your microphone; they sound quieter the farther away "
                        "they are. Off: you neither send nor hear voices."});
         out.push_back({Toggle("Show players on map", options_.map_players), Act::kMapPlayers,
-                       "The other players as arrows in their colours on the minimap and on the pause menu's map. "
-                       "Off: neither shows them."});
+                       "The other players as arrows in their colours on the minimap and on the Map page's area and "
+                       "dungeon maps (not the world map). Off: neither shows them."});
         out.push_back({Toggle("Names on map", options_.map_names), Act::kMapNames,
                        "Each player's name beside their arrow on the maps. Off: the arrows only."});
         break;

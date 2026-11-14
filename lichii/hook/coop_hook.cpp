@@ -964,20 +964,31 @@ public:
     }
 
     // CurrentMapView (coop_hook.h): from the last frame, as the markers.
-    std::optional<MapView> CurrentMapView() {
+    bool CurrentMapView(MapView& v) {
         std::lock_guard lock(view_mutex_);
         if (Clock::now() - frame_.at >= kFrameStale || !frame_.game || !frame_.scene || !frame_.position) {
-            return std::nullopt;
+            return false;
         }
-        MapView v;
-        v.scene = *frame_.scene;
+        v.scene.assign(*frame_.scene);
         v.self = *frame_.position;
         v.event = frame_.event;
-        v.others.reserve(frame_.others.size());
-        for (const auto& s : frame_.others) {
-            v.others.push_back({s.number, s.name, s.position, s.rotation, s.scene, s.fade});
+        v.others.resize(frame_.others.size());
+        for (std::size_t i = 0; i < frame_.others.size(); ++i) {
+            const auto& s = frame_.others[i];
+            auto& o = v.others[i];
+            o.number = s.number;
+            o.name.assign(s.name);
+            o.position = s.position;
+            o.rotation = s.rotation;
+            if (s.scene) {
+                if (!o.scene) o.scene.emplace();
+                o.scene->assign(*s.scene);
+            } else {
+                o.scene.reset();
+            }
+            o.fade = s.fade;
         }
-        return v;
+        return true;
     }
 
     std::vector<OverlayLine> Lines() {
@@ -2151,14 +2162,12 @@ std::optional<Markers> CurrentMarkers() {
     return std::nullopt;
 }
 
-std::optional<MapView> CurrentMapView() {
+bool CurrentMapView(MapView& out) {
     if (g_mod_refused) {
-        return std::nullopt;
+        return false;
     }
-    if (auto* coop = Get()) {
-        return coop->CurrentMapView();
-    }
-    return std::nullopt;
+    auto* coop = Get();
+    return coop != nullptr && coop->CurrentMapView(out);
 }
 
 bool SendChat(const std::string& text) {

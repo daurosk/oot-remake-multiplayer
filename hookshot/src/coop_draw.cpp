@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 #include <string_view>
 
 #include "coop_dbno_draw.h"
@@ -441,25 +442,37 @@ void DrawCheats(const HosCoopDraw& d, const CheatsView& c) {
     }
 }
 
-// The others on the HUD minimap (MapShown): an arrow each in their colour,
-// turned the way they face (a dot when that is not known), on a dark rim;
-// a player off the minimap is held at its edge, a little paler. Their name
-// under the icon when the names are on. Our own Link is the game's arrow.
+// The others on the maps (MapShown): on the Map page's picture while it is
+// shown, else on the HUD minimap (not while a game menu is in front). An
+// arrow each in their colour, turned the way they face (a dot when that is
+// not known), on a dark rim; a player off the map is held at its edge, a
+// little paler, and one on another floor paler still. Their name under the
+// icon when the names are on. Our own Link is the game's arrow.
 void DrawMap(const HosCoopDraw& d, const MapShown& m, const Look* look) {
     namespace map = coop::overlay::map;
-    map::Minimap mini;
-    mini.box = MinimapBox(d.width, d.height);
-    mini.metres_across = m.metres_across;
-    const float r = std::max(5.0f, mini.box.w * 0.035f);
-    mini.edge_inset = r;
     static thread_local std::vector<map::Icon> icons;  // (the present's thread: kept between frames)
-    map::minimap_icons(mini, m.scene, m.self, m.players, icons);
-    const float px = std::clamp(mini.box.h * 0.06f, 11.0f, 24.0f);
+    static thread_local std::string label;
+    float r = 0;
+    if (m.page && m.capture != nullptr) {
+        const map::Box pic = LayoutToScreen(*m.page, d.width, d.height);
+        r = std::max(6.0f, d.height * 0.012f);
+        map::picture_icons(pic, *m.capture, m.page_floor, m.players, icons);
+    } else if (m.minimap) {
+        map::Minimap mini;
+        mini.box = MinimapBox(d.width, d.height);
+        mini.metres_across = m.metres_across;
+        r = std::max(5.0f, mini.box.w * 0.035f);
+        mini.edge_inset = r;
+        map::minimap_icons(mini, m.scene, m.self, m.players, icons, m.capture);
+    } else {
+        return;
+    }
+    const float px = std::clamp(r * 1.9f, 11.0f, 24.0f);
     if (look) {
         Font(d, look->medium);
     }
     for (const auto& icon : icons) {
-        const int a = Alpha(icon.alpha * (icon.clamped ? 0.75f : 1.0f));
+        const int a = Alpha(icon.alpha * (icon.clamped ? 0.75f : 1.0f) * (icon.floor_delta != 0 ? 0.55f : 1.0f));
         if (a == 0) {
             continue;
         }
@@ -486,14 +499,15 @@ void DrawMap(const HosCoopDraw& d, const MapShown& m, const Look* look) {
         if (at >= m.names.size() || m.names[at].empty()) {
             continue;
         }
-        const char* name = m.names[at].c_str();
-        const float tw = d.text_width(d.user, px, name);
+        label.assign(m.names[at]);
+        label += FloorWords(icon.floor_delta);
+        const float tw = d.text_width(d.user, px, label.c_str());
         const float x = std::clamp(icon.x - tw / 2, 2.0f, std::max(2.0f, d.width - tw - 2.0f));
         const float y = icon.y + r * 1.2f;
         if (look) {
-            GameText(d, x, y, px, fill, name);
+            GameText(d, x, y, px, fill, label.c_str());
         } else {
-            Outlined(d, x, y, px, fill, a, name);
+            Outlined(d, x, y, px, fill, a, label.c_str());
         }
     }
 }
@@ -506,6 +520,20 @@ coop::overlay::map::Box MinimapBox(float width, float height) {
     const float size = kMinimapSize * s;
     const float cx = ox + (kLayoutW / 2 + kMinimapX) * s, cy = oy + (kLayoutH / 2 + kMinimapY) * s;
     return {cx - size / 2, cy - size / 2, size, size};
+}
+
+coop::overlay::map::Box LayoutToScreen(const coop::overlay::map::Box& b, float width, float height) {
+    const float s = std::min(width / kLayoutW, height / kLayoutH);
+    const float ox = (width - kLayoutW * s) / 2, oy = (height - kLayoutH * s) / 2;
+    return {ox + b.x * s, oy + b.y * s, b.w * s, b.h * s};
+}
+
+std::string FloorWords(int delta) {
+    if (delta == 0) {
+        return {};
+    }
+    const int n = delta < 0 ? -delta : delta;
+    return " (" + std::to_string(n) + (delta > 0 ? " below)" : " above)");
 }
 
 float MinimapMetres(const coop::overlay::map::Capture& capture, float zoom) {
@@ -599,7 +627,7 @@ bool Wanted(const Scene& s) {
         return true;
     }
     return !s.chat.empty() || !s.hud.empty() || s.box.has_value() || s.cheats.has_value() || (s.markers && !s.markers->items.empty()) || s.players.has_value() ||
-           (s.panel && !s.panel->empty()) || s.dbno.has_value() || (s.map && !s.map->players.empty());
+           (s.panel && !s.panel->empty()) || s.dbno.has_value() || (s.map != nullptr && !s.map->players.empty() && (s.map->minimap || s.map->page));
 }
 
 bool GameLook(const HosCoopDraw& d, const Look& look) {

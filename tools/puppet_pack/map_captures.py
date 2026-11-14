@@ -54,9 +54,13 @@ def captures(capture_root, menu_root):
         scenes = [s for s in dict.fromkeys(entry.get("BancName") or []) if s]
         scenes += [c["BancName"] for c in entry.get("ChangeBancInfo") or [] if c.get("BancName")]
         floors = []
-        for key in sorted(cap.get("CaptureParamData") or {}):
+        # Floor keys are "00", "01", ...: in their number's order (a key that is not a number goes last).
+        keys = sorted(cap.get("CaptureParamData") or {}, key=lambda k: (not str(k).isdigit(), int(k) if str(k).isdigit() else 0, str(k)))
+        for key in keys:
             p = (cap["CaptureParamData"][key] or {}).get("MapCaptureParam") or {}
             floors.append((p.get("Near"), p.get("Far")))
+        # A dungeon: IsDungeon, or the same scene for both eras (the Deku Tree's and Dodongo's Cavern's captures
+        # have no IsDungeon; every area of the game has a _Child and an _Adult scene, so none is taken for one).
         dungeon = bool(cap.get("IsDungeon")) or len(set(entry.get("BancName") or [])) == 1
         out.append({"location": str(name), "scenes": [str(s) for s in scenes] or [str(name)],
                     "x": _num(pos.get("X", 0)), "z": _num(pos.get("Z", 0)), "camera_y": _num(pos.get("Y", 0)),

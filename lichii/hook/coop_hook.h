@@ -95,7 +95,9 @@ struct MapView {
     bool event = false;
     std::vector<MapPlayer> others;
 };
-std::optional<MapView> CurrentMapView();
+// Fills `out` (its vectors and strings keep their room: no allocation once
+// it has held as many players); false and `out` untouched when nothing.
+bool CurrentMapView(MapView& out);
 
 // Chat and the player list, for the co-op window. Any thread.
 //

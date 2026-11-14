@@ -120,15 +120,21 @@ struct TitleView {
     std::string prompt;   // "Multiplayer" (or what co-op is doing); "" for none
 };
 
-// The other players on the HUD minimap (docs/overlay.md, "Players on the
-// map"; coop/overlay/map_icons.hpp): our Link's place, the minimap's span
-// and the others with their colours (Lifted) and names.
+// The other players on the HUD minimap and on the pause menu's Map page
+// (docs/overlay.md, "Players on the map"; coop/overlay/map_icons.hpp): our
+// Link's place, the minimap's span, our place's map and the others with their
+// colours (Lifted) and names. A player on another floor of a dungeon is
+// paler, "(1 below)" / "(2 above)" after the name.
 struct MapShown {
     std::string scene;
     std::array<float, 3> self{};
     float metres_across = 0.0f;  // the minimap's span (MinimapMetres)
+    const coop::overlay::map::Capture* capture = nullptr;  // our place's map (the table's: it outlives the scene)
     std::vector<coop::overlay::map::Player> players;
     std::vector<std::string> names;  // players[i]'s; empty: no names (the setting)
+    bool minimap = true;             // false: a game menu is in front (the game hides its minimap)
+    std::optional<coop::overlay::map::Box> page;  // the Map page's map picture, in the layout's units
+    int page_floor = 0;              // the floor the page shows, as floor_of counts them
 };
 
 // The game's minimap in its HUD layout (MapMenu_00, N_MiniMap_00 under
@@ -139,6 +145,12 @@ struct MapShown {
 inline constexpr float kLayoutW = 3840.0f, kLayoutH = 2160.0f;
 inline constexpr float kMinimapX = 1470.0f, kMinimapY = 544.0f, kMinimapSize = 552.0f;
 coop::overlay::map::Box MinimapBox(float width, float height);
+// A box in the layout's units (x right, y down from its top left) on the
+// picture, by the same rule.
+coop::overlay::map::Box LayoutToScreen(const coop::overlay::map::Box& layout, float width, float height);
+// The words after a name for a player `delta` floors from the one shown
+// ("" on the same floor): floors count down as floor_of's do.
+std::string FloorWords(int delta);
 // The metres the minimap spans, from its map's capture: the share of the map
 // picture the window shows (552 of the 960 the picture pane N_FadeMiniMap is
 // across), over `zoom` (LICHII_COOP_MINIMAP_ZOOM, 1 by default).
@@ -156,7 +168,7 @@ struct Scene {
     std::optional<std::vector<CoopHook::PlayerRow>> players;  // the player list key is held
     std::optional<std::vector<CoopHook::OverlayLine>> panel;  // the panel is on
     std::optional<CoopDbno::View> dbno;  // down but not out: we are down, or beside someone who is
-    std::optional<MapShown> map;          // players on the minimap
+    const MapShown* map = nullptr;        // players on the maps (the module's, kept between presents)
     // The game look: players' colours (Lifted, alpha 255) by what tags and
     // chat lines call them: their names, "P1".."P4", "you". Nobody here: white.
     std::map<std::string, std::uint32_t, std::less<>> colours;

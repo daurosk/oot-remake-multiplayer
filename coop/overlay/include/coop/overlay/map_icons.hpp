@@ -114,10 +114,12 @@ struct Minimap {
 
 // The minimap's icons for the others in our scene; players in another scene
 // or with no scene are left out, so are bad numbers (NaN, a box of no size).
-// `out` is cleared and refilled (its capacity kept: no allocation once it
-// holds 16).
+// With a dungeon's `capture`, each icon's floor and its floor_delta from our
+// Link's floor (floor_of; 0 elsewhere). `out` is cleared and refilled (its
+// capacity kept: no allocation once it holds 16).
 void minimap_icons(const Minimap& minimap, std::string_view our_scene, const Vec3& self,
-                   const std::vector<Player>& others, std::vector<Icon>& out);
+                   const std::vector<Player>& others, std::vector<Icon>& out,
+                   const Capture* capture = nullptr);
 
 // The pause menu's map of `capture` drawn in `picture` (the whole map
 // picture's box on the screen, its aspect the capture's width to height):

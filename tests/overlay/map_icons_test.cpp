@@ -230,3 +230,21 @@ TEST_CASE("zoom setting") {
   CHECK_FALSE(parse_zoom(""));
   CHECK_FALSE(parse_zoom("inf"));
 }
+
+TEST_CASE("minimap in a dungeon: a player on another floor is marked by how many floors away") {
+  const Table t(parse_captures(kText));
+  const Capture& jabu = *t.find("InsideJabuJabuBelly");
+  std::vector<Icon> out;
+  std::vector<Player> others{at(2, 1, 100, 0, "InsideJabuJabuBelly"), at(3, 1, 68, 0, "InsideJabuJabuBelly")};
+  minimap_icons(square(), "InsideJabuJabuBelly", {0, 100, 0}, others, out, &jabu);
+  REQUIRE(out.size() == 2);
+  CHECK(out[0].floor_delta == 0);
+  CHECK(out[1].floor == 2);
+  CHECK(out[1].floor_delta == 1);
+  // An area: no floors counted, nor without the capture.
+  const Capture& field = *t.find("HyruleField");
+  minimap_icons(square(), "InsideJabuJabuBelly", {0, 100, 0}, others, out, &field);
+  CHECK(out[1].floor_delta == 0);
+  minimap_icons(square(), "InsideJabuJabuBelly", {0, 100, 0}, others, out);
+  CHECK(out[1].floor_delta == 0);
+}

@@ -52,6 +52,7 @@
 #include "coop_hook.h"
 #include "coop_hud.h"
 #include "coop_hud_hearts.h"
+#include "coop_map_page.h"
 #include "coop_maps.h"
 #include "coop_live_events.h"
 #include "coop_objects_sync.h"
@@ -570,20 +571,24 @@ bool EnvOff(const char* name) {
 std::atomic<bool> g_map_players{!EnvOff("LICHII_COOP_MAP")};
 std::atomic<bool> g_map_names{!EnvOff("LICHII_COOP_MAP_NAMES")};
 
-// The minimap's players (CoopDraw::MapShown), or none: the setting is off,
-// the game's camera is not known (not playing), our own cutscene runs (the
-// game hides its HUD), or our place has no map (coop_maps.txt).
-std::optional<CoopDraw::MapShown> MapScene(bool camera, std::uint8_t self) {
-    if (!g_map_players.load() || !camera) {
-        return std::nullopt;
+// The players on the maps (CoopDraw::MapShown), or null: the setting is
+// off, our place is not known or has no map (coop_maps.txt), nobody else is
+// there, or our own cutscene runs (the game hides its HUD). The minimap needs
+// the game's camera (we play) and no game menu in front (patch 0018); the Map
+// page's picture is CoopMapPage's. The present's thread only: the view, the
+// players and their names keep their room between presents.
+const CoopDraw::MapShown* MapScene(bool camera, std::uint8_t self) {
+    static CoopHook::MapView view;
+    static CoopDraw::MapShown m;
+    static std::optional<int> page_open_floor;   // the game's floor when the Map page came up
+    if (!g_map_players.load() || !CoopHook::CurrentMapView(view) || view.event || view.others.empty()) {
+        page_open_floor.reset();
+        return nullptr;
     }
-    auto view = CoopHook::CurrentMapView();
-    if (!view || view->event || view->others.empty()) {
-        return std::nullopt;
-    }
-    const auto* capture = CoopMaps::Maps().find(view->scene);
+    const auto* capture = CoopMaps::Maps().find(view.scene);
     if (capture == nullptr) {
-        return std::nullopt;
+        page_open_floor.reset();
+        return nullptr;
     }
     static const float zoom = [] {
         const auto z = coop::overlay::map::parse_zoom(Env("LICHII_COOP_MINIMAP_ZOOM"));
@@ -592,27 +597,55 @@ std::optional<CoopDraw::MapShown> MapScene(bool camera, std::uint8_t self) {
         }
         return z.value_or(1.0f);
     }();
-    CoopDraw::MapShown m;
-    m.scene = std::move(view->scene);
-    m.self = view->self;
+    const auto menu = CoopMapPage::MenuState();
+    const auto page = CoopMapPage::Shown(capture->dungeon);
+    m.minimap = camera && !(menu && menu->menu_open);
+    m.page.reset();
+    m.page_floor = coop::overlay::map::floor_of(*capture, view.self[1]);
+    if (page) {
+        m.page = page->box;
+        // The page opens on our floor; each floor up (the game's count) is one less in floor_of's.
+        if (page->floors > 0) {
+            if (!page_open_floor) page_open_floor = page->floor;
+            m.page_floor += *page_open_floor - page->floor;
+        }
+    } else {
+        page_open_floor.reset();
+    }
+    if (!m.minimap && !m.page) {
+        return nullptr;
+    }
+    m.scene.assign(view.scene);
+    m.self = view.self;
+    m.capture = capture;
     m.metres_across = CoopDraw::MinimapMetres(*capture, zoom);
     const bool names = g_map_names.load();
-    m.players.reserve(view->others.size());
-    for (auto& o : view->others) {
-        coop::overlay::map::Player p;
+    m.players.resize(view.others.size());
+    m.names.resize(names ? view.others.size() : 0);
+    for (std::size_t i = 0; i < view.others.size(); ++i) {
+        const auto& o = view.others[i];
+        auto& p = m.players[i];
         p.number = o.number;
         p.position = o.position;
         p.rotation = o.rotation;
-        p.scene = std::move(o.scene);
+        if (o.scene) {
+            if (!p.scene) p.scene.emplace();
+            p.scene->assign(*o.scene);
+        } else {
+            p.scene.reset();
+        }
         p.fade = o.fade;
         const std::uint32_t c = CoopDraw::Lifted(CoopPuppet::NameColor(o.number, self));
         p.rgb = (c & 0xFF) << 16 | (c & 0xFF00) | (c >> 16 & 0xFF);  // (IM_COL32 to 0xRRGGBB)
-        m.players.push_back(std::move(p));
         if (names) {
-            m.names.push_back(o.name.empty() ? "P" + std::to_string(o.number) : std::move(o.name));
+            if (o.name.empty()) {
+                m.names[i] = "P" + std::to_string(o.number);
+            } else {
+                m.names[i].assign(o.name);
+            }
         }
     }
-    return m;
+    return &m;
 }
 
 }  // namespace
@@ -942,6 +975,7 @@ void Frame(void* ctx, int site) {
         LogFlagNative();
         RunCalls(ctx);
         LogBossNative();
+        CoopMapPage::Frame(ctx, g_api);   // the Map page's panes, found once while the game plays
     }
 }
 

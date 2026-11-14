@@ -3,12 +3,14 @@
 // through a canvas that records the calls.
 #include <doctest/doctest.h>
 
+#include <cmath>
 #include <string>
 #include <vector>
 
 #include "coop_dbno_draw.h"
 #include "coop_draw.h"
 #include "coop_hud_layout.h"
+#include "coop_map_page.h"
 
 namespace {
 
@@ -545,7 +547,7 @@ TEST_CASE("hookshot draw: the others on the minimap in their colours, names unde
     m.players = {OnMap(2, 10, -20, 0xFF0000), OnMap(3, 0, 0, 0x00FF00)};
     m.players[0].rotation = coop::overlay::map::Quat{0, 0, 0, 1};  // looks +Z: an arrow
     m.names = {"Saria", "Darunia"};
-    s.map = m;
+    s.map = &m;
     CHECK(CoopDraw::Wanted(s));
     CoopDraw::Draw(c.d, s);
     const auto tris = c.Of("triangle");
@@ -566,10 +568,10 @@ TEST_CASE("hookshot draw: the others on the minimap in their colours, names unde
 
     // Names off: arrows only. No one: nothing wanted.
     Canvas quiet(1920, 1080);
-    s.map->names.clear();
+    m.names.clear();
     CoopDraw::Draw(quiet.d, s);
     CHECK(quiet.Of("text").empty());
-    s.map->players.clear();
+    m.players.clear();
     CHECK_FALSE(CoopDraw::Wanted(s));
 }
 
@@ -580,7 +582,7 @@ TEST_CASE("hookshot draw: a player far off the minimap is held at its edge, pale
     m.scene = "HyruleField";
     m.metres_across = 276;
     m.players = {OnMap(2, 5000, 0, 0x0000FF)};
-    s.map = m;
+    s.map = &m;
     CoopDraw::Draw(c.d, s);
     const auto dots = c.Of("circle");
     REQUIRE(dots.size() == 2);
@@ -588,4 +590,89 @@ TEST_CASE("hookshot draw: a player far off the minimap is held at its edge, pale
     CHECK(dots[1].x < box.x + box.w);
     CHECK(dots[1].x > box.x + box.w - 20);
     CHECK(AlphaOf(dots[1].rgba) < 255);
+}
+
+TEST_CASE("hookshot map page: a pane's box from its global matrix, in the layout's units") {
+    float m[12] = {};
+    m[0] = 1.0f, m[4] = 1.0f, m[9] = 0.0f, m[10] = 0.0f;  // the middle, unscaled
+    auto b = CoopMapPage::PaneBox(m, CoopMapPage::kFieldW, CoopMapPage::kFieldH);
+    REQUIRE(b);
+    CHECK(b->cx() == doctest::Approx(1920));
+    CHECK(b->cy() == doctest::Approx(1080));
+    CHECK(b->w == doctest::Approx(2600));
+    m[0] = m[4] = 2.0f, m[9] = 100.0f, m[10] = 200.0f;  // zoomed in twice, moved right and up
+    b = CoopMapPage::PaneBox(m, 2600, 1872);
+    REQUIRE(b);
+    CHECK(b->cx() == doctest::Approx(2020));
+    CHECK(b->cy() == doctest::Approx(880));
+    CHECK(b->h == doctest::Approx(3744));
+    m[0] = 0.0f;  // not shown
+    CHECK_FALSE(CoopMapPage::PaneBox(m, 2600, 1872));
+    m[0] = std::nanf("");
+    CHECK_FALSE(CoopMapPage::PaneBox(m, 2600, 1872));
+    const auto s = CoopDraw::LayoutToScreen({0, 0, 3840, 2160}, 1920, 1080);
+    CHECK(s.w == doctest::Approx(1920));
+    CHECK(s.x == doctest::Approx(0));
+}
+
+TEST_CASE("hookshot draw: the Map page's map shows everyone in our place's map, and the minimap hides behind menus") {
+    coop::overlay::map::Capture field;
+    field.location = "HyruleField";
+    field.height = 100;
+    field.floors.push_back({});
+    CoopDraw::MapShown m;
+    m.scene = "HyruleField";
+    m.capture = &field;
+    m.metres_across = 276;
+    m.players = {OnMap(2, 25, 0, 0xFF0000)};  // a quarter of the picture's height right of its centre
+    m.names = {"Saria"};
+    m.page = coop::overlay::map::Box{1920 - 1000, 1080 - 500, 2000, 1000};  // 200 m across
+    CoopDraw::Scene s;
+    s.map = &m;
+    CHECK(CoopDraw::Wanted(s));
+    Canvas c(1920, 1080);
+    CoopDraw::Draw(c.d, s);
+    const auto dots = c.Of("circle");
+    REQUIRE(dots.size() == 2);
+    CHECK(dots[1].x == doctest::Approx(960 + 0.125f * 1000));  // 25 of 200 m: 1/8 of the half-size picture
+    CHECK(dots[1].y == doctest::Approx(540));
+
+    m.page.reset();
+    m.minimap = false;  // a game menu in front, no Map page: nothing
+    CHECK_FALSE(CoopDraw::Wanted(s));
+    Canvas none(1920, 1080);
+    CoopDraw::Draw(none.d, s);
+    CHECK(none.calls.empty());
+}
+
+TEST_CASE("hookshot draw: a player on another floor is paler, the floors after the name") {
+    CHECK(CoopDraw::FloorWords(0).empty());
+    CHECK(CoopDraw::FloorWords(1) == " (1 below)");
+    CHECK(CoopDraw::FloorWords(-2) == " (2 above)");
+    coop::overlay::map::Capture jabu;
+    jabu.location = "InsideJabuJabuBelly";
+    jabu.scenes = {"InsideJabuJabuBelly"};
+    jabu.camera_y = 200;
+    jabu.height = 300;
+    jabu.dungeon = true;
+    jabu.floors = {{}, {93.0f, 105.0f}, {128.0f, 133.0f}};
+    CoopDraw::MapShown m;
+    m.scene = "InsideJabuJabuBelly";
+    m.self = {0, 100, 0};
+    m.capture = &jabu;
+    m.metres_across = 276;
+    m.players = {OnMap(2, 5, 0, 0x00FF00)};
+    m.players[0].scene = "InsideJabuJabuBelly";
+    m.players[0].position[1] = 68;  // floor 2: one below ours
+    m.names = {"Ruto"};
+    CoopDraw::Scene s;
+    s.map = &m;
+    Canvas c(1920, 1080);
+    CoopDraw::Draw(c.d, s);
+    const auto dots = c.Of("circle");
+    REQUIRE(dots.size() == 2);
+    CHECK(AlphaOf(dots[1].rgba) < 160);
+    bool named = false;
+    for (const auto& t : c.Of("text")) named = named || t.text == "Ruto (1 below)";
+    CHECK(named);
 }

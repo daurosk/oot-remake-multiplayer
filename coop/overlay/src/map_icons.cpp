@@ -164,7 +164,7 @@ std::optional<float> map_angle(const Quat& q) {
 }
 
 void minimap_icons(const Minimap& m, std::string_view our_scene, const Vec3& self,
-                   const std::vector<Player>& others, std::vector<Icon>& out) {
+                   const std::vector<Player>& others, std::vector<Icon>& out, const Capture* capture) {
   out.clear();
   if (!usable(m.box) || !finite(m.metres_across) || m.metres_across <= 0 || !finite(self) || our_scene.empty()) {
     return;
@@ -195,6 +195,10 @@ void minimap_icons(const Minimap& m, std::string_view our_scene, const Vec3& sel
     }
     icon.x = m.box.cx() + dx;
     icon.y = m.box.cy() + dy;
+    if (capture != nullptr && capture->dungeon) {
+      icon.floor = floor_of(*capture, p.position[1]);
+      icon.floor_delta = icon.floor - floor_of(*capture, self[1]);
+    }
     out.push_back(icon);
   }
 }

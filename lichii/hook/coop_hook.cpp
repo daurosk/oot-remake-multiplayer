@@ -763,6 +763,10 @@ public:
             LOG_INFO(Core, "coop: notice: {}", line);
             chat_.Add(std::move(line), true);
         }
+        if (auto line = CoopVoice::TakeNotice(); !line.empty()) {   // voice chat turned on: how it works
+            LOG_INFO(Core, "coop: notice: {}", line);
+            chat_.Add(std::move(line), true);
+        }
         // Chests opened and pickups taken in another game: what is loaded of
         // them goes here too (docs/items.md, "Chests").
         // Issue 146: a map or compass the game took back, put back.
@@ -911,6 +915,7 @@ public:
         CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                             report.connected ? session_.get() : nullptr, report.server_now_us);
         // Proximity voice (docs/voice.md): our microphone out, theirs at their Links.
+        CoopVoice::SetHostMuted(CoopLobby::OwnVoiceMuted());
         CoopVoice::Frame(view.game ? view.position : std::nullopt, view.others, view.hidden,
                          report.connected ? session_.get() : nullptr);
         // Our Ocarina's notes for the other games (issue 152, coop_ocarina_sound.h).

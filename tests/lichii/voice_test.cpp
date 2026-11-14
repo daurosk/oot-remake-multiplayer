@@ -44,7 +44,12 @@ TEST_CASE("voice settings: defaults, then LICHII_COOP_VOICE*") {
     CHECK(s.range_m == doctest::Approx(20.0f));
     CHECK(From({{"LICHII_COOP_VOICE", "off"}}, errors).mode == coop::voice::Mode::off);
     CHECK(From({{"LICHII_COOP_VOICE", "ptt"}}, errors).mode == coop::voice::Mode::push_to_talk);
+    // an older file's on, 1, yes: push to talk as they meant, never a live open mic unasked
     CHECK(From({{"LICHII_COOP_VOICE", "on"}}, errors).mode == coop::voice::Mode::push_to_talk);
+    CHECK(From({{"LICHII_COOP_VOICE", "1"}}, errors).mode == coop::voice::Mode::push_to_talk);
+    CHECK(From({{"LICHII_COOP_VOICE", "yes"}}, errors).mode == coop::voice::Mode::push_to_talk);
+    CHECK(From({{"LICHII_COOP_VOICE", "open"}}, errors).mode == coop::voice::Mode::open_mic);
+    CHECK(From({{"LICHII_COOP_VOICE", "PTT"}}, errors).mode == coop::voice::Mode::push_to_talk);
     CHECK(From({{"LICHII_COOP_VOICE_TEST", "tone"}}, errors).test == Test::tone);
     CHECK(From({{"LICHII_COOP_VOICE_TEST", "log"}}, errors).test == Test::log);
     CHECK(From({{"LICHII_COOP_VOICE_TEST", "0"}}, errors).test == Test::none);
@@ -87,14 +92,20 @@ TEST_CASE("voice off: no microphone and nobody heard, and the settings row turns
     CHECK(EngineSettings(off, true).deafened);
     CHECK(EngineSettings(off, true).gate.mode == coop::voice::Mode::off);
     const Settings on = WithEnabled(off, true);
-    CHECK(on.mode == coop::voice::Mode::push_to_talk);
+    CHECK(on.mode == coop::voice::Mode::open_mic);   // turned on: open mic
     CHECK_FALSE(EngineSettings(on, true).deafened);
     CHECK(WithEnabled(on, false) == off);
-    Settings open = on;
-    open.mode = coop::voice::Mode::open_mic;
-    open.volume = 0.5f;
-    CHECK(WithEnabled(open, true) == open);  // on already: the chosen way of talking stays
-    CHECK(WithEnabled(open, false).volume == doctest::Approx(0.5f));
+    Settings ptt = on;
+    ptt.mode = coop::voice::Mode::push_to_talk;
+    ptt.volume = 0.5f;
+    CHECK(WithEnabled(ptt, true) == ptt);  // on already: the chosen way of talking stays
+    CHECK(WithEnabled(ptt, false).volume == doctest::Approx(0.5f));
+    CHECK(MicWanted(on, true, false, false));        // open mic: the microphone is open
+    CHECK_FALSE(MicWanted(ptt, true, false, false)); // push to talk: only while held
+    CHECK(MicWanted(ptt, true, true, false));
+    // the host muted our voice: the microphone closes, in either mode
+    CHECK_FALSE(MicWanted(on, true, false, false, true));
+    CHECK_FALSE(MicWanted(ptt, true, true, true, true));
     // What a settings screen writes is what the start reads.
     std::vector<std::string> errors;
     for (const auto mode : {coop::voice::Mode::off, coop::voice::Mode::push_to_talk, coop::voice::Mode::open_mic}) {
@@ -184,4 +195,27 @@ TEST_CASE("voice microphone: push to talk opens it only while the key is held or
     CHECK_FALSE(MicWanted(open, false, false, false));
     open.muted = true;
     CHECK_FALSE(MicWanted(open, true, false, false));
+}
+
+TEST_CASE("voice: the tip when voice chat is turned on names the mode and where to change it") {
+    Settings s;
+    CHECK(TurnedOnTip(s).empty());   // off: no tip
+    s.mode = coop::voice::Mode::open_mic;
+    CHECK(TurnedOnTip(s) == "Voice chat on: open mic (change to push-to-talk in Settings)");
+    s.mode = coop::voice::Mode::push_to_talk;
+    CHECK(TurnedOnTip(s) == "Voice chat on: hold V to talk (change to open mic in Settings)");
+    s.key = 0x14;   // Caps Lock: no letter to name
+    CHECK(TurnedOnTip(s).find("hold the push-to-talk key") != std::string::npos);
+    CHECK(KeyName('7') == "7");
+}
+
+TEST_CASE("voice: the HUD icon: none while voice is off, muted wins, lit while talking, ours dim when quiet") {
+    for (const bool self : {false, true}) {
+        CHECK(IconFor(false, true, true, self) == Icon::none);   // voice off here: nothing for anyone
+        CHECK(IconFor(true, true, true, self) == Icon::muted);
+        CHECK(IconFor(true, true, false, self) == Icon::muted);
+        CHECK(IconFor(true, false, true, self) == Icon::talking);
+    }
+    CHECK(IconFor(true, false, false, true) == Icon::idle);    // ours: on, quiet
+    CHECK(IconFor(true, false, false, false) == Icon::none);   // theirs: not known whether their voice is on
 }

@@ -58,8 +58,8 @@ struct Settings {
     bool operator==(const Settings&) const = default;
 };
 
-// LICHII_COOP_VOICE (off, the default; ptt or on: push to talk; open: open
-// mic), LICHII_COOP_VOICE_KEY (a virtual-key code, decimal or 0x hex, or one
+// LICHII_COOP_VOICE (off, the default; open: open mic, what the menu writes
+// when voice is turned on; ptt, or an older file's on, 1, yes: push to talk), LICHII_COOP_VOICE_KEY (a virtual-key code, decimal or 0x hex, or one
 // letter or digit), LICHII_COOP_VOICE_VOLUME (0 to 200, percent),
 // LICHII_COOP_VOICE_RANGE (metres, 5 to 100), LICHII_COOP_VOICE_TEST (log,
 // tone). `env` gives a variable's value, empty when unset. Anything it
@@ -71,17 +71,33 @@ coop::voice::Settings EngineSettings(const Settings& s, bool camera_known);
 // The mode as LICHII_COOP_VOICE takes it: "off", "ptt" or "open" (what a
 // settings screen writes to coop-options.ini).
 const char* ModeName(coop::voice::Mode mode);
-// The settings screen's one On/Off row. On: push to talk, or open mic when
-// that was already chosen; off: off. The rest stays.
+// The settings screen's On/Off row. On: open mic, or push to talk when that
+// was already chosen; off: off. The rest stays.
 Settings WithEnabled(Settings s, bool on);
+// The push-to-talk key as the player reads it: "V", "7", else "the
+// push-to-talk key".
+std::string KeyName(std::uint32_t vk);
+// The chat's tip when voice chat is turned on (once a run): "Voice chat on:
+// open mic (change to push-to-talk in Settings)"; "" when off.
+std::string TurnedOnTip(const Settings& s);
+
+// The voice icon by a name in the player HUD (docs/voice.md, "Who is
+// talking"). Voice off here: none for anyone (nothing is heard or sent).
+// Muted (ours: our microphone; another's: muted by us or the host): the
+// muted icon. Talking (ours: we send; another's: their voice plays here, held
+// 300 ms after the last frame): lit. Else ours is dim (voice on, quiet) and
+// another's none (whether their voice is on is not known here).
+enum class Icon : std::uint8_t { none, idle, talking, muted };
+Icon IconFor(bool voice_on, bool muted, bool active, bool self);
 
 // Whether our microphone is open at all (privacy: no live microphone the
 // player did not ask for). Never when we cannot send (not connected, not in
 // the game), voice is off or we are muted. Push to talk: only while the key
 // is held, and while the spurt it started is still ending (`talking`: the
 // gate's 100 ms tail and its end frame); a player who never presses the key
-// never has the microphone opened. Open mic: always, as asked.
-bool MicWanted(const Settings& s, bool can_send, bool key_held, bool talking);
+// never has the microphone opened. Open mic: always, as asked. Never while
+// the host has muted our voice (the server would drop it anyway).
+bool MicWanted(const Settings& s, bool can_send, bool key_held, bool talking, bool host_muted = false);
 
 // Where a voice comes from: a little under the top of the head (`head`
 // above the feet, as presence has it), or 1.2 m up when that is not known.
@@ -130,6 +146,13 @@ void Set(const Settings& settings);
 // The settings screen's On/Off row: Get().mode != off, Set(WithEnabled).
 bool Enabled();
 void SetEnabled(bool on);
+// The Voice mode row (and On/Off together): off, open mic or push to talk.
+void SetMode(coop::voice::Mode mode);
+// The game thread: whether the host has muted our voice (CoopLobby); the
+// microphone closes while it has.
+void SetHostMuted(bool muted);
+// The turned-on tip once, for the chat as a notice; "" when there is none.
+std::string TakeNotice();
 
 // The network thread: VOICE_FRAME in, a player gone.
 void OnEvent(const coop::net::Event& event);

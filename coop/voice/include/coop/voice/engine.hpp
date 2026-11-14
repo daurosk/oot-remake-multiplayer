@@ -108,7 +108,7 @@ class Engine {
 
   // --- any thread ---
   // True while a player's voice plays here (it is talking and in range):
-  // a frame of it was heard within the last 250 ms of render's clock.
+  // a frame of it was heard within the last 300 ms of render's clock.
   bool speaking(std::uint8_t player, std::uint64_t now_us) const;
 
   struct Stats {
@@ -139,6 +139,13 @@ class Engine {
   std::uint16_t sequence_ = 0;
   std::atomic_bool talking_{false};
   std::atomic<float> level_db_{-96.0f};
+  // The echo guard: capture frames left while a voice heard here counts
+  // (render sets it, capture counts it down, so it ends even if render stops).
+  std::atomic<int> echo_frames_{0};
+  // Open mic: the last frame the gate held back, sent first when it opens
+  // (the attack frame, so a word's start is not cut).
+  std::array<std::int16_t, kSamplesPerFrame> held_{};
+  bool have_held_ = false;
   // Listener.
   mutable std::mutex listener_mutex_;
   Listener listener_;

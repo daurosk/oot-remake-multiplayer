@@ -813,3 +813,41 @@ TEST_CASE("hookshot map page: a tap held for one present counts as a press, like
     CHECK(w.Update(true, true));        // and back
     CHECK(w.Update(true, false));
 }
+
+TEST_CASE("hookshot draw: the voice icon after a talking or muted player's name, our row over the others") {
+    CoopDraw::Scene s;
+    s.hud = {{"Mido", "", {}, false}};
+    Canvas quiet(1280, 720);
+    CoopDraw::Draw(quiet.d, s, GameLook());
+    CHECK(quiet.Of("rect").empty());   // no icon: nothing but the name
+    s.hud[0].voice = CoopVoice::Icon::talking;
+    Canvas talk(1280, 720);
+    CoopDraw::Draw(talk.d, s, GameLook());
+    const auto rects = talk.Of("rect");
+    REQUIRE(rects.size() == 6);   // the microphone's three parts, shadow then fill
+    CHECK(rects[0].x > 40.0f + 4 * 25.0f * 0.5f);   // after "Mido" (the fake's width: half the size a byte)
+    CHECK(rects[3].rgba == CoopDraw::Rgba(120, 235, 120, 255));   // lit green
+    CHECK(talk.Of("circle").size() == 1);   // the ring
+    CHECK(talk.Of("triangle").empty());
+    s.hud[0].voice = CoopVoice::Icon::muted;
+    Canvas muted(1280, 720);
+    CoopDraw::Draw(muted.d, s, GameLook());
+    CHECK(muted.Of("triangle").size() == 2);   // the red bar
+    CHECK(muted.Of("circle").empty());
+    // our own row first, with "You", while voice is on
+    s.own_voice = CoopVoice::Icon::idle;
+    Canvas own(1280, 720);
+    CoopDraw::Draw(own.d, s, GameLook());
+    const auto texts = own.Of("text");
+    REQUIRE(texts.size() == 12);
+    CHECK(texts[5].text == "You");
+    CHECK(texts[5].y == doctest::Approx(CoopHudLayout::BlocksTop(1280, 720)));
+    CHECK(texts[11].text == "Mido");
+    CHECK(texts[11].y > texts[5].y);
+    CHECK(AlphaOf(own.Of("rect")[3].rgba) == 110);   // quiet: dim
+    // nobody else: no row of our own either
+    s.hud.clear();
+    Canvas alone(1280, 720);
+    CoopDraw::Draw(alone.d, s, GameLook());
+    CHECK(alone.calls.empty());
+}

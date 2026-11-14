@@ -29,6 +29,7 @@
 #include "coop_dbno_game.h"
 #include "coop_hook.h"
 #include "coop_i18n.h"
+#include "coop_voice.h"
 #include "hos_coop_draw.h"
 
 namespace CoopDraw {
@@ -115,6 +116,7 @@ struct HudBlock {
     std::string place;        // the place's name, or ""
     std::vector<int> hearts;  // quarters filled in each (CoopHudHearts::Quarters)
     bool dim = false;         // not connected
+    CoopVoice::Icon voice = CoopVoice::Icon::none;   // the voice icon after the name (CoopVoice::IconFor)
 };
 
 // The item cheats panel, when it is open.
@@ -193,6 +195,9 @@ struct Scene {
     std::optional<TitleView> title;
     std::optional<CheatsView> cheats;
     std::vector<HudBlock> hud;
+    // Our own voice icon (CoopVoice::IconFor): not none, a "You" row with it
+    // over the HUD blocks (only when there are any).
+    CoopVoice::Icon own_voice = CoopVoice::Icon::none;
     std::optional<ChatBoxView> box;
     std::vector<ChatShown> chat;
     std::optional<CoopHook::Markers> markers;

@@ -8,7 +8,8 @@ namespace coop::voice {
 
 namespace {
 
-constexpr std::uint64_t kSpeakingUs = 250'000;
+constexpr std::uint64_t kSpeakingUs = 300'000;
+constexpr int kEchoFrames = 15;  // 300 ms of microphone
 
 }  // namespace
 
@@ -61,9 +62,34 @@ void Engine::capture(std::span<const std::int16_t> samples, bool key_held,
   while (pending_.size() - at >= static_cast<std::size_t>(kSamplesPerFrame)) {
     const std::span<const std::int16_t> frame(pending_.data() + at, kSamplesPerFrame);
     at += kSamplesPerFrame;
+    // Open mic's echo guard: the others' voices played here within the last
+    // kEchoFrames of our microphone.
+    int echo = echo_frames_.load();
+    while (echo > 0 && !echo_frames_.compare_exchange_weak(echo, echo - 1)) {
+    }
+    gate_.set_hearing(echo > 0);
     const Gate::Step step = gate_.update(frame, key_held, s.muted || encoder_ == nullptr);
     level_db_.store(gate_.level_db());
-    if (step == Gate::Step::closed) continue;
+    if (step == Gate::Step::closed) {
+      std::copy(frame.begin(), frame.end(), held_.begin());
+      have_held_ = true;
+      continue;
+    }
+    if (step == Gate::Step::open && gate_.just_opened() && have_held_ && s.gate.mode == Mode::open_mic &&
+        s.gate.attack_frames > 1) {
+      // The frame the attack held back: the start of the word.
+      const std::size_t n = encoder_->encode(held_, packet);
+      if (n > 0 && n <= packet.size()) {
+        protocol::VoiceFrame h;
+        h.player_number = protocol::kPlayerSelf;
+        h.opus.assign(packet.begin(), packet.begin() + static_cast<std::ptrdiff_t>(n));
+        h.sequence = sequence_++;
+        out.push_back(std::move(h));
+        std::lock_guard lock(stats_mutex_);
+        ++stats_.sent;
+      }
+    }
+    have_held_ = false;
     protocol::VoiceFrame v;
     v.player_number = protocol::kPlayerSelf;
     if (step == Gate::Step::ended) {
@@ -88,6 +114,7 @@ void Engine::capture(std::span<const std::int16_t> samples, bool key_held,
 
 void Engine::stop_talking(std::vector<protocol::VoiceFrame>& out) {
   pending_.clear();
+  have_held_ = false;
   if (!gate_.open()) return;
   const std::array<std::int16_t, kSamplesPerFrame> silence{};
   if (gate_.update(silence, false, true) == Gate::Step::ended) {  // muted: closes at once
@@ -214,7 +241,10 @@ void Engine::render(float* const* out, int channels, int frames, std::uint64_t n
     if (s.position && !set.deafened) now = place(listener, *s.position, set.spatial);
     const float pv = set.player_volume[p] > 0.0f ? set.player_volume[p] : 1.0f;
     const float volume = std::clamp(set.volume, 0.0f, 2.0f) * std::clamp(pv, 0.0f, 2.0f);
-    if (voice && now.audible && volume > 0.0f) s.heard_us.store(now_us == 0 ? 1 : now_us);
+    if (voice && now.audible && volume > 0.0f) {
+      s.heard_us.store(now_us == 0 ? 1 : now_us);
+      echo_frames_.store(kEchoFrames);
+    }
     const Placement from = s.placed;
     s.placed = now;
     if (!now.audible && !from.audible) continue;

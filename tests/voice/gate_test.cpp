@@ -68,8 +68,12 @@ TEST_CASE("voice gate: open mic opens on speech over the noise and holds a hango
   // Room noise for a second: never opens, the floor settles near it.
   for (int i = 0; i < 50; ++i) CHECK(g.update(noise(60, seed), false, false) == Step::closed);
   CHECK(g.floor_db() < -50.0f);
+  CHECK(g.update(tone(0.2f), false, false) == Step::closed);  // the attack: two speech frames
+  CHECK_FALSE(g.just_opened());
   CHECK(g.update(tone(0.2f), false, false) == Step::open);
+  CHECK(g.just_opened());
   CHECK(g.update(noise(60, seed), false, false) == Step::open);  // hangover
+  CHECK_FALSE(g.just_opened());
   CHECK(g.update(noise(60, seed), false, false) == Step::open);
   CHECK(g.update(noise(60, seed), false, false) == Step::open);
   CHECK(g.update(noise(60, seed), false, false) == Step::ended);
@@ -92,4 +96,38 @@ TEST_CASE("voice gate: a loud steady hum does not hold open mic open") {
   CHECK(open > 400);
   CHECK(open < 600);
   CHECK(g.update(tone(0.05f), false, false) == Step::closed);
+}
+
+TEST_CASE("voice gate: a one-frame click does not open open mic") {
+  GateConfig c;
+  c.mode = Mode::open_mic;
+  Gate g(c);
+  std::uint32_t seed = 7;
+  for (int i = 0; i < 50; ++i) g.update(noise(60, seed), false, false);
+  for (int k = 0; k < 5; ++k) {
+    CHECK(g.update(tone(0.5f), false, false) == Step::closed);  // a key click, a bump
+    for (int i = 0; i < 5; ++i) CHECK(g.update(noise(60, seed), false, false) == Step::closed);
+  }
+  CHECK(g.update(tone(0.5f), false, false) == Step::closed);
+  CHECK(g.update(tone(0.5f), false, false) == Step::open);  // a word
+  CHECK(g.update(noise(60, seed), false, false) == Step::open);
+}
+
+TEST_CASE("voice gate: while the others are heard, open mic needs a louder voice") {
+  GateConfig c;
+  c.mode = Mode::open_mic;
+  Gate g(c);
+  std::uint32_t seed = 3;
+  for (int i = 0; i < 50; ++i) g.update(noise(60, seed), false, false);
+  g.set_hearing(true);
+  // Their voice from our speakers, picked up quietly: about -43 dBFS.
+  for (int i = 0; i < 10; ++i) CHECK(g.update(tone(0.01f), false, false) == Step::closed);
+  // We talk over it, louder: it opens.
+  CHECK(g.update(tone(0.2f), false, false) == Step::closed);
+  CHECK(g.update(tone(0.2f), false, false) == Step::open);
+  // Nobody heard: the same quiet level is speech again.
+  Gate quiet(c);
+  for (int i = 0; i < 50; ++i) quiet.update(noise(60, seed), false, false);
+  quiet.update(tone(0.01f), false, false);
+  CHECK(quiet.update(tone(0.01f), false, false) == Step::open);
 }

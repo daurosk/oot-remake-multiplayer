@@ -380,6 +380,36 @@ TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off u
     CHECK(m.options().voice);
 }
 
+TEST_CASE("pause tab: Settings: voice on shows Voice mode, open mic first, push to talk the other choice") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kSettings);
+    SelectRow(m, "Proximity voice chat");
+    m.Press(Input::kRight);
+    m.TakeRequest();
+    auto names = Names(m);
+    auto at = std::find(names.begin(), names.end(), "Voice mode");
+    REQUIRE(at != names.end());
+    CHECK(at[-1] == "Proximity voice chat");   // right under it
+    const auto row = static_cast<std::size_t>(at - names.begin());
+    CHECK(m.view().rows[row].value == "Open mic");
+    CHECK(m.view().rows[row].kind == RowKind::kChoice);
+    SelectRow(m, "Voice mode");
+    m.Press(Input::kRight);
+    CHECK(m.options().voice_ptt);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    CHECK(m.view().rows[row].value == "Push to talk (V)");
+    m.Press(Input::kLeft);
+    CHECK_FALSE(m.options().voice_ptt);
+    // voice off: the row goes, the choice stays for next time
+    m.Press(Input::kRight);
+    SelectRow(m, "Proximity voice chat");
+    m.Press(Input::kLeft);
+    names = Names(m);
+    CHECK(std::find(names.begin(), names.end(), "Voice mode") == names.end());
+    CHECK(m.options().voice_ptt);
+}
+
 TEST_CASE("pause tab: Settings: players on the map and their names, on unless turned off, each saved") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});

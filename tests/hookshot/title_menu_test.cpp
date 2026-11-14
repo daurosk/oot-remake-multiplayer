@@ -613,43 +613,65 @@ TEST_CASE("title menu: players on the map are on unless turned off: off writes 0
     CHECK(Options::Read("", "LICHII_COOP_MAP=1\r\n").map_players);
 }
 
-TEST_CASE("title menu: voice chat is off unless turned on: on writes ptt, off takes the line away") {
+TEST_CASE("title menu: voice chat is off unless turned on: on writes open, ptt stays ptt, off takes the line away") {
     Options o;
     CHECK_FALSE(o.voice);
+    CHECK_FALSE(o.voice_ptt);
     std::string c, opt = "LICHII_COOP_VOICE=ptt\r\n";
     o.Write(c, opt);
     CHECK_FALSE(IniGet(opt, "LICHII_COOP_VOICE").has_value());
     CHECK_FALSE(Options::Read("", opt).voice);
+    // turned on: open mic
     o.voice = true;
     o.Write(c, opt);
-    CHECK(IniGet(opt, "LICHII_COOP_VOICE") == "ptt");
+    CHECK(IniGet(opt, "LICHII_COOP_VOICE") == "open");
     CHECK(Options::Read("", opt).voice);
-    // a mode written by hand stays as it is while voice stays on
-    std::string open = "LICHII_COOP_VOICE=open\r\n";
-    Options::Read("", open).Write(c, open);
-    CHECK(IniGet(open, "LICHII_COOP_VOICE") == "open");
+    CHECK_FALSE(Options::Read("", opt).voice_ptt);
+    // the Voice mode row's push to talk
+    o.voice_ptt = true;
+    o.Write(c, opt);
+    CHECK(IniGet(opt, "LICHII_COOP_VOICE") == "ptt");
+    // an older file's ptt (and on, 1) read back
+    CHECK(Options::Read("", "LICHII_COOP_VOICE=ptt\r\n").voice_ptt);
+    CHECK(Options::Read("", "LICHII_COOP_VOICE=PTT\r\n").VoiceMode() == "ptt");
+    CHECK(Options::Read("", "LICHII_COOP_VOICE=on\r\n").VoiceMode() == "ptt");   // an older file's on: as it meant
+    CHECK(Options::Read("", "LICHII_COOP_VOICE=1\r\n").voice_ptt);
+    CHECK(Options::Read("", "LICHII_COOP_VOICE=open-mic\r\n").VoiceMode() == "open");
+    CHECK(Options::Read("", "LICHII_COOP_VOICE=Open\r\n").VoiceMode() == "open");
     CHECK_FALSE(Options::Read("", "LICHII_COOP_VOICE=off\r\n").voice);
-    // this run's variable: ptt, or unset for off
-    bool seen = false;
-    for (const auto& [k, v] : o.Environment()) {
-        if (k == "LICHII_COOP_VOICE") {
-            seen = true;
-            CHECK(v == "ptt");
+    // this run's variable: the mode, or unset for off
+    auto env_of = [](const Options& x) {
+        for (const auto& [k, v] : x.Environment()) {
+            if (k == "LICHII_COOP_VOICE") {
+                return v;
+            }
         }
+        return std::string("(none)");
+    };
+    CHECK(env_of(o) == "ptt");
+    o.voice_ptt = false;
+    CHECK(env_of(o) == "open");
+    o.voice = false;
+    CHECK(env_of(o).empty());
+    // the push-to-talk key the Voice mode row names
+    CHECK(Options{}.voice_key == "V");
+    CHECK(Options::Read("", "LICHII_COOP_VOICE_KEY=b\r\n").voice_key == "B");
+    CHECK(Options::Read("", "LICHII_COOP_VOICE_KEY=0x14\r\n").voice_key == "your key");
+}
+
+TEST_CASE("title menu: a fresh kit has voice off, and turning it on gives open mic") {
+    for (const char* file : {"", "# LICHII_COOP_VOICE=open\r\n", "LICHII_COOP_VOICE=off\r\n"}) {
+        CAPTURE(file);
+        Options o = Options::Read("", file);
+        CHECK_FALSE(o.voice);       // no line (or off): voice off
+        CHECK_FALSE(o.voice_ptt);   // and no push to talk waiting
+        o.voice = true;             // the menu's row turned on
+        CHECK(o.VoiceMode() == "open");
+        std::string c, opt = file;
+        o.Write(c, opt);
+        CHECK(IniGet(opt, "LICHII_COOP_VOICE") == "open");
+        CHECK_FALSE(Options::Read("", opt).voice_ptt);
     }
-    CHECK(seen);
-    // "open" by hand counts for this run too (Host / Join set the variable), not ptt in its place
-    const auto by_hand = Options::Read("", "LICHII_COOP_VOICE=Open\r\n");
-    CHECK(by_hand.VoiceMode() == "open");
-    bool open_seen = false;
-    for (const auto& [k, v] : by_hand.Environment()) {
-        if (k == "LICHII_COOP_VOICE") {
-            open_seen = true;
-            CHECK(v == "open");
-        }
-    }
-    CHECK(open_seen);
-    CHECK(Options::Read("", "LICHII_COOP_VOICE=on\r\n").VoiceMode() == "ptt");
 }
 
 TEST_CASE("title menu: the host's player count, 2 to 16, read and written") {

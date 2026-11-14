@@ -515,6 +515,17 @@ function Get-KitUnpackedRoot([string]$Dir) {
 # Copies the new kit's own files over KitDir. Every file replaced or removed goes to
 # Backup first; on failure everything is put back. With MoveShaders the shader cache is moved
 # to Backup before anything else (and back on failure). Returns the number of files written.
+# Copy-Item, tried again for about 3 s when the file is held: an antivirus or the search indexer opens a file it has
+# just seen being written (the kit's own exe a moment ago) for a short scan, and one write in that moment failed the
+# whole update (launch_test's update checks, on a PC's first run). A file held for longer (a running emulator) still fails.
+function Copy-KitFile([string]$From, [string]$To) {
+    for ($try = 1; ; $try++) {
+        try { Copy-Item -LiteralPath $From -Destination $To -Force -ErrorAction Stop; return }
+        catch { if ($try -ge 12) { throw } }
+        Start-Sleep -Milliseconds 250
+    }
+}
+
 function Install-KitFiles([string]$NewKit, [string]$KitDir, [string]$Backup, [string]$Version, [bool]$MoveShaders = $false, [string]$From = '') {
     $NewKit = [System.IO.Path]::GetFullPath($NewKit).TrimEnd('\')
     $newFiles = Get-KitInstallOrder @(Get-KitFiles $NewKit | Where-Object { -not (Test-KitPlayerPath $_) })
@@ -593,7 +604,7 @@ function Install-KitFiles([string]$NewKit, [string]$KitDir, [string]$Backup, [st
             $dest = Join-Path $KitDir $rel
             if (-not $saved.Contains($rel)) { $created.Add($rel) }
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dest) | Out-Null
-            Copy-Item -LiteralPath (Join-Path $NewKit $rel) -Destination $dest -Force
+            Copy-KitFile (Join-Path $NewKit $rel) $dest
         }
         Remove-Item -LiteralPath $marker -Force
     } catch {
@@ -615,7 +626,7 @@ function Install-KitFiles([string]$NewKit, [string]$KitDir, [string]$Backup, [st
             try {
                 # A file the failed write never changed (a running emulator's exe) is fine as it is.
                 if ((Test-Path -LiteralPath $to) -and (Get-FileHash -LiteralPath $to).Hash -eq (Get-FileHash -LiteralPath $from).Hash) { continue }
-                Copy-Item -LiteralPath $from -Destination $to -Force -ErrorAction Stop
+                Copy-KitFile $from $to
             } catch { $lost.Add($rel) }
         }
         if ($lost.Count) {

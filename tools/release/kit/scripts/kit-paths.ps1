@@ -751,6 +751,8 @@ function Get-KitHookshotStamp([string]$Kit) {
 #   'module'  the co-op module changed, or the puppet pack is missing or stale (co-op and the pack put in
 #             again: seconds to a minute; without a pack the other players cannot be shown), or the kit's
 #             randomizer (hookshot\OOTRR.txt) is not in the game yet
+#   'offline' only the kit's randomizer is missing and this PC has no internet: the game starts as it is
+#             (play.ps1 says one line), the next start with internet puts it in
 #   ''        nothing: start the game
 function Get-KitHookshotNeed([string]$Kit) {
     $game = Get-KitHookshotGame $Kit
@@ -784,8 +786,56 @@ function Get-KitHookshotNeed([string]$Kit) {
     }
     $manifest = Join-Path $exeDir 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json'
     if (Test-KitPuppetPackStale $manifest (Join-Path $Kit 'tools\puppet_pack')) { return 'module' }
-    if (Test-KitOotrrStale $Kit $exeDir) { return 'module' }
+    if (Test-KitOotrrStale $Kit $exeDir) {
+        # (an offline player: the module step would only try the OOTRR download again, on every start. Everything
+        # else is current and checked above, so the game starts as it is; a zip already downloaded and matching its
+        # pinned SHA-256 needs no network, so that one still goes in)
+        if (-not (Test-KitOotrrZipReady $Kit) -and (Test-KitOffline)) { return 'offline' }
+        return 'module'
+    }
     return ''
+}
+
+# The kit's OOTRR zip (hookshot\OOTRR.txt) is in hookshot\downloads already and matches its pinned SHA-256.
+function Test-KitOotrrZipReady([string]$Kit) {
+    $pin = Join-Path $Kit 'hookshot\OOTRR.txt'
+    if (-not (Test-Path -LiteralPath $pin)) { return $false }
+    $keys = @{}
+    foreach ($line in @(Get-Content -LiteralPath $pin -ErrorAction SilentlyContinue)) {
+        if ($line -match '^\s*([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$') { $keys[$Matches[1]] = $Matches[2] }
+    }
+    if ($keys.windows -notmatch '^[A-Za-z0-9._-]+$' -or -not $keys.windows_sha256) { return $false }
+    $zip = Join-Path $Kit "hookshot\downloads\$($keys.windows)"
+    if (-not (Test-Path -LiteralPath $zip)) { return $false }
+    return (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -eq $keys.windows_sha256.ToUpperInvariant()
+}
+
+# No internet on this PC: no network adapter up, or github.com (where the kit's downloads are) cannot be reached
+# in a few seconds. OOT_COOP_OFFLINE=1 says offline and =0 online, with no probe (tests). Behind a proxy it is never
+# offline: a direct connect is often blocked there while the kit's downloads (the system proxy) work.
+function Test-KitOffline {
+    if ($env:OOT_COOP_OFFLINE -eq '1') { return $true }
+    if ($env:OOT_COOP_OFFLINE -eq '0') { return $false }
+    if (Test-KitProxied) { return $false }
+    try { if (-not [System.Net.NetworkInformation.NetworkInterface]::GetIsNetworkAvailable()) { return $true } } catch { }
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+        $try = $client.BeginConnect('github.com', 443, $null, $null)
+        if (-not $try.AsyncWaitHandle.WaitOne(4000)) { return $true }
+        $client.EndConnect($try)
+        return $false
+    } catch { return $true } finally { $client.Close() }
+}
+
+# github.com goes through a proxy here ($Proxy: the system's, as Invoke-WebRequest uses it; tests pass their own).
+# Can't tell: yes (online is the safe answer, the download is then tried as before).
+function Test-KitProxied($Proxy = $null) {
+    try {
+        if (-not $Proxy) { $Proxy = [System.Net.WebRequest]::GetSystemWebProxy() }
+        if (-not $Proxy) { return $false }
+        $u = [uri]'https://github.com'
+        return (-not $Proxy.IsBypassed($u)) -and ($Proxy.GetProxy($u) -ne $u)
+    } catch { return $true }
 }
 
 # The randomizer the kit brings (hookshot\OOTRR.txt) is not in the game's tools\ootrr yet, or another release is:

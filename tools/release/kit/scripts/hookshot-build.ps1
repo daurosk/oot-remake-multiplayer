@@ -537,13 +537,18 @@ if (Test-Path -LiteralPath $ootrrPin) {
         $ootrrZip = Join-Path $downloads $op.windows
         $why = ''
         if (-not ((Test-Path -LiteralPath $ootrrZip) -and (Get-Sha256 $ootrrZip) -eq $op.windows_sha256)) {
-            Write-Host "  downloading $($op.windows) ..."
-            try {
-                Invoke-WebRequest -Uri "$($op.url)/$($op.windows)" -OutFile "$ootrrZip.part" -UseBasicParsing
-                if ((Get-Sha256 "$ootrrZip.part") -ne $op.windows_sha256) { $why = 'its SHA-256 differs from the one this kit was made with' }
-                else { Move-Item -LiteralPath "$ootrrZip.part" -Destination $ootrrZip -Force }
-            } catch { $why = "the download failed: $($_.Exception.Message)" }
-            Remove-Item -LiteralPath "$ootrrZip.part" -Force -ErrorAction SilentlyContinue
+            if (($env:OOT_COOP_OFFLINE -eq '1' -or $op.url -match '^https?://') -and (Test-KitOffline)) {
+                # (no internet: no download try, which would only wait for its timeout)
+                $why = 'this PC has no internet now'
+            } else {
+                Write-Host "  downloading $($op.windows) ..."
+                try {
+                    Invoke-WebRequest -Uri "$($op.url)/$($op.windows)" -OutFile "$ootrrZip.part" -UseBasicParsing
+                    if ((Get-Sha256 "$ootrrZip.part") -ne $op.windows_sha256) { $why = 'its SHA-256 differs from the one this kit was made with' }
+                    else { Move-Item -LiteralPath "$ootrrZip.part" -Destination $ootrrZip -Force }
+                } catch { $why = "the download failed: $($_.Exception.Message)" }
+                Remove-Item -LiteralPath "$ootrrZip.part" -Force -ErrorAction SilentlyContinue
+            }
         }
         if (-not $why) {
             if (Test-Path -LiteralPath $ootrrDir) { Remove-Item -LiteralPath $ootrrDir -Recurse -Force }

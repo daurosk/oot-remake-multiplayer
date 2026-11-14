@@ -42,6 +42,21 @@ bool ClockLike(float rate) {
 
 }  // namespace
 
+std::optional<float> WavePhaseCycle(const Floats& floats, std::uint64_t key, float rate) {
+    if ((key & 0xffffffffULL) < kWavePhaseFromCycle) {
+        return std::nullopt;  // no cycle word before it in the same region
+    }
+    const auto c = floats.find(key - kWavePhaseFromCycle);
+    if (c == floats.end() || !std::isfinite(c->second) || c->second <= 0.0f || c->second > 3600.0f || rate <= 0.0f) {
+        return std::nullopt;
+    }
+    const float want = kTwoPi / c->second;
+    if (std::fabs(rate - want) > ClockFinder::kRateSlack * want) {
+        return std::nullopt;
+    }
+    return kTwoPi;
+}
+
 bool IsDriver(std::string_view name) {
     if (name.starts_with("GroundControlActor_") || name.starts_with("GrouondControlActor_")) {
         return true;  // the game's movers of floors (GrouondControl: the game's own spelling)
@@ -147,6 +162,10 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
             cand.bad = 0;
             cand.stalled = 0;
             cand.top = std::max(cand.top, std::max(v1, v2));
+            if (const auto loop = WavePhaseCycle(c.floats, key, r2)) {
+                cand.wave = true;
+                cand.cycle = *loop;  // known from the game's code: no loop needs to be seen first
+            }
             next[key] = cand;
             continue;
         }
@@ -168,7 +187,7 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
             }
             continue;
         }
-        if (backwards && in_range(r1) &&
+        if (!cand.wave && backwards && in_range(r1) &&
             std::fabs(r1 - cand.rate) <= kRateSlack * std::fabs(cand.rate)) {
             const float would = v1 + cand.rate * dt2;
             const float cycle = cand.rate > 0 ? would - v2 : v2 - would;
@@ -201,6 +220,12 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
                 continue;
             }
             const Candidate& b2 = candidates_.at(*best);
+            if (cand.wave != b2.wave) {
+                if (cand.wave) {
+                    best = key;  // a wave mover's phase before any other stepping word
+                }
+                continue;
+            }
             const bool like = ClockLike(cand.rate);
             const bool best_like = ClockLike(b2.rate);
             if (like != best_like) {

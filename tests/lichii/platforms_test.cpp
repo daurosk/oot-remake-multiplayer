@@ -457,3 +457,37 @@ TEST_CASE("platforms: a stall right after a loop is no cycle and no jump (review
     REQUIRE(f.Found());
     CHECK(f.Found()->cycle == doctest::Approx(3.0f).epsilon(0.01));
 }
+
+TEST_CASE("platforms: a wave mover's phase is taken before seconds and frames, with its loop 2 pi at once") {
+    // The Deku Tree water room's floor: GroundControlActor_WaveLoop, WaveCycle_Linear 18 s (Banc), so its phase
+    // steps 2 pi / 18 = 0.349 a second. Its wave block is at component + 192: the cycle at +8 (+0xc8), the phase
+    // at +56 (+0xf8). A seconds word and a frames word step beside it.
+    ClockFinder f;
+    const std::uint64_t cycle_key = Key(3, 0xc8);
+    const std::uint64_t phase_key = Key(3, 0xc8 + kWavePhaseFromCycle);
+    float phase = 1.0f;
+    float seconds = 50.0f;
+    float frames = 3000.0f;
+    for (int i = 0; i < 8; ++i) {
+        const std::uint64_t t = 1'000'000 + static_cast<std::uint64_t>(i) * 250'000;
+        f.Add(t, Floats{{Key(3, 0x0), seconds}, {Key(3, 0x4), frames}, {cycle_key, 18.0f},
+                        {cycle_key + 12, 4.0f}, {phase_key, phase}});
+        seconds += 0.25f;
+        frames += 15.0f;
+        phase += kTwoPi / 18.0f * 0.25f;
+    }
+    const auto found = f.Found();
+    REQUIRE(found);
+    CHECK(found->key == phase_key);
+    CHECK(found->rate == doctest::Approx(kTwoPi / 18.0f).epsilon(0.01));
+    CHECK(found->cycle == doctest::Approx(kTwoPi));
+}
+
+TEST_CASE("platforms: a word that steps but not at 2 pi over the word before it is no wave phase") {
+    const Floats look{{Key(3, 0x10), 18.0f}, {Key(3, 0x40), 1.0f}, {Key(3, 0x20), 1.0f}};
+    CHECK(WavePhaseCycle(look, Key(3, 0x40), kTwoPi / 18.0f).has_value());
+    CHECK_FALSE(WavePhaseCycle(look, Key(3, 0x40), 1.0f).has_value());   // a seconds clock
+    CHECK_FALSE(WavePhaseCycle(look, Key(3, 0x20), kTwoPi / 18.0f).has_value());  // no cycle 48 bytes before
+    CHECK_FALSE(WavePhaseCycle(look, Key(3, 0x10), kTwoPi / 18.0f).has_value());  // first words of a region
+    CHECK_FALSE(WavePhaseCycle(look, Key(3, 0x40), -kTwoPi / 18.0f).has_value());
+}

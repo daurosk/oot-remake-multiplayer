@@ -3504,7 +3504,10 @@ TEST_CASE("objects: a boss's minion is made by the game that owns the boss, the 
 TEST_CASE("objects: a chest opened elsewhere opens its lid here, then shows its open idle") {
     CHECK(CoopObjects::ChestOpening("Obj_TBox_A_01") == "FrontOpenSmall");
     CHECK(CoopObjects::ChestOpening("Obj_TBox_A_02") == "FrontOpen");
-    CHECK(CoopObjects::ChestOpening("Obj_TBox_A_06") == "FrontOpen");
+    CHECK(CoopObjects::ChestOpening("Obj_TBox_A_03_NoBake") == "FrontOpen");
+    CHECK(CoopObjects::ChestOpening("Obj_TBox_A_04") == "FrontOpenSmall");
+    CHECK(CoopObjects::ChestOpening("Obj_TBox_A_06") == "FrontOpenSmall");
+    CHECK(CoopObjects::ChestOpening("Obj_TBox_GlassTruth_A_01") == "FrontOpenSmall");
     CHECK(CoopObjects::ChestOpening("Obj_HrlCity_Shop_TBox_A_01").empty());
     CHECK(CoopObjects::PlaysOver("CloseWait", "Close"));
     CHECK(CoopObjects::PlaysOver("FrontOpen", "FrontOpen|Close"));

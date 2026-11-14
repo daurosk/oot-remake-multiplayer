@@ -101,8 +101,9 @@ float FrameAfter(float frame, float rate, std::int64_t age_us);
 
 // deku-visuals-b: a chest's own opening command, the lid opening (read from
 // the romfs: AS/Obj_TBox_A_01 has "FrontOpenSmall", AS/Obj_TBox_A_02
-// "FrontOpen"; the other Obj_TBox_A_* are tried with "FrontOpen"). Empty for
-// what is not a placed chest (the Treasure Chest Shop's game keeps its own).
+// "FrontOpen"; Pack/Actor/Obj_TBox_A_02 and _A_03 bring AS _A_02, the other
+// Obj_TBox_* packs (A_01, A_04, A_06, GlassTruth, NoBake) only AS _A_01).
+// Empty for the Treasure Chest Shop's chests (their game keeps its own).
 std::string ChestOpening(std::string_view actor);
 
 // deku-visuals-b: a cobweb or one of its parts (the Deku Tree's

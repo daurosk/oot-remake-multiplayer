@@ -1082,7 +1082,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                             }
                             const auto shown = chest_shown_.find(s.address);
                             if (shown == chest_shown_.end()) {
-                                ChestShow show{now_us, false};
+                                ChestShow show;
+                                show.since_us = now_us;
                                 show.opening = ChestOpening(s.name);
                                 show.lid_done = show.opening.empty();
                                 chest_shown_.emplace(s.address, show);
@@ -1177,7 +1178,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     if (IsWeb(s.name)) {
                         auto burn = web_burns_.find(s.address);
                         if (burn == web_burns_.end()) {
-                            web_burns_.emplace(s.address, WebBurn{now_us, 0});
+                            WebBurn burn_new;
+                            burn_new.since_us = now_us;
+                            web_burns_.emplace(s.address, burn_new);
                             notes_.emplace_back(s.name + ": burnt in another game, burns here ('" +
                                                 std::string(kWebBurn) + "' played)");
                             continue;
@@ -2413,10 +2416,13 @@ float FrameAfter(float frame, float rate, std::int64_t age_us) {
 }
 
 std::string ChestOpening(std::string_view actor) {
-    if (!actor.starts_with("Obj_TBox_A_")) {
-        return {};
+    if (!actor.starts_with("Obj_TBox_")) {
+        return {};  // the Treasure Chest Shop's (Obj_HrlCity_Shop_TBox_*) keeps its game's own
     }
-    return actor.starts_with("Obj_TBox_A_01") ? "FrontOpenSmall" : "FrontOpen";
+    // The packs that bring AS/Obj_TBox_A_02 (A_02, A_03, their NoBake): its
+    // "FrontOpen". The others bring only AS/Obj_TBox_A_01: "FrontOpenSmall".
+    return actor.starts_with("Obj_TBox_A_02") || actor.starts_with("Obj_TBox_A_03") ? "FrontOpen"
+                                                                                    : "FrontOpenSmall";
 }
 
 bool IsWeb(std::string_view actor) {

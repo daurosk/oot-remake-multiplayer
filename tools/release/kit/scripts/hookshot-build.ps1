@@ -239,17 +239,21 @@ if (-not $Rebuild -and -not $CheckOnly -and $Out -ieq $defaultOut -and -not (Fin
     $from = Find-KitHookshotGameToCopy $kit $stamp $others
     if ($from) {
         Step "The game: copying the one another kit on this PC built ($from), instead of building it again"
+        Write-Host '  The copy starts with that kit''s saves (as they are now); from then on each kit has its own.'
+        $outWas = Test-Path -LiteralPath $Out
         New-Item -ItemType Directory -Force -Path $Out | Out-Null
         & robocopy $from $Out /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP /XF coop.ini coop-options.ini *.log *_log.txt | Out-Null
         if ($LASTEXITCODE -ge 8 -or -not (Find-HookshotExe $Out)) {
             Write-Host "  Copying failed (robocopy $LASTEXITCODE): the game is built here instead." -ForegroundColor Yellow
-            Remove-Item -LiteralPath $Out -Recurse -Force -ErrorAction SilentlyContinue
+            # (only a folder this copy made: one that was there before may hold the player's own files)
+            if (-not $outWas) { Remove-Item -LiteralPath $Out -Recurse -Force -ErrorAction SilentlyContinue }
         } else {
             Write-Host "  Copied to $Out (this kit's own game from now on)."
         }
         $global:LASTEXITCODE = 0
     }
-}$gameStamp = Join-Path $Out 'coop-built-from.txt'
+}
+$gameStamp = Join-Path $Out 'coop-built-from.txt'
 $exe = Find-HookshotExe $Out
 $gameReady = $exe -and (Test-Path -LiteralPath $gameStamp) -and ([System.IO.File]::ReadAllText($gameStamp) -eq $stamp)
 

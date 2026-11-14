@@ -992,7 +992,7 @@ try {
     try { $out = (& powershell -NoProfile -ExecutionPolicy Bypass -File "$k2\scripts\hookshot-build.ps1" 2>&1) -join '|'; $code = $LASTEXITCODE }
     finally { $env:LOCALAPPDATA = $keepKc[0]; $env:OOT_COOP_NO_SHORTCUT = $keepKc[1]; $ErrorActionPreference = 'Stop' }
     $b2 = "$k2\hookshot\game\bin"
-    Check ($code -eq 0 -and $out -match 'copying the one another kit on this PC built' -and $out -notmatch 'Building the game' -and (Test-Path "$b2\longshot.exe")) "kit-copy build: the copy gets its own game, copied not built [$code $out]"
+    Check ($code -eq 0 -and $out -match 'copying the one another kit on this PC built' -and $out -match 'starts with that kit''s saves' -and $out -notmatch 'Building the game' -and (Test-Path "$b2\longshot.exe")) "kit-copy build: the copy gets its own game, copied not built [$code $out]"
     Check ((Read-File "$k2\hookshot\game-folder.txt").Trim() -eq 'hookshot\game') "kit-copy build: game-folder.txt is relative [$(Read-File "$k2\hookshot\game-folder.txt")]"
     Check ((Read-File "$b2\coop.ini") -notmatch 'Saria' -and (Read-File "$b2\coop-options.ini") -match 'PAD=2' -and -not (Test-Path "$b2\hookshot_log.txt")) 'kit-copy build: its own coop.ini and coop-options.ini, no log of the other kit'
     Check ((Get-KitHookshotGame $k2) -eq "$k2\hookshot\game" -and (Get-KitHookshotGame $k1) -eq "$k1\hookshot\game") 'kit-copy build: two kits, two games'

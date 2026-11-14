@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_look_parts.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <string_view>
 
@@ -92,6 +93,46 @@ CoopLookTunic::Texels Painted(const CoopLookTunic::Texels& gear, const CoopLook:
         }
         if (!rules.empty()) {
             CoopLookPaint::Recolour(entry->format, t.texels, t.texels, rules);
+        }
+    }
+    return out;
+}
+
+std::string SlotName(const std::string& name, std::size_t slot) {
+    if (slot < 1 || slot > 9 || name.size() < 4 || name.compare(0, 3, "Mt_") != 0) {
+        return {};
+    }
+    return "C" + std::to_string(slot) + "_" + name.substr(3);
+}
+
+std::string SlotsName(const SlotLooks& looks) {
+    std::string name = kSlotsBase;
+    bool any = false;
+    for (const auto& look : looks) {
+        name += '|';
+        if (look && AnyGear(*look)) {
+            name += Name(*look);
+            any = true;
+        } else {
+            name += '-';
+        }
+    }
+    return any ? name : std::string(kSlotsBase);
+}
+
+CoopLookTunic::Texels SlotTexels(const CoopLookTunic::Texels& gear, const SlotLooks& looks) {
+    CoopLookTunic::Texels out;
+    const std::size_t n = std::min<std::size_t>(looks.size(), 9);
+    out.reserve(gear.size() * n);
+    for (std::size_t i = 0; i < n; ++i) {
+        CoopLookTunic::Texels slot = looks[i] && AnyGear(*looks[i]) ? Painted(gear, *looks[i]) : gear;
+        for (CoopLookTunic::Texture& t : slot) {
+            std::string name = SlotName(t.name, i + 1);
+            if (name.empty()) {
+                continue;   // not a gear texture: no slot copy of it
+            }
+            t.name = std::move(name);
+            out.push_back(std::move(t));
         }
     }
     return out;

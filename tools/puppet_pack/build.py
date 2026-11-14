@@ -32,7 +32,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import ainb, byml, dumpcheck, dungeon_rooms, hud, look_live, map_captures, nup, rstb, sarc, title_menu, tunic, tunic_extra, zs  # noqa: E402
+from . import ainb, byml, dumpcheck, dungeon_rooms, hud, look_items, look_live, map_captures, nup, rstb, sarc, title_menu, tunic, tunic_extra, zs  # noqa: E402
 
 TITLE_ID = "0400486024DEC000"
 DEFAULT_MOD_NAME = "coop-puppet"
@@ -743,8 +743,75 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
     return out
 
 
+def write_look_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, slots, log=print):
+    """The puppets' own copies of the coloured items (puppet_pack.look_items): per slot, each
+    item's actor, its models naming the slot's textures, and those textures. Returns (the
+    manifest's look_items, new ActorInfo rows, new GameActorInfo rows); an item this romfs lacks
+    is left out and said."""
+    made, new_ai, new_gai, files = [], [], [], []
+    textures = {}  # gear name -> (Tex/ path, raw), read once
+    for item in look_items.ITEMS:
+        src = os.path.join(romfs, "Pack", "Actor", f"{item}.pack.zs")
+        if not os.path.isfile(src) or item not in ai_rows:
+            log(f"look items: no {item} in this romfs, its colours stay the game's on puppets")
+            continue
+        try:
+            members = sarc.read(dicts.decompress(read(src)))
+            _, project, info_src = look_items.model_info(members, item)
+        except (look_items.TunicError, ValueError, KeyError) as e:
+            log(f"look items: {item} left out ({e})")
+            continue
+        models = sorted(f for f in os.listdir(os.path.join(romfs, "Model"))
+                        if f.startswith(project + ".") and f.endswith(".bfres.zs"))
+        if not models:
+            log(f"look items: no Model/{project}.* in this romfs, {item} left out")
+            continue
+        for slot in range(1, slots + 1):
+            actor = look_items.actor_name(item, slot)
+            pack, ap, info = look_items.copy_pack(members, item, slot)
+            dst = f"Pack/Actor/{actor}.pack.zs"
+            write(os.path.join(out_romfs, dst), dicts.compress(pack, PACK_DICT))
+            table.add_new(strip_zs(dst), ((len(pack) + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN)
+            ap_size = table.get(look_items.actor_param_path(item)) or 0
+            table.add_new(look_items.actor_param_path(actor), max(ap_size, len(ap) + PACK_SIZE_MARGIN))
+            info_size = table.get(info_src) or 0
+            table.add_new(look_items.model_info_path(actor), max(info_size, len(info) + PACK_SIZE_MARGIN))
+            new_ai.append(look_items.info_row(ai_rows[item], item, slot))
+            new_gai.append(dict(gai_rows.get(item, {}), __RowId=actor))
+            paths = [dst]
+            named = set()
+            for m in models:
+                m_rel = f"Model/{m}"
+                m_raw = read(os.path.join(romfs, "Model", m))
+                data, names = look_items.model_for(dicts.decompress(m_raw), slot)
+                named.update(names)
+                m_dst = f"Model/{actor}{m[len(project):]}"
+                write(os.path.join(out_romfs, m_dst), recompress(dicts, m_raw, data, level=3))
+                table.add_new(strip_zs(m_dst), table.get(strip_zs(m_rel)) or len(data) + PACK_SIZE_MARGIN)
+                paths.append(m_dst)
+            for g in sorted(named):
+                if g not in textures:
+                    t_rel = f"Tex/{g}.bntx.zs"
+                    p = os.path.join(romfs, t_rel)
+                    textures[g] = (t_rel, read(p)) if os.path.isfile(p) else None
+                if textures[g] is None:
+                    continue
+                t_rel, t_raw = textures[g]
+                data = look_items.texture_for(dicts.decompress(t_raw), g, slot)
+                t_dst = f"Tex/{look_items.tex_name(g, slot)}.bntx.zs"
+                write(os.path.join(out_romfs, t_dst), recompress(dicts, t_raw, data))
+                table.add_new(strip_zs(t_dst), table.get(strip_zs(t_rel)) or len(data) + PACK_SIZE_MARGIN)
+                paths.append(t_dst)
+            files += paths
+        made.append(item)
+    if made:
+        log(f"look items: {len(made)} items x {slots} slots ({len(files)} files): puppets in their own gear colours")
+    return {"slots": slots, "actors": made, "files": files} if made else None, new_ai, new_gai
+
+
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
-          tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False):
+          tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False,
+          look_slots=look_items.SLOTS):
     """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
     a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
     that colour too (a test of the colours with a hook that knows none).
@@ -752,7 +819,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     `sound`: False builds the puppets without Link's sounds (issue 131). `player_footsteps`: keep
     the player's footstep param instead of the puppet's own (FOOTSTEP_OVERRIDES). `sound_user`: another
     SLink user for the puppets' sounds (SLINK_DIR). `basic_xlink`: the shared ActorBasic XLink param
-    instead of the player's (test switch, the pack before puppet-looks)."""
+    instead of the player's (test switch, the pack before puppet-looks). `look_slots`: how many
+    players' puppets can wear gear colours of their own (puppet_pack.look_items; 0: none)."""
     heaps = heaps or {}
     if not os.path.isfile(os.path.join(romfs, "Pack", "ZsDic.pack.zs")):
         raise BuildError(f"{romfs} does not look like the game's romfs (no Pack/ZsDic.pack.zs)")
@@ -800,6 +868,13 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
             write(os.path.join(mod_dir, look_live.DIR, look_live.GEAR_FILE), gear_blob)
             look_files["gear"] = f"{look_live.DIR}/{look_live.GEAR_FILE}"
             log(f"look: {look_live.DIR}/{look_live.GEAR_FILE} ({len(gear_blob) >> 10} KB of gear textures)")
+    look_item_files = None
+    if tunics and look_slots > 0:
+        gai_rows = {r["__RowId"]: r for r in gai}
+        look_item_files, rows, grows = write_look_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows,
+                                                        look_slots, log)
+        new_ai += rows
+        new_gai += grows
     jobs = [(v, None) for v in VARIANTS] + [(v, c) for v in VARIANTS for c in tunics]
     for v, color in jobs:
         player = f"Player_{v}"
@@ -948,6 +1023,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "self_dark_tiles": self_dark_tiles,
         "self_files": self_files,
         "look_files": look_files,
+        "look_items": look_item_files,
         "tunics_off": tunics_off,
         "test_tunic": test_tunic,
         "sound": sound,
@@ -1029,6 +1105,8 @@ def main(argv=None):
                     help="test switch: the puppets get the shared ActorBasic XLink param (the older pack)")
     ap.add_argument("--title-rows", action="store_true",
                     help="Hookshot's game: Host, Join and Co-op Settings as rows of the title (title_menu.py)")
+    ap.add_argument("--look-slots", type=int, default=look_items.SLOTS, metavar="N",
+                    help="how many players' puppets wear gear colours of their own (look_items.py; 0: none)")
     a = ap.parse_args(argv)
     from_nup = os.path.isfile(a.romfs) and nup.is_nup(a.romfs)
     if from_nup:
@@ -1080,7 +1158,7 @@ def _main_build(a, romfs, hud_reader=None):
         build(romfs, mod_dir, heaps=heaps, sound=not a.no_sound, player_footsteps=a.player_footsteps,
               sound_user=a.sound_user, tunics=tunics, test_tunic=a.test_tunic,
               stand_in_effects=a.seed_trail and not a.no_seed_trail, basic_xlink=a.basic_xlink,
-              title_rows=a.title_rows)
+              title_rows=a.title_rows, look_slots=max(0, min(a.look_slots, 9)))
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

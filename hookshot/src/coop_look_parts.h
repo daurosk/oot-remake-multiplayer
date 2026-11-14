@@ -15,7 +15,9 @@
 // and writes them, as for the tunic.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -46,5 +48,23 @@ bool AnyGear(const CoopLook::Look& look);
 // The gear texels painted in `look` (same textures, same sizes); a texture
 // with no part set, or not in the table, as it is.
 CoopLookTunic::Texels Painted(const CoopLookTunic::Texels& gear, const CoopLook::Look& look);
+
+// The puppets' gear (docs/puppet.md, "Gear colours on the puppets"): the
+// pack's per-slot item copies name textures of their own, "Mt_..." as
+// "C<slot>_..." (tools/puppet_pack/look_items.py tex_name). One wardrobe
+// keeps every slot's textures in the look of the player in that slot.
+//
+// A gear texture's name in slot `slot` (1 to 9); "" for a name that is not
+// a gear texture's ("Mt_..." is).
+std::string SlotName(const std::string& name, std::size_t slot);
+// The looks worn in the slots (index 0: slot 1; nothing: a free slot).
+using SlotLooks = std::vector<std::optional<CoopLook::Look>>;
+// The wardrobe's base: the game's own texels under every slot's names.
+inline constexpr const char* kSlotsBase = "puppets";
+// The name of the slots' painting: kSlotsBase when no slot sets a gear part.
+std::string SlotsName(const SlotLooks& looks);
+// Every gear texture once per slot under the slot's name, painted in that
+// slot's look (as it is in a free slot): looks.size() slots, at most 9.
+CoopLookTunic::Texels SlotTexels(const CoopLookTunic::Texels& gear, const SlotLooks& looks);
 
 }  // namespace CoopLookParts

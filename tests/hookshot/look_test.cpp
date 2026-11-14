@@ -468,3 +468,62 @@ TEST_CASE("look: an unpause with the look unchanged is told too") {
     CHECK(unpaused == 1);
     CoopLook::Init(Look{}, nullptr);
 }
+
+TEST_CASE("look parts: the puppets' slot copies are named per slot and painted in each slot's look") {
+    CHECK(CoopLookParts::SlotName(kHylian, 2) == "C2_Weapon_Shield_Hylian_Alb");
+    CHECK(CoopLookParts::SlotName("Mt_Weapon_Sword_Biggoron_Alb.00", 1) == "C1_Weapon_Sword_Biggoron_Alb.00");
+    CHECK(CoopLookParts::SlotName("Angin_Tile_A_Alb", 1).empty());
+    CHECK(CoopLookParts::SlotName(kHylian, 0).empty());
+    for (const auto& g : CoopLookParts::Gear()) {
+        CHECK(CoopLookParts::SlotName(g.name, 4).size() == std::strlen(g.name));   // as long (look_items.py)
+    }
+    Look red;
+    red[Part::hylian_face] = 0xFF0000u;
+    CoopLookParts::SlotLooks looks(3);
+    CHECK(CoopLookParts::SlotsName(looks) == CoopLookParts::kSlotsBase);
+    looks[1] = red;
+    const std::string name = CoopLookParts::SlotsName(looks);
+    CHECK(name != CoopLookParts::kSlotsBase);
+    looks[1] = Look{};
+    CHECK(CoopLookParts::SlotsName(looks) == CoopLookParts::kSlotsBase);   // a slot with no gear part
+    looks[1] = red;
+
+    const auto gear = Colour({{kHylian, Shield()}});
+    const auto slots = CoopLookParts::SlotTexels(*gear, looks);
+    REQUIRE(slots.size() == 3);
+    CHECK(slots[0].name == "C1_Weapon_Shield_Hylian_Alb");
+    CHECK(slots[0].texels == Shield());                                     // a free slot: the game's own
+    CHECK(slots[1].name == "C2_Weapon_Shield_Hylian_Alb");
+    CHECK(slots[1].texels == CoopLookParts::Painted(*gear, red)[0].texels);
+    CHECK(slots[2].texels == Shield());
+    CHECK(CoopLookTunic::SameLayout(slots, CoopLookParts::SlotTexels(*gear, CoopLookParts::SlotLooks(3))));
+}
+
+TEST_CASE("look parts: the puppets' wardrobe paints a slot's copy and leaves your own shield alone") {
+    FakeMemory m(kBase, 0x10000);
+    PutFile(m, kBase + 0x1000, kHylian, Shield());                          // your own
+    PutFile(m, kBase + 0x3000, "C2_Weapon_Shield_Hylian_Alb", Shield());    // slot 2's copy
+    PutFile(m, kBase + 0x5000, "C1_Weapon_Shield_Hylian_Alb", Shield());    // slot 1's copy
+    Look red;
+    red[Part::hylian_face] = 0xFF0000u;
+    CoopLookParts::SlotLooks looks(2);
+    looks[1] = red;
+    const auto gear = *CoopLookTunic::Parse(LookFile({{kHylian, Shield()}}));
+    CoopLookTunic::Wardrobe::Host host;
+    host.memory = &m;
+    host.range = [] { return std::pair<std::uint64_t, std::uint64_t>{kBase, kBase + 0x10000}; };
+    host.file = [&](const std::string& c) -> std::optional<std::vector<std::uint8_t>> {
+        return CoopLookTunic::Pack(CoopLookParts::SlotTexels(
+            gear, c == CoopLookParts::kSlotsBase ? CoopLookParts::SlotLooks(2) : looks));
+    };
+    host.log = [](const std::string&) {};
+    host.base = CoopLookParts::kSlotsBase;
+    host.what = "puppets' gear";
+    CoopLookTunic::Wardrobe w(host);
+    w.Wear(CoopLookParts::SlotsName(looks));
+    w.Step(0);
+    const auto want = CoopLookParts::Painted(gear, red)[0].texels;
+    CHECK(std::memcmp(m.at(kBase + 0x3000 + kOffset), want.data(), want.size()) == 0);
+    CHECK(std::memcmp(m.at(kBase + 0x1000 + kOffset), Shield().data(), kTexels) == 0);   // yours: not the puppets'
+    CHECK(std::memcmp(m.at(kBase + 0x5000 + kOffset), Shield().data(), kTexels) == 0);   // slot 1 is free
+}

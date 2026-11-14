@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The Hookshot module's side of coop_look.h: what applying a look does, and
 // the worker that keeps your own Link in it: the tunic in the pack's colours
-// (coop_look_tunic.h), the gear painted in any colour (coop_look_parts.h).
+// (coop_look_tunic.h), the gear painted in any colour (coop_look_parts.h),
+// and the other players' puppets' own copies of the gear painted in their
+// looks (coop_look_share.h slots, docs/puppet.md "Gear colours on the puppets").
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
@@ -84,6 +86,49 @@ std::optional<std::vector<std::uint8_t>> GearFile(const std::string& name) {
     return CoopLookTunic::Pack(CoopLookParts::Painted(*gear, look));
 }
 
+std::mutex g_slots_mutex;
+std::map<std::string, CoopLookParts::SlotLooks> g_slots_looks;   // guarded: a painting's name -> the slots' looks
+
+// The puppets' slot textures (the gear file under every slot's names),
+// painted in the looks of the players in the slots.
+std::optional<std::vector<std::uint8_t>> SlotsFile(const std::string& name) {
+    const auto base = ReadFile(LookDir() / (std::string(CoopLookParts::kBase) + ".bin"));
+    if (!base) {
+        return std::nullopt;
+    }
+    const auto gear = CoopLookTunic::Parse(*base);
+    if (!gear) {
+        return std::nullopt;   // the gear's wardrobe says why
+    }
+    CoopLookParts::SlotLooks looks(CoopLookShare::kSlots);
+    if (name != CoopLookParts::kSlotsBase) {
+        std::lock_guard lock(g_slots_mutex);
+        const auto it = g_slots_looks.find(name);
+        if (it == g_slots_looks.end()) {
+            return std::nullopt;
+        }
+        looks = it->second;
+    }
+    return CoopLookTunic::Pack(CoopLookParts::SlotTexels(*gear, looks));
+}
+
+// The slots' looks now, from the network's share.
+CoopLookParts::SlotLooks SlotLooksNow() {
+    CoopLookParts::SlotLooks looks;
+    for (const auto& parts : CoopLookShare::SlotLooks()) {
+        if (!parts) {
+            looks.emplace_back();
+            continue;
+        }
+        std::vector<std::pair<std::uint8_t, std::uint32_t>> wire;
+        for (const auto& p : *parts) {
+            wire.emplace_back(p.part, p.colour);
+        }
+        looks.emplace_back(CoopLook::FromWire(wire));
+    }
+    return looks;
+}
+
 CoopLookShare::Parts Share(const CoopLook::Look& look) {
     CoopLookShare::Parts parts;
     for (const auto& [number, colour] : CoopLook::Wire(look)) {
@@ -95,6 +140,8 @@ CoopLookShare::Parts Share(const CoopLook::Look& look) {
 GameMemory g_memory;
 std::unique_ptr<CoopLookTunic::Wardrobe> g_wardrobe;   // the tunic
 std::unique_ptr<CoopLookTunic::Wardrobe> g_gear;       // the gear
+std::unique_ptr<CoopLookTunic::Wardrobe> g_puppets;    // the puppets' slot copies of the gear
+std::uint64_t g_slots_serial = ~std::uint64_t{0};      // the worker's: CoopLookShare::Serial last seen
 std::thread g_worker;
 std::mutex g_wake_mutex;
 std::condition_variable g_wake;
@@ -129,8 +176,22 @@ void Work() {
         g_kick = false;
         lock.unlock();
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+        if (const auto serial = CoopLookShare::Serial(); serial != g_slots_serial) {
+            // A player's look or slot changed, or a puppet was given a slot's
+            // copy to wear (its texture loads now): paint and search again.
+            g_slots_serial = serial;
+            const auto looks = SlotLooksNow();
+            const std::string name = CoopLookParts::SlotsName(looks);
+            {
+                std::lock_guard slots_lock(g_slots_mutex);
+                g_slots_looks[name] = looks;
+            }
+            g_puppets->Wear(name);
+            g_puppets->Kick();
+        }
         g_wardrobe->Step(static_cast<std::uint64_t>(ms.count()));
         g_gear->Step(static_cast<std::uint64_t>(ms.count()));
+        g_puppets->Step(static_cast<std::uint64_t>(ms.count()));
         lock.lock();
     }
 }
@@ -140,6 +201,7 @@ void Work() {
 void Unpaused() {
     g_wardrobe->Kick();
     g_gear->Kick();
+    g_puppets->Kick();
     {
         std::lock_guard lock(g_wake_mutex);
         g_kick = true;
@@ -180,8 +242,21 @@ void StartModule() {
     gear.file = GearFile;
     gear.base = CoopLookParts::kBase;
     gear.what = "gear";
+    CoopLookTunic::Wardrobe::Host puppets = host;
+    puppets.file = SlotsFile;
+    puppets.base = CoopLookParts::kSlotsBase;
+    puppets.what = "puppets' gear";
     g_wardrobe = std::make_unique<CoopLookTunic::Wardrobe>(std::move(host));
     g_gear = std::make_unique<CoopLookTunic::Wardrobe>(std::move(gear));
+    g_puppets = std::make_unique<CoopLookTunic::Wardrobe>(std::move(puppets));
+    g_slots_serial = ~std::uint64_t{0};
+    // The others' puppets wear their own gear colours only where the pack has
+    // the gear's texels to paint their copies with (an older pack: the game's
+    // items on every puppet, as before).
+    const bool slots = ReadFile(LookDir() / (std::string(CoopLookParts::kBase) + ".bin")).has_value();
+    CoopLookShare::EnableSlots(slots);
+    LOG_INFO(Core, "coop: look: other players' gear colours on their puppets {}",
+             slots ? "on (pack slots)" : "off (the puppet pack has no coop_look/gear.bin; make it again)");
     // The game started in the settings' colour (the pack's own tiles): the
     // wardrobe looks for that colour's texels too.
     g_wardrobe->Wear(TunicName(worn[Part::tunic]));
@@ -216,6 +291,8 @@ void StopModule() {
     g_worker.join();
     g_wardrobe.reset();   // a later StartModule starts a new worker
     g_gear.reset();
+    g_puppets.reset();
+    CoopLookShare::EnableSlots(false);
 }
 
 }  // namespace CoopLook

@@ -36,10 +36,13 @@ extern const int kLangCount;
 // each time: a change of the Menu language row shows at once).
 const Lang* Current();
 
-// The Menu language row's value in longshot_options.ini's text (0 Auto, also
-// when the line is missing), and the language code it stands for (nullptr for
-// Auto).
+// The Menu language row's value in longshot_options.ini's text (0 Auto), -1
+// when the text has no such line (empty, or cut short while Longshot writes
+// it); the value after a read, `last` kept when the read had none (`good`
+// false: read again next time); and the language code a value stands for
+// (nullptr for Auto).
 int MenuLanguageSetting(std::string_view ini);
+int MenuLanguageAfterRead(int last, std::string_view ini, bool* good);
 const char* MenuLanguageCode(int setting);
 
 // The table for a language code (any case; "zh-Hans-CN" takes "zh-Hans"), or

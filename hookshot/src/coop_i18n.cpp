@@ -756,16 +756,20 @@ int MenuLanguageNow() {
     std::error_code error;
     const auto written = std::filesystem::last_write_time(path, error);
     if (error) {
-        return ini.value = 0;   // (no options file yet: the menu is on Auto)
+        return ini.value;   // (no options file yet: Auto; or it is being replaced: the last value)
     }
     if (written == ini.written) {
         return ini.value;
     }
-    ini.written = written;
     std::ifstream file(path, std::ios::binary);
     std::ostringstream text;
     text << file.rdbuf();
-    return ini.value = MenuLanguageSetting(text.str());
+    bool good = false;
+    ini.value = MenuLanguageAfterRead(ini.value, text.str(), &good);
+    if (good) {
+        ini.written = written;   // (else read again at the next look: Longshot was writing it)
+    }
+    return ini.value;
 }
 
 bool SameCode(std::string_view a, std::string_view b) {   // (pt-br is pt-BR, as Longshot's same_code)
@@ -832,12 +836,12 @@ const Lang* ForCode(std::string_view code) {
 }
 
 int MenuLanguageSetting(std::string_view ini) {
-    int value = 0;
+    int value = -1;
     std::size_t at = 0;
     while (at < ini.size()) {
         std::size_t end = ini.find('\n', at);
         if (end == std::string_view::npos) {
-            end = ini.size();
+            break;   // (a last line with no line end: cut while Longshot writes it, "menu_language=1" of 13)
         }
         std::string_view line = ini.substr(at, end - at);
         at = end + 1;
@@ -852,9 +856,19 @@ int MenuLanguageSetting(std::string_view ini) {
             n = n * 10 + (line[digits] - '0');
             ++digits;
         }
-        value = digits > 0 ? n : 0;   // (the last line wins, as Longshot's own reader)
+        value = digits > 0 ? n : -1;   // (the last line wins, as Longshot's own reader)
     }
     return value;
+}
+
+int MenuLanguageAfterRead(int last, std::string_view ini, bool* good) {
+    // Longshot writes the whole file again on each change (fopen "w"): read
+    // in between, it is empty or cut short. Such a read keeps the last value.
+    const int value = MenuLanguageSetting(ini);
+    if (good != nullptr) {
+        *good = value >= 0;
+    }
+    return value >= 0 ? value : last;
 }
 
 const char* MenuLanguageCode(int setting) {

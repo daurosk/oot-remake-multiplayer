@@ -121,13 +121,25 @@ TEST_CASE("coop i18n: a language code picks its table") {
 
 TEST_CASE("coop i18n: the Menu language row from longshot_options.ini") {
     // Longshot writes menu_language=N (0 Auto, else its kLangs[N - 1]) with
-    // the other rows; a missing line is Auto, and the last line wins.
-    CHECK(CoopI18n::MenuLanguageSetting("") == 0);
+    // the other rows; the last line wins; no line: -1 (a read mid-write).
+    CHECK(CoopI18n::MenuLanguageSetting("") == -1);
     CHECK(CoopI18n::MenuLanguageSetting("vsync=1\nmenu_language=13\nfps=60\n") == 13);
     CHECK(CoopI18n::MenuLanguageSetting("menu_language=14\r\n") == 14);
     CHECK(CoopI18n::MenuLanguageSetting("menu_language=13\nmenu_language=0\n") == 0);
-    CHECK(CoopI18n::MenuLanguageSetting("game_menu_language=13\n") == 0);
-    CHECK(CoopI18n::MenuLanguageSetting("menu_language=x\n") == 0);
+    CHECK(CoopI18n::MenuLanguageSetting("game_menu_language=13\n") == -1);
+    CHECK(CoopI18n::MenuLanguageSetting("menu_language=x\n") == -1);
+    // A read while Longshot rewrites the file (empty, or cut before the line)
+    // keeps the last value and is not taken as read; a whole file is.
+    bool good = true;
+    CHECK(CoopI18n::MenuLanguageAfterRead(13, "", &good) == 13);
+    CHECK_FALSE(good);
+    CHECK(CoopI18n::MenuLanguageAfterRead(14, "vsync=1\nresolution=2\nmenu_lan", &good) == 14);
+    CHECK_FALSE(good);
+    CHECK(CoopI18n::MenuLanguageAfterRead(14, "vsync=1\nmenu_language=1", &good) == 14);   // (cut inside 13)
+    CHECK_FALSE(good);
+    CHECK(CoopI18n::MenuLanguageAfterRead(13, "vsync=1\nmenu_language=0\n", &good) == 0);
+    CHECK(good);
+    CHECK(CoopI18n::MenuLanguageAfterRead(0, "menu_language=14\n", nullptr) == 14);
     CHECK(CoopI18n::MenuLanguageCode(0) == nullptr);   // (Auto: the game's language)
     CHECK(std::string(CoopI18n::MenuLanguageCode(1)) == "en");
     CHECK(std::string(CoopI18n::MenuLanguageCode(13)) == "zh-Hans");

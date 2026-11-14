@@ -633,12 +633,11 @@ public:
                 // of the event session is the emulator's way, and Hookshot's net.
                 auto& requests = CoopLiveEvents::TheGameRequests();
                 const bool by_request = requests.Live();
-                const auto asked = by_request ? requests.Since(start_cursor_) : std::vector<CoopLiveEvents::GameRequest>{};
                 const auto found = start_source_.Frame(
-                    by_request ? CoopLiveEvents::RequestedOf(asked, names) : std::nullopt,
-                    CoopLiveEvents::RequestedOtherOf(asked, names), by_request, running_now,
+                    by_request ? CoopLiveEvents::RequestedOf(requests.Since(start_cursor_), names) : std::nullopt,
+                    by_request, running_now,
                     [&] { return CoopLiveEvents::FindRunningEvent(&ReadGuest, &*memory, base_, names); });
-                LogScanOnly(start_source_, start_scan_only_, "dungeon", &start_refused_);
+                LogScanOnly(start_source_, start_scan_only_, "dungeon");
                 if (found) {
                     live_decider_.Ours(*found, hold_scene_);
                     coop::protocol::DungeonEvent e;
@@ -1770,7 +1769,7 @@ private:
     std::mutex live_mutex_;  // the requester runs on the calc thread (CoopSvc caller)
     CoopLiveEvents::Requester live_requester_;
     CoopLiveEvents::StartSource start_source_;  // our own gimmick event starts
-    std::uint64_t start_cursor_ = 0, start_scan_only_ = 0, start_refused_ = 0;
+    std::uint64_t start_cursor_ = 0, start_scan_only_ = 0;
     // An event start the search found that the game's request had not named, with the wrap there: logged, as the
     // sign that some event does not start through the wrapped request.
     static void LogScanOnly(const CoopLiveEvents::StartSource& source, std::uint64_t& said, const char* what,
@@ -1873,6 +1872,8 @@ private:
             }();
             auto& requests = CoopLiveEvents::TheGameRequests();
             const bool by_request = requests.Live();
+            // Only the story path refuses the search's finds while another asked-for event runs (intro-ocarina);
+            // the dungeon gimmicks above keep their net as it was (a gimmick may start inside a talk's flow).
             const auto asked = by_request ? requests.Since(story_cursor_) : std::vector<CoopLiveEvents::GameRequest>{};
             const auto found = story_source_.Frame(
                 by_request ? CoopLiveEvents::RequestedOf(asked, names) : std::nullopt,

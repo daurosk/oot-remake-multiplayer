@@ -172,6 +172,21 @@ std::string Hex(std::uint64_t v) {
 } // namespace
 
 std::uint64_t FindActor(CoopPuppet::Guest& guest, std::uint64_t main_base, std::string_view name) {
+    return WalkActors(guest, main_base, [&](std::uint64_t actor) {
+        return Present(guest, actor) && NameIs(guest, actor, name);
+    });
+}
+
+bool ActorPresent(CoopPuppet::Guest& guest, std::uint64_t actor) {
+    return Present(guest, actor);
+}
+
+bool ActorNamed(CoopPuppet::Guest& guest, std::uint64_t actor, std::string_view name) {
+    return NameIs(guest, actor, name);
+}
+
+std::uint64_t WalkActors(CoopPuppet::Guest& guest, std::uint64_t main_base,
+                         const std::function<bool(std::uint64_t actor)>& visit) {
     std::uint64_t manager = 0, lists = 0;
     if (main_base == 0 || !ReadValue(guest, main_base + addr::kManagerPtr, manager) ||
         !ReadValue(guest, manager + addr::kLists, lists) || lists == 0) {
@@ -185,8 +200,7 @@ std::uint64_t FindActor(CoopPuppet::Guest& guest, std::uint64_t main_base, std::
     for (std::size_t walked = 0; node != 0 && node != head && walked < addr::kMaxWalk; ++walked) {
         std::uint64_t owner = 0;
         if (ReadValue(guest, node + addr::kNodeOwner, owner) && owner != 0 &&
-            owner + addr::kActorNode == node && Present(guest, owner) &&
-            NameIs(guest, owner, name)) {
+            owner + addr::kActorNode == node && visit(owner)) {
             return owner;
         }
         if (!ReadValue(guest, node, node)) {

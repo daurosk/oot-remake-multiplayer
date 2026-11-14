@@ -101,8 +101,8 @@ inline constexpr std::string_view kAskerNames[] = {"EventRequestActor", "EventPr
 inline constexpr float kAskerNearM = 1.0f;
 
 // The present actor whose name is one of `names` nearest `at` (x, height, z), within `max_m`; 0 none. Walks the
-// game's actor list (CoopFairy::addr, as FindActor); the actor's place at kActorPosition. The calc thread (or a test).
-inline constexpr std::uint64_t kActorPosition = 0x31c;  // three floats, as coop_puppet.h
+// game's actor list (CoopFairy::WalkActors); the actor's place at CoopPuppet::addr::kActorPosition. The calc thread
+// (or a test).
 std::uint64_t NearestActor(CoopPuppet::Guest& guest, std::uint64_t main, std::span<const std::string_view> names,
                            const std::array<float, 3>& at, float max_m);
 
@@ -277,6 +277,7 @@ private:
         std::uint64_t starter = 0;
         bool room_asker = false;  // WantFromRoom: the starter is found when it is asked
     };
+    bool current_room_asker_ = false;  // current_starter_ is a room asker: checked again just before the link
     // WantFromRoom's asker for `name` in `scene`, read on the calc thread when the event is asked; 0 none.
     static std::uint64_t FindAsker(CoopPuppet::Guest& guest, std::uint64_t main, const std::string& name,
                                    const std::string& scene, std::string& where);

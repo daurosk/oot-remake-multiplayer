@@ -47,7 +47,12 @@ bool g_said_own = false;
 // Issue 106: on the clock, not presented frames (high refresh presents up to
 // 2.75 times as many).
 CoopEvery::Every g_folder_every{CoopEvery::kHalfSecondUs};
-std::string g_notice;
+std::vector<std::string> g_notices;   // chat lines, oldest first (TakeNotice)
+save::GuestNotices g_lines;           // the guest's lines about the host's save (the owner's wording)
+
+void Say(std::string line) {
+    if (!line.empty()) g_notices.push_back(std::move(line));
+}
 std::function<std::string()> g_root;                    // SetSwitch (Hookshot)
 std::function<bool(const std::string&)> g_remount;
 bool g_in_game = false;
@@ -106,7 +111,7 @@ void Decide() {
 }
 
 void NoteSaveDirLocked(const fs::path& dir);
-save::WriteResult WriteSlotTo(const fs::path& dir, const save::SaveSlot& slot);
+save::WriteResult WriteSlotTo(const fs::path& dir, const save::SaveSlot& slot, bool played_from = true);
 void PendingFrame();
 
 // Under g_mutex, each frame where the folder can be switched (Hookshot): the folder as mounted, and the choice.
@@ -122,6 +127,7 @@ void SwitchFrame(coop::net::Client& client) {
         if (save::decide_again(g_decided, over, g_in_game)) {
             g_decided = false;   // the next session (the title menu's Host after a Join, a rejoin) decides again
             g_guest = save::GuestSession{};   // and asks for the host's save again: everything of the last one goes
+            g_lines = save::GuestNotices{};
             g_pending.clear();
             g_suspended = false;
             LOG_INFO(Core, "coop: save: the session is over: the next one chooses the save folder again");
@@ -189,36 +195,35 @@ void PendingFrame() {
     auto slot = std::move(*g_guest.unwritten);
     g_guest.unwritten.reset();
     const fs::path to = std::exchange(g_pending, {});
-    if (WriteSlotTo(to, slot) != save::WriteResult::written) return;
+    if (WriteSlotTo(to, slot, false) != save::WriteResult::written) return;
     if (!g_remount(to.string())) {
         LOG_WARNING(Core, "coop: save: could not switch the save folder to {}: this game keeps {}", to.string(),
                     g_dir.string());
         g_guest.ready = false;
-        g_notice = "The host's save came, but this game could not switch to it (see the log).";
+        Say("The host's save came, but this game could not switch to it (see the log).");
         return;
     }
     NoteSaveDirLocked(to);
     LOG_INFO(Core, "coop: save: now playing from the co-op save folder {}", to.string());
+    Say(g_lines.on_ready(g_in_game));
 }
 
 // Under g_mutex: the host's slot written whole into the co-op folder `dir`.
-save::WriteResult WriteSlotTo(const fs::path& dir, const save::SaveSlot& slot) {
+// `played_from`: the game already plays from `dir` (else Success is said once it is switched to: PendingFrame).
+save::WriteResult WriteSlotTo(const fs::path& dir, const save::SaveSlot& slot, bool played_from) {
     const auto result = save::write_coop_save(dir, slot, save::own_dir_of(dir));
     switch (result) {
     case save::WriteResult::written:
         g_guest.ready = true;
         LOG_INFO(Core, "coop: save: the host's save written to {}", dir.string());
-        g_notice = g_guest.assembler.reason() == proto::SaveReason::host_load
-                       ? "The host loaded a save. Load it from your co-op save to stand where it starts "
-                         "(your progress already follows the host)."
-                       : "The host's save is ready: load it (Continue, or Load Game, newest save).";
+        if (played_from) Say(g_lines.on_ready(g_in_game));
         break;
     case save::WriteResult::not_coop:
         LOG_WARNING(Core, "coop: save: refused to write the host's save into {}", dir.string());
         break;
     case save::WriteResult::failed:
         LOG_ERROR(Core, "coop: save: could not write the host's save into {}", dir.string());
-        g_notice = "The host's save could not be written (see the log).";
+        Say("The host's save could not be written (see the log).");
         break;
     }
     return result;
@@ -255,6 +260,7 @@ void SetSwitch(std::function<std::string()> root, std::function<bool(const std::
 void NoteInGame(bool in_game) {
     std::lock_guard lock(g_mutex);
     g_in_game = in_game;
+    Say(g_lines.on_in_game(in_game));
 }
 
 bool HostSaveReady() {
@@ -364,6 +370,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     }
     g_guest.last_part_us = CoopEvery::NowUs();
     g_guest.said_stuck = false;
+    if (part->player_number == client.host_number() && !client.is_host()) Say(g_lines.on_part(part->transfer_id));
     switch (g_guest.assembler.add(*part, client.host_number())) {
     case save::Assembler::Result::partial:
         return;
@@ -374,7 +381,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     case save::Assembler::Result::bad_crc:
         LOG_WARNING(Core, "coop: save: the host's save (transfer {}) came damaged (CRC); waiting for "
                           "the next one", part->transfer_id);
-        g_notice = "The host's save came damaged; it is sent again after the host's next save.";
+        Say("The host's save came damaged; it is sent again after the host's next save.");
         return;
     case save::Assembler::Result::complete:
         break;
@@ -384,7 +391,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
         LOG_INFO(Core, "coop: save: the host has no save yet (a new game): this game keeps its own saves");
         g_guest.no_save = true;
         g_pending.clear();   // (nothing to switch to)
-        g_notice = "The host has no save yet: New Game starts one, Continue plays your own.";
+        Say("The host has no save yet: New Game starts one, Continue plays your own.");
         return;
     }
     const auto slot = save::unpack(packed);
@@ -488,7 +495,10 @@ void OnFrame(coop::net::Client& client, bool host_reset) {
 
 std::string TakeNotice() {
     std::lock_guard lock(g_mutex);
-    return std::exchange(g_notice, {});
+    if (g_notices.empty()) return {};
+    std::string line = std::move(g_notices.front());
+    g_notices.erase(g_notices.begin());
+    return line;
 }
 
 }  // namespace CoopSave

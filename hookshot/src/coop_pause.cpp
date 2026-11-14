@@ -128,11 +128,11 @@ void Joined() {
     coop = CoopTitleMenu::IniSet(coop, "last_invite", g_join_text, true);
     coop = CoopTitleMenu::IniSet(coop, "last_host", host, true);
     WriteText(CoopIni(), coop);
-    if (CoopTitle::StartAutoLoad(host)) {
+    if (CoopTitle::StartSaveWait(host)) {
         g_wanted = HOS_COOP_MENU_WANT_CLOSE;
-        LOG_INFO(Core, "coop: multiplayer tab: joined at the title: the host's save loads when it is here");
+        LOG_INFO(Core, "coop: multiplayer tab: joined at the title: load a save once the chat says Success");
     } else {
-        LOG_INFO(Core, "coop: multiplayer tab: joined in the game: the host's save loads at the title");
+        LOG_INFO(Core, "coop: multiplayer tab: joined in the game: the host's save is used from the title on");
     }
 }
 
@@ -276,7 +276,7 @@ void Join(const std::string& text) {
 void Leave() {
     LOG_INFO(Core, "coop: multiplayer tab: {}", g_doing == "hosting" ? "stop hosting" : "leave the friend's game");
     CoopHookshot::HostMenu().Leave();
-    CoopTitle::StopAutoLoad();
+    CoopTitle::StopSaveWait();
     g_doing.clear();
     g_lan_lines.clear();
     g_answer_note.clear();

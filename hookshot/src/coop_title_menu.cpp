@@ -569,7 +569,7 @@ std::vector<std::string> PlainStatus(const HostView& v) {
     }
 }
 
-void AutoLoad::Start(std::uint64_t now_ms, std::string host) {
+void SaveWait::Start(std::uint64_t now_ms, std::string host) {
     phase_ = Phase::kWait;
     host_ = Trim(host).empty() ? std::string("your friend") : std::string(Trim(host));
     last_ms_ = now_ms;
@@ -577,20 +577,7 @@ void AutoLoad::Start(std::uint64_t now_ms, std::string host) {
     live_seen_ = false;
 }
 
-void AutoLoad::Load(std::uint64_t now_ms) {
-    phase_ = Phase::kLoad;
-    on_title_ms_ = 0;
-    after_title_ms_ = 0;
-    next_focus_ = now_ms + 300;   // (Continue shown, then the cursor, then A)
-    next_press_ = now_ms + 600;
-    revealed_ = false;
-    pressed_continue_ = false;
-    native_tried_ = false;
-    native_left_ = false;
-    fell_back_ = false;
-}
-
-AutoLoad::Tick AutoLoad::Step(std::uint64_t now_ms, const Input& in) {
+SaveWait::Tick SaveWait::Step(std::uint64_t now_ms, const Input& in) {
     Tick t;
     const std::uint64_t dt = std::min<std::uint64_t>(now_ms >= last_ms_ ? now_ms - last_ms_ : 0, kStepGapMs);
     last_ms_ = now_ms;
@@ -619,101 +606,34 @@ AutoLoad::Tick AutoLoad::Step(std::uint64_t now_ms, const Input& in) {
         return t;
     }
     if (waiting()) {
-        if (!(in.host_save_ready && in.title_up)) {
-            if (in.save_coming) {
-                phase_ = Phase::kWait;   // (on its way: "Getting ...", and the wait starts over)
-                waited_ms_ = 0;
-            } else if (in.title_up) {
-                waited_ms_ += dt;
-            }
-            if (phase_ == Phase::kWait && waited_ms_ >= kWaitSaveMs) {
-                phase_ = Phase::kLate;
-            }
+        if (in.host_save_ready) {
+            phase_ = Phase::kReady;   // (late too: the player loads it themselves now)
             return t;
         }
-        Load(now_ms);   // (late too: the player has not picked anything, so the save loads)
-    }
-    if (phase_ != Phase::kLoad) {
-        return t;
-    }
-    if (in.title_up) {
-        on_title_ms_ += dt;
-        if (on_title_ms_ >= kLoadMs) {
-            phase_ = Phase::kStuck;
-            return t;
+        if (in.save_coming) {
+            phase_ = Phase::kWait;   // (on its way: "Getting ...", and the wait starts over)
+            waited_ms_ = 0;
+        } else if (in.title_up) {
+            waited_ms_ += dt;
         }
-    } else if (pressed_continue_) {
-        after_title_ms_ += dt;
-    }
-    if (!revealed_ && in.title_up) {
-        revealed_ = true;
-        t.reveal_continue = true;
-        return t;
-    }
-    if (in.title_up && in.focused != kContinue && now_ms >= next_focus_) {
-        next_focus_ = now_ms + kFocusEveryMs;
-        t.focus_continue = true;
-    }
-    // The game's own decide first: once per title, with the cursor on Continue.
-    if (!in.title_up && native_tried_) {
-        native_left_ = true;
-    } else if (in.title_up && native_left_) {
-        native_tried_ = native_left_ = false;   // (back on the title: the player backed out; decide again)
-    }
-    if (in.native_ok && !fell_back_) {
-        if (!native_tried_) {
-            if (in.title_up && in.focused == kContinue && now_ms >= next_press_) {
-                t.decide_continue = true;
-                native_tried_ = true;
-                native_at_ = now_ms;
-                pressed_continue_ = true;
-                after_title_ms_ = 0;
-            }
-            return t;
-        }
-        if (in.decide_waiting) {
-            native_at_ = now_ms;   // (not in yet: the wait for the title to go starts when it is)
-            return t;
-        }
-        if (in.title_up) {
-            if (now_ms - native_at_ < kNativeWaitMs) {
-                return t;   // (the title's Sequence runs Continue: nothing pressed on the title)
-            }
-            fell_back_ = true;   // (the title stayed: the pad A from here)
-            next_press_ = now_ms;
-        }
-        // (off the title: Continue's file list and its question still take the pad A below, kAfterTitleMs)
-    }
-    if (now_ms >= next_press_) {
-        if (now_ms < next_press_ + kPressHoldMs) {
-            if (PressAllowed(in.title_up, in.focused, pressed_continue_) &&
-                (in.title_up || after_title_ms_ < kAfterTitleMs)) {
-                t.press_a = true;
-                if (in.title_up) {
-                    pressed_continue_ = true;
-                    after_title_ms_ = 0;   // (a new press on Continue: the file list's presses start over)
-                }
-            }
-        } else {
-            next_press_ = now_ms + kPressEveryMs;
+        if (phase_ == Phase::kWait && waited_ms_ >= kWaitSaveMs) {
+            phase_ = Phase::kLate;
         }
     }
     return t;
 }
 
-std::string AutoLoad::Line() const {
+std::string SaveWait::Line() const {
     switch (phase_) {
     case Phase::kWait:
-        return "Getting " + host_ + "'s save: it loads by itself when it is here...";
+        return "Getting " + host_ + "'s save: don't load a save yet...";
     case Phase::kLate:
-        return host_ + "'s save is not here yet (it still loads by itself if it comes): Continue plays your own "
-                       "save, New Game starts a new one.";
-    case Phase::kLoad:
-        return "Loading " + host_ + "'s save...";
+        return host_ + "'s save is not here yet (the chat says Success when it is): Continue plays your own save, "
+                       "New Game starts a new one.";
+    case Phase::kReady:
+        return host_ + "'s save is in: load any save.";
     case Phase::kHostNone:
         return host_ + " has no save yet: New Game starts one, Continue plays your own.";
-    case Phase::kStuck:
-        return "Press Continue to play " + host_ + "'s save.";
     case Phase::kHostGone:
         return host_ + "'s game ended before the save came: Continue plays your own save, New Game starts a new "
                        "one.";

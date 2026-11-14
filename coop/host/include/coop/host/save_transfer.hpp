@@ -248,6 +248,36 @@ inline constexpr std::uint64_t kGuestReaskUs = 15'000'000;
 inline constexpr int kGuestMaxAsks = 4;
 bool reask_due(const GuestSession& s, std::uint64_t now_us);
 
+// A guest's chat lines about the host's save (the owner's wording). The player loads the save themselves (nothing
+// presses the title's buttons); these lines say when:
+// - kLoading once per transfer, when its first part comes;
+// - kSuccessTitle / kSuccessPlaying once it is written whole and the game plays from the co-op folder (at the title,
+//   or in the game: a join during play, or the host loaded another save);
+// - kTooEarly once per transfer if the player loads a save (Link comes into the game) after kLoading and before
+//   Success.
+class GuestNotices {
+ public:
+  static constexpr std::string_view kLoading = "Host save loading, don't load a save.";
+  static constexpr std::string_view kSuccessTitle = "Success, load any save.";
+  static constexpr std::string_view kSuccessPlaying = "Success, load any save for changes to occur.";
+  static constexpr std::string_view kTooEarly =
+      "That save loaded before the host's save was in: go back to the title and load a save after Success.";
+  // A part of transfer `transfer_id` came: kLoading when it is a new transfer, else "".
+  std::string on_part(std::uint32_t transfer_id);
+  // The save is written and played from: kSuccessTitle when Link is not in the game, else kSuccessPlaying.
+  std::string on_ready(bool in_game);
+  // Each frame: Link in the game or not. kTooEarly when Link came in while the save was still loading.
+  std::string on_in_game(bool in_game);
+  bool loading() const { return loading_; }
+
+ private:
+  bool started_ = false;
+  std::uint32_t transfer_ = 0;
+  bool loading_ = false;
+  bool said_early_ = false;
+  bool was_in_game_ = false;
+};
+
 // The slot_NN folders of a co-op save folder taken away, so it holds nothing until the host's save comes (a guest
 // switching to it must not find an older host's save and load that). Refuses a folder that is not a co-op one.
 // Returns the folders removed, or -1.

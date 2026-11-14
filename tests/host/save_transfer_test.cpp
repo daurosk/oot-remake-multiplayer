@@ -507,3 +507,40 @@ TEST_CASE("save transfer: two Join sessions in one run each ask once and get the
     s.ready = true;
   }
 }
+
+TEST_CASE("save transfer: the guest's lines come in order: loading, (too early), success") {
+  using N = save::GuestNotices;
+  // at the title: loading once per transfer, then success at the title
+  N n;
+  CHECK(n.on_in_game(false).empty());
+  CHECK(n.on_part(7) == N::kLoading);
+  CHECK(n.on_part(7).empty());   // (the same transfer's other parts)
+  CHECK(n.loading());
+  CHECK(n.on_in_game(false).empty());
+  CHECK(n.on_ready(false) == N::kSuccessTitle);
+  CHECK_FALSE(n.loading());
+  CHECK(n.on_in_game(true).empty());   // (loading a save after Success: nothing to say)
+  // the player loads a save while it loads: told once to load again after Success
+  N early;
+  early.on_in_game(false);
+  CHECK(early.on_part(3) == N::kLoading);
+  CHECK(early.on_in_game(true) == N::kTooEarly);
+  CHECK(early.on_in_game(true).empty());
+  early.on_in_game(false);
+  CHECK(early.on_in_game(true).empty());   // (once a transfer)
+  CHECK(early.on_ready(true) == N::kSuccessPlaying);
+  // during play (a join in the game, or the host loaded another save): no "too early" for being in the game,
+  // success says the changes need a load
+  N playing;
+  playing.on_in_game(true);
+  CHECK(playing.on_part(9) == N::kLoading);
+  CHECK(playing.on_in_game(true).empty());
+  CHECK(playing.on_ready(true) == N::kSuccessPlaying);
+  // the host loads another save later: a new transfer says loading again
+  CHECK(playing.on_part(10) == N::kLoading);
+  CHECK(playing.on_ready(true) == N::kSuccessPlaying);
+  // the owner's exact wording
+  CHECK(N::kLoading == "Host save loading, don't load a save.");
+  CHECK(N::kSuccessTitle == "Success, load any save.");
+  CHECK(N::kSuccessPlaying == "Success, load any save for changes to occur.");
+}

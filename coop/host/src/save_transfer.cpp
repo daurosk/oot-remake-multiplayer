@@ -227,6 +227,28 @@ std::vector<Planner::Send> Planner::due(std::optional<Time> newest) {
   return out;
 }
 
+std::string GuestNotices::on_part(std::uint32_t transfer_id) {
+  if (started_ && transfer_id == transfer_) return {};
+  started_ = true;
+  transfer_ = transfer_id;
+  loading_ = true;
+  said_early_ = false;
+  return std::string(kLoading);
+}
+
+std::string GuestNotices::on_ready(bool in_game) {
+  loading_ = false;
+  return std::string(in_game ? kSuccessPlaying : kSuccessTitle);
+}
+
+std::string GuestNotices::on_in_game(bool in_game) {
+  const bool came_in = in_game && !was_in_game_;
+  was_in_game_ = in_game;
+  if (!came_in || !loading_ || said_early_) return {};
+  said_early_ = true;
+  return std::string(kTooEarly);
+}
+
 bool reask_due(const GuestSession& s, std::uint64_t now_us) {
   if (!s.asked || s.ready || s.no_save || s.unwritten || s.asks >= kGuestMaxAsks) return false;
   if (now_us - s.asked_us < kGuestReaskUs) return false;

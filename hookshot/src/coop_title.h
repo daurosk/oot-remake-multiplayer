@@ -6,7 +6,7 @@
 // (hos_coop_pad). The puppet pack's title has its own Host, Join and Co-op
 // Settings rows: each opens the tab at that page. Without them a
 // "(-) Multiplayer" prompt shows at the bottom left and Minus opens the tab.
-// After a join the host's save loads here in one step (CoopTitleMenu::AutoLoad).
+// After a join the title says what the host's save is doing (CoopTitleMenu::SaveWait); nothing is pressed.
 // The module stays loaded, co-op idle, when coop.ini names no server.
 #pragma once
 
@@ -35,12 +35,12 @@ void OnTitle(void* ctx, std::uint64_t screen, int event);
 // hos_coop_pad: player 1's pad before the game gets it; what the game gets.
 std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]);
 
-// A join connected: the host's save is loaded at the title when it is here
-// (the game's Continue pressed for the player). True when the title is up
-// now (the menu should close, so the game takes the presses).
-bool StartAutoLoad(const std::string& host);
-// Co-op stopped: no more presses.
-void StopAutoLoad();
+// A join connected: the title says what the host's save is doing until it is
+// in (nothing is pressed: the player loads a save themselves when the chat
+// says Success). True when the title is up now (the menu should close).
+bool StartSaveWait(const std::string& host);
+// Co-op stopped: the title's line goes.
+void StopSaveWait();
 
 // This PC's own id for rejoining (coop.ini client_id, made once): the module's
 // join helper uses the same nonce and port for the same invite with it.

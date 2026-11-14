@@ -1,4 +1,4 @@
-From 62755010a776f093123c08fb2d3f20d3835569e9 Mon Sep 17 00:00:00 2001
+From d63951958763062e56d8c69741b5a2d720beb892 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 16:33:05 -0900
 Subject: [PATCH] Co-op menu picture: a module tab may draw shapes, or show the
@@ -20,14 +20,14 @@ The Multiplayer tab's Customize page shows the player's own Link in the
 window, the camera turning around him, and a flat Link when there is none.
 A module without the exports: no picture, the game's camera.
 ---
- gpu/vk/hos_coop_menu_picture.h | 44 ++++++++++++++++++++++++++
- gpu/vk/vk_coop.cpp             | 16 ++++++++++
+ gpu/vk/hos_coop_menu_picture.h | 44 ++++++++++++++++++++++++
+ gpu/vk/vk_coop.cpp             | 16 +++++++++
  gpu/vk/vk_coop.h               |  4 +++
- gpu/vk/vk_menu.cpp             | 58 ++++++++++++++++++++++++++++++++--
+ gpu/vk/vk_menu.cpp             | 61 ++++++++++++++++++++++++++++++++--
  host/coop_bridge.c             |  8 +++++
- host/hos_coop_view.h           | 18 +++++++++++
+ host/hos_coop_view.h           | 18 ++++++++++
  host/hos_main.c                | 28 ++++++++++++++++
- 7 files changed, 173 insertions(+), 3 deletions(-)
+ 7 files changed, 176 insertions(+), 3 deletions(-)
  create mode 100644 gpu/vk/hos_coop_menu_picture.h
  create mode 100644 host/hos_coop_view.h
 
@@ -142,26 +142,28 @@ index 17c4cf0d..a3931bcb 100644
  
  }  // namespace mkwvk::coop
 diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
-index 7cc538be..e0eeb2b4 100644
+index 7cc538be..a18dc8a3 100644
 --- a/gpu/vk/vk_menu.cpp
 +++ b/gpu/vk/vk_menu.cpp
-@@ -3040,6 +3040,28 @@ void row_value_cell(ui::Ctx& c, const Row& r, ImVec2 va, ImVec2 vb, bool selecte
+@@ -3040,6 +3040,30 @@ void row_value_cell(ui::Ctx& c, const Row& r, ImVec2 va, ImVec2 vb, bool selecte
  /// own cells (an action's value cell, or the page arrow when it has none; a choice with its arrows; a toggle's Off and On
  /// halves; a heading as Hookshot's; a note as one line of text), the help box beside it and the prompts the module names.
  /// The hits are the module's row numbers, as Hookshot's own rows: coop_tick hands the cursor and the clicks on
 +// (oot-remake-multiplayer, patch 0019) A live picture's clear window onto the game (hos_coop_menu_picture.h): draw_coop_page
-+// leaves its square here, in the window's pixels, with the drawing's number; the next drawing's dim (draw_menu) leaves it
-+// out. coop_win_w and coop_win_ox (the window's width, the column's offset in it) are draw_menu's, for the fractions the
-+// module is told
++// leaves its square here, in the window's pixels, with the drawing's number and time; the next drawing's dim (draw_menu)
++// leaves it out, if that is the next drawing and it comes soon (not a menu opened again later). coop_win_w and coop_win_ox
++// (the window's width, the column's offset in it) are draw_menu's, for the fractions the module is told
 +ImVec4 coop_clear{0, 0, 0, 0};
 +unsigned coop_clear_at = 0, coop_drawing = 0;
++std::chrono::steady_clock::time_point coop_clear_when{};
 +float coop_win_w = 0, coop_win_ox = 0;
 +
 +/// The game behind the menu, dimmed: all of it, or around last drawing's clear window
 +void dim_game(ui::Ctx& c) {
 +    const ImU32 dim = ui::rgba(8, 5, 2, ui::kDimAlpha);
 +    const ImVec4 r = coop_clear;
-+    if (coop_clear_at + 1 != coop_drawing || !(r.z > r.x && r.w > r.y)) {
++    const bool recent = std::chrono::steady_clock::now() - coop_clear_when < std::chrono::milliseconds(100);
++    if (coop_clear_at + 1 != coop_drawing || !recent || !(r.z > r.x && r.w > r.y)) {
 +        c.d->AddRectFilled(ImVec2(0, 0), ImVec2(c.w, c.h), dim);
 +        return;
 +    }
@@ -174,7 +176,7 @@ index 7cc538be..e0eeb2b4 100644
  void draw_coop_page(ui::Ctx& c, float hh) {
      const float s = c.s;
      float cx0, cx1, hx0, hx1;
-@@ -3064,8 +3086,36 @@ void draw_coop_page(ui::Ctx& c, float hh) {
+@@ -3064,8 +3088,37 @@ void draw_coop_page(ui::Ctx& c, float hh) {
          help_box(c, hx0, hx1, bottom + 8 * s, said(p.help_title), said(p.help), said(p.hint), said(p.gold), 0, false,
                   bottom + 8 * s, bar_top - 10 * s);
      } else {
@@ -191,6 +193,7 @@ index 7cc538be..e0eeb2b4 100644
 +        if (coop::menu_picture(coop_tab, &pic, where, ww / wh)) {
 +            if (pic.live) {   // (the game shows through: no dim there on the next drawing, a thin frame)
 +                coop_clear = ImVec4(ox + coop_win_ox, py0, ox + side + coop_win_ox, py0 + side), coop_clear_at = coop_drawing;
++                coop_clear_when = std::chrono::steady_clock::now();
 +                c.d->AddRect(ImVec2(ox, py0), ImVec2(ox + side, py0 + side), ui::rgba(255, 255, 255, 90), 8 * s, 0, 1.5f * s);
 +            } else {
 +                c.d->AddRectFilled(ImVec2(ox, py0), ImVec2(ox + side, py0 + side), ui::rgba(0, 0, 0, 110), 8 * s);
@@ -213,7 +216,7 @@ index 7cc538be..e0eeb2b4 100644
      }
      const float rh = 40 * s, pitch = 48 * s, top = hh + 24 * s, rx0 = cx0 + 44 * s, rx1 = cx1 - 44 * s,
                  split = rx0 + (rx1 - rx0) * 0.55f;
-@@ -3752,10 +3802,12 @@ float menu_ox = 0;   // (the menu's column's left edge in the window: more than
+@@ -3752,10 +3805,12 @@ float menu_ox = 0;   // (the menu's column's left edge in the window: more than
  /// middle (a window of 16:9 or narrower: the whole of it). The pages draw from 0 as on 16:9; their vertices and clip
  /// rectangles are moved over after, and menu_tick moves the mouse back by menu_ox before it tests the hits
  void draw_menu(ui::Ctx& c) {

@@ -7,7 +7,7 @@
 //
 // The menu's thread asks for the picture each drawing (Ask); the game's
 // thread frames the camera while it is asked for (Camera). Asked for no more
-// (the page left, the menu closed): the game's camera again, at once.
+// (the page left, the menu closed): the game's camera again within kHoldMs.
 #pragma once
 
 #include <array>

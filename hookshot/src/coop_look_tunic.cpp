@@ -148,7 +148,9 @@ Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Te
         if (!textures.Read(live.address, head, kHead)) {
             continue;
         }
-        bool taken = false;
+        // Several textures may hold the same texels (the puppets' copies all
+        // start as the game's own): the one whose own file this is takes it.
+        bool taken = false, matched = false;
         for (const auto& colour : colours) {
             for (std::size_t i = 0; !taken && colour && i < colour->size(); ++i) {
                 const Texture& texture = (*colour)[i];
@@ -156,16 +158,18 @@ Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Te
                     !Same(textures, live.address, texture.texels)) {
                     continue;
                 }
-                taken = true;
+                matched = true;
                 if (InOwnFile(textures, live.address, texture)) {
+                    taken = true;
                     out.places.push_back({i, live.address, live.serial, colour, colour, false});
-                } else {
-                    ++out.copies;
                 }
             }
             if (taken) {
                 break;
             }
+        }
+        if (matched && !taken) {
+            ++out.copies;   // the same texels in another texture's file (a puppet's copy)
         }
     }
     return out;

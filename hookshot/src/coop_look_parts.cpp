@@ -3,9 +3,6 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <fstream>
-#include <iterator>
-#include <system_error>
 #include <string_view>
 
 namespace CoopLookParts {
@@ -109,150 +106,33 @@ std::string SlotName(const std::string& name, std::size_t slot) {
     return "C" + std::to_string(slot) + "_" + name.substr(3);
 }
 
-namespace {
-constexpr std::uint32_t kZstdMagic = 0xFD2FB528u;
-constexpr std::uint8_t kRawHeader = 0xE0;   // single segment, an 8-byte content size, no dictionary or checksum
-constexpr std::size_t kRawBlock = 128 * 1024;
-
-void PutLe(std::vector<std::uint8_t>& out, std::uint64_t v, int bytes) {
-    for (int i = 0; i < bytes; ++i) {
-        out.push_back(static_cast<std::uint8_t>(v >> (8 * i)));
-    }
-}
-std::uint64_t GetLe(const std::vector<std::uint8_t>& in, std::size_t at, int bytes) {
-    std::uint64_t v = 0;
-    for (int i = 0; i < bytes; ++i) {
-        v |= std::uint64_t{in[at + static_cast<std::size_t>(i)]} << (8 * i);
-    }
-    return v;
-}
-}  // namespace
-
-std::vector<std::uint8_t> RawZstd(const std::vector<std::uint8_t>& data) {
-    std::vector<std::uint8_t> out;
-    out.reserve(data.size() + data.size() / kRawBlock * 3 + 16);
-    PutLe(out, kZstdMagic, 4);
-    out.push_back(kRawHeader);
-    PutLe(out, data.size(), 8);
-    std::size_t at = 0;
-    do {
-        const std::size_t n = std::min(kRawBlock, data.size() - at);
-        const bool last = at + n >= data.size();
-        PutLe(out, (std::uint64_t{n} << 3) | (last ? 1u : 0u), 3);
-        out.insert(out.end(), data.begin() + static_cast<std::ptrdiff_t>(at),
-                   data.begin() + static_cast<std::ptrdiff_t>(at + n));
-        at += n;
-    } while (at < data.size());
-    return out;
-}
-
-std::optional<std::vector<std::uint8_t>> UnrawZstd(const std::vector<std::uint8_t>& frame) {
-    if (frame.size() < 13 || GetLe(frame, 0, 4) != kZstdMagic || frame[4] != kRawHeader) {
-        return std::nullopt;
-    }
-    const std::uint64_t size = GetLe(frame, 5, 8);
-    if (size > frame.size()) {
-        return std::nullopt;
-    }
-    std::vector<std::uint8_t> out;
-    out.reserve(static_cast<std::size_t>(size));
-    std::size_t at = 13;
-    while (true) {
-        if (at + 3 > frame.size()) {
-            return std::nullopt;
-        }
-        const std::uint64_t h = GetLe(frame, at, 3);
-        at += 3;
-        const std::size_t n = static_cast<std::size_t>(h >> 3);
-        if (((h >> 1) & 3) != 0 || n > frame.size() - at) {
-            return std::nullopt;   // not a raw block, or cut short
-        }
-        out.insert(out.end(), frame.begin() + static_cast<std::ptrdiff_t>(at),
-                   frame.begin() + static_cast<std::ptrdiff_t>(at + n));
-        at += n;
-        if (h & 1) {
-            break;
-        }
-    }
-    if (out.size() != size) {
-        return std::nullopt;
-    }
-    return out;
-}
-
-std::optional<std::vector<std::uint8_t>> Repainted(const std::vector<std::uint8_t>& frame,
-                                                   const CoopLookTunic::Texture& texture) {
-    auto file = UnrawZstd(frame);
-    if (!file || texture.offset > file->size() || texture.texels.size() > file->size() - texture.offset) {
-        return std::nullopt;
-    }
-    std::copy(texture.texels.begin(), texture.texels.end(), file->begin() + static_cast<std::ptrdiff_t>(texture.offset));
-    return RawZstd(*file);
-}
-
-CopyResult PaintCopyFiles(const std::filesystem::path& tex, const CoopLookTunic::Texels& gear, std::size_t copy,
-                          const CoopLook::Look& look) {
-    namespace fs = std::filesystem;
-    CopyResult result;
-    // Only the textures this copy has a file of (an item the romfs lacked has none).
-    CoopLookTunic::Texels mine;
-    std::vector<fs::path> files;
-    for (const CoopLookTunic::Texture& t : gear) {
-        const std::string name = SlotName(t.name, copy);
+CoopLookTunic::Texels CopyTexels(const CoopLookTunic::Texels& gear, std::size_t copy,
+                                 const std::optional<CoopLook::Look>& look) {
+    CoopLookTunic::Texels out = look && AnyGear(*look) ? Painted(gear, *look) : gear;
+    std::erase_if(out, [&](CoopLookTunic::Texture& t) {
+        std::string name = SlotName(t.name, copy);
         if (name.empty()) {
-            continue;
+            return true;   // not a gear texture: no copy of it
         }
-        fs::path file = tex / (name + ".bntx.zs");
-        std::error_code ec;
-        if (!fs::is_regular_file(file, ec)) {
-            continue;
+        t.name = std::move(name);
+        return false;
+    });
+    return out;
+}
+
+std::string CopiesName(const CopyLooks& looks) {
+    std::string name = kCopiesBase;
+    bool any = false;
+    for (const auto& look : looks) {
+        name += '|';
+        if (look && AnyGear(*look)) {
+            name += Name(*look);
+            any = true;
+        } else {
+            name += '-';
         }
-        mine.push_back(t);
-        files.push_back(std::move(file));
     }
-    const CoopLookTunic::Texels painted = Painted(mine, look);
-    for (std::size_t i = 0; i < painted.size(); ++i) {
-        const fs::path& file = files[i];
-        std::vector<std::uint8_t> frame;
-        {
-            std::ifstream in(file, std::ios::binary);
-            if (!in) {
-                result.status = CopyResult::Status::retry;
-                result.why = "could not read " + file.filename().string();
-                return result;
-            }
-            frame.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-        }
-        const auto out = Repainted(frame, painted[i]);
-        if (!out) {
-            result.status = CopyResult::Status::broken;
-            result.why = file.filename().string() + " is not a copy this module can paint";
-            return result;
-        }
-        if (*out != frame) {
-            fs::path part = file;
-            part += ".part";
-            {
-                std::ofstream o(part, std::ios::binary | std::ios::trunc);
-                o.write(reinterpret_cast<const char*>(out->data()), static_cast<std::streamsize>(out->size()));
-                if (!o) {
-                    result.status = CopyResult::Status::retry;
-                    result.why = "could not write " + part.filename().string();
-                    return result;
-                }
-            }
-            std::error_code ec;
-            fs::rename(part, file, ec);   // (the game holds a file it reads without delete sharing: then it fails)
-            if (ec) {
-                fs::remove(part, ec);
-                result.status = CopyResult::Status::retry;
-                result.why = "could not replace " + file.filename().string() + " (held open?)";
-                return result;
-            }
-        }
-        ++result.files;
-    }
-    return result;
+    return any ? name : std::string(kCopiesBase);
 }
 
 }  // namespace CoopLookParts

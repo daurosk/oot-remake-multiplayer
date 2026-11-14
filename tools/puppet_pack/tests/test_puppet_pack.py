@@ -1084,9 +1084,7 @@ class FullBuildTest(unittest.TestCase):
         self.assertEqual(m["look_items"]["copies"], 4)   # two per slot
         self.assertTrue(os.path.exists(os.path.join(out, f"Pack/Actor/{item}_Look4.pack.zs")))
         self.assertFalse(os.path.exists(os.path.join(out, f"Pack/Actor/{item}_Look5.pack.zs")))
-        # The copies' textures are raw zstd frames, for the module to write again.
-        raw = build.read(os.path.join(out, "Tex/C3_Weapon_Shield_Hylian_Alb.bntx.zs"))
-        self.assertEqual(look_items.unraw_zstd(raw), d.decompress(raw))
+
         # The game's own item is not in the pack.
         self.assertFalse(os.path.exists(os.path.join(out, f"Pack/Actor/{item}.pack.zs")))
         self.assertFalse(os.path.exists(os.path.join(out, "Tex/Mt_Weapon_Shield_Hylian_Alb.bntx.zs")))
@@ -1103,17 +1101,6 @@ class FullBuildTest(unittest.TestCase):
         with self.assertRaises(look_items.TunicError):
             look_items.tex_name("Angin_Tile_A_Alb", 1)
         self.assertEqual(look_items.actor_name("Armor_Adult_Zora", 2), "Armor_Adult_Zora_Look2")
-
-    def test_raw_zstd(self):
-        import zstandard as zstd
-        from puppet_pack import look_items
-        for n in (0, 1, 128 * 1024, 128 * 1024 + 5, 300000):
-            data = bytes((i * 7) & 0xFF for i in range(n))
-            frame = look_items.raw_zstd(data)
-            self.assertEqual(look_items.unraw_zstd(frame), data)
-            self.assertEqual(zstd.ZstdDecompressor().decompress(frame), data)   # any zstd reads it
-        with self.assertRaises(look_items.TunicError):
-            look_items.unraw_zstd(zstd.ZstdCompressor().compress(b"abc" * 100))
 
     def test_build(self):
         from puppet_pack import zs

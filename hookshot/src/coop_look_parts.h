@@ -17,7 +17,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -51,42 +50,24 @@ bool AnyGear(const CoopLook::Look& look);
 CoopLookTunic::Texels Painted(const CoopLookTunic::Texels& gear, const CoopLook::Look& look);
 
 // The puppets' gear (docs/puppet.md, "Gear colours on the puppets"): the
-// pack's item copies name texture files of their own, "Mt_..." as
-// "C<copy>_..." (tools/puppet_pack/look_items.py tex_name), kept as zstd
-// frames of raw blocks. The module writes a copy's files again in a player's
-// look before their puppet wears it; the game loads them through its own file
-// system (Hookshot opens a mod file each time it is read).
+// pack's item copies name textures of their own, "Mt_..." as "C<copy>_..."
+// (tools/puppet_pack/look_items.py tex_name). One more wardrobe keeps every
+// copy's textures in the look of the player it is painted for, drawn by
+// Longshot's texture overrides as your own gear is (nothing of the game is
+// written; the game loads and draws the copies itself).
 //
 // A gear texture's name in copy `copy` (1 to 9); "" for a name that is not
-// a gear texture's ("Mt_..." is), or that could name another folder (a
-// separator or "..": the name becomes a file name).
+// a gear texture's ("Mt_..." is), or that could name another folder.
 std::string SlotName(const std::string& name, std::size_t copy);
-// A zstd frame of raw blocks holding `data` (look_items.py raw_zstd), and its
-// data again (nothing for any other frame).
-std::vector<std::uint8_t> RawZstd(const std::vector<std::uint8_t>& data);
-std::optional<std::vector<std::uint8_t>> UnrawZstd(const std::vector<std::uint8_t>& frame);
-// A copy's texture file (a raw frame of its BNTX) with `texture`'s texels in
-// place of its own: nothing when the file is not a raw frame or the texels do
-// not fit at their offset.
-std::optional<std::vector<std::uint8_t>> Repainted(const std::vector<std::uint8_t>& frame,
-                                                   const CoopLookTunic::Texture& texture);
-
-// Paints copy `copy` of the items in `look`: for each gear texture the copy
-// has a file of in `tex` (the pack's romfs/Tex), the game's own texels
-// (`gear`, from coop_look/gear.bin) painted in the look are written into that
-// file (a ".part" file renamed over it; a file already in these colours is
-// left as it is). Only the textures the copy has are painted.
-struct CopyResult {
-    enum class Status {
-        written,   // every file the copy has is in the look
-        retry,     // a file could not be written now (held open, a full disk): try again later
-        broken,    // a file is not a copy this code can paint (make the pack again)
-    };
-    Status status = Status::written;
-    std::size_t files = 0;   // in the look now
-    std::string why;         // for retry and broken
-};
-CopyResult PaintCopyFiles(const std::filesystem::path& tex, const CoopLookTunic::Texels& gear, std::size_t copy,
-                          const CoopLook::Look& look);
+// The gear textures under copy `copy`'s names, painted in `look` (the game's
+// own colours when none): what that copy's pieces are drawn with.
+CoopLookTunic::Texels CopyTexels(const CoopLookTunic::Texels& gear, std::size_t copy,
+                                 const std::optional<CoopLook::Look>& look);
+// The looks the copies are painted in (index 0: copy 1; nothing: the game's own).
+using CopyLooks = std::vector<std::optional<CoopLook::Look>>;
+// The copies' wardrobe's base (every copy in the game's own colours), and the
+// name of a painting of them: kCopiesBase when no copy has a gear part set.
+inline constexpr const char* kCopiesBase = "puppets";
+std::string CopiesName(const CopyLooks& looks);
 
 }  // namespace CoopLookParts

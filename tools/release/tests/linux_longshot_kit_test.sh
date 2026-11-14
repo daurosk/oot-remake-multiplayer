@@ -39,6 +39,8 @@ check 'versions: v0.1.0 > v0.1.0-beta2 > v0.1.0-beta1; beta9 < beta10' bash -c '
     [ "$(kit_version_compare v0.1.0-beta9 v0.1.0-beta10)" = -1 ] && [ "$(kit_version_compare ci-1234 v0.1.0)" = -1 ]' _ "$lib"
 printf '# a comment\ntag=v3.0.0-rc.3\nurl=https://x/y=z\n' >"$tmp/pin"
 check 'pin_get reads key=value lines (a value may hold =)' bash -c '. "$1"; [ "$(pin_get "$2" tag)" = v3.0.0-rc.3 ] && [ "$(pin_get "$2" url)" = https://x/y=z ] && ! pin_get "$2" nope' _ "$lib" "$tmp/pin"
+check 'kit_offline: 1 offline, 0 online; behind a proxy (https_proxy, ALL_PROXY) online with no probe' bash -c '. "$1"
+    kit_offline 1 && ! kit_offline 0 && ! https_proxy=http://127.0.0.1:9 kit_offline "" && ! ALL_PROXY=socks5://127.0.0.1:9 kit_offline ""' _ "$lib"
 
 # --- A kit, as make_kit_linux.sh lays it out ----------------------------------------------------
 # The stand-in builder: what --appimage-extract unpacks.

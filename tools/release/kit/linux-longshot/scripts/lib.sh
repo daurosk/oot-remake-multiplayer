@@ -67,13 +67,13 @@ sha256_of() { sha256sum "$1" | cut -d' ' -f1; }
 
 # kit_offline [FORCE]: no internet here (github.com, where the kit's downloads are, cannot be reached in a few
 # seconds). FORCE is OOT_COOP_OFFLINE as read before build.sh clears it: 1 says offline, 0 online, no probe (tests).
+# Behind a proxy (curl and wget use https_proxy/all_proxy, a direct connect is often blocked there) and when it
+# can't tell (no timeout tool: the connect could hang for minutes) it says online, and the download is tried.
 kit_offline() {
     case ${1-} in 1) return 0 ;; 0) return 1 ;; esac
-    if command -v timeout >/dev/null 2>&1; then
-        timeout 4 bash -c '</dev/tcp/github.com/443' 2>/dev/null && return 1
-    else
-        bash -c '</dev/tcp/github.com/443' 2>/dev/null && return 1
-    fi
+    [[ -n ${https_proxy-}${HTTPS_PROXY-}${all_proxy-}${ALL_PROXY-} ]] && return 1
+    command -v timeout >/dev/null 2>&1 || return 1
+    timeout 4 bash -c '</dev/tcp/github.com/443' 2>/dev/null && return 1
     return 0
 }
 

@@ -355,6 +355,8 @@ try {
     Check ($code -eq 0) "asked, yes: play ran ($(($out | Select-Object -Last 1) -join ''))"
     Check (($out -join ' ') -match 'Co-op v0\.1\.0-beta4 is out\. Update now\?') 'the question names the new version'
     Check (((Get-Played $kit) -join '|') -eq 'new NoUpdate') 'the old play.ps1 hands over to the new one (and does not start the game itself)'
+    # (a flake here once had no trace: what the update said, when it did not hand over)
+    if (((Get-Played $kit) -join '|') -ne 'new NoUpdate') { Write-Host "     the update said: $(($out | Select-Object -Last 15) -join ' | ')" }
     Check ((Get-Content "$kit\VERSION.txt" -TotalCount 1) -match 'v0\.1\.0-beta4') 'the kit is the new version'
     Check ((Read-File "$kit\emulator\lichii.exe") -match 'coop: loaded v0\.1\.0-beta4') 'the emulator is the new one'
     Check ((Read-File "$kit\emulator\user\keys\prod.keys") -eq 'my keys') 'the keys are kept'
@@ -679,6 +681,13 @@ try {
     [System.IO.File]::WriteAllBytes($gmod, [byte[]](1, 2, 3))
     Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need offline: a new module is still put in -> module'
     [System.IO.File]::WriteAllBytes($gmod, $gmodWas)
+    # behind a proxy (review-kit-offline): never offline, no probe, so the download is tried as before
+    $viaProxy = New-Object System.Net.WebProxy('http://proxy.example:8080')
+    $direct = New-Object System.Net.WebProxy
+    $bypassed = New-Object System.Net.WebProxy('http://proxy.example:8080', $false, [string[]]@('github\.com'))
+    Check ((Test-KitProxied $viaProxy) -and -not (Test-KitProxied $direct) -and -not (Test-KitProxied $bypassed)) 'proxy: github.com through a proxy yes; no proxy or github.com bypassed no'
+    $env:OOT_COOP_OFFLINE = ''
+    Check (-not (& { function Test-KitProxied { $true }; Test-KitOffline })) 'offline: behind a proxy -> online, no probe'
     $env:OOT_COOP_OFFLINE = '0'
     Write-File (Join-Path $g 'tools\ootrr\ootrr.exe') 'MZ'
     Write-File (Join-Path $g 'tools\ootrr\coop-ootrr.txt') "v0.4.2 $osha`n"

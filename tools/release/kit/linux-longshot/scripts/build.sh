@@ -233,10 +233,12 @@ if [[ -f $ootrr_pin ]]; then
     else
         mkdir -p "$B"
         o_tgz=$B/$o_file o_why=''
-        if [[ ! -f $o_tgz || $(sha256_of "$o_tgz") != "$o_sha" ]] && { [[ $offline == 1 || $o_url =~ ^https?:// ]] && kit_offline "$offline"; }; then
+        o_get=0
+        [[ ! -f $o_tgz || $(sha256_of "$o_tgz") != "$o_sha" ]] && o_get=1
+        if ((o_get)) && { [[ $offline == 1 || $o_url =~ ^https?:// ]] && kit_offline "$offline"; }; then
             # (no internet: no download try, which would only wait for its timeout, on every start)
             o_why=offline
-        elif [[ ! -f $o_tgz || $(sha256_of "$o_tgz") != "$o_sha" ]]; then
+        elif ((o_get)); then
             say "  downloading $o_file ..."
             if ! OOT_COOP_FETCH_LOCAL=$fetch_local fetch "$o_url/$o_file" "$o_tgz.part"; then o_why='the download failed (no network?)'
             elif [[ $(sha256_of "$o_tgz.part") != "$o_sha" ]]; then o_why='its SHA-256 differs from the one this kit was made with'

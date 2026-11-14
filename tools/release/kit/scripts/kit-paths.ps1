@@ -811,10 +811,12 @@ function Test-KitOotrrZipReady([string]$Kit) {
 }
 
 # No internet on this PC: no network adapter up, or github.com (where the kit's downloads are) cannot be reached
-# in a few seconds. OOT_COOP_OFFLINE=1 says offline and =0 online, with no probe (tests).
+# in a few seconds. OOT_COOP_OFFLINE=1 says offline and =0 online, with no probe (tests). Behind a proxy it is never
+# offline: a direct connect is often blocked there while the kit's downloads (the system proxy) work.
 function Test-KitOffline {
     if ($env:OOT_COOP_OFFLINE -eq '1') { return $true }
     if ($env:OOT_COOP_OFFLINE -eq '0') { return $false }
+    if (Test-KitProxied) { return $false }
     try { if (-not [System.Net.NetworkInformation.NetworkInterface]::GetIsNetworkAvailable()) { return $true } } catch { }
     $client = New-Object System.Net.Sockets.TcpClient
     try {
@@ -823,6 +825,17 @@ function Test-KitOffline {
         $client.EndConnect($try)
         return $false
     } catch { return $true } finally { $client.Close() }
+}
+
+# github.com goes through a proxy here ($Proxy: the system's, as Invoke-WebRequest uses it; tests pass their own).
+# Can't tell: yes (online is the safe answer, the download is then tried as before).
+function Test-KitProxied($Proxy = $null) {
+    try {
+        if (-not $Proxy) { $Proxy = [System.Net.WebRequest]::GetSystemWebProxy() }
+        if (-not $Proxy) { return $false }
+        $u = [uri]'https://github.com'
+        return (-not $Proxy.IsBypassed($u)) -and ($Proxy.GetProxy($u) -ne $u)
+    } catch { return $true }
 }
 
 # The randomizer the kit brings (hookshot\OOTRR.txt) is not in the game's tools\ootrr yet, or another release is:

@@ -2437,6 +2437,52 @@ TEST_CASE("world: a block another player pushed asks for its old rest place to b
     CHECK(out.blocks.empty());
 }
 
+// deku-visuals-b (0.10.1 playtest): the second player's push of a block the
+// first had moved jumped to a place between the two; that jump (our game's
+// push from the stale start) is told. It is still our push and is sent.
+TEST_CASE("world: a push from the old rest after a followed push is told") {
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});
+    w.Receive(MoveOf(0x50, 2000 * kMs, 1.0f));
+    w.Receive(MoveOf(0x50, 2100 * kMs, 2.0f));
+    Walk(w, 2100 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});
+    w.Receive(PlaceOf(0x50, 3.0f));
+    Walk(w, 2300 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {2.0f, 2.0f, 3.0f})});
+    Walk(w, 2700 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {3.0f, 2.0f, 3.0f})});
+    auto out = Walk(w, 2900 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {3.0f, 2.0f, 3.0f})});
+    REQUIRE(out.blocks.size() == 1);
+    CHECK_FALSE(out.blocks[0].snap);
+    Walk(w, 5000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {3.0f, 2.0f, 3.0f})}, proto::Vec3{3.0f, 2.0f, 4.0f});
+    // Our player pushes; the game starts the push from 1.0 (the stale start).
+    out = Walk(w, 5100 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.4f, 2.0f, 3.0f})}, proto::Vec3{1.4f, 2.0f, 4.0f});
+    CHECK(Sent<proto::WorldMove>(out).size() == 1);
+    REQUIRE(out.blocks.size() == 1);
+    CHECK(out.blocks[0].snap);
+    CHECK(out.blocks[0].from[0] == doctest::Approx(1.0f));
+    CHECK(out.blocks[0].to[0] == doctest::Approx(3.0f));
+    bool said = false;
+    for (const auto& n : out.notes) said |= n.find("jumped back toward its old rest") != std::string::npos;
+    CHECK(said);
+    // Told once.
+    out = Walk(w, 5200 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.6f, 2.0f, 3.0f})}, proto::Vec3{1.6f, 2.0f, 4.0f});
+    CHECK(out.blocks.empty());
+}
+
+TEST_CASE("world: a plain push after a followed push is no snap") {
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});
+    w.Receive(MoveOf(0x50, 2000 * kMs, 2.0f));
+    Walk(w, 2100 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});
+    w.Receive(PlaceOf(0x50, 3.0f));
+    Walk(w, 2300 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {3.0f, 2.0f, 3.0f})});
+    Walk(w, 2900 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {3.0f, 2.0f, 3.0f})});
+    Walk(w, 5000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {3.0f, 2.0f, 3.0f})}, proto::Vec3{3.0f, 2.0f, 4.0f});
+    // Back toward the old place, but a step at a time: a real push.
+    auto out = Walk(w, 5100 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {2.9f, 2.0f, 3.0f})}, proto::Vec3{2.9f, 2.0f, 4.0f});
+    CHECK(out.blocks.empty());
+    CHECK(Sent<proto::WorldMove>(out).size() == 1);
+}
+
 TEST_CASE("world: a block first seen after it was moved is fixed from where it was made (issue 147)") {
     WorldSync w;
     Walk(w, 1000 * kMs, {});

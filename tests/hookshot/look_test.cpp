@@ -5,6 +5,10 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cstdlib>
+#include <iterator>
+#include <fstream>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <set>
@@ -514,4 +518,61 @@ TEST_CASE("look parts: a puppet copy's texture names, and its file painted again
     CHECK(std::equal(file->end() - 32, file->end(), bntx.end() - 32));
     std::vector<std::uint8_t> small(kOffset + 8);
     CHECK_FALSE(CoopLookParts::Repainted(CoopLookParts::RawZstd(small), painted));   // does not fit
+}
+
+TEST_CASE("look parts: a puppet copy's files are painted in a folder, a broken one is said") {
+    namespace fs = std::filesystem;
+    const fs::path tex = fs::temp_directory_path() / ("coop_look_copy_test_" + std::to_string(std::rand()));
+    fs::create_directories(tex);
+    const auto put = [&](const std::string& name, const std::vector<std::uint8_t>& bytes) {
+        std::ofstream o(tex / (name + ".bntx.zs"), std::ios::binary);
+        o.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    };
+    const auto get = [&](const std::string& name) {
+        std::ifstream in(tex / (name + ".bntx.zs"), std::ios::binary);
+        return std::vector<std::uint8_t>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    };
+    const auto shield = Shield();
+    std::vector<std::uint8_t> bntx(kOffset + shield.size() + 32, 0x11);
+    std::copy(shield.begin(), shield.end(), bntx.begin() + kOffset);
+    put("C3_Weapon_Shield_Hylian_Alb", CoopLookParts::RawZstd(bntx));
+    put("C4_Weapon_Shield_Hylian_Alb", CoopLookParts::RawZstd(bntx));
+    // The gear file names a sword too, which this pack has no copy of.
+    const auto gear = Colour({{kHylian, shield}, {"Mt_Weapon_Sword_Master_Alb", shield}});
+    Look red;
+    red[Part::hylian_face] = 0xFF0000u;
+    using S = CoopLookParts::CopyResult::Status;
+
+    auto r = CoopLookParts::PaintCopyFiles(tex, *gear, 3, red);
+    CHECK(r.status == S::written);
+    CHECK(r.files == 1);   // the sword has no file: passed over
+    const auto want = CoopLookParts::Repainted(CoopLookParts::RawZstd(bntx), CoopLookParts::Painted(*gear, red)[0]);
+    REQUIRE(want);
+    CHECK(get("C3_Weapon_Shield_Hylian_Alb") == *want);
+    CHECK(get("C4_Weapon_Shield_Hylian_Alb") == CoopLookParts::RawZstd(bntx));   // the other copy is not touched
+    const auto time = fs::last_write_time(tex / "C3_Weapon_Shield_Hylian_Alb.bntx.zs");
+    r = CoopLookParts::PaintCopyFiles(tex, *gear, 3, red);   // already in these colours: left as it is
+    CHECK(r.status == S::written);
+    CHECK(r.files == 1);
+    CHECK(fs::last_write_time(tex / "C3_Weapon_Shield_Hylian_Alb.bntx.zs") == time);
+    r = CoopLookParts::PaintCopyFiles(tex, *gear, 3, Look{});   // back to the game's own colours
+    CHECK(get("C3_Weapon_Shield_Hylian_Alb") == CoopLookParts::RawZstd(bntx));
+    CHECK(CoopLookParts::PaintCopyFiles(tex, *gear, 5, red).files == 0);   // a copy with no files: nothing to do
+    for (const auto& e : fs::directory_iterator(tex)) {
+        CHECK(e.path().extension() != ".part");   // nothing left over
+    }
+    put("C4_Weapon_Shield_Hylian_Alb", {1, 2, 3});   // not a raw frame
+    r = CoopLookParts::PaintCopyFiles(tex, *gear, 4, red);
+    CHECK(r.status == S::broken);
+    CHECK(r.why.find("C4_Weapon_Shield_Hylian_Alb") != std::string::npos);
+    std::error_code ec;
+    fs::remove_all(tex, ec);
+}
+
+TEST_CASE("look parts: a copy's texture name never names another folder") {
+    CHECK(CoopLookParts::SlotName("Mt_../../x", 1).empty());
+    CHECK(CoopLookParts::SlotName("Mt_a/b", 1).empty());
+    CHECK(CoopLookParts::SlotName("Mt_a\\b", 1).empty());
+    CHECK(CoopLookParts::SlotName("Mt_C:x", 1).empty());
+    CHECK(CoopLookParts::SlotName("Mt_Weapon_Sword_Biggoron_Alb.01", 2) == "C2_Weapon_Sword_Biggoron_Alb.01");
 }

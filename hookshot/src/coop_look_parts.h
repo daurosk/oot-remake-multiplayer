@@ -17,6 +17,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -57,7 +58,8 @@ CoopLookTunic::Texels Painted(const CoopLookTunic::Texels& gear, const CoopLook:
 // system (Hookshot opens a mod file each time it is read).
 //
 // A gear texture's name in copy `copy` (1 to 9); "" for a name that is not
-// a gear texture's ("Mt_..." is).
+// a gear texture's ("Mt_..." is), or that could name another folder (a
+// separator or "..": the name becomes a file name).
 std::string SlotName(const std::string& name, std::size_t copy);
 // A zstd frame of raw blocks holding `data` (look_items.py raw_zstd), and its
 // data again (nothing for any other frame).
@@ -68,5 +70,23 @@ std::optional<std::vector<std::uint8_t>> UnrawZstd(const std::vector<std::uint8_
 // not fit at their offset.
 std::optional<std::vector<std::uint8_t>> Repainted(const std::vector<std::uint8_t>& frame,
                                                    const CoopLookTunic::Texture& texture);
+
+// Paints copy `copy` of the items in `look`: for each gear texture the copy
+// has a file of in `tex` (the pack's romfs/Tex), the game's own texels
+// (`gear`, from coop_look/gear.bin) painted in the look are written into that
+// file (a ".part" file renamed over it; a file already in these colours is
+// left as it is). Only the textures the copy has are painted.
+struct CopyResult {
+    enum class Status {
+        written,   // every file the copy has is in the look
+        retry,     // a file could not be written now (held open, a full disk): try again later
+        broken,    // a file is not a copy this code can paint (make the pack again)
+    };
+    Status status = Status::written;
+    std::size_t files = 0;   // in the look now
+    std::string why;         // for retry and broken
+};
+CopyResult PaintCopyFiles(const std::filesystem::path& tex, const CoopLookTunic::Texels& gear, std::size_t copy,
+                          const CoopLook::Look& look);
 
 }  // namespace CoopLookParts

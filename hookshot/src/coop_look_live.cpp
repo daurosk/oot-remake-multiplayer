@@ -89,79 +89,54 @@ std::optional<std::vector<std::uint8_t>> GearFile(const std::string& name) {
 
 // The puppets' gear (coop_look_share.h, docs/puppet.md "Gear colours on the
 // puppets"): one copy of the items painted in a player's look. The one place
-// the puppets' colours are made; it writes the copy's texture files in the
-// pack's romfs/Tex/, which the game reads through its own file system when it
-// makes that copy's pieces (no memory is written). Returns how many files
-// were written; nothing when the pack cannot do it.
-std::optional<std::size_t> PaintPuppetCopy(std::size_t copy, const CoopLook::Look& look) {
+// the puppets' colours are made (patch 0020's texture override replaces its
+// body later); it writes the copy's texture files in the pack's romfs/Tex/
+// (CoopLookParts::PaintCopyFiles), which the game reads through its own file
+// system when it makes that copy's pieces (no memory is written).
+CoopLookParts::CopyResult PaintPuppetCopy(std::size_t copy, const CoopLook::Look& look) {
     static std::optional<CoopLookTunic::Texels> gear;   // the worker's: the game's own gear texels, read once
     if (!gear) {
         const auto base = ReadFile(LookDir() / (std::string(CoopLookParts::kBase) + ".bin"));
         if (!base || !(gear = CoopLookTunic::Parse(*base))) {
-            return std::nullopt;
+            return {CoopLookParts::CopyResult::Status::broken, 0, "the pack's coop_look/gear.bin cannot be read"};
         }
     }
-    const fs::path tex = LookDir().parent_path() / "romfs" / "Tex";
-    std::size_t written = 0;
-    for (const CoopLookTunic::Texture& t : CoopLookParts::Painted(*gear, look)) {
-        const std::string name = CoopLookParts::SlotName(t.name, copy);
-        if (name.empty()) {
-            continue;
-        }
-        const fs::path file = tex / (name + ".bntx.zs");
-        const auto frame = ReadFile(file);
-        if (!frame) {
-            continue;   // no copy of this texture in the pack (an item the romfs lacked)
-        }
-        const auto out = CoopLookParts::Repainted(*frame, t);
-        if (!out) {
-            LOG_WARNING(Core, "coop: look: {} is not a copy the module can paint (make the puppet pack again)", file.string());
-            return std::nullopt;
-        }
-        if (*out == *frame) {
-            ++written;   // already in these colours
-            continue;
-        }
-        const fs::path part = file.string() + ".part";
-        {
-            std::ofstream f(part, std::ios::binary | std::ios::trunc);
-            f.write(reinterpret_cast<const char*>(out->data()), static_cast<std::streamsize>(out->size()));
-            if (!f) {
-                return std::nullopt;
-            }
-        }
-        std::error_code ec;
-        fs::rename(part, file, ec);
-        if (ec) {
-            LOG_WARNING(Core, "coop: look: could not write {}: {}", file.string(), ec.message());
-            return std::nullopt;
-        }
-        ++written;
-    }
-    return written;
+    return CoopLookParts::PaintCopyFiles(LookDir().parent_path() / "romfs" / "Tex", *gear, copy, look);
 }
 
 // Paints every copy a player's puppet is waiting for (CoopLookShare::Jobs).
-void PaintPuppets() {
-    static std::vector<CoopLookShare::Share::Job> failed;   // the worker's: said once, not tried again
-    for (const CoopLookShare::Share::Job& job : CoopLookShare::Jobs()) {
-        if (std::find(failed.begin(), failed.end(), job) != failed.end()) {
+// Painting takes this worker's time (about 0.1 s a texture), so many new
+// looks at once delay your own Link's next repaint by as much.
+void PaintPuppets(std::uint64_t now_ms) {
+    static std::vector<CoopLookShare::Share::Job> broken;   // the worker's: said once, not tried again
+    static std::vector<CoopLookShare::Share::Job> said;     // the worker's: a retry said once
+    for (const CoopLookShare::Share::Job& job : CoopLookShare::Jobs(now_ms)) {
+        if (std::find(broken.begin(), broken.end(), job) != broken.end()) {
             continue;   // that puppet keeps the game's items (or its last copy)
         }
         std::vector<std::pair<std::uint8_t, std::uint32_t>> wire;
         for (const auto& p : job.parts) {
             wire.emplace_back(p.part, p.colour);
         }
-        const auto files = PaintPuppetCopy(job.copy, CoopLook::FromWire(wire));
-        if (!files) {
-            failed.push_back(job);
-            LOG_WARNING(Core, "coop: look: P{}'s gear colours not painted (copy {}): their puppet keeps the game's items",
-                        job.player, job.copy);
+        const auto r = PaintPuppetCopy(job.copy, CoopLook::FromWire(wire));
+        using S = CoopLookParts::CopyResult::Status;
+        if (r.status == S::broken) {
+            broken.push_back(job);
+            LOG_WARNING(Core, "coop: look: P{}'s gear colours not painted (copy {}: {}; make the puppet pack again): "
+                        "their puppet keeps the game's items", job.player, job.copy, r.why);
             continue;
         }
-        CoopLookShare::Done(job);
+        if (r.status == S::retry) {
+            if (std::find(said.begin(), said.end(), job) == said.end()) {
+                said.push_back(job);
+                LOG_INFO(Core, "coop: look: P{}'s gear colours wait (copy {}: {}): tried again each second",
+                         job.player, job.copy, r.why);
+            }
+            continue;
+        }
+        CoopLookShare::Done(job, now_ms);
         LOG_INFO(Core, "coop: look: P{}'s gear colours painted for their puppet (copy {}, {} texture file(s))",
-                 job.player, job.copy, *files);
+                 job.player, job.copy, r.files);
     }
 }
 
@@ -210,7 +185,7 @@ void Work() {
         g_kick = false;
         lock.unlock();
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
-        PaintPuppets();   // before their puppets wear the copies
+        PaintPuppets(static_cast<std::uint64_t>(ms.count()));   // before their puppets wear the copies
         g_wardrobe->Step(static_cast<std::uint64_t>(ms.count()));
         g_gear->Step(static_cast<std::uint64_t>(ms.count()));
         lock.lock();

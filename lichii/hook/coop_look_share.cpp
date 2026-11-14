@@ -32,7 +32,9 @@ bool Share::OnEvent(const coop::net::Event& event) {
         const bool had = !theirs_.empty();
         theirs_.clear();
         slots_.fill(0);
-        ready_.fill({});
+        for (std::size_t i = 0; i < kSlots; ++i) {
+            Forget(i);
+        }
         due_ = ours_.has_value();
         return had;
     }
@@ -90,7 +92,7 @@ std::optional<std::size_t> Share::SlotOf(std::uint8_t number) const {
     return std::nullopt;
 }
 
-std::vector<Share::Job> Share::Jobs() const {
+std::vector<Share::Job> Share::Jobs(std::uint64_t now_ms) const {
     std::vector<Job> out;
     for (std::size_t i = 0; i < kSlots; ++i) {
         const std::uint8_t player = slots_[i];
@@ -102,17 +104,33 @@ std::vector<Share::Job> Share::Jobs() const {
         if (r.copy != 0 && r.player == player && r.parts == *parts) {
             continue;   // painted already
         }
+        if (r.copy != 0 && now_ms < r.at_ms + kCopyDwellMs) {
+            continue;   // the puppet may still wear the other copy: later
+        }
         const std::size_t first = kCopiesPerSlot * i + 1;
         out.push_back({i + 1, r.copy == first ? first + 1 : first, player, *parts});
     }
     return out;
 }
 
-void Share::Done(const Job& job) {
-    if (job.slot < 1 || job.slot > kSlots || slots_[job.slot - 1] != job.player) {
-        return;   // the slot changed hands meanwhile: its next job paints it
+void Share::Done(const Job& job, std::uint64_t now_ms) {
+    if (job.slot < 1 || job.slot > kSlots) {
+        return;
     }
-    ready_[job.slot - 1] = {job.copy, job.player, job.parts};
+    Ready& r = ready_[job.slot - 1];
+    if (slots_[job.slot - 1] != job.player) {
+        // The slot changed hands meanwhile: its next job paints it, but not
+        // this copy (a puppet may have been given it already).
+        r.copy = job.copy;
+        r.at_ms = now_ms;
+        return;
+    }
+    r = {job.copy, job.player, job.parts, now_ms};
+}
+
+void Share::Forget(std::size_t i) {
+    ready_[i].player = 0;   // nobody wears it now; the copy is kept, so the next job paints the other one
+    ready_[i].parts.clear();
 }
 
 std::optional<std::size_t> Share::CopyOf(std::uint8_t number) const {
@@ -156,7 +174,7 @@ void Share::Free(std::uint8_t number) {
     for (std::size_t i = 0; i < kSlots; ++i) {
         if (slots_[i] == number) {
             slots_[i] = 0;
-            ready_[i] = {};
+            Forget(i);
         }
     }
 }
@@ -220,14 +238,14 @@ std::optional<std::size_t> SlotOf(std::uint8_t number) {
     return g_share.SlotOf(number);
 }
 
-std::vector<Share::Job> Jobs() {
+std::vector<Share::Job> Jobs(std::uint64_t now_ms) {
     std::lock_guard lock(g_mutex);
-    return g_share.Jobs();
+    return g_share.Jobs(now_ms);
 }
 
-void Done(const Share::Job& job) {
+void Done(const Share::Job& job, std::uint64_t now_ms) {
     std::lock_guard lock(g_mutex);
-    g_share.Done(job);
+    g_share.Done(job, now_ms);
 }
 
 std::optional<std::size_t> CopyOf(std::uint8_t number) {

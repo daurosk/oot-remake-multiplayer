@@ -69,12 +69,36 @@ struct Picture {
     int floor = 0, lowest = 0, floors = 0;
 };
 
+// Whether the Map page shows our own place's map (the one it opens on, Y's
+// "Current Location"): Y (the pad's, or the mouse's tap on its prompt) turns
+// it to the World Map and back, so an odd count of Y presses since the page
+// came up is the World Map or an area picked on it: not ours, no icons. Fed
+// once a present with the page's state and whether Y is held.
+struct PageWatch {
+    bool shown = false, y_was = false, ours = true;
+    bool Update(bool map_page, bool y_down) {
+        if (!map_page) {
+            shown = false, y_was = false, ours = true;
+            return false;
+        }
+        if (!shown) {
+            shown = true, ours = true, y_was = y_down;   // (a Y held as the page came up is not a press on it)
+        } else if (y_down && !y_was) {
+            ours = !ours;
+        }
+        y_was = y_down;
+        return ours;
+    }
+};
+inline constexpr std::uint64_t kPadY = 1ull << 3;  // Switch NpadButton Y
+
 // On the game's thread with a context that may call (hos_coop_frame's): finds
 // the map panes in the screens' layouts once (and again for a new screen),
 // logging what it found.
 void Frame(void* ctx, const HosCoopApi* api);
-// While the Map page is shown and its pane was found: the picture. `dungeon`
-// picks the pane (our place's map is a dungeon's). Any thread.
+// While the Map page is shown with our place's map (PageWatch) and its pane,
+// found in a screen that still runs, is shown: the picture. `dungeon` picks
+// the pane (our place's map is a dungeon's). The present's thread (PageWatch).
 std::optional<Picture> Shown(bool dungeon);
 
 }  // namespace CoopMapPage

@@ -676,3 +676,19 @@ TEST_CASE("hookshot draw: a player on another floor is paler, the floors after t
     for (const auto& t : c.Of("text")) named = named || t.text == "Ruto (1 below)";
     CHECK(named);
 }
+
+TEST_CASE("hookshot map page: our place's map until Y turns it to the World Map, and back") {
+    CoopMapPage::PageWatch w;
+    CHECK_FALSE(w.Update(false, false));  // no page
+    CHECK(w.Update(true, false));         // opens on our place
+    CHECK(w.Update(true, false));
+    CHECK_FALSE(w.Update(true, true));    // Y: the World Map
+    CHECK_FALSE(w.Update(true, true));    // (held: one press)
+    CHECK_FALSE(w.Update(true, false));
+    CHECK(w.Update(true, true));          // Y again: Current Location
+    CHECK(w.Update(true, false));
+    CHECK_FALSE(w.Update(true, true));    // World Map again, then the page closes
+    CHECK_FALSE(w.Update(false, false));
+    CHECK(w.Update(true, true));          // a new page opens on our place, even with Y still held
+    CHECK(w.Update(true, false));
+}

@@ -47,8 +47,26 @@ MenuStateFn FindMenuState() {
 #endif
 }
 
-// The panes found (0: not found), and the screen each was looked for in.
-std::atomic<std::uint64_t> g_field{0}, g_dungeon{0}, g_searched_hud{0}, g_searched_panel{0};
+// The panes found (0: not found), each with the screen whose layout it is in; and the screens looked in.
+struct Found {
+    std::atomic<std::uint64_t> pane{0}, from{0};
+};
+Found g_field, g_dungeon;
+std::atomic<std::uint64_t> g_searched_hud{0}, g_searched_panel{0};
+
+// A pane is used only while the screen it came from is one of the screens that run now (a new screen: its
+// old panes may be freed).
+std::uint64_t PaneNow(const Found& f, const Menu& menu) {
+    const std::uint64_t from = f.from.load();
+    return from != 0 && (from == menu.hud_screen || from == menu.panel_screen) ? f.pane.load() : 0;
+}
+
+void Forget(Found& f, std::uint64_t screen) {
+    if (screen != 0 && f.from.load() == screen) {
+        f.pane = 0;
+        f.from = 0;
+    }
+}
 
 std::uint64_t Read64(std::uint64_t a) {
     std::uint64_t v = 0;
@@ -82,8 +100,8 @@ void Search(void* ctx, const HosCoopApi* api, std::uint64_t screen, const char* 
     }
     const std::uint64_t field = FindPane(ctx, api, layout, kFieldPane);
     const std::uint64_t dungeon = FindPane(ctx, api, layout, kDungeonPane);
-    if (field != 0) g_field = field;
-    if (dungeon != 0) g_dungeon = dungeon;
+    if (field != 0) g_field.pane = field, g_field.from = screen;
+    if (dungeon != 0) g_dungeon.pane = dungeon, g_dungeon.from = screen;
     float m[12] = {};
     const bool read = field != 0 && CoopRuntime::Read(field + kPaneMatrix, m, sizeof m);
     LOG_INFO(Core, "coop: map: the {} screen {:#x} (layout {:#x}): {} {:#x}, {} {:#x}{}", which, screen, layout,
@@ -116,21 +134,27 @@ void Frame(void* ctx, const HosCoopApi* api) {
         return;
     }
     if (menu->hud_screen != 0 && menu->hud_screen != g_searched_hud.load()) {
-        g_searched_hud = menu->hud_screen;
+        const std::uint64_t old = g_searched_hud.exchange(menu->hud_screen);
+        Forget(g_field, old), Forget(g_dungeon, old);
         Search(ctx, api, menu->hud_screen, "HUD");
     }
     if (menu->panel_screen != 0 && menu->panel_screen != g_searched_panel.load()) {
-        g_searched_panel = menu->panel_screen;
+        const std::uint64_t old = g_searched_panel.exchange(menu->panel_screen);
+        Forget(g_field, old), Forget(g_dungeon, old);
         Search(ctx, api, menu->panel_screen, "panel's");
     }
 }
 
 std::optional<Picture> Shown(bool dungeon) {
     const auto menu = MenuState();
-    if (!menu || !menu->map_page) {
+    static PageWatch watch;
+    std::uint64_t pad = 0;
+    const bool y = CoopRuntime::PadButtons(pad) && (pad & kPadY) != 0;
+    const bool ours = watch.Update(menu && menu->map_page, y);
+    if (!menu || !menu->map_page || !ours) {
         return std::nullopt;
     }
-    const std::uint64_t pane = dungeon ? g_dungeon.load() : g_field.load();
+    const std::uint64_t pane = PaneNow(dungeon ? g_dungeon : g_field, *menu);
     float m[12] = {};
     if (pane == 0 || !CoopRuntime::Read(pane + kPaneMatrix, m, sizeof m)) {
         return std::nullopt;

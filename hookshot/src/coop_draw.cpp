@@ -593,36 +593,111 @@ std::vector<ChatShown> ShownChat(const std::vector<CoopHook::ChatLine>& lines, b
     return out;
 }
 
+namespace {
+
+std::uint32_t Be(const std::vector<std::uint8_t>& b, std::size_t at, int n) {
+    std::uint32_t v = 0;
+    for (int i = 0; i < n; ++i) {
+        v = v << 8 | b[at + static_cast<std::size_t>(i)];
+    }
+    return v;
+}
+
+}  // namespace
+
+FontMetrics MetricsOf(const std::vector<std::uint8_t>& font) {
+    FontMetrics m;
+    if (font.size() < 12) {
+        return m;
+    }
+    // The table directory: 12 bytes, then 16 a table (tag, checksum, offset, length).
+    const std::size_t tables = Be(font, 4, 2);
+    std::size_t hhea = 0, head = 0, os2 = 0, os2_len = 0;
+    for (std::size_t i = 0; i < tables && 12 + 16 * (i + 1) <= font.size(); ++i) {
+        const std::size_t at = 12 + 16 * i;
+        const std::uint32_t tag = Be(font, at, 4), off = Be(font, at + 8, 4), len = Be(font, at + 12, 4);
+        if (off > font.size() || len > font.size() - off) {
+            continue;
+        }
+        if (tag == 0x68686561u && len >= 8) {   // 'hhea'
+            hhea = off;
+        } else if (tag == 0x68656164u && len >= 20) {   // 'head'
+            head = off;
+        } else if (tag == 0x4F532F32u) {   // 'OS/2'
+            os2 = off, os2_len = len;
+        }
+    }
+    if (hhea == 0) {
+        return m;
+    }
+    const int ascender = static_cast<std::int16_t>(Be(font, hhea + 4, 2));
+    const int descender = static_cast<std::int16_t>(Be(font, hhea + 6, 2));
+    const float span = static_cast<float>(ascender - descender);
+    if (ascender <= 0 || span <= 0) {
+        return m;
+    }
+    m.ascent = static_cast<float>(ascender) / span;
+    int cap = 0;
+    if (os2 != 0 && os2_len >= 90 && Be(font, os2, 2) >= 2) {   // sCapHeight: OS/2 version 2 and later
+        cap = static_cast<std::int16_t>(Be(font, os2 + 88, 2));
+    }
+    if (cap <= 0 && head != 0) {   // none: Longshot's 0.7 em
+        cap = static_cast<int>(0.7f * static_cast<float>(Be(font, head + 18, 2)));
+    }
+    if (cap > 0 && cap < ascender * 2) {
+        m.cap = static_cast<float>(cap) / span;
+    } else {
+        m.cap = 0.7f * m.ascent;   // (nothing usable: about Longshot's share of the line)
+    }
+    return m;
+}
+
+float MidTop(const FontMetrics& m, float px, float y) {
+    return y - m.ascent * px + 0.5f * m.cap * px;
+}
+
+// The title line's place: the control guide's, bottom left of the game's
+// picture (any window shape: the picture is the 16:9 part, as Picture), in
+// its 720-line units. The words' capitals are centred on the button as
+// Longshot centres a prompt's label on its button (vk_ui.h glyph/mid_top);
+// before, the words' top was a fixed 0.62 px above the centre, right only
+// for a font whose ascent is 0.97 of its line, so with the game's font the
+// words sat off the button's middle.
+TitleBox TitleAt(float width, float height, const TitleView& t, const FontMetrics& m) {
+    const float s = std::min(width / 16.0f, height / 9.0f);
+    const float left = (width - 16.0f * s) / 2, pic_h = 9.0f * s, u = pic_h / kGameHeight;
+    TitleBox b;
+    b.px = std::max(14.0f, 24.0f * u);
+    b.r = b.px * 0.62f;
+    b.cx = left + 48.0f * u + b.r;
+    b.cy = pic_h + (height - pic_h) / 2 - 44.0f * u;
+    b.text_x = t.button ? b.cx + b.r + 10.0f * u : left + 48.0f * u;
+    b.text_top = MidTop(m, b.px, b.cy);
+    return b;
+}
+
 // A title screen line (TitleView): the words, bottom left, after the Minus
 // button when it has one, in the game's font with its soft shadow; the plain
 // look (no pack): the same with Hookshot's font.
 static void DrawTitle(const HosCoopDraw& d, const TitleView& t, const Look* look) {
-    const Pic p = Picture(d);
-    const float u = p.u;
-    auto text = [&](float x, float y, float px, std::uint32_t fill, const std::string& s) {
-        if (look) {
-            GameText(d, x, y, px, fill, s.c_str());
-        } else {
-            d.text(d.user, x, y, px, fill, s.c_str());
-        }
-    };
     if (t.prompt.empty()) {
         return;
     }
-    // The control guide's place, bottom left: the Minus button and the words.
+    const float u = Picture(d).u;
     const std::uint32_t white = Rgba(255, 255, 255, 255);
     Font(d, look ? look->regular : 0);
-    const float px = std::max(14.0f, 24.0f * u);
-    const float r = px * 0.62f;
-    const float cx = p.left + 48.0f * u + r, cy = p.height + (d.height - p.height) / 2 - 44.0f * u;
-    if (!t.button) {
-        text(p.left + 48.0f * u, cy - px * 0.62f, px, white, t.prompt);
-        return;
+    const TitleBox b = TitleAt(d.width, d.height, t, look ? look->regular_metrics : FontMetrics{});
+    if (t.button) {
+        const float bar = std::max(1.0f, 1.5f * u);
+        d.circle(d.user, b.cx, b.cy, b.r, Rgba(0, 0, 0, 130), 0.0f);
+        d.circle(d.user, b.cx, b.cy, b.r, Rgba(255, 255, 255, 230), std::max(1.5f, 2.0f * u));
+        d.rect(d.user, b.cx - b.r * 0.5f, b.cy - bar, b.cx + b.r * 0.5f, b.cy + bar, white, 0.0f);
     }
-    d.circle(d.user, cx, cy, r, Rgba(0, 0, 0, 130), 0.0f);
-    d.circle(d.user, cx, cy, r, Rgba(255, 255, 255, 230), std::max(1.5f, 2.0f * u));
-    d.rect(d.user, cx - r * 0.5f, cy - std::max(1.0f, 1.5f * u), cx + r * 0.5f, cy + std::max(1.0f, 1.5f * u), white, 0.0f);
-    text(cx + r + 10.0f * u, cy - px * 0.62f, px, white, t.prompt);
+    if (look) {
+        GameText(d, b.text_x, b.text_top, b.px, white, t.prompt.c_str());
+    } else {
+        d.text(d.user, b.text_x, b.text_top, b.px, white, t.prompt.c_str());
+    }
 }
 
 bool Wanted(const Scene& s) {

@@ -19,7 +19,7 @@
 # What it does: reads the kit's version from VERSION.txt, asks GitHub for the releases of
 # daurosk/oot-remake-multiplayer (test builds count, drafts never) and takes the newest. If that
 # is newer, it downloads the release's zip, checks it against the SHA-256 published beside it
-# (oot-coop-<version>.zip.sha256), unpacks it to a temp folder and copies the kit's own files
+# (oot-coop-<version>-windows.zip.sha256, or oot-coop-<version>.zip.sha256 before v0.11.0), unpacks it to a temp folder and copies the kit's own files
 # over this kit. Every file it replaces is first copied to backup-<old version>\; if anything
 # fails, those are put back and the new files removed. VERSION.txt is written last, and
 # update-in-progress.txt marks an update that has started: an update that was stopped half way
@@ -186,16 +186,28 @@ function Read-KitReleaseList([string]$Source) {
     return Invoke-RestMethod -Uri $Source -UserAgent $UserAgent -TimeoutSec $timeout -Headers @{ Accept = 'application/vnd.github+json' }
 }
 
-# The newest release that has a kit zip and its .sha256 beside it; drafts never.
+# The Windows kit zip of a release and its .sha256: oot-coop-<tag>-windows.zip from v0.11.0 on, else
+# oot-coop-<tag>.zip (every release before, and the same file again in later ones, for the kits up to v0.10.1,
+# whose updater knows only that name). @(zip asset, sha256 asset) or $null.
+function Get-KitReleaseZip($Release, [string]$Tag) {
+    foreach ($n in "oot-coop-$Tag-windows.zip", "oot-coop-$Tag.zip") {
+        $zip = @($Release.assets) | Where-Object { $_.name -eq $n } | Select-Object -First 1
+        $sum = @($Release.assets) | Where-Object { $_.name -eq "$n.sha256" } | Select-Object -First 1
+        if ($zip -and $sum) { return @($zip, $sum) }
+    }
+    return $null
+}
+
+# The newest release that has a Windows kit zip and its .sha256 beside it; drafts never.
 function Select-KitRelease($Releases) {
     $best = $null
     foreach ($r in @($Releases)) {
         if ($r.draft) { continue }
         $tag = [string]$r.tag_name
         if (-not (ConvertTo-KitVersion $tag)) { continue }
-        $zip = @($r.assets) | Where-Object { $_.name -eq "oot-coop-$tag.zip" } | Select-Object -First 1
-        $sum = @($r.assets) | Where-Object { $_.name -eq "oot-coop-$tag.zip.sha256" } | Select-Object -First 1
-        if (-not $zip -or -not $sum) { continue }
+        $pair = Get-KitReleaseZip $r $tag
+        if (-not $pair) { continue }
+        $zip = $pair[0]; $sum = $pair[1]
         if (-not $best -or (Compare-KitVersion $tag $best.Tag) -gt 0) {
             $best = @{ Tag = $tag; Zip = [string]$zip.browser_download_url; Sum = [string]$sum.browser_download_url;
                        Size = [long]$zip.size; Page = [string]$r.html_url }

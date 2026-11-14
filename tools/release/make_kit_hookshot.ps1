@@ -203,12 +203,19 @@ $own = @(Get-ChildItem $kit -Recurse -File | ForEach-Object { $_.FullName.Substr
 $size = (Get-ChildItem $kit -Recurse -File | Measure-Object Length -Sum).Sum
 Write-Host ('Folder: {0:N1} MB, {1} files' -f ($size / 1MB), ($own.Count + 1))
 if (-not $NoZip) {
-    $zip = "$kit.zip"
+    # Two names, the same bytes: oot-coop-<tag>-windows.zip is the one players download (beside the Linux kit's
+    # oot-coop-<tag>-linux.zip); oot-coop-<tag>.zip is the name every updater up to v0.10.1 looks for (its
+    # Select-KitRelease takes nothing else), so those kits still find and install this release. Both go up.
+    $zip = Join-Path $OutRoot "$name-windows.zip"
+    $old = "$kit.zip"
     & "$env:SystemRoot\System32\tar.exe" -a -c -f $zip -C $OutRoot $name
     if ($LASTEXITCODE -ne 0) { throw "Zipping failed (tar $LASTEXITCODE)." }
+    Copy-Item -LiteralPath $zip -Destination $old -Force
     $hash = Get-Sha $zip
-    [System.IO.File]::WriteAllText("$zip.sha256", "$hash  $name.zip`n", [System.Text.Encoding]::ASCII)
+    if ((Get-Sha $old) -ne $hash) { throw "The copy $old does not match $zip." }
+    [System.IO.File]::WriteAllText("$zip.sha256", "$hash  $name-windows.zip`n", [System.Text.Encoding]::ASCII)
+    [System.IO.File]::WriteAllText("$old.sha256", "$hash  $name.zip`n", [System.Text.Encoding]::ASCII)
     Copy-Item -LiteralPath (Join-Path $kit 'Update.bat') -Destination (Join-Path $OutRoot 'Update.bat') -Force
     Write-Host ('Zip: {0} ({1:N1} MB), SHA-256 {2}' -f $zip, ((Get-Item $zip).Length / 1MB), $hash)
-    Write-Host "Release assets: $name.zip, $name.zip.sha256 and Update.bat, all in $OutRoot"
+    Write-Host "Release assets: $name-windows.zip and $name.zip (the same file, the name kits up to v0.10.1 update from), each with its .sha256, and Update.bat, all in $OutRoot"
 }

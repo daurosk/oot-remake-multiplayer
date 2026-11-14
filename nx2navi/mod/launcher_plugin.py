@@ -630,6 +630,7 @@ class Multiplayer:
         self.settings = self._load()
         self.server = None           # the Popen of the server this launcher started
         self.pack_thread = None      # the puppet pack being made since the launcher started
+        self.packing = False         # that pack is being made now (the Multiplayer row says so)
         self.addresses = local_addresses  # replaced in tests
         self.clipboard = copy_to_clipboard
 
@@ -705,15 +706,21 @@ class Multiplayer:
             why = make_puppet_pack(self.mod_dir, game_dir, self.api.log)
             self.api.log(f'co-op: the puppet pack was not made: {why}' if why
                          else 'co-op: puppet pack made in ' + str(self.mod_dir / 'romfs'))
+            self.packing = False
+            try:
+                self.api.refresh()   # the row's text goes; the launcher draws a row only when asked
+            except Exception:
+                pass
 
+        self.packing = True
         self.pack_thread = threading.Thread(target=work, name='coop-puppet-pack', daemon=True)
         self.pack_thread.start()
 
     def home_value(self):
         if self.api.game_running():
             return self.connection()
-        if self.pack_thread is not None and self.pack_thread.is_alive():
-            return 'preparing the player models...'   # the puppet pack, once after an install
+        if self.packing:
+            return 'preparing models...'   # the puppet pack, once after an install or update
         return 'server running' if self.server_running() else ''
 
     def connection(self):

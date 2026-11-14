@@ -36,6 +36,7 @@ function mkdirs(p) {
 
 // The .NET calls the handler uses, on the real file system.
 var startedServers = [];
+var attrMode = "number";   // how the DirectoryInfo stand-in reports FileAttributes (below)
 var System = {
     IO: {
         Path: {
@@ -52,8 +53,14 @@ var System = {
             CreateDirectory: function (p) { mkdirs(p); },
             Move: function (a, b) { fso.MoveFolder(a, b); }
         },
+        // FileAttributes as Jint may hand it over: a number (Directory 16, ReparsePoint 1024), or an object with
+        // ToString (and valueOf: the number) or the enum's text, as attrMode says.
         DirectoryInfo: function (p) {
-            this.Attributes = (fso.GetFolder(p).Attributes & 1024) ? "Directory, ReparsePoint" : "Directory";
+            var link = (fso.GetFolder(p).Attributes & 1024) !== 0, n = link ? 1040 : 16;
+            var text = link ? "Directory, ReparsePoint" : "Directory";
+            if (attrMode === "number") this.Attributes = n;
+            else if (attrMode === "text") this.Attributes = text;
+            else this.Attributes = { ToString: function () { return text; } };
         }
     },
     Environment: { GetEnvironmentVariable: function (n) { return shell.ExpandEnvironmentStrings("%" + n + "%"); } },
@@ -171,6 +178,20 @@ Game.Play();
 check(readFile(fso.BuildPath(instances[0], "coop.ini")).indexOf("password = 0123456789abcdef0123456789abcd") >= 0 &&
       readFile(fso.BuildPath(instances[0], "coop.ini")).indexOf(pw) < 0, "a new password for a new session");
 check(fso.FileExists(fso.BuildPath(instances[0], "user\\save\\host.sav")), "player 1's link kept");
+var renamed = false;
+for (var e0 = new Enumerator(fso.GetFolder(instances[0]).SubFolders); !e0.atEnd(); e0.moveNext()) {
+    renamed = renamed || /^user\.nucleus-/.test(e0.item().Name);
+}
+check(!renamed, "a rerun keeps the working link (none renamed aside)");
+
+// coopIsLink with each form the attributes can come in: a number (the default above), the enum's text, a wrapper.
+var junction = fso.BuildPath(instances[0], "user"), plain = fso.BuildPath(game, "user");
+var modes = ["number", "text", "wrapper"];
+for (var m = 0; m < modes.length; m++) {
+    attrMode = modes[m];
+    check(coopIsLink(junction) === true && coopIsLink(plain) === false, "coopIsLink with attributes as " + attrMode);
+}
+attrMode = "number";
 
 // Clean up: the links first (rmdir removes a link, not what it names), then the rest.
 for (var r = 0; r < 3; r++) shell.Run("cmd /c rmdir \"" + fso.BuildPath(instances[r], "user") + "\"", 0, true);

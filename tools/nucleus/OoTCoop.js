@@ -45,9 +45,9 @@ Game.Hook.ForceFocus = false;
 // Windows: Nucleus places, sizes and unborders them.
 Game.SetWindowHook = false;
 Game.KeepAspectRatio = false;
-Game.ForceFinishOnPlay = true;        // closes running longshot.exe games first
-Game.PauseBetweenStarts = 15000;      // player 1 first: it hosts (the first player in hosts, docs/protocol.md)
-Game.PauseBetweenProcessGrab = 5;
+Game.PauseBetweenStarts = 15;         // seconds (Nucleus sleeps TimeSpan.FromSeconds): player 1 first, it hosts
+                                      // (the first player in hosts, docs/protocol.md)
+Game.PauseBetweenProcessGrab = 5;     // seconds
 Game.KillProcessesOnClose = ["coop_server"];   // the session's server (and any other coop_server.exe on this PC)
 
 // The session's settings (also in nucleus-players\session.txt, for a start that runs the script anew per player).
@@ -124,8 +124,17 @@ function coopSetKey(text, key, value) {
     return (t === "" ? "" : t + "\r\n") + key + "=" + value;
 }
 
+// FileAttributes.ReparsePoint (1024). Jint hands a CLR enum over as a number or as a wrapper; both are taken.
 function coopIsLink(p) {
-    return String(new System.IO.DirectoryInfo(p).Attributes).indexOf("ReparsePoint") >= 0;
+    var a = new System.IO.DirectoryInfo(p).Attributes;
+    if (typeof a === "number") {
+        return (a & 1024) !== 0;
+    }
+    var n = Number(a);
+    if (!isNaN(n)) {
+        return (n & 1024) !== 0;
+    }
+    return String(a.ToString ? a.ToString() : a).indexOf("ReparsePoint") >= 0;
 }
 
 // <link> made a junction to <target> (no admin needed). A real folder there is kept beside it, renamed.

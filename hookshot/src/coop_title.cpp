@@ -258,13 +258,29 @@ void SaveLook(const CoopLook::Look& look) {
              kit ? "coop-options.ini" : "coop.ini", ok ? "" : " (the file could not be written)");
 }
 
+// Whether `kit` (FindKit's) is this game's own: named (OOT_COOP_KIT, coop-kit.txt), or the game is its
+// hookshot\game (or the kit folder itself). A kit found further up is someone else's folder the game sits in.
+static bool OwnKit(const fs::path& kit) {
+    if (!Env("OOT_COOP_KIT").empty() || !ReadText(CoopRuntime::GameDir() / "coop-kit.txt").empty()) {
+        return true;
+    }
+    const fs::path game = CoopRuntime::GameDir();
+    std::error_code ec;
+    return fs::equivalent(kit, game, ec) || fs::equivalent(kit, game.parent_path().parent_path(), ec);
+}
+
 void ApplyKitOptions() {
-    // No kit above the game (a game folder copied out of its kit, Nucleus Co-op's instance folders: docs/play-lan.md,
-    // "Split-screen with Nucleus Co-op"): the coop-options.ini beside longshot.exe, so each copy can have its own.
-    const auto found = FindKit();
-    const std::optional<fs::path> kit = found ? *found : CoopRuntime::GameDir();
+    // No kit of its own (a game folder copied out of its kit, Nucleus Co-op's instance folders, also with Nucleus
+    // unzipped inside a kit: docs/play-lan.md, "Split-screen with Nucleus Co-op"): the coop-options.ini beside
+    // longshot.exe, so each copy can have its own.
+    auto found = FindKit();
     std::error_code exists_ec;
-    if (!found && !fs::exists(*kit / "coop-options.ini", exists_ec)) {
+    const bool beside = fs::exists(CoopRuntime::GameDir() / "coop-options.ini", exists_ec);
+    if (found && beside && !OwnKit(*found)) {
+        found.reset();
+    }
+    const std::optional<fs::path> kit = found ? *found : CoopRuntime::GameDir();
+    if (!found && !beside) {
         return;
     }
     int set = 0;

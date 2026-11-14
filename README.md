@@ -92,6 +92,7 @@ People who contributed code:
 
 - bmitch87 (Linux Longshot: GCC module build and clean-PC kit test, PR #221).
 - SrAjoloteuwu (bosses: Gohma's long intro is not her death, PR #210; no teleport to the other age's Link, PR #211; boss ready guard, PR #209).
+- cirnoice9 (Chinese text for the Multiplayer tab, PR #224).
 
 Every contributor whose pull request is merged is added here. GitHub's list: [contributors](https://github.com/daurosk/oot-remake-multiplayer/graphs/contributors).
 

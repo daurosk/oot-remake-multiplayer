@@ -9,6 +9,7 @@
 #include "coop_dbno_draw.h"
 #include "coop_hud_hearts.h"
 #include "coop_hud_layout.h"
+#include "coop_i18n.h"
 
 namespace CoopDraw {
 namespace {
@@ -225,7 +226,8 @@ float DrawBox(const HosCoopDraw& d, const std::optional<ChatBoxView>& box, const
         const float room = at.width - 2 * kPad;
         const float y = top + (height - px) / 2;
         if (box->text.empty()) {
-            GameText(d, at.left + kPad, y, px, Rgba(255, 255, 255, 160), Elided(d, px, kChatPlaceholder, room).c_str());
+            GameText(d, at.left + kPad, y, px, Rgba(255, 255, 255, 160),
+                     Elided(d, px, ChatPlaceholder(), room).c_str());
         } else {
             GameText(d, at.left + kPad, y, px, box->failed ? Rgba(255, 122, 106, 255) : Rgba(255, 255, 255, 255),
                      Tail(d, px, box->text + "_", room).c_str());
@@ -242,7 +244,7 @@ float DrawBox(const HosCoopDraw& d, const std::optional<ChatBoxView>& box, const
     const float room = width - 2 * kPad;
     if (box->text.empty()) {
         d.text(d.user, kMargin + kPad, top + 6, px, Rgba(255, 255, 255, 160),
-               Elided(d, px, kChatPlaceholder, room).c_str());
+               Elided(d, px, ChatPlaceholder(), room).c_str());
     } else {
         d.text(d.user, kMargin + kPad, top + 6, px, Rgba(255, 255, 255, 255), Tail(d, px, box->text + "_", room).c_str());
     }
@@ -418,16 +420,20 @@ void DrawCheats(const HosCoopDraw& d, const CheatsView& c) {
     const float room = width - 2 * kPad;
     float y = kMargin + kPad;
     d.text(d.user, x, y, px, Rgba(255, 220, 120, 255),
-           Elided(d, px, "Co-op item cheats (debug): a click or Enter gives, F8 or Esc closes", room).c_str());
+           Elided(d, px, CoopI18n::Tr("Co-op item cheats (debug): a click or Enter gives, F8 or Esc closes").c_str(),
+                  room)
+               .c_str());
     y += line;
     d.text(d.user, x, y, px, Rgba(255, 255, 255, 255),
-           Tail(d, px, "Find: " + c.filter + "_", room).c_str());
+           Tail(d, px, CoopI18n::Tr("Find: ") + c.filter + "_", room).c_str());
     y += line;
     d.text(d.user, x, y, px, Rgba(170, 170, 170, 255),
-           c.filter.empty() ? "Quick gifts (type to find any item flag):" : "Item flags with that in the name:");
+           CoopI18n::Tr(c.filter.empty() ? "Quick gifts (type to find any item flag):"
+                                         : "Item flags with that in the name:")
+               .c_str());
     y += line;
     if (c.rows.empty()) {
-        d.text(d.user, x, y, px, Rgba(170, 170, 170, 255), "(none)");
+        d.text(d.user, x, y, px, Rgba(170, 170, 170, 255), CoopI18n::Tr("(none)").c_str());
         y += line;
     }
     for (std::size_t i = 0; i < c.rows.size(); ++i) {
@@ -567,14 +573,16 @@ std::optional<std::size_t> CheatsRowAt(float width, float height, const CheatsVi
 }
 
 std::vector<std::vector<std::string>> PlayerCells(const std::vector<CoopHook::PlayerRow>& rows, bool place) {
-    std::vector<std::vector<std::string>> cells{{"#", "Player", "State", "Ping", place ? "Place" : "Scene"}};
+    const auto tr = [](const char* t) { return CoopI18n::Tr(t); };
+    std::vector<std::vector<std::string>> cells{
+        {"#", tr("Player"), tr("State"), tr("Ping"), place ? tr("Place") : tr("Scene")}};
     for (const auto& row : rows) {
         std::string ms = "-";
         if (row.ms) {
             ms = (row.self ? "" : "~") + std::to_string(*row.ms) + " ms";
         }
         cells.push_back({row.number ? "P" + std::to_string(row.number) : std::string("-"),
-                         row.name + (row.self ? " (you)" : ""), row.state, ms, row.scene.value_or("?")});
+                         row.name + (row.self ? tr(" (you)") : ""), row.state, ms, row.scene.value_or("?")});
     }
     return cells;
 }
@@ -587,7 +595,8 @@ std::vector<ChatShown> ShownChat(const std::vector<CoopHook::ChatLine>& lines, b
             alpha = 1.0f - static_cast<float>(l.age_ms - kChatShowMs) / static_cast<float>(kChatFadeMs);
         }
         if (alpha > 0.0f) {
-            out.push_back({l.text, l.notice, alpha});
+            // (a notice is the module's own words: in the player's language; chat is as typed)
+            out.push_back({l.notice ? CoopI18n::Tr(l.text) : l.text, l.notice, alpha});
         }
     }
     return out;
@@ -700,6 +709,16 @@ static void DrawTitle(const HosCoopDraw& d, const TitleView& t, const Look* look
     }
 }
 
+bool LookFontFits() {
+    // The pack's font is the game's own HUD font: Latin letters only. Any other
+    // script (Chinese, Japanese, Korean, Cyrillic) has no glyphs in it, and the
+    // words would draw as empty boxes; Hookshot's own font has that script's
+    // letters merged in (gpu/vk/vk_imgui.cpp script_fonts), so those languages
+    // take the plain look. English (the table's own absence) keeps the pack.
+    const CoopI18n::Lang* const lang = CoopI18n::Current();
+    return lang == nullptr || lang->entries == nullptr;
+}
+
 bool Wanted(const Scene& s) {
     if (s.title && !s.title->prompt.empty()) {
         return true;
@@ -709,7 +728,7 @@ bool Wanted(const Scene& s) {
 }
 
 bool GameLook(const HosCoopDraw& d, const Look& look) {
-    return look.On() && d.use_font && d.draw_image;
+    return look.On() && LookFontFits() && d.use_font && d.draw_image;
 }
 
 void Draw(const HosCoopDraw& d, const Scene& s, const Look& look) {

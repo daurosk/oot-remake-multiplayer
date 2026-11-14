@@ -40,6 +40,10 @@ using Parts = std::vector<coop::protocol::LookPart>;
 // own file system when it makes the copy's pieces.
 inline constexpr std::size_t kSlots = 4;
 inline constexpr std::size_t kCopiesPerSlot = 2;
+// After a copy is painted, the slot's other copy is not painted again for this
+// long: the puppet has time to move off it (the equip call makes new pieces,
+// the game lets the old ones and their textures go).
+inline constexpr std::uint64_t kCopyDwellMs = 5000;
 // True when the look colours a part other than the tunic (part 0).
 bool HasGear(const Parts& parts);
 
@@ -62,7 +66,10 @@ public:
     // their look has no gear or every slot is taken.
     std::optional<std::size_t> SlotOf(std::uint8_t number) const;
     // A copy to paint: the player in `slot` wears a look its ready copy is not
-    // painted in (or none is ready). `copy` is the slot's other copy.
+    // painted in (or none is ready). `copy` is the slot's other copy: never
+    // the one painted last, which a puppet may still wear (kept when the slot
+    // is freed or a session starts again), and none within kCopyDwellMs of the
+    // last paint. `now_ms`: any steady clock, the same as Done's.
     struct Job {
         std::size_t slot = 0;
         std::size_t copy = 0;
@@ -70,10 +77,10 @@ public:
         Parts parts;
         bool operator==(const Job&) const = default;
     };
-    std::vector<Job> Jobs() const;
+    std::vector<Job> Jobs(std::uint64_t now_ms) const;
     // The job's files are written: its copy is the slot's ready one, if the
     // slot is still that player's.
-    void Done(const Job& job);
+    void Done(const Job& job, std::uint64_t now_ms);
     // The copy player `number`'s puppet wears (1 to kSlots * kCopiesPerSlot):
     // nothing before one is painted for them.
     std::optional<std::size_t> CopyOf(std::uint8_t number) const;
@@ -91,10 +98,12 @@ private:
     bool slots_on_ = false;
     std::array<std::uint8_t, kSlots> slots_{};   // the player in each slot, 0 for none
     struct Ready {
-        std::size_t copy = 0;       // 0: none painted
-        std::uint8_t player = 0;
+        std::size_t copy = 0;       // the copy painted last (0: none); kept for a new player in the slot
+        std::uint8_t player = 0;    // who it is painted for (0: nobody now)
         Parts parts;
+        std::uint64_t at_ms = 0;    // when
     };
+    void Forget(std::size_t i);
     std::array<Ready, kSlots> ready_{};
 };
 
@@ -105,8 +114,8 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client);
 void Frame(coop::host::Session* session);
 std::optional<Parts> Of(std::uint8_t number);
 std::optional<std::size_t> SlotOf(std::uint8_t number);
-std::vector<Share::Job> Jobs();
-void Done(const Share::Job& job);
+std::vector<Share::Job> Jobs(std::uint64_t now_ms);
+void Done(const Share::Job& job, std::uint64_t now_ms);
 std::optional<std::size_t> CopyOf(std::uint8_t number);
 void EnableSlots(bool on);
 

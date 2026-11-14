@@ -103,35 +103,55 @@ TEST_CASE("look share: a new session forgets the last one's looks and slots") {
 
 TEST_CASE("look share: a puppet wears a copy only once it is painted, then the slot's other copy for a new look") {
     using Job = CoopLookShare::Share::Job;
+    constexpr std::uint64_t later = CoopLookShare::kCopyDwellMs;
     CoopLookShare::Share s;
     s.EnableSlots(true);
     s.OnEvent(Look(3, {{11, 0xFF0000}}));
     s.OnEvent(Look(4, {{4, 0x00FF00}}));
     CHECK_FALSE(s.CopyOf(3));                   // nothing painted yet: the game's items
-    auto jobs = s.Jobs();
+    auto jobs = s.Jobs(0);
     REQUIRE(jobs.size() == 2);
     CHECK(jobs[0] == Job{1, 1, 3, {{11, 0xFF0000}}});   // slot 1: copies 1 and 2
     CHECK(jobs[1] == Job{2, 3, 4, {{4, 0x00FF00}}});    // slot 2: copies 3 and 4
-    s.Done(jobs[0]);
+    s.Done(jobs[0], 1000);
     CHECK(s.CopyOf(3) == 1u);
     CHECK_FALSE(s.CopyOf(4));
-    CHECK(s.Jobs().size() == 1);                // painted once
+    CHECK(s.Jobs(1000).size() == 1);            // painted once
     s.OnEvent(Look(3, {{11, 0x0000FF}}));       // a new colour: the other copy is painted...
-    jobs = s.Jobs();
+    CHECK(s.Jobs(1500).size() == 1);            // ...but not while the puppet may still be moving onto copy 1
+    jobs = s.Jobs(1000 + later);
     REQUIRE(jobs.size() == 2);
     CHECK(jobs[0] == Job{1, 2, 3, {{11, 0x0000FF}}});
     CHECK(s.CopyOf(3) == 1u);                   // ...while the puppet keeps the one it wears
-    s.Done(jobs[0]);
+    s.Done(jobs[0], 1000 + later);
     CHECK(s.CopyOf(3) == 2u);
     s.OnEvent(Look(3, {{11, 0x00FFFF}}));
-    CHECK(s.Jobs()[0].copy == 1u);              // and back
-    // A slot that changed hands while its copy was painted: not the new player's.
-    s.OnEvent(Kind(EventKind::player_left, 4));
+    CHECK(s.Jobs(1000 + 3 * later)[0].copy == 1u);   // and back
+
+    // Freed and given again: never the copy painted last (a puppet may still wear it).
+    s.OnEvent(Look(3, {}));
+    CHECK_FALSE(s.CopyOf(3));
+    s.OnEvent(Look(3, {{11, 0x101010}}));
+    CHECK(s.Jobs(1000 + 3 * later)[0] == Job{1, 1, 3, {{11, 0x101010}}});   // copy 2 was painted last
+    s.OnEvent(Kind(EventKind::welcomed));       // a new session: the same, for every slot
+    s.OnEvent(Look(6, {{3, 1}}));
+    CHECK(s.Jobs(1000 + 3 * later)[0].copy == 1u);
+
+    // A slot that changed hands while its copy was painted: not the new player's, and not painted again next.
+    s.OnEvent(Look(7, {{4, 1}}));
+    jobs = s.Jobs(1000 + 3 * later);
+    REQUIRE(jobs.size() == 2);
+    const Job late = jobs[1];
+    CHECK(late.player == 7);
+    s.OnEvent(Kind(EventKind::player_left, 7));
     s.OnEvent(Look(5, {{4, 1}}));
-    s.Done(jobs[1]);                            // P4's job, done late
+    s.Done(late, 100);                          // P7's job, done late
     CHECK_FALSE(s.CopyOf(5));
-    CHECK_FALSE(s.CopyOf(4));
-    CHECK(s.Jobs().back() == Job{2, 3, 5, {{4, 1}}});
+    CHECK_FALSE(s.CopyOf(7));
+    const auto next = s.Jobs(1000 + 5 * later);
+    REQUIRE(next.size() == 2);
+    CHECK(next[1].player == 5);
+    CHECK(next[1].copy != late.copy);
 }
 
 TEST_CASE("look items: the pack's item copies are read from its manifest") {

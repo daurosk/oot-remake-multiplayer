@@ -3,6 +3,9 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <fstream>
+#include <iterator>
+#include <system_error>
 #include <string_view>
 
 namespace CoopLookParts {
@@ -99,7 +102,8 @@ CoopLookTunic::Texels Painted(const CoopLookTunic::Texels& gear, const CoopLook:
 }
 
 std::string SlotName(const std::string& name, std::size_t slot) {
-    if (slot < 1 || slot > 9 || name.size() < 4 || name.compare(0, 3, "Mt_") != 0) {
+    if (slot < 1 || slot > 9 || name.size() < 4 || name.compare(0, 3, "Mt_") != 0 ||
+        name.find_first_of("/\\:") != std::string::npos || name.find("..") != std::string::npos) {
         return {};
     }
     return "C" + std::to_string(slot) + "_" + name.substr(3);
@@ -184,6 +188,71 @@ std::optional<std::vector<std::uint8_t>> Repainted(const std::vector<std::uint8_
     }
     std::copy(texture.texels.begin(), texture.texels.end(), file->begin() + static_cast<std::ptrdiff_t>(texture.offset));
     return RawZstd(*file);
+}
+
+CopyResult PaintCopyFiles(const std::filesystem::path& tex, const CoopLookTunic::Texels& gear, std::size_t copy,
+                          const CoopLook::Look& look) {
+    namespace fs = std::filesystem;
+    CopyResult result;
+    // Only the textures this copy has a file of (an item the romfs lacked has none).
+    CoopLookTunic::Texels mine;
+    std::vector<fs::path> files;
+    for (const CoopLookTunic::Texture& t : gear) {
+        const std::string name = SlotName(t.name, copy);
+        if (name.empty()) {
+            continue;
+        }
+        fs::path file = tex / (name + ".bntx.zs");
+        std::error_code ec;
+        if (!fs::is_regular_file(file, ec)) {
+            continue;
+        }
+        mine.push_back(t);
+        files.push_back(std::move(file));
+    }
+    const CoopLookTunic::Texels painted = Painted(mine, look);
+    for (std::size_t i = 0; i < painted.size(); ++i) {
+        const fs::path& file = files[i];
+        std::vector<std::uint8_t> frame;
+        {
+            std::ifstream in(file, std::ios::binary);
+            if (!in) {
+                result.status = CopyResult::Status::retry;
+                result.why = "could not read " + file.filename().string();
+                return result;
+            }
+            frame.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }
+        const auto out = Repainted(frame, painted[i]);
+        if (!out) {
+            result.status = CopyResult::Status::broken;
+            result.why = file.filename().string() + " is not a copy this module can paint";
+            return result;
+        }
+        if (*out != frame) {
+            fs::path part = file;
+            part += ".part";
+            {
+                std::ofstream o(part, std::ios::binary | std::ios::trunc);
+                o.write(reinterpret_cast<const char*>(out->data()), static_cast<std::streamsize>(out->size()));
+                if (!o) {
+                    result.status = CopyResult::Status::retry;
+                    result.why = "could not write " + part.filename().string();
+                    return result;
+                }
+            }
+            std::error_code ec;
+            fs::rename(part, file, ec);   // (the game holds a file it reads without delete sharing: then it fails)
+            if (ec) {
+                fs::remove(part, ec);
+                result.status = CopyResult::Status::retry;
+                result.why = "could not replace " + file.filename().string() + " (held open?)";
+                return result;
+            }
+        }
+        ++result.files;
+    }
+    return result;
 }
 
 }  // namespace CoopLookParts

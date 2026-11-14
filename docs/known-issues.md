@@ -32,7 +32,7 @@ This is an early test release. Everything under "Works" was seen in our two-game
 
 - **After a join that cannot connect**, Join refuses another code until the game is restarted (there is no Leave yet).
 - **Microsoft Defender** may warn about the zip or `Update.bat` ("Trojan:Script/Wacatac"): a false alarm on our scripts, which we report to Microsoft.
-- **Built in, not yet checked on Longshot**: Epona seen by everyone with more than one rider ([#199](https://github.com/daurosk/oot-remake-multiplayer/issues/199)), townspeople walking on every screen ([#200](https://github.com/daurosk/oot-remake-multiplayer/issues/200)), locked doors and `/teleport` inside dungeons ([#197](https://github.com/daurosk/oot-remake-multiplayer/issues/197)), no black screen in another player's cutscene ([#173](https://github.com/daurosk/oot-remake-multiplayer/issues/173)); these worked on the emulator and Hookshot before.
+- **Built in, not yet checked on Longshot**: Epona seen by everyone with more than one rider ([#199](https://github.com/daurosk/oot-remake-multiplayer/issues/199)), townspeople walking on every screen ([#200](https://github.com/daurosk/oot-remake-multiplayer/issues/200)), no black screen in another player's cutscene ([#173](https://github.com/daurosk/oot-remake-multiplayer/issues/173)); these worked on the emulator and Hookshot before.
 - **The ocarina**: other players' songs are not heard ([#152](https://github.com/daurosk/oot-remake-multiplayer/issues/152)); the ocarina in their hand was seen in our test logs.
 - **Your own adult Link's colour up close**: the back of the hat and the skirt show green when the camera is close (from a distance they are in your colour). Child Link is fully in your colour, for you and for the others; as others see your adult Link, a touch of green can stay at the back of the hat ([#202](https://github.com/daurosk/oot-remake-multiplayer/issues/202)).
 - **Masks and boots** reach the other games but have not been seen on the other Link's screen yet ([#91](https://github.com/daurosk/oot-remake-multiplayer/issues/91)). Tell us if you see them.
@@ -70,7 +70,7 @@ These are fixed or built in, but no two-game test has reached them yet, or reach
 
 ## Hookshot (experimental)
 
-- This release is Longshot only: no emulator in the kit. The emulator kits are the older releases, and they cannot join a 0.10.1 game.
+- This release is Longshot only: no emulator in the kit. Emulator support ends with 0.10.0, the last release with the emulator kit; it cannot join a 0.10.1 game.
 - Co-op also runs on Hookshot, now [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot), a native PC build of the game that each player builds from their own game with the kit's `Build-Hookshot-Coop.bat` ([setup.md, Hookshot](setup.md#play-on-hookshot-experimental)). Hookshot and emulator players can join the same game and see each other as Link in their colours (checked by hand).
 - It needs Vulkan 1.3 with mesh shaders: NVIDIA RTX 20 or newer, AMD RX 6000 or newer; Intel is mostly untested.
 - Checked by hand on two Hookshot games: the other players as Link in their tunic colours, name tags and edge arrows over them, shots in flight, your own Link in your colour; with an emulator player in the same session, each sees the other as Link in their colour.

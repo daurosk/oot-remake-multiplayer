@@ -829,6 +829,12 @@ try {
     New-StartKit $k
     $r = Start-Kit $k
     Check ($r[0] -eq 0 -and (Read-File "$k\played.txt") -eq "choose True True $k") "start: a good kit hands over to play.ps1 choose -Hookshot with the kit named [$($r[1])] [$(Read-File "$k\played.txt")]"
+    # (kit-friction review) a ' in the kit's path: the Windows checks get the folder from a variable, never in their code
+    $ka = Join-Path $sk "kits\O'Brien's kit"
+    New-StartKit $ka
+    $r = Start-Kit $ka
+    Check ($r[0] -eq 0 -and (Read-File "$ka\played.txt") -eq "choose True True $ka" -and (Test-Path -LiteralPath "$ka\logs\windows-checks.txt") -and $r[1] -notmatch 'Unexpected token') "start: a kit path with an apostrophe starts, the Windows checks ran [$($r[1])]"
+    Remove-Item -LiteralPath $ka -Recurse -Force -ErrorAction SilentlyContinue
     # A desktop shortcut to another kit is moved to the kit started last.
     $sh = New-Object -ComObject WScript.Shell
     $l = $sh.CreateShortcut("$sk\desk\Play OoT Co-op.lnk"); $l.TargetPath = "$old\Start OoT Co-op.bat"; $l.Save()

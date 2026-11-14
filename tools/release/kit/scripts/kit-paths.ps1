@@ -946,6 +946,9 @@ function Copy-KitLongshotDownload([object[]]$Homes, [string]$Sha256, [string]$To
 # The saves of a Longshot game (user\save\<account>\slot_NN, account.sav, option.sav beside its image.bin) copied into
 # the co-op game's. A slot or file the co-op game has already is never overwritten (said, and left). The co-op guest
 # folders (<account>-coop) are not copied. Returns the lines to say.
+# (The account folder's name is the same in every Longshot: its one user's id is a constant, host/nn_applet.c user_uid,
+# 5a3c9e1f0b7d2468 0000000000000001, which no co-op patch touches; the test kits' games use that folder. Still on the
+# in-game check list: the copied slots show on the title.)
 function Copy-KitLongshotSaves([string]$FromImageDir, [string]$ToImageDir) {
     $from = Join-Path $FromImageDir 'user\save'
     if (-not (Test-Path -LiteralPath $from)) { return @("No saves in $FromImageDir\user\save: nothing to copy.") }

@@ -67,8 +67,13 @@ trap {
     Write-Host "  $m" -ForegroundColor Red
     if ($m -match '(?i)denied|being used by another process|cannot access the file') {
         $path = if ($m -match "'([A-Za-z]:\\[^']+)'") { $Matches[1] } else { '' }
-        $folder = if ($path -and (Test-Path -LiteralPath $path -PathType Container)) { $path } elseif ($path) { Split-Path -Parent $path } else { $kit }
-        Write-Host (Get-KitHeldFolderText $folder 'access denied') -ForegroundColor Yellow
+        # (no path in the message: no holder scan, which over a built kit's game\ would open thousands of files)
+        if ($path) {
+            $folder = if (Test-Path -LiteralPath $path -PathType Container) { $path } else { Split-Path -Parent $path }
+            Write-Host (Get-KitHeldFolderText $folder 'access denied') -ForegroundColor Yellow
+        } else {
+            Write-Host (Get-KitHeldFolderText $kit 'access denied' @() '') -ForegroundColor Yellow
+        }
     } elseif ($m -match '(?i)application control|blocked by|virus|potentially unwanted') {
         Write-Host '  Windows or the antivirus blocked a program of the build: Windows Security > Protection history says which; allow it, or add this kit''s folder under Exclusions. Smart App Control (Windows 11) blocks it whatever Defender''s settings (SETUP.md, "If something goes wrong").' -ForegroundColor Yellow
     }
@@ -185,7 +190,8 @@ if (-not $Longshot -and $lsFresh -and -not $env:OOT_COOP_NO_LONGSHOT_ASK) {
         Write-Host ''
         Write-Host 'Built Longshot yourself? The co-op game is a separate build (co-op is built into its source), but your own'
         Write-Host 'Longshot can lend it your saves and its downloads. Drag your Longshot game folder (the one with longshot.exe)'
-        Write-Host 'into this window and press Enter; just Enter (or 60 s) for no:'
+        Write-Host 'into this window and press Enter; just Enter (or 60 s) for no. (Asked once: hookshot\longshot-folder.txt keeps the answer;'
+        Write-Host 'delete that file to be asked again before a build.)'
         $Longshot = (Read-TimedLine 60).Trim().Trim('"')
         try { [System.IO.File]::WriteAllText($lsNote, "$(if ($Longshot) { $Longshot } else { 'none' })`n") } catch { }
     }

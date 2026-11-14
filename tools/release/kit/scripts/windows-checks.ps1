@@ -31,12 +31,19 @@ function Get-WcMarked([string]$Kit, [switch]$All) {
     $files = @()
     if ($All) {
         # (not the built game, Longshot's tools or the build's work folder: the build made those here, unmarked, and
-        # they are many thousands of files)
+        # they are many thousands of files (35 GB). Left out before they are entered, folder by folder)
         $skip = @('hookshot\game', 'hookshot\work', 'hookshot\tools', 'hookshot\tools.new', 'hookshot\downloads', 'logs')
-        $files = @(Get-ChildItem -LiteralPath $Kit -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object {
-            $rel = $_.FullName.Substring($Kit.Length + 1)
-            -not @($skip | Where-Object { $rel -like "$_\*" }).Count
-        })
+        $todo = @($Kit)
+        while ($todo.Count) {
+            $dir = $todo[0]
+            $todo = @($todo | Select-Object -Skip 1)
+            foreach ($e in @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue)) {
+                if ($e.PSIsContainer) {
+                    $rel = $e.FullName.Substring($Kit.Length + 1)
+                    if ($skip -notcontains $rel) { $todo += $e.FullName }
+                } else { $files += $e }
+            }
+        }
     } else {
         foreach ($n in 'Start OoT Co-op.bat', 'scripts\start.ps1', 'scripts\play.ps1', 'hookshot\hookshot_coop.dll', 'server\coop_server.exe') {
             $p = Join-Path $Kit $n

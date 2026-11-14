@@ -129,6 +129,10 @@ bool Mouse(float fx, float fy, int event);
 bool TypeKey(std::uint32_t vk, bool repeat);
 bool TypeChar(std::uint32_t byte);
 bool KeysTaken();
+// The key that opens the chat box from now on (the Multiplayer tab's Settings
+// row): LICHII_COOP_CHAT_KEY's words ("T", "F2", "off"). Takes no lock (the
+// next key press picks it up), so it may be called under CoopPause's mutex.
+void SetChatKey(const std::string& key);
 
 // Whether co-op knows the game whose main has this build id (hex, 16 or more
 // digits; Hookshot gives 32).

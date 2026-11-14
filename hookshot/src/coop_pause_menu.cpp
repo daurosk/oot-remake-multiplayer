@@ -51,6 +51,12 @@ Row Toggle(std::string name, bool on) {
     return r;
 }
 
+// A CoopInput label ("Controller: 2 - Xbox Wireless Controller") as a choice row: the words after ": " are the value.
+Row InputChoice(const char* name, const std::string& label) {
+    const auto colon = label.find(": ");
+    return Choice(name, colon == std::string::npos ? label : label.substr(colon + 2));
+}
+
 Row Note(std::string text) {
     Row r;
     r.name = std::move(text);
@@ -143,7 +149,8 @@ std::vector<Menu::Line> Menu::Lines() const {
                                  "are not touched."});
         out.push_back({Action("Local co-op"), Act::kOpenLocal, "Two players on this PC."});
         out.push_back({Action("Settings"), Act::kOpenSettings,
-                       "Your name, Link's look, how many players can join your game, and voice chat."});
+                       "Your name, Link's look, how many players can join your game, voice chat, the chat key, and "
+                       "which controller this game reads."});
         out.push_back({Action("Commands"), Act::kOpenCommands, "The chat's commands, and the key that opens the chat."});
         break;
     case Page::kHost:
@@ -199,11 +206,10 @@ std::vector<Menu::Line> Menu::Lines() const {
     case Page::kCommands: {
         const std::string key = ChatKeyWords(options_.chat_key);
         out.push_back({Action("Open the chat", key), Act::kCommand,
-                       key == "Off" ? "The chat key is off (LICHII_COOP_CHAT_KEY=off in coop-options.ini): set a key "
-                                      "there (a letter, a digit, or F1 to F12) to chat."
+                       key == "Off" ? "The chat key is off. To chat, choose a key in Settings, Chat key."
                                     : "Press " + key + " in the game to open the chat box; Enter sends, Esc closes. "
-                                      "A line that starts with / is a command, not chat. Another key: "
-                                      "LICHII_COOP_CHAT_KEY in coop-options.ini."});
+                                      "A line that starts with / is a command, not chat. To use another key: "
+                                      "Settings, Chat key."});
         for (const Command& c : Commands()) {
             out.push_back({Action(c.typed), Act::kCommand, c.help});
         }
@@ -221,6 +227,19 @@ std::vector<Menu::Line> Menu::Lines() const {
         out.push_back({Toggle("Proximity voice chat", options_.voice), Act::kVoice,
                        "Talk with players near your Link through your microphone; they sound quieter the farther away "
                        "they are. Off: you neither send nor hear voices."});
+        out.push_back({Choice("Chat key", ChatKeyWords(options_.chat_key)), Act::kChatKey,
+                       "The key that opens the chat box in the game. Off: no chat box."});
+        if (!controller_row_.empty()) {
+            out.push_back({InputChoice("Controller", controller_row_), Act::kController,
+                           "Which controller this game reads: all of them (only while its window is in front), one "
+                           "of them (also behind another window: two games on one PC, each with its own), or none."});
+        }
+        if (!keyboard_row_.empty()) {
+            out.push_back({InputChoice("Keyboard and mouse", keyboard_row_), Act::kKeyboard,
+                           "Window in front: the keyboard and mouse count while this game's window is in front. Also "
+                           "in background: the keys count behind other windows too. Off: neither (a controller "
+                           "only)."});
+        }
         break;
     }
     return out;
@@ -345,6 +364,19 @@ void Menu::SetRejoin(std::string host, std::string code) {
     const auto after = Lines();
     const auto same = std::find_if(after.begin(), after.end(), [act](const Line& l) { return l.act == act; });
     selected_ = same != after.end() ? static_cast<std::size_t>(same - after.begin()) : 0;
+    Clamp();
+}
+
+void Menu::SetInputRows(std::string controller, std::string keyboard) {
+    const auto before = Lines();
+    const Act act = selected_ < before.size() ? before[selected_].act : Act::kNone;
+    controller_row_ = std::move(controller);
+    keyboard_row_ = std::move(keyboard);
+    const auto after = Lines();
+    const auto same = std::find_if(after.begin(), after.end(), [act](const Line& l) { return l.act == act; });
+    if (same != after.end()) {
+        selected_ = static_cast<std::size_t>(same - after.begin());
+    }
     Clamp();
 }
 
@@ -547,6 +579,9 @@ void Menu::Decide(Act act) {
         break;
     case Act::kLook:
     case Act::kPlayers:
+    case Act::kChatKey:
+    case Act::kController:
+    case Act::kKeyboard:
         Change(act, 1);
         break;
     case Act::kVoice:
@@ -578,6 +613,20 @@ void Menu::Change(Act act, int step) {
     case Act::kVoice:
         options_.voice = step > 0 ? true : step < 0 ? false : !options_.voice;
         request_ = Request{Request::Kind::kSave, {}};
+        break;
+    case Act::kChatKey: {
+        const auto& list = CoopTitleMenu::ChatKeys();
+        const auto at = std::find(list.begin(), list.end(), options_.chat_key);
+        const std::size_t n = list.size(), i = at == list.end() ? 0 : static_cast<std::size_t>(at - list.begin());
+        options_.chat_key = list[(i + (step < 0 ? n - 1 : 1)) % n];
+        request_ = Request{Request::Kind::kSave, {}};
+        break;
+    }
+    case Act::kController:   // (one way round, either arrow: the list depends on the controllers connected now)
+        request_ = Request{Request::Kind::kController, {}};
+        break;
+    case Act::kKeyboard:
+        request_ = Request{Request::Kind::kKeyboard, {}};
         break;
     default:
         break;
@@ -693,6 +742,8 @@ View Menu::view() const {
         break;
     case Page::kLocal:
         v.help_title = "Local co-op";
+        v.help = "Two players on one PC, the screen split in two. It is not in this test release yet: for now, play "
+                 "together from two PCs with Host a game and Join a game.";
         break;
     case Page::kSettings:
         v.help_title = "Settings";

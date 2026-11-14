@@ -459,6 +459,24 @@ CoopDraw::Keys g_keys;
 std::mutex g_box_mutex;
 CoopChatBox::Box g_box;
 unsigned g_box_lead = 0;  // a double-byte code page's lead byte, waiting for its second
+bool g_box_key_set = false;  // the open key was taken from LICHII_COOP_CHAT_KEY
+// The tab's new open key (SetChatKey), taken by the next key press under g_box_mutex. Not a lock: the tab calls in
+// holding CoopPause's own mutex, and TypeChar takes that one while it holds g_box_mutex (one lock order only).
+constexpr std::uint64_t kNoChatKey = ~std::uint64_t{0};
+std::atomic<std::uint64_t> g_box_key_next{kNoChatKey};
+
+// (under g_box_mutex) "" = T, the box's own default.
+void UseChatKey(const std::string& v) {
+    if (v.empty()) {
+        return;
+    }
+    if (const auto k = CoopChatBox::ParseOpenKey(v)) {
+        g_box.SetOpenKey(*k);
+        LOG_INFO(Core, "coop: chat box key: {}", *k == 0 ? std::string("off") : v);
+    } else {
+        LOG_WARNING(Core, "coop: LICHII_COOP_CHAT_KEY={} is not a letter, a digit, F1 to F12 or off; T opens the chat box", v);
+    }
+}
 // The item cheats panel (coop_cheats_panel.h), under the same mutex.
 CoopCheatsPanel::Panel g_cheats;
 
@@ -667,20 +685,13 @@ bool TypeKey(std::uint32_t vk, bool repeat) {
             return true;
         }
     }
-    static const bool keyed = [] {  // LICHII_COOP_CHAT_KEY: the key that opens the box (T unless set)
-        const std::string v = Env("LICHII_COOP_CHAT_KEY");
-        if (v.empty()) {
-            return true;
-        }
-        if (const auto k = CoopChatBox::ParseOpenKey(v)) {
-            g_box.SetOpenKey(*k);
-            LOG_INFO(Core, "coop: chat box key: {}", *k == 0 ? std::string("off") : v);
-        } else {
-            LOG_WARNING(Core, "coop: LICHII_COOP_CHAT_KEY={} is not a letter, a digit, F1 to F12 or off; T opens the chat box", v);
-        }
-        return true;
-    }();
-    (void)keyed;
+    if (!g_box_key_set) {  // LICHII_COOP_CHAT_KEY: the key that opens the box (T unless set), until the tab sets one
+        g_box_key_set = true;
+        UseChatKey(Env("LICHII_COOP_CHAT_KEY"));
+    }
+    if (const std::uint64_t next = g_box_key_next.exchange(kNoChatKey); next != kNoChatKey) {
+        g_box.SetOpenKey(static_cast<std::uint32_t>(next));   // (after the variable: the tab's choice wins)
+    }
     const bool taken = g_box.Key(vk, repeat);
     if (auto text = g_box.TakeSend()) {
         const bool ok = CoopHook::SendChat(*text);
@@ -736,6 +747,16 @@ bool Mouse(float fx, float fy, int event) {
     const bool taken = g_cheats.Pointer(kWhat[event], row, rows.size());
     GiveChosen(rows);
     return taken;
+}
+
+void SetChatKey(const std::string& key) {
+    const std::string k = key.empty() ? std::string("T") : key;
+    if (const auto vk = CoopChatBox::ParseOpenKey(k)) {
+        g_box_key_next.store(*vk);   // (no g_box_mutex here: see g_box_key_next)
+        LOG_INFO(Core, "coop: chat box key: {} (from the Multiplayer tab)", *vk == 0 ? std::string("off") : k);
+    } else {
+        LOG_WARNING(Core, "coop: chat key {} is not a letter, a digit, F1 to F12 or off; the key stays", k);
+    }
 }
 
 bool KeysTaken() {

@@ -113,10 +113,12 @@ CheatsBox CheatsAt(float width, float height, const CheatsView& c);
 // The row under (x, y), for the mouse; nothing outside the rows.
 std::optional<std::size_t> CheatsRowAt(float width, float height, const CheatsView& c, float x, float y);
 
-// The title screen's Multiplayer prompt while it is up (Minus opens the
-// Multiplayer tab of Hookshot's menu, coop_pause.h).
+// A line on the title screen, bottom left, while it is up: today only the
+// host's save loading (coop_title.cpp; no co-op hint there now, the
+// Multiplayer tab is in the pause menu).
 struct TitleView {
-    std::string prompt;   // "Multiplayer" (or what co-op is doing); "" for none
+    std::string prompt;   // the words; "" for none
+    bool button = false;  // the Minus button before them
 };
 
 // What to draw this present.

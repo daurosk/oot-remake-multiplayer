@@ -455,8 +455,9 @@ std::string ClientId() {
 }
 
 
+// Only the host's save loading ("Loading Saria's save..."): the title has no co-op hint of its own (the owner:
+// the title looks like the plain game; Multiplayer is the pause menu's first tab).
 std::optional<CoopDraw::TitleView> View() {
-    const std::string doing = CoopPause::Doing();   // (before the lock: CoopPause calls in here)
     std::lock_guard lock(g_mutex);
     if (!HasScratch() || !TitleUp()) {
         return std::nullopt;
@@ -464,10 +465,7 @@ std::optional<CoopDraw::TitleView> View() {
     if (const std::string line = g_autoload.Line(); !line.empty()) {
         return CoopDraw::TitleView{line};   // ("Loading Saria's save...")
     }
-    if (g_rows) {   // (the title's own rows: no prompt)
-        return std::nullopt;
-    }
-    return CoopDraw::TitleView{doing.empty() ? std::string("Multiplayer") : "Multiplayer: " + doing};
+    return std::nullopt;
 }
 
 }  // namespace CoopTitle

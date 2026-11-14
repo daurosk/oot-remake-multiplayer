@@ -49,9 +49,4 @@ bool KeysTaken();
 // title): Host hosts at once, Join pastes a code already copied.
 void Open(CoopPauseMenu::Page page);
 
-// What co-op does since the tab started it, for the title's prompt:
-// "hosting", "joining" (not connected yet), "joined", or "" (none, or it
-// failed).
-std::string Doing();
-
 }  // namespace CoopPause

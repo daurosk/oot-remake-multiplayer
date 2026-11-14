@@ -547,7 +547,7 @@ TEST_CASE("save transfer: the guest's lines come in order: loading, (too early),
   CHECK(N::kSuccessPlaying == "Success, load any save for changes to occur.");
 }
 
-TEST_CASE("save transfer: no Loading for a no-save answer; a failed transfer ends Loading") {
+TEST_CASE("save transfer: no Loading for a no-save answer, a failed transfer ends Loading") {
   using N = save::GuestNotices;
   // the host has no save: its answer is one part; no Loading, and loading a save then is not "too early"
   N none;

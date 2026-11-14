@@ -24,6 +24,7 @@ namespace CoopTitle {
 void Init(const HosCoopApi* api);
 // The kit's coop-options.ini as the launcher's variables, for the ones not
 // set (the game started without Host.bat or play.cmd). Before co-op starts.
+// No kit above the game (FindKit): the coop-options.ini beside longshot.exe.
 void ApplyKitOptions();
 // The look the player chose in the pause menu (coop_look.h), written to the
 // kit's coop-options.ini (else coop.ini) so the next start keeps it (the

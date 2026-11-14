@@ -1,28 +1,42 @@
 # Installs the self-hosted GitHub Actions runner for daurosk/oot-remake-multiplayer
-# on this PC (docs/ci-runner.md). Run ONCE in an elevated PowerShell (Run as
-# administrator), from a checkout of this repo:
+# on this PC (docs/ci-runner.md). Run ONCE in a fresh elevated PowerShell (Run as
+# administrator, no transcript on), from a checkout of this repo:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tools\ci-runner\install.ps1
-# It creates the standard local user oot-ci (not an admin) with a random password
-# nobody sees, a runner folder only that user, SYSTEM and Administrators can open,
-# downloads the official runner, checks its SHA-256 against the one GitHub
-# publishes in the release notes, registers it (the token never shows) and starts
-# it as a service under oot-ci. Remove it all with tools\ci-runner\uninstall.ps1.
+# Run tools\ci-runner\uninstall.ps1 first to install again.
+#
+# What it does:
+# - standard local user oot-ci (Users only, never admin), random password nobody
+#   sees; no interactive, RDP or network logon.
+# - Deny ACEs for oot-ci on every other user's profile and on every top-level
+#   folder of a fixed drive that grants Users/Authenticated Users/Everyone write
+#   (kits, games, toolchains); a no-create Deny on each drive root. The list is
+#   saved so uninstall.ps1 removes exactly those.
+# - C:\actions-runner owned by Administrators: oot-ci may read and run it but
+#   writes only _work and _diag. Registered with --disableupdate (re-run install
+#   for a new runner release; GitHub refuses runners about 30 days out of date).
+# - Job-started hook (job-started.ps1) in C:\ProgramData\oot-ci, read-only to
+#   oot-ci: refuses any job but a push by daurosk to main, integrate-* or a tag.
+# - official runner zip, SHA-256 checked against GitHub's release notes; the
+#   registration token is never printed.
 param(
     [string]$Version = '2.338.2',
     [string]$Sha256 = 'a1f17aa987fc8158bc7521d284912267a0d01b7c2c4684b33c86783b5e8221cc',
     [string]$Root = 'C:\actions-runner',
+    [string]$HookDir = 'C:\ProgramData\oot-ci',
     [string]$User = 'oot-ci',
     [string]$Repo = 'daurosk/oot-remake-multiplayer',
     [string]$Gh = 'C:\Program Files\GitHub CLI\gh.exe'
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'rights.ps1')
 
 $me = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not $me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run this in an elevated PowerShell (Run as administrator).' }
+if (Test-Path (Join-Path $Root 'config.cmd')) { throw "$Root already has a runner. Run tools\ci-runner\uninstall.ps1 first." }
 $login = (& $Gh api user --jq .login)
 if ($login -ne 'daurosk') { throw "gh is signed in as '$login', not daurosk." }
 
-# 1. The user: standard (Users group only), random 32-char password, never shown.
+# 1. The user.
 $bytes = New-Object byte[] 24
 [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
 $plain = [Convert]::ToBase64String($bytes) + 'a1!'
@@ -34,26 +48,60 @@ if (Get-LocalUser -Name $User -ErrorAction SilentlyContinue) {
         -AccountNeverExpires -Description 'GitHub Actions runner (oot-remake-multiplayer CI)' | Out-Null
 }
 Add-LocalGroupMember -Group 'Users' -Member $User -ErrorAction SilentlyContinue
-if (Get-LocalGroupMember -Group 'Administrators' | Where-Object { $_.Name -like "*\$User" }) { throw "$User is an administrator; remove it from Administrators first." }
+foreach ($g in 'Administrators', 'Remote Desktop Users') {
+    if (Get-LocalGroupMember -Group $g | Where-Object { $_.Name -like "*\$User" }) { throw "$User is in $g; remove it first." }
+}
+$sid = (Get-LocalUser -Name $User).SID.Value
+$acct = "${env:COMPUTERNAME}\$User"
+Set-OotCiLogonRights -Sid $sid -Add
 
-# 2. The folder: no inherited rights; SYSTEM + Administrators full, oot-ci modify.
+# 2. Hook folder and denied-folder list: admin-owned, oot-ci read only.
+New-Item -ItemType Directory -Force $HookDir | Out-Null
+& icacls $HookDir /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
+& icacls $HookDir /reset /T /C /Q | Out-Null
+& icacls $HookDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' "${acct}:(OI)(CI)RX" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'icacls failed on the hook folder.' }
+$hook = Join-Path $HookDir 'job-started.ps1'
+Copy-Item (Join-Path $PSScriptRoot 'job-started.ps1') $hook -Force
+
+# 3. Deny ACEs on everything of the owner's that oot-ci could reach.
+$denied = Get-OotCiDenyTargets -Skip @($Root, $HookDir)
+$denied | Set-Content -Encoding utf8 (Join-Path $HookDir 'denied.txt')
+foreach ($d in $denied) {
+    $p, $kind = $d -split '\|'
+    if ($kind -eq 'root') { & icacls $p /deny "${acct}:(AD,WD,WEA,WA)" | Out-Null }
+    else { & icacls $p /deny "${acct}:(OI)(CI)F" | Out-Null }
+    if ($LASTEXITCODE -ne 0) { throw "icacls deny failed on $p" }
+    "denied: $p ($kind)"
+}
+
+# 4. Runner folder: admin-owned, oot-ci RX; download and verify the runner.
+function Set-RunnerAcl {
+    # Everything under the root inherits only from it; oot-ci writes only _work and _diag.
+    foreach ($sub in '_work', '_diag') { New-Item -ItemType Directory -Force (Join-Path $Root $sub) | Out-Null }
+    & icacls $Root /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
+    & icacls $Root /reset /T /C /Q | Out-Null
+    & icacls $Root /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' "${acct}:(OI)(CI)RX" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'icacls failed on the runner folder.' }
+    foreach ($sub in '_work', '_diag') {
+        & icacls (Join-Path $Root $sub) /grant "${acct}:(OI)(CI)M" | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "icacls failed on $sub." }
+    }
+}
 New-Item -ItemType Directory -Force $Root | Out-Null
-& icacls $Root /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' "${env:COMPUTERNAME}\${User}:(OI)(CI)M" | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'icacls failed on the runner folder.' }
-
-# 3. The owner's profile must stay closed to oot-ci (no Users/Everyone entries).
-$open = (Get-Acl $env:USERPROFILE).Access | Where-Object {
-    $_.IdentityReference -match ('Everyone|BUILTIN\\Users|Authenticated Users|' + [regex]::Escape($User)) }
-if ($open) { throw "$env:USERPROFILE grants access to: $($open.IdentityReference -join ', '). Close it first." }
-
-# 4. Download and verify the official runner.
-$zip = Join-Path $Root "actions-runner-win-x64-$Version.zip"
+Set-RunnerAcl
+$zip = Join-Path $env:TEMP "actions-runner-win-x64-$Version.zip"
 Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/actions/runner/releases/download/v$Version/actions-runner-win-x64-$Version.zip" -OutFile $zip
 $got = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($got -ne $Sha256) { Remove-Item $zip; throw "SHA-256 mismatch: got $got, expected $Sha256." }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [IO.Compression.ZipFile]::ExtractToDirectory($zip, $Root)
 Remove-Item $zip
+Set-Content -Encoding ascii (Join-Path $Root '.env') @(
+    "ACTIONS_RUNNER_HOOK_JOB_STARTED=$hook",
+    'PSExecutionPolicyPreference=RemoteSigned'
+)
+[Environment]::SetEnvironmentVariable('ACTIONS_RUNNER_HOOK_JOB_STARTED', $hook, 'Machine')
 
 # 5. Register (token only in a variable) and install the service under oot-ci.
 $token = (& $Gh api -X POST "repos/$Repo/actions/runners/registration-token" --jq .token)
@@ -61,12 +109,21 @@ if (-not $token) { throw 'No registration token.' }
 Push-Location $Root
 try {
     & .\config.cmd --unattended --url "https://github.com/$Repo" --token $token --name "$env:COMPUTERNAME-ci" `
-        --labels daurosk-pc --work _work --replace --runasservice `
+        --labels daurosk-pc --work _work --replace --disableupdate --runasservice `
         --windowslogonaccount ".\$User" --windowslogonpassword $plain
     if ($LASTEXITCODE -ne 0) { throw "config.cmd failed ($LASTEXITCODE)." }
 } finally { Pop-Location; $token = $null; $plain = $null }
 
-# 6. Show the result (no secrets).
+# 6. config.cmd grants the service account full control of the runner folder;
+#    take that back: oot-ci reads and runs the runner, writes only _work and _diag.
+$svc = Get-Service 'actions.runner.*' | Select-Object -First 1
+Stop-Service $svc.Name
+Set-RunnerAcl
+Start-Service $svc.Name
+Start-Sleep -Seconds 5
+if ((Get-Service $svc.Name).Status -ne 'Running') { throw "$($svc.Name) did not start; see $Root\_diag." }
+
+# 7. Show the result (no secrets).
 Get-Service 'actions.runner.*' | Format-Table Name, Status, StartType -AutoSize
 & $Gh api "repos/$Repo/actions/runners" --jq '.runners[] | .name + " " + .status + " " + ([.labels[].name] | join(","))'
 "Runner installed. Jobs use it only after: gh api -X POST repos/$Repo/actions/variables -f name=COOP_SELF_HOSTED -f value=on"

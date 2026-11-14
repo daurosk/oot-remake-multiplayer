@@ -162,6 +162,8 @@ jobs:
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/mods_test.ps1
       - name: Kit log masking tests
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/log_mask_test.ps1
+      - name: CI runner hook tests
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/ci-runner/job_started_test.ps1
 
   # gcc: Release, -Werror (fast tier). clang: the same with clang. asan: clang
   # Debug with ASan + UBSan. tsan: clang Debug with TSan. asan and tsan also run

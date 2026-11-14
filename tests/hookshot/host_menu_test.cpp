@@ -365,3 +365,42 @@ TEST_CASE("host menu: the same helper nonce and port for the same invite on this
     CHECK(CoopHostMenu::RejoinIds("pc-two", "PW", host).nonce != a.nonce);   // two friends, one invite
     CHECK(CoopHostMenu::RejoinIds("pc-one", "PW2", host).nonce != a.nonce);  // another session
 }
+
+TEST_CASE("host menu: Paste friend's answer says plainly what was wrong with the clipboard") {
+    using CoopHostMenu::ReadPastedAnswer;
+    namespace nat = coop::server::nat;
+    constexpr std::uint64_t now = 1'800'000'000;
+    nat::Answer a;
+    a.guest = nat::Addr{0xC6336402u, 40001};
+    a.nonce = {1, 2, 3, 4, 5, 6, 7, 8};
+    a.time = static_cast<std::uint32_t>(now);
+    const std::string answer = nat::make_answer(a, "join-pw");
+    const std::string invite = nat::make_invite(nat::Invite{nat::Addr{0xCB007105u, 27510}, "join-pw"}).value();
+
+    const auto taken = ReadPastedAnswer("ROXAS \xE2\x80\x94 Today at 9:41 PM\n`" + answer + "`", invite, "join-pw", now);
+    CHECK(taken.ok);
+    CHECK(taken.line.find("taken") != std::string::npos);
+
+    const auto locked = ReadPastedAnswer(std::nullopt, invite, "join-pw", now);
+    CHECK_FALSE(locked.ok);
+    CHECK(locked.line.find("could not be read") != std::string::npos);
+    for (const std::string empty : {std::string(), std::string(" \r\n"), std::string("\xE2\x80\x8B")}) {
+        const auto e = ReadPastedAnswer(empty, invite, "join-pw", now);
+        CHECK_FALSE(e.ok);
+        CHECK(e.line.find("clipboard is empty") != std::string::npos);
+    }
+    const auto own = ReadPastedAnswer(invite, invite, "join-pw", now);
+    CHECK_FALSE(own.ok);
+    CHECK(own.line.find("your own invite code") != std::string::npos);
+    const auto own_in_chat = ReadPastedAnswer("me: " + invite, invite, "join-pw", now);
+    CHECK(own_in_chat.line.find("your own invite code") != std::string::npos);
+    const auto other_invite =
+        ReadPastedAnswer(nat::make_invite(nat::Invite{nat::Addr{0xCB007106u, 27510}, "x"}).value(), invite, "join-pw", now);
+    CHECK(other_invite.line.find("invite code, not an answer code") != std::string::npos);
+    const auto words = ReadPastedAnswer("send me the code pls", invite, "join-pw", now);
+    CHECK(words.line.find("No answer code found") != std::string::npos);
+    const auto stale = ReadPastedAnswer(answer, invite, "join-pw", now + 3600);
+    CHECK(stale.line.find("10 minutes") != std::string::npos);
+    const auto old_invite = ReadPastedAnswer(answer, invite, "other-pw", now);
+    CHECK(old_invite.line.find("another invite code") != std::string::npos);
+}

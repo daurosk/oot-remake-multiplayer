@@ -41,7 +41,9 @@ CoopTitleMenu::Options ReadOptions();
 // The settings' LICHII_COOP_* variables for this run (co-op not started yet).
 void SetCoopEnvironment(const CoopTitleMenu::Options& o);
 
-// The clipboard's text (at most 4096 bytes; "" when none), and text put on it.
+// The clipboard's text (at most 4096 bytes): nothing when it could not be read (another program held it on
+// Windows; no wl-paste, xclip or xsel on Linux). ClipboardText: "" then. And text put on it.
+std::optional<std::string> ReadClipboard();
 std::string ClipboardText();
 bool SetClipboardText(const std::string& text);
 

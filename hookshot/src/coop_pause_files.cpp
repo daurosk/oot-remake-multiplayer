@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_pause_files.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -188,23 +189,58 @@ std::string Narrow(const wchar_t* w) {
 }  // namespace
 #endif
 
-std::string ClipboardText() {
-#ifdef _WIN32
+std::optional<std::string> ReadClipboard() {
     std::string out;
-    if (!OpenClipboard(nullptr)) {
-        return out;
+#ifdef _WIN32
+    // Another program (a chat app, a clipboard manager) may hold the clipboard for a moment: try a few times.
+    bool open = false;
+    for (int i = 0; i < 10 && !(open = OpenClipboard(nullptr) != 0); ++i) {
+        Sleep(15);
+    }
+    if (!open) {
+        return std::nullopt;
     }
     if (HANDLE h = GetClipboardData(CF_UNICODETEXT)) {
         if (const auto* w = static_cast<const wchar_t*>(GlobalLock(h))) {
             out = Narrow(w);
             GlobalUnlock(h);
         }
+    } else if (HANDLE a = GetClipboardData(CF_TEXT)) {   // only 8-bit text on it (some older programs)
+        if (const auto* s = static_cast<const char*>(GlobalLock(a))) {
+            out = s;
+            GlobalUnlock(a);
+        }
     }
     CloseClipboard();
-    return out.size() > 4096 ? out.substr(0, 4096) : out;
 #else
-    return {};
+    // Wayland's wl-paste, else X11's xclip or xsel; none there (or no display): nothing read.
+    const char* commands[] = {"wl-paste --no-newline 2>/dev/null", "xclip -selection clipboard -o 2>/dev/null",
+                              "xsel --clipboard --output 2>/dev/null"};
+    bool read = false;
+    for (const char* command : commands) {
+        if (FILE* p = popen(command, "r")) {
+            std::string got;
+            char buf[512];
+            std::size_t n = 0;
+            while (got.size() < 65536 && (n = fread(buf, 1, sizeof buf, p)) > 0) {
+                got.append(buf, n);
+            }
+            if (pclose(p) == 0) {
+                out = std::move(got);
+                read = true;
+                break;
+            }
+        }
+    }
+    if (!read) {
+        return std::nullopt;
+    }
 #endif
+    return out.size() > 4096 ? out.substr(0, 4096) : out;
+}
+
+std::string ClipboardText() {
+    return ReadClipboard().value_or(std::string());
 }
 
 bool SetClipboardText(const std::string& text) {

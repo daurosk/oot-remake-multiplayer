@@ -507,3 +507,41 @@ RejoinId RejoinIds(const std::string& client_id, const std::string& password, co
 }
 
 } // namespace CoopHostMenu
+
+namespace CoopHostMenu {
+
+PastedAnswer ReadPastedAnswer(const std::optional<std::string>& clipboard, std::string_view own_invite,
+                              std::string_view password, std::uint64_t unix_now) {
+    PastedAnswer out;
+    if (!clipboard) {
+        out.line = "The clipboard could not be read (another program had it open): press this again.";
+        return out;
+    }
+    out.text = *clipboard;
+    const bool empty = std::none_of(out.text.begin(), out.text.end(), [](char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+    });
+    if (empty) {
+        out.line = "Your clipboard is empty: copy your friend's answer code first, then press this again.";
+        return out;
+    }
+    const nat::AnswerRead read = nat::read_answer(out.text, password, unix_now);
+    if (read.error == nat::CodeError::kOk) {
+        out.ok = true;
+        out.line = nat::explain_answer(read.error);
+        return out;
+    }
+    if (read.error == nat::CodeError::kWrongKind && !own_invite.empty()) {
+        const auto own = nat::clean_letters(own_invite);
+        for (const std::string& code : nat::find_codes(out.text)) {
+            if (own && code == *own) {
+                out.line = "That is your own invite code: copy the answer code your friend sends back to you.";
+                return out;
+            }
+        }
+    }
+    out.line = nat::explain_answer(read.error);
+    return out;
+}
+
+} // namespace CoopHostMenu

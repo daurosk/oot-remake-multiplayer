@@ -54,6 +54,13 @@ std::optional<std::vector<std::uint8_t>> from_letters(std::string_view letters, 
 // upper case, without spaces, dashes and dots; nothing if another character
 // is in it.
 std::optional<std::string> clean_letters(std::string_view typed);
+// Every code inside a pasted text (its checksum right), as bare letters, in
+// the order they appear: what someone copied from a chat message, with the
+// name, the time, "code:", quotes, backticks, line breaks, non-breaking or
+// zero-width spaces around or inside it. A code is a run of words of code
+// letters (any case) with anything else between the words. read_invite and
+// read_answer look inside the text this way when it is not a code as it is.
+std::vector<std::string> find_codes(std::string_view text);
 // Groups of five letters joined by '-'.
 std::string grouped(std::string_view letters);
 
@@ -116,5 +123,8 @@ struct AnswerRead {
   Answer answer;
 };
 AnswerRead read_answer(std::string_view typed, std::string_view password, std::uint64_t unix_now);
+// One plain line for the host whose pasted answer code was not taken (the
+// game's menu, not Host.bat's window): what was wrong and what to do.
+std::string explain_answer(CodeError error);
 
 }  // namespace coop::server::nat

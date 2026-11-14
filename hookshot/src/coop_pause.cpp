@@ -13,6 +13,7 @@
 #include "coop_colors.h"
 #include "coop_hook.h"
 #include "coop_hookshot.h"
+#include "coop_host_menu.h"
 #include "coop_input.h"
 #include "coop_lobby_tab.h"
 #include "coop_look.h"
@@ -366,19 +367,28 @@ void CopyLan() {
 
 void PasteAnswer() {
     g_lan_lines.clear();
-    const std::string clip = ClipboardText();
-    if (!coop::server::nat::looks_like_code(clip)) {
+    const HosCoopStatus st = Status();
+    if (st.state != HOS_COOP_HOSTING || st.invite[0] == '\0') {
         g_answer_note.clear();
-        g_menu.SetNote({"Copy your friend's answer code first (they send it to you), then press this again."});
+        g_menu.SetNote({st.state != HOS_COOP_HOSTING
+                            ? "Host a game first: a friend's answer code is pasted while you host."
+                            : "There is no invite code this time, so no answer code: friends on the same network or "
+                              "VPN use Same network or VPN."});
         return;
     }
-    if (!CoopHookshot::HostMenu().Answer(clip.c_str())) {
+    const auto now = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    const CoopHostMenu::PastedAnswer paste =
+        CoopHostMenu::ReadPastedAnswer(CoopFiles::ReadClipboard(), st.invite, st.password, now);
+    if (!paste.ok || !CoopHookshot::HostMenu().Answer(paste.text.c_str())) {
         g_answer_note.clear();
-        g_menu.SetNote({"That code didn't work: ask your friend to copy it again."});
+        g_menu.SetNote({paste.ok ? "That answer code could not be used: host again and ask your friend to join again."
+                                 : paste.line});
+        LOG_INFO(Core, "coop: multiplayer tab: host: a pasted answer code was not taken: {}", paste.line);
         return;
     }
     LOG_INFO(Core, "coop: multiplayer tab: host: the friend's answer code was pasted");
-    g_answer_note = "Answer code taken: connecting your friend...";
+    g_answer_note = paste.line;
     RefreshSession(true);
 }
 

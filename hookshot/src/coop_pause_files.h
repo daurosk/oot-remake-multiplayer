@@ -42,12 +42,18 @@ CoopTitleMenu::Options ReadOptions();
 // The settings' LICHII_COOP_* variables for this run (co-op not started yet).
 void SetCoopEnvironment(const CoopTitleMenu::Options& o);
 
-// The clipboard's text (at most 4096 bytes; "" when none), and text put on it.
+// The clipboard's text (at most 4096 bytes): nothing when it could not be read (another program held it on
+// Windows; no wl-paste, xclip or xsel on Linux). ClipboardText: "" then. And text put on it.
+std::optional<std::string> ReadClipboard();
 std::string ClipboardText();
 bool SetClipboardText(const std::string& text);
 
 // This PC's IPv4 addresses, as text (CoopTitleMenu::LanAddresses picks the
 // ones a friend can use).
 std::vector<std::string> LocalIpv4s();
+// This PC's network cards that are up (no loopback), each IPv4 address with the card's name and description
+// (Windows: GetAdaptersAddresses; Linux: the interface name) and whether it has a router: what
+// CoopTitleMenu::SplitLan sorts into the Host dialog's Same network and VPN rows.
+std::vector<CoopTitleMenu::LocalCard> LocalCards();
 
 }  // namespace CoopFiles

@@ -24,10 +24,10 @@ constexpr Addr kStunA{0x08080808u, 19302};
 constexpr Addr kStunB{0x01010101u, 3478};
 constexpr std::uint64_t kNow = 1'800'000'000;
 
-std::string mutate(std::string code, std::size_t at) {
-  char& c = code[at];
-  if (c == '-') return code;
-  c = c == 'A' ? 'B' : 'A';
+std::string mutate(const std::string& original, std::size_t at) {
+  std::string code = original;
+  if (at >= code.size() || code[at] == '-') return code;
+  code[at] = code[at] == 'A' ? 'B' : 'A';
   return code;
 }
 
@@ -164,6 +164,73 @@ TEST_CASE("answer code: signed with the join password, fresh, not forged") {
   const auto invite = make_invite(Invite{kHostAddr, "pw-one"}).value();
   CHECK(read_answer(invite, "pw-one", kNow).error == CodeError::kWrongKind);
   CHECK(read_invite(code).error == CodeError::kWrongKind);
+}
+
+TEST_CASE("answer code: found anywhere in what a player copied from a chat") {
+  Answer a;
+  a.guest = kGuestAddr;
+  a.nonce = {9, 8, 7, 6, 5, 4, 3, 2};
+  a.time = static_cast<std::uint32_t>(kNow);
+  const std::string code = make_answer(a, "pw-one");
+  std::string lower;
+  for (char c : code) lower += static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+  std::string split = code;   // a phone breaks the line in a group
+  split.insert(13, "\n");
+  std::string spaced;         // groups by spaces, no dashes
+  for (char c : code) spaced += c == '-' ? ' ' : c;
+  const std::string zw = "\xE2\x80\x8B";    // U+200B zero-width space
+  const std::string nbsp = "\xC2\xA0";      // U+00A0 no-break space
+  const std::string dash = "\xE2\x80\x93";  // U+2013 en dash (a phone's "smart" dash)
+  std::string unicode;
+  for (char c : code) unicode += c == '-' ? dash : std::string(1, c);
+  const std::vector<std::string> pasted = {
+      code,
+      "  " + code + " \r\n",
+      "code: " + code,
+      "answer code: " + code + "   (copied to the clipboard)",
+      "`" + code + "`",
+      "```\n" + code + "\n```",
+      "\"" + code + "\"",
+      "\xE2\x80\x9C" + code + "\xE2\x80\x9D",   // curly quotes
+      "ROXAS \xE2\x80\x94 Today at 9:41 PM\n" + code,
+      "ROXAS\n" + code + "\nhere you go, paste it on your Host page!",
+      "Pm " + code + " ok",  // short words of code letters right beside it
+      lower,
+      split,
+      spaced,
+      zw + code + zw,
+      nbsp + code + nbsp,
+      unicode,
+  };
+  for (std::size_t i = 0; i < pasted.size(); ++i) {
+    CAPTURE(i);
+    CHECK(read_answer(pasted[i], "pw-one", kNow + 5).error == CodeError::kOk);
+    const auto found = find_codes(pasted[i]);
+    REQUIRE(found.size() == 1);
+    CHECK(found[0] == clean_letters(code).value());
+  }
+  // Still told apart, still not made up.
+  const auto invite = make_invite(Invite{kHostAddr, "pw-one"}).value();
+  CHECK(read_answer("Here is my code: " + invite, "pw-one", kNow).error == CodeError::kWrongKind);
+  CHECK(read_answer("my invite " + invite + "\nyour answer " + code, "pw-one", kNow).error == CodeError::kOk);
+  CHECK(read_answer(invite + "\n" + code, "pw-one", kNow + kAnswerMaxAgeSeconds + 1).error == CodeError::kStale);
+  CHECK(read_answer("hey can you host again?", "pw-one", kNow).error == CodeError::kNotACode);
+  CHECK(read_answer("", "pw-one", kNow).error == CodeError::kNotACode);
+  const std::string typo = mutate(code, 3);
+  CHECK(read_answer("code: " + typo, "pw-one", kNow).error != CodeError::kOk);
+  CHECK(read_answer("code: " + code.substr(0, code.size() - 3), "pw-one", kNow).error != CodeError::kOk);
+  CHECK(read_answer(typo, "pw-one", kNow).error == CodeError::kBadChecksum);  // as before
+  CHECK(read_invite("join me: " + invite + " :)").error == CodeError::kOk);
+  CHECK(looks_like_code("code: " + code));
+  CHECK_FALSE(looks_like_code("203.0.113.5:27510 hunter2"));
+  CHECK(find_codes("ABCDE-FGHJK-LMNPQ-RSTUV-WXYZ2-34567-89ABC").empty());  // code letters, no checksum
+  // Every answer error has a plain line for the host's menu.
+  for (CodeError e : {CodeError::kOk, CodeError::kNotACode, CodeError::kBadChecksum, CodeError::kWrongKind,
+                      CodeError::kNewerCode, CodeError::kMalformed, CodeError::kBadSignature, CodeError::kStale,
+                      CodeError::kNotPublic}) {
+    CHECK_FALSE(explain_answer(e).empty());
+  }
+  CHECK(explain_answer(CodeError::kStale).find("10 minutes") != std::string::npos);
 }
 
 TEST_CASE("stun: request and answers") {

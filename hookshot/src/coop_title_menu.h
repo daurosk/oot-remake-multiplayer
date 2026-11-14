@@ -161,6 +161,31 @@ std::string LanJoinText(std::string_view address, std::uint16_t port, std::strin
 std::vector<std::string> LanLines(const std::vector<LanAddress>& addresses, std::uint16_t port,
                                   std::string_view password, bool copied);
 
+// The Host dialog's two rows for friends who join by address: "Same network" (this PC's home-network address, the
+// card with the router first) and "VPN" (a VPN program's card: Radmin VPN, Hamachi, ZeroTier, Tailscale, WireGuard,
+// found by the card's name, so any address range it uses works).
+struct LocalCard {
+    std::string address;   // IPv4, dotted
+    std::string adapter;   // the card's name and description as the system gives them ("" when it does not say)
+    bool gateway = false;  // the card has a router (the default way out)
+};
+// The VPN program a card belongs to ("" when none): by its name ("Radmin VPN", "Hamachi Network Interface",
+// "ZeroTier One Virtual Port", "Tailscale", "WireGuard Tunnel"; on Linux ham0, zt..., tailscale0, wg0).
+std::string VpnLabel(std::string_view adapter);
+struct LanSplit {
+    std::vector<LanAddress> home;   // label "home network"; a card with a router first
+    std::vector<LanAddress> vpn;    // label the VPN program's name
+};
+// A card without a name (the system did not say) counts as a VPN by its address range (LanLabel), as before.
+LanSplit SplitLan(const std::vector<LocalCard>& cards);
+// The lines each row shows (the first address's join text is on the clipboard when `copied`).
+std::vector<std::string> HomeLines(const std::vector<LanAddress>& home, std::uint16_t port, std::string_view password,
+                                   bool copied);
+std::vector<std::string> VpnLines(const std::vector<LanAddress>& vpn, std::uint16_t port, std::string_view password,
+                                  bool copied);
+// The Host dialog's first line while hosting with an invite code: the code is the way to host, the rows the others.
+std::string HostHeadline(bool copied);
+
 // After Join connects: the host's save (lichii/hook/coop_save.h, the co-op
 // folder) is loaded in one step, with no Continue to find. The states:
 // - wait: the save is not in yet. Nothing pressed. The player's A on Continue

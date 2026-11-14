@@ -6,6 +6,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -13,6 +14,7 @@
 #include "coop_colors.h"
 #include "coop_hook.h"
 #include "coop_hookshot.h"
+#include "coop_host_menu.h"
 #include "coop_input.h"
 #include "coop_lobby_tab.h"
 #include "coop_look.h"
@@ -33,6 +35,8 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#else
+#include <dlfcn.h>
 #endif
 
 namespace CoopPause {
@@ -68,7 +72,7 @@ bool g_answer_copied = false;   // this join's answer code (WAIT_HOST) was put o
 std::string g_answer_note;   // what became of the friend's answer code the host pasted ("" when none)
 std::string g_join_text;     // the code (or address) this join used: remembered once connected
 bool g_join_saved = false;
-std::vector<std::string> g_lan_lines;   // "Same network or VPN"'s lines while they are shown
+std::vector<std::string> g_lan_lines;   // "Same network"'s or "VPN"'s lines while they are shown
 std::uint64_t g_next_session_ms = 0;
 std::atomic<int> g_wanted{HOS_COOP_MENU_WANT_NOTHING};
 
@@ -355,37 +359,49 @@ void CycleInput(bool controller) {
     }
 }
 
-void CopyLan() {
-    // The address and the join password for a friend on the host's home network or VPN (never logged).
+// The address and the join password for a friend on the host's home network (Same network) or on a VPN with the
+// host (VPN): the first address's line on the clipboard (never logged).
+void CopyLan(bool vpn) {
     const HosCoopStatus st = Status();
     if (st.state != HOS_COOP_HOSTING || st.port == 0) {
         g_menu.SetNote({"The server is not running yet."});
         return;
     }
-    const auto addresses = CoopTitleMenu::LanAddresses(CoopFiles::LocalIpv4s());
+    const CoopTitleMenu::LanSplit split = CoopTitleMenu::SplitLan(CoopFiles::LocalCards());
+    const auto& addresses = vpn ? split.vpn : split.home;
     const bool copied = !addresses.empty() &&
                         SetClipboardText(CoopTitleMenu::LanJoinText(addresses.front().address, st.port, st.password));
-    g_lan_lines = CoopTitleMenu::LanLines(addresses, st.port, st.password, copied);
-    LOG_INFO(Core, "coop: multiplayer tab: host: same network or VPN: {} address(es){}", addresses.size(),
+    g_lan_lines = vpn ? CoopTitleMenu::VpnLines(addresses, st.port, st.password, copied)
+                      : CoopTitleMenu::HomeLines(addresses, st.port, st.password, copied);
+    LOG_INFO(Core, "coop: multiplayer tab: host: {}: {} address(es){}", vpn ? "VPN" : "same network", addresses.size(),
              copied ? ", the join line is on the clipboard" : "");
     RefreshSession(true);
 }
 
 void PasteAnswer() {
     g_lan_lines.clear();
-    const std::string clip = ClipboardText();
-    if (!coop::server::nat::looks_like_code(clip)) {
+    const HosCoopStatus st = Status();
+    if (st.state != HOS_COOP_HOSTING || st.invite[0] == '\0') {
         g_answer_note.clear();
-        g_menu.SetNote({"Copy your friend's answer code first (they send it to you), then press this again."});
+        g_menu.SetNote({st.state != HOS_COOP_HOSTING
+                            ? "Host a game first: a friend's answer code is pasted while you host."
+                            : "There is no invite code this time, so no answer code: friends on the same network or "
+                              "a VPN use the Same network or the VPN row."});
         return;
     }
-    if (!CoopHookshot::HostMenu().Answer(clip.c_str())) {
+    const auto now = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    const CoopHostMenu::PastedAnswer paste =
+        CoopHostMenu::ReadPastedAnswer(CoopFiles::ReadClipboard(), st.invite, st.password, now);
+    if (!paste.ok || !CoopHookshot::HostMenu().Answer(paste.text.c_str())) {
         g_answer_note.clear();
-        g_menu.SetNote({"That code didn't work: ask your friend to copy it again."});
+        g_menu.SetNote({paste.ok ? "That answer code could not be used: host again and ask your friend to join again."
+                                 : paste.line});
+        LOG_INFO(Core, "coop: multiplayer tab: host: a pasted answer code was not taken: {}", paste.line);
         return;
     }
     LOG_INFO(Core, "coop: multiplayer tab: host: the friend's answer code was pasted");
-    g_answer_note = "Answer code taken: connecting your friend...";
+    g_answer_note = paste.line;
     RefreshSession(true);
 }
 
@@ -420,7 +436,8 @@ void Act(const Request& r) {
         break;
     case Request::Kind::kCopyAnswer: Copy(Status().answer, "answer code"); break;
     case Request::Kind::kPasteAnswer: PasteAnswer(); break;
-    case Request::Kind::kCopyLan: CopyLan(); break;
+    case Request::Kind::kCopyLan: CopyLan(false); break;
+    case Request::Kind::kCopyVpn: CopyLan(true); break;
     case Request::Kind::kController: CycleInput(true); break;
     case Request::Kind::kKeyboard: CycleInput(false); break;
     }
@@ -624,23 +641,47 @@ int Wanted() {
     return g_wanted.exchange(HOS_COOP_MENU_WANT_NOTHING);
 }
 
+// Ctrl and Shift held now. Windows: GetKeyState. Linux: the game's own SDL (SDL2 or SDL3, found in the process when
+// it is there: no link to it), whose KMOD_CTRL / KMOD_SHIFT bits are the same in both; without SDL, neither.
+static std::pair<bool, bool> Modifiers() {
+#ifdef _WIN32
+    return {(GetKeyState(VK_CONTROL) & 0x8000) != 0, (GetKeyState(VK_SHIFT) & 0x8000) != 0};
+#else
+    using GetModState = unsigned int (*)();
+    static const GetModState get = reinterpret_cast<GetModState>(dlsym(RTLD_DEFAULT, "SDL_GetModState"));
+    if (get == nullptr) {
+        return {false, false};
+    }
+    const unsigned int mod = get() & 0xFFFFu;
+    return {(mod & 0x00C0u) != 0, (mod & 0x0003u) != 0};
+#endif
+}
+
 bool Key(std::uint32_t vk, bool repeat) {
     if (CoopModsTab::Key(vk, repeat)) {  // the Mods tab's text field, while it is typed into
         return true;
     }
     std::lock_guard lock(g_mutex);
-    if (!g_shown || !g_menu.typing()) {
+    if (!g_shown) {
+        return false;
+    }
+    const auto [ctrl_down, shift_down] = Modifiers();
+    // Ctrl+V and Shift+Insert paste, typing or not: on the Host page that is Paste friend's answer (players press
+    // Ctrl+V there), on Join the code. A plain Insert stays Hookshot's.
+    if (!repeat && ((vk == 'V' && ctrl_down) || (vk == 0x2D && shift_down && !ctrl_down))) {
+        const bool taken = g_menu.Press(Input::kPaste);
+        Settle();
+        if (taken || g_menu.typing()) {
+            return true;
+        }
+    }
+    if (!g_menu.typing()) {
         return false;
     }
     if (vk == 0x70 || vk == 0x2D) {   // F1, Insert: Hookshot's (the menu closes, the typing with it)
         return false;
     }
-    const bool ctrl =
-#ifdef _WIN32
-        (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-#else
-        false;
-#endif
+    const bool ctrl = ctrl_down;
     switch (vk) {
     case 0x26: g_menu.Press(Input::kUp); break;
     case 0x28: g_menu.Press(Input::kDown); break;

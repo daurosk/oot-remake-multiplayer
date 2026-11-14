@@ -15,6 +15,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -114,3 +115,18 @@ RejoinId RejoinIds(const std::string& client_id, const std::string& password, co
 void CopyText(char* out, std::size_t size, const std::string& text);
 
 } // namespace CoopHostMenu
+
+namespace CoopHostMenu {
+
+// The host's "Paste friend's answer" (the pause menu's Host page), checked at once so the player is told plainly what
+// was wrong: nothing when the clipboard could not be read. The answer code may sit anywhere in what was copied (a
+// whole chat message: name, time, "code:", quotes, line breaks; nat::find_codes).
+struct PastedAnswer {
+    bool ok = false;      // an answer code for this session: hand `text` to Menu::Answer
+    std::string text;     // what was pasted
+    std::string line;     // one plain line for the menu: why not, or that it was taken
+};
+PastedAnswer ReadPastedAnswer(const std::optional<std::string>& clipboard, std::string_view own_invite,
+                              std::string_view password, std::uint64_t unix_now);
+
+}  // namespace CoopHostMenu

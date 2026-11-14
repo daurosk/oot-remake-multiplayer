@@ -45,14 +45,14 @@ struct Request {
     // kCopyInvite: the session's invite code onto the clipboard. kPasteAnswer:
     // the friend's ANSWER CODE from the clipboard to the host. kCopyAnswer: a
     // guest's answer code (its host could not be reached) onto the clipboard.
-    // kCopyLan: the line for friends on the same network or VPN onto the
-    // clipboard. kController / kKeyboard: the next choice of this game's
+    // kCopyLan / kCopyVpn: the line for friends on the same network / on a
+    // VPN with the host onto the clipboard. kController / kKeyboard: the next choice of this game's
     // controller / keyboard (CoopInput::CycleController / CycleKeyboard),
     // applied and saved by the module, which then hands the new rows back
     // (SetInputRows). kLookParts: look() is the look chosen on the Customize
     // page (coop_look_menu.h); worn when the menu closes.
     enum class Kind { kHost, kJoin, kLeave, kSave, kLook, kPaste, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan,
-                      kController, kKeyboard, kLookParts };
+                      kController, kKeyboard, kLookParts, kCopyVpn };
     Kind kind = Kind::kHost;
     std::string text;
 };
@@ -162,7 +162,7 @@ private:
     enum class Act {
         kNone,
         kOpenHost, kOpenJoin, kOpenLocal, kOpenSettings, kOpenCommands, kCommand,
-        kStartHost, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan, kLeave,
+        kStartHost, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan, kCopyVpn, kLeave,
         kRejoin, kCode, kJoinNow,
         kName, kLook, kPlayers, kVoice, kChatKey, kController, kKeyboard, kMapPlayers, kMapNames,
         kOpenCustomize

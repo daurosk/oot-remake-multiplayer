@@ -46,8 +46,11 @@ set_target_properties(hookshot_coop PROPERTIES PREFIX "" CXX_VISIBILITY_PRESET h
 # (hos_coop_voice.h, our patch 0009) and the game-free voice library.
 target_sources(hookshot_coop PRIVATE src/coop_voice_hookshot.cpp)
 target_link_libraries(hookshot_coop PRIVATE coop_voice)
-# Linux: the clipboard through the desktop's tools (wl-copy, xclip, xsel); Windows has its own.
-if(NOT WIN32)
+if(WIN32)
+  # GetAdaptersAddresses: the Host dialog's Same network and VPN rows name each network card.
+  target_link_libraries(hookshot_coop PRIVATE iphlpapi)
+else()
+  # Linux: the clipboard through the desktop's tools (wl-copy, xclip, xsel); Windows has its own.
   target_sources(hookshot_coop PRIVATE src/coop_clipboard_posix.cpp)
   # The game's bridge opens the module by its full path (RTLD_LOCAL); the renderer's menu tabs and
   # drawing (patches 0001, 0012) and the world hooks (0005) then find it with
@@ -60,6 +63,8 @@ if(NOT WIN32)
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     target_link_options(hookshot_coop PRIVATE -static-libstdc++ -static-libgcc -Wl,--exclude-libs,ALL -Wl,--no-undefined)
   endif()
+  # dlsym: Ctrl+V reads the modifier keys from the game's own SDL (coop_pause.cpp Modifiers).
+  target_link_libraries(hookshot_coop PRIVATE ${CMAKE_DL_LIBS})
 endif()
 if(MSVC)
   # The emulator's own code builds with these off too (lichii/README.md).

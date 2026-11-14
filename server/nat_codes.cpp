@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <optional>
 #include <random>
 #include <utility>
 
@@ -178,6 +179,67 @@ std::optional<std::string> clean_letters(std::string_view typed) {
   return out;
 }
 
+std::vector<std::string> find_codes(std::string_view text) {
+  // The words (runs of ASCII letters and digits) made only of code letters,
+  // and whether each follows the one before with no other word between.
+  struct Word {
+    std::string letters;
+    bool joined = false;
+  };
+  std::vector<Word> words;
+  bool broken = true;
+  for (std::size_t i = 0; i < text.size();) {
+    const auto alnum = [](char c) {
+      return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+    };
+    if (!alnum(text[i])) {
+      ++i;
+      continue;
+    }
+    std::string w;
+    bool code = true;
+    for (; i < text.size() && alnum(text[i]); ++i) {
+      char c = text[i];
+      if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+      if (letter_value(c) < 0) code = false;
+      w.push_back(c);
+    }
+    if (!code) {
+      broken = true;
+      continue;
+    }
+    words.push_back({std::move(w), !broken});
+    broken = false;
+  }
+  // Each run of joined words: the first stretch of whole words, from the
+  // left, whose letters are a code; then on after it.
+  constexpr std::size_t kMin = 20;   // the shortest invite code (a 1-letter password) is 21 letters
+  constexpr std::size_t kMax = 240;  // the longest (a 128-byte password) is 224
+  std::vector<std::string> out;
+  for (std::size_t start = 0; start < words.size();) {
+    std::string letters;
+    std::size_t found = 0;
+    for (std::size_t end = start; end < words.size(); ++end) {
+      if (end > start && !words[end].joined) break;
+      letters += words[end].letters;
+      if (letters.size() > kMax) break;
+      // Only lengths to_letters makes (cheap) go on to the checksum (a SHA-256).
+      if (letters.size() >= kMin && letters_for(letters.size() * 5 / 8) == letters.size() &&
+          read_raw(letters).error == CodeError::kOk) {
+        found = end + 1;
+        break;
+      }
+    }
+    if (found) {
+      out.push_back(std::move(letters));
+      start = found;
+    } else {
+      ++start;
+    }
+  }
+  return out;
+}
+
 std::string grouped(std::string_view letters) {
   std::string out;
   for (std::size_t i = 0; i < letters.size(); ++i) {
@@ -241,7 +303,7 @@ std::optional<std::string> make_invite(const Invite& invite) {
   return grouped(to_letters(bytes));
 }
 
-InviteRead read_invite(std::string_view typed) {
+static InviteRead invite_as_is(std::string_view typed) {
   InviteRead out;
   Raw raw = read_raw(typed);
   out.error = raw.error;
@@ -271,7 +333,7 @@ InviteRead read_invite(std::string_view typed) {
 
 bool looks_like_code(std::string_view typed) {
   const auto letters = clean_letters(typed);
-  return letters && letters->size() >= 30;
+  return (letters && letters->size() >= 30) || !find_codes(typed).empty();
 }
 
 std::string make_answer(const Answer& answer, std::string_view password) {
@@ -288,7 +350,7 @@ std::string make_answer(const Answer& answer, std::string_view password) {
   return grouped(to_letters(bytes));
 }
 
-AnswerRead read_answer(std::string_view typed, std::string_view password, std::uint64_t unix_now) {
+static AnswerRead answer_as_is(std::string_view typed, std::string_view password, std::uint64_t unix_now) {
   AnswerRead out;
   Raw raw = read_raw(typed);
   out.error = raw.error;
@@ -309,6 +371,57 @@ AnswerRead read_answer(std::string_view typed, std::string_view password, std::u
   if (out.answer.guest.port == 0) { out.error = CodeError::kMalformed; return out; }
   out.error = CodeError::kOk;
   return out;
+}
+
+
+// The text as it is first; when that is not a code (other characters in it,
+// or a letter more or less), the codes inside it: the first one read fine, or
+// else the first one's error that is not "the other kind" (a stale answer
+// beside the host's own invite says "stale"), or else the first one's.
+template <typename Read, typename AsIs>
+static Read look_inside(std::string_view typed, const AsIs& as_is) {
+  Read out = as_is(typed);
+  if (out.error != CodeError::kNotACode && out.error != CodeError::kBadChecksum) return out;
+  std::optional<Read> first, first_right_kind;
+  for (const std::string& code : find_codes(typed)) {
+    Read r = as_is(code);
+    if (r.error == CodeError::kOk) return r;
+    if (!first) first = r;
+    if (!first_right_kind && r.error != CodeError::kWrongKind) first_right_kind = r;
+  }
+  if (first_right_kind) return *first_right_kind;
+  if (first) return *first;
+  return out;
+}
+
+InviteRead read_invite(std::string_view typed) {
+  return look_inside<InviteRead>(typed, [](std::string_view t) { return invite_as_is(t); });
+}
+
+AnswerRead read_answer(std::string_view typed, std::string_view password, std::uint64_t unix_now) {
+  return look_inside<AnswerRead>(typed, [&](std::string_view t) { return answer_as_is(t, password, unix_now); });
+}
+
+std::string explain_answer(CodeError error) {
+  switch (error) {
+    case CodeError::kOk: return "Answer code taken: connecting your friend...";
+    case CodeError::kNotACode:
+      return "No answer code found in what you copied: copy the whole code from your friend's message.";
+    case CodeError::kBadChecksum:
+      return "A letter of that answer code is wrong or missing: ask your friend to copy and send it again.";
+    case CodeError::kWrongKind:
+      return "That is an invite code, not an answer code: copy the code your friend's game shows them.";
+    case CodeError::kNewerCode: return "Your friend's co-op is newer than yours: both of you run Update.bat.";
+    case CodeError::kMalformed: return "That answer code does not make sense: ask your friend for a new one.";
+    case CodeError::kBadSignature:
+      return "That answer code was made for another invite code (an old one?): send your friend your code again.";
+    case CodeError::kStale:
+      return "That answer code is over 10 minutes old (or a PC's clock is wrong): ask your friend to join again "
+             "and send the new one.";
+    case CodeError::kNotPublic:
+      return "That answer code has no internet address: on the same network or VPN, use Same network or VPN.";
+  }
+  return "That answer code didn't work: ask your friend to copy it again.";
 }
 
 }  // namespace coop::server::nat

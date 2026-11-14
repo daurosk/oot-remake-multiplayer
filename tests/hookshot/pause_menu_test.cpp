@@ -42,7 +42,7 @@ Session Hosting(int players, std::string code = "ABCDE-FGHJK") {
     s.hosting = true;
     s.players = players;
     s.code = std::move(code);
-    s.lines = {"Send this code to your friends:", s.code};
+    s.lines = {CoopTitleMenu::HostHeadline(true), s.code};
     return s;
 }
 
@@ -97,12 +97,17 @@ TEST_CASE("pause tab: Host hosts in one press, then the page shows the code, the
     m.SetSession(starting);
     CHECK(m.view().gold == "Starting your game...");
     m.SetSession(Hosting(1));
-    CHECK(Names(m) == std::vector<std::string>{"Copy the code again", "Paste friend's answer", "Same network or VPN",
-                                               "Stop hosting"});
+    CHECK(Names(m) == std::vector<std::string>{"Copy the code again", "Paste friend's answer (or Ctrl+V)",
+                                               "Same network", "VPN", "Stop hosting"});
+    // Ctrl+V (or Shift+Insert) on the Host page is Paste friend's answer, wherever the cursor is.
+    CHECK(m.Press(Input::kPaste));
+    const auto paste = m.TakeRequest();
+    REQUIRE(paste.has_value());
+    CHECK(paste->kind == Request::Kind::kPasteAnswer);
     View v = m.view();
     CHECK(v.hint == "ABCDE-FGHJK");
     CHECK(v.gold == "Hosting: waiting for friends");
-    CHECK(v.help.find("Send this code") != std::string::npos);   // what the host does, in place of the row's help
+    CHECK(v.help.find("Invite code copied to your clipboard") == 0);   // what the host does, in place of the row's help
     m.SetSession(Hosting(3));
     CHECK(m.view().gold == "Hosting: 3 players");
     m.Press(Input::kDecide);
@@ -113,15 +118,18 @@ TEST_CASE("pause tab: Host hosts in one press, then the page shows the code, the
     m.Press(Input::kDown);
     m.Press(Input::kDecide);
     CHECK(m.TakeRequest()->kind == Request::Kind::kCopyLan);
+    m.Press(Input::kDown);
+    m.Press(Input::kDecide);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kCopyVpn);
     // Stop takes a second press
     m.Press(Input::kDown);
     REQUIRE(Selected(m) == "Stop hosting");
     m.Press(Input::kDecide);
     CHECK_FALSE(m.TakeRequest().has_value());
-    CHECK(m.view().rows[3].value == "Press again to confirm");
+    CHECK(m.view().rows[4].value == "Press again to confirm");
     m.Press(Input::kUp);   // anything else: not confirmed
     m.Press(Input::kDown);
-    CHECK(m.view().rows[3].value == "Stop");
+    CHECK(m.view().rows[4].value == "Stop");
     m.Press(Input::kDecide);
     m.Press(Input::kDecide);
     CHECK(m.TakeRequest()->kind == Request::Kind::kLeave);

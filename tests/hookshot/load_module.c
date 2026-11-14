@@ -21,11 +21,21 @@ int main(int argc, char **argv) {
         fprintf(stderr, "usage: load_module <hookshot_coop.so>\n");
         return 2;
     }
+    /* (as Longshot's host/posix LoadLibraryA: the full path, RTLD_LOCAL) */
     void *m = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
     if (!m) {
         fprintf(stderr, "load_module: %s did not load: %s\n", argv[1], dlerror());
         return 1;
     }
+    /* (as the renderer's menu tabs and drawing, patches 0001 and 0012, and the world hooks, 0005: the loaded module by
+       its bare name. glibc finds it so only by its SONAME; without one the Multiplayer tab never shows on Linux) */
+    void *by_name = dlopen("hookshot_coop.so", RTLD_NOW | RTLD_NOLOAD);
+    if (by_name != m) {
+        fprintf(stderr, "load_module: dlopen(\"hookshot_coop.so\", RTLD_NOLOAD) %s: the renderer would not find the "
+                        "module (its SONAME must be hookshot_coop.so)\n", by_name ? "found another library" : "found nothing");
+        return 1;
+    }
+    printf("found by its bare name (RTLD_NOLOAD), as the renderer looks for it\n");
     int missing = 0;
     for (size_t i = 0; i < sizeof exports / sizeof exports[0]; ++i) {
         void *f = dlsym(m, exports[i]);

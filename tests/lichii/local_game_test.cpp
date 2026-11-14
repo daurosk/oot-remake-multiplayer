@@ -608,7 +608,7 @@ TEST_CASE("local game off: the step runs only with no session and never while co
     CHECK_FALSE(OffFrame::Runs(true, true));
 }
 
-TEST_CASE("local game off: solo reads light and publishes nothing; seats publish; the last seat leaving publishes once") {
+TEST_CASE("local game off: solo reads light and publishes nothing, seats publish, the last seat leaving publishes once") {
     CoopLocalGame::OffFrame step;
     // Solo: position and age only, no Director.
     for (int i = 0; i < 3; i++) {

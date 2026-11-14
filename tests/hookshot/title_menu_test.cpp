@@ -634,8 +634,9 @@ TEST_CASE("title menu: voice chat is off unless turned on: on writes open, ptt s
     // an older file's ptt (and on, 1) read back
     CHECK(Options::Read("", "LICHII_COOP_VOICE=ptt\r\n").voice_ptt);
     CHECK(Options::Read("", "LICHII_COOP_VOICE=PTT\r\n").VoiceMode() == "ptt");
-    CHECK(Options::Read("", "LICHII_COOP_VOICE=on\r\n").VoiceMode() == "open");
-    CHECK(Options::Read("", "LICHII_COOP_VOICE=1\r\n").voice);
+    CHECK(Options::Read("", "LICHII_COOP_VOICE=on\r\n").VoiceMode() == "ptt");   // an older file's on: as it meant
+    CHECK(Options::Read("", "LICHII_COOP_VOICE=1\r\n").voice_ptt);
+    CHECK(Options::Read("", "LICHII_COOP_VOICE=open-mic\r\n").VoiceMode() == "open");
     CHECK(Options::Read("", "LICHII_COOP_VOICE=Open\r\n").VoiceMode() == "open");
     CHECK_FALSE(Options::Read("", "LICHII_COOP_VOICE=off\r\n").voice);
     // this run's variable: the mode, or unset for off

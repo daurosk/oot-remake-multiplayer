@@ -244,3 +244,47 @@ TEST_CASE("voice engine: open mic needs a louder voice while the others play her
   CHECK(capture_quiet_voice(false) > 0);   // nobody heard: that level is speech
   CHECK(capture_quiet_voice(true) == 0);   // their voice playing: not sent back
 }
+
+TEST_CASE("voice engine: the echo guard ends 300 ms of microphone after the last voice, even if render stops") {
+  Engine e(fake_codecs());
+  Settings s;
+  s.gate.mode = Mode::open_mic;
+  e.configure(s);
+  std::vector<proto::VoiceFrame> out;
+  e.capture(std::vector<std::int16_t>(960 * 50, 20), false, out);
+  e.set_listener(Listener{});
+  e.set_speaker(2, Vec3{1, 0, 0});
+  for (std::uint16_t i = 0; i < 6; ++i) e.receive(frame_from(2, i, 16384), 0);
+  render(e, 8, 0);  // then the output stops: no more render
+  e.capture(std::vector<std::int16_t>(960 * 15, 20), false, out);  // 300 ms of quiet room
+  CHECK(out.empty());
+  e.capture(std::vector<std::int16_t>(960 * 3, 200), false, out);  // the quiet voice counts again
+  CHECK_FALSE(out.empty());
+}
+
+TEST_CASE("voice engine: open mic sends the frame its attack held back, so a word's start is not cut") {
+  Engine e(fake_codecs());
+  Settings s;
+  s.gate.mode = Mode::open_mic;
+  e.configure(s);
+  std::vector<proto::VoiceFrame> out;
+  e.capture(std::vector<std::int16_t>(960 * 50, 20), false, out);
+  std::vector<std::int16_t> word(960 * 2);
+  std::fill(word.begin(), word.begin() + 960, static_cast<std::int16_t>(3001));  // its first frame
+  std::fill(word.begin() + 960, word.end(), static_cast<std::int16_t>(3002));
+  e.capture(word, false, out);
+  REQUIRE(out.size() == 2);
+  CHECK(out[0].opus == std::vector<std::uint8_t>{0xB9, 0x0B});  // 3001: the held frame first
+  CHECK(out[1].opus == std::vector<std::uint8_t>{0xBA, 0x0B});  // 3002
+  CHECK(out[1].sequence == static_cast<std::uint16_t>(out[0].sequence + 1));
+  // push to talk: no frame from before the key
+  Engine p(fake_codecs());
+  Settings ps;
+  ps.gate.mode = Mode::push_to_talk;
+  p.configure(ps);
+  std::vector<proto::VoiceFrame> pout;
+  p.capture(std::vector<std::int16_t>(960, 3001), false, pout);
+  p.capture(std::vector<std::int16_t>(960, 3002), true, pout);
+  REQUIRE(pout.size() == 1);
+  CHECK(pout[0].opus == std::vector<std::uint8_t>{0xBA, 0x0B});
+}

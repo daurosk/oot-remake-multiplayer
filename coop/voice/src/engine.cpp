@@ -9,6 +9,7 @@ namespace coop::voice {
 namespace {
 
 constexpr std::uint64_t kSpeakingUs = 300'000;
+constexpr int kEchoFrames = 15;  // 300 ms of microphone
 
 }  // namespace
 
@@ -55,19 +56,40 @@ void Engine::capture(std::span<const std::int16_t> samples, bool key_held,
                      std::vector<protocol::VoiceFrame>& out) {
   const Settings s = settings();
   gate_.configure(s.gate);
-  // Open mic's echo guard: the others' voices played here just now.
-  const std::uint64_t heard = any_heard_us_.load();
-  const std::uint64_t now = render_us_.load();
-  gate_.set_hearing(heard != 0 && now >= heard && now - heard < kSpeakingUs);
   pending_.insert(pending_.end(), samples.begin(), samples.end());
   std::size_t at = 0;
   std::array<std::uint8_t, protocol::kMaxVoiceBytes> packet{};
   while (pending_.size() - at >= static_cast<std::size_t>(kSamplesPerFrame)) {
     const std::span<const std::int16_t> frame(pending_.data() + at, kSamplesPerFrame);
     at += kSamplesPerFrame;
+    // Open mic's echo guard: the others' voices played here within the last
+    // kEchoFrames of our microphone.
+    int echo = echo_frames_.load();
+    while (echo > 0 && !echo_frames_.compare_exchange_weak(echo, echo - 1)) {
+    }
+    gate_.set_hearing(echo > 0);
     const Gate::Step step = gate_.update(frame, key_held, s.muted || encoder_ == nullptr);
     level_db_.store(gate_.level_db());
-    if (step == Gate::Step::closed) continue;
+    if (step == Gate::Step::closed) {
+      std::copy(frame.begin(), frame.end(), held_.begin());
+      have_held_ = true;
+      continue;
+    }
+    if (step == Gate::Step::open && gate_.just_opened() && have_held_ && s.gate.mode == Mode::open_mic &&
+        s.gate.attack_frames > 1) {
+      // The frame the attack held back: the start of the word.
+      const std::size_t n = encoder_->encode(held_, packet);
+      if (n > 0 && n <= packet.size()) {
+        protocol::VoiceFrame h;
+        h.player_number = protocol::kPlayerSelf;
+        h.opus.assign(packet.begin(), packet.begin() + static_cast<std::ptrdiff_t>(n));
+        h.sequence = sequence_++;
+        out.push_back(std::move(h));
+        std::lock_guard lock(stats_mutex_);
+        ++stats_.sent;
+      }
+    }
+    have_held_ = false;
     protocol::VoiceFrame v;
     v.player_number = protocol::kPlayerSelf;
     if (step == Gate::Step::ended) {
@@ -92,6 +114,7 @@ void Engine::capture(std::span<const std::int16_t> samples, bool key_held,
 
 void Engine::stop_talking(std::vector<protocol::VoiceFrame>& out) {
   pending_.clear();
+  have_held_ = false;
   if (!gate_.open()) return;
   const std::array<std::int16_t, kSamplesPerFrame> silence{};
   if (gate_.update(silence, false, true) == Gate::Step::ended) {  // muted: closes at once
@@ -186,7 +209,6 @@ bool Engine::fill(Speaker& s, std::uint64_t now_us) {
 void Engine::render(float* const* out, int channels, int frames, std::uint64_t now_us) {
   if (out == nullptr || frames <= 0 || (channels != 2 && channels != 6)) return;
   const Settings set = settings();
-  render_us_.store(now_us);
   Listener listener;
   {
     std::lock_guard lock(listener_mutex_);
@@ -221,7 +243,7 @@ void Engine::render(float* const* out, int channels, int frames, std::uint64_t n
     const float volume = std::clamp(set.volume, 0.0f, 2.0f) * std::clamp(pv, 0.0f, 2.0f);
     if (voice && now.audible && volume > 0.0f) {
       s.heard_us.store(now_us == 0 ? 1 : now_us);
-      any_heard_us_.store(now_us == 0 ? 1 : now_us);
+      echo_frames_.store(kEchoFrames);
     }
     const Placement from = s.placed;
     s.placed = now;

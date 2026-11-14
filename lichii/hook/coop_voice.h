@@ -58,8 +58,8 @@ struct Settings {
     bool operator==(const Settings&) const = default;
 };
 
-// LICHII_COOP_VOICE (off, the default; open, on or 1: open mic, what turning
-// voice on gives; ptt: push to talk), LICHII_COOP_VOICE_KEY (a virtual-key code, decimal or 0x hex, or one
+// LICHII_COOP_VOICE (off, the default; open: open mic, what the menu writes
+// when voice is turned on; ptt, or an older file's on, 1, yes: push to talk), LICHII_COOP_VOICE_KEY (a virtual-key code, decimal or 0x hex, or one
 // letter or digit), LICHII_COOP_VOICE_VOLUME (0 to 200, percent),
 // LICHII_COOP_VOICE_RANGE (metres, 5 to 100), LICHII_COOP_VOICE_TEST (log,
 // tone). `env` gives a variable's value, empty when unset. Anything it
@@ -95,8 +95,9 @@ Icon IconFor(bool voice_on, bool muted, bool active, bool self);
 // the game), voice is off or we are muted. Push to talk: only while the key
 // is held, and while the spurt it started is still ending (`talking`: the
 // gate's 100 ms tail and its end frame); a player who never presses the key
-// never has the microphone opened. Open mic: always, as asked.
-bool MicWanted(const Settings& s, bool can_send, bool key_held, bool talking);
+// never has the microphone opened. Open mic: always, as asked. Never while
+// the host has muted our voice (the server would drop it anyway).
+bool MicWanted(const Settings& s, bool can_send, bool key_held, bool talking, bool host_muted = false);
 
 // Where a voice comes from: a little under the top of the head (`head`
 // above the feet, as presence has it), or 1.2 m up when that is not known.
@@ -147,6 +148,9 @@ bool Enabled();
 void SetEnabled(bool on);
 // The Voice mode row (and On/Off together): off, open mic or push to talk.
 void SetMode(coop::voice::Mode mode);
+// The game thread: whether the host has muted our voice (CoopLobby); the
+// microphone closes while it has.
+void SetHostMuted(bool muted);
 // The turned-on tip once, for the chat as a notice; "" when there is none.
 std::string TakeNotice();
 

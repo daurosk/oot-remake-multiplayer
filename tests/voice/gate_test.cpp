@@ -69,8 +69,11 @@ TEST_CASE("voice gate: open mic opens on speech over the noise and holds a hango
   for (int i = 0; i < 50; ++i) CHECK(g.update(noise(60, seed), false, false) == Step::closed);
   CHECK(g.floor_db() < -50.0f);
   CHECK(g.update(tone(0.2f), false, false) == Step::closed);  // the attack: two speech frames
+  CHECK_FALSE(g.just_opened());
   CHECK(g.update(tone(0.2f), false, false) == Step::open);
+  CHECK(g.just_opened());
   CHECK(g.update(noise(60, seed), false, false) == Step::open);  // hangover
+  CHECK_FALSE(g.just_opened());
   CHECK(g.update(noise(60, seed), false, false) == Step::open);
   CHECK(g.update(noise(60, seed), false, false) == Step::open);
   CHECK(g.update(noise(60, seed), false, false) == Step::ended);

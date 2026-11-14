@@ -139,9 +139,13 @@ class Engine {
   std::uint16_t sequence_ = 0;
   std::atomic_bool talking_{false};
   std::atomic<float> level_db_{-96.0f};
-  // Render's clock now, and when any voice was last heard (the echo guard).
-  std::atomic<std::uint64_t> render_us_{0};
-  std::atomic<std::uint64_t> any_heard_us_{0};
+  // The echo guard: capture frames left while a voice heard here counts
+  // (render sets it, capture counts it down, so it ends even if render stops).
+  std::atomic<int> echo_frames_{0};
+  // Open mic: the last frame the gate held back, sent first when it opens
+  // (the attack frame, so a word's start is not cut).
+  std::array<std::int16_t, kSamplesPerFrame> held_{};
+  bool have_held_ = false;
   // Listener.
   mutable std::mutex listener_mutex_;
   Listener listener_;

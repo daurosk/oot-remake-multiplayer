@@ -57,6 +57,7 @@ Gate::Step Gate::update(std::span<const std::int16_t> frame, bool key_held, bool
     }
   }
   if (muted) want = false;
+  just_opened_ = want && !open_;
   if (want) {
     open_ = true;
     return Step::open;

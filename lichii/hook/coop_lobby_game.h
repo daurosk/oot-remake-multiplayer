@@ -53,6 +53,8 @@ bool VoiceHidden(std::uint8_t player);
 // Any thread: the host muted our own chat (the server drops it), so the chat
 // box says so instead of showing the line as sent.
 bool OwnChatMuted();
+// Any thread: the host muted our own voice (the microphone then stays closed).
+bool OwnVoiceMuted();
 
 // What the Lobby tab shows of the session. Any thread.
 struct PlayerSeen {

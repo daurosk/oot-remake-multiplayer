@@ -47,6 +47,8 @@ class Gate {
   void set_hearing(bool hearing) { hearing_ = hearing; }
 
   bool open() const { return open_; }
+  // The last update opened it (closed before).
+  bool just_opened() const { return just_opened_; }
   float level_db() const { return level_db_; }
   float floor_db() const { return floor_db_; }
 
@@ -56,6 +58,7 @@ class Gate {
   int hold_ = 0;
   int attack_ = 0;  // open mic: speech frames in a row while closed
   bool hearing_ = false;
+  bool just_opened_ = false;
   float level_db_ = -96.0f;
   float floor_db_ = -70.0f;
 };

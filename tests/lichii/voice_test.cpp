@@ -44,8 +44,11 @@ TEST_CASE("voice settings: defaults, then LICHII_COOP_VOICE*") {
     CHECK(s.range_m == doctest::Approx(20.0f));
     CHECK(From({{"LICHII_COOP_VOICE", "off"}}, errors).mode == coop::voice::Mode::off);
     CHECK(From({{"LICHII_COOP_VOICE", "ptt"}}, errors).mode == coop::voice::Mode::push_to_talk);
-    CHECK(From({{"LICHII_COOP_VOICE", "on"}}, errors).mode == coop::voice::Mode::open_mic);   // on: open mic
-    CHECK(From({{"LICHII_COOP_VOICE", "1"}}, errors).mode == coop::voice::Mode::open_mic);
+    // an older file's on, 1, yes: push to talk as they meant, never a live open mic unasked
+    CHECK(From({{"LICHII_COOP_VOICE", "on"}}, errors).mode == coop::voice::Mode::push_to_talk);
+    CHECK(From({{"LICHII_COOP_VOICE", "1"}}, errors).mode == coop::voice::Mode::push_to_talk);
+    CHECK(From({{"LICHII_COOP_VOICE", "yes"}}, errors).mode == coop::voice::Mode::push_to_talk);
+    CHECK(From({{"LICHII_COOP_VOICE", "open"}}, errors).mode == coop::voice::Mode::open_mic);
     CHECK(From({{"LICHII_COOP_VOICE", "PTT"}}, errors).mode == coop::voice::Mode::push_to_talk);
     CHECK(From({{"LICHII_COOP_VOICE_TEST", "tone"}}, errors).test == Test::tone);
     CHECK(From({{"LICHII_COOP_VOICE_TEST", "log"}}, errors).test == Test::log);
@@ -100,6 +103,9 @@ TEST_CASE("voice off: no microphone and nobody heard, and the settings row turns
     CHECK(MicWanted(on, true, false, false));        // open mic: the microphone is open
     CHECK_FALSE(MicWanted(ptt, true, false, false)); // push to talk: only while held
     CHECK(MicWanted(ptt, true, true, false));
+    // the host muted our voice: the microphone closes, in either mode
+    CHECK_FALSE(MicWanted(on, true, false, false, true));
+    CHECK_FALSE(MicWanted(ptt, true, true, true, true));
     // What a settings screen writes is what the start reads.
     std::vector<std::string> errors;
     for (const auto mode : {coop::voice::Mode::off, coop::voice::Mode::push_to_talk, coop::voice::Mode::open_mic}) {

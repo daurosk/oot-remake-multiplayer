@@ -39,10 +39,10 @@ Settings SettingsFrom(const std::function<std::string(const char*)>& env,
     if (const std::string mode = Lower(env("LICHII_COOP_VOICE")); !mode.empty()) {
         if (mode == "off" || mode == "0" || mode == "no" || mode == "false") {
             s.mode = coop::voice::Mode::off;
-        } else if (mode == "ptt" || mode == "push" || mode == "push-to-talk") {
+        } else if (mode == "ptt" || mode == "push" || mode == "push-to-talk" || mode == "1" || mode == "on" ||
+                   mode == "yes" || mode == "true") {  // (old files' on: push to talk, as it meant; no live mic unasked)
             s.mode = coop::voice::Mode::push_to_talk;
-        } else if (mode == "open" || mode == "open-mic" || mode == "1" || mode == "on" || mode == "yes" ||
-                   mode == "true") {  // on: open mic, the default once voice is on (voice-mode)
+        } else if (mode == "open" || mode == "open-mic") {  // what the menu writes when voice is turned on
             s.mode = coop::voice::Mode::open_mic;
         } else {
             errors.push_back("LICHII_COOP_VOICE '" + mode + "' is not off, ptt or open");
@@ -146,8 +146,8 @@ coop::voice::Settings EngineSettings(const Settings& s, bool camera_known) {
     return e;
 }
 
-bool MicWanted(const Settings& s, bool can_send, bool key_held, bool talking) {
-    if (!can_send || s.muted) {
+bool MicWanted(const Settings& s, bool can_send, bool key_held, bool talking, bool host_muted) {
+    if (!can_send || s.muted || host_muted) {
         return false;
     }
     switch (s.mode) {
@@ -253,6 +253,7 @@ Settings g_settings;
 bool g_settings_read = false;
 bool g_camera_known = false;
 bool g_mic_on = false;
+std::atomic<bool> g_host_muted{false};   // the host muted our voice (SetHostMuted)
 bool g_tip_given = false;   // the turned-on tip: once a run
 std::string g_notice;       // for the chat (TakeNotice)
 std::atomic<std::uint64_t> g_mic_said{0};
@@ -406,6 +407,8 @@ void SetMode(coop::voice::Mode mode) {
     SetLocked(next);
 }
 
+void SetHostMuted(bool muted) { g_host_muted.store(muted); }
+
 std::string TakeNotice() {
     std::lock_guard lock(g_mutex);
     return std::exchange(g_notice, {});
@@ -479,7 +482,7 @@ void Frame(const std::optional<std::array<float, 3>>& our_feet,
                               g_backend.mic_read;
         const bool key = g_settings.mode == coop::voice::Mode::push_to_talk && g_backend.key_down &&
                          g_backend.key_down(g_settings.key);
-        const bool want = MicWanted(g_settings, can_send, key, e->talking());
+        const bool want = MicWanted(g_settings, can_send, key, e->talking(), g_host_muted.load());
         if (want && !g_mic_on) {
             g_mic_on = g_backend.mic_start();
             if (!g_mic_on && g_mic_said.exchange(1) == 0) {

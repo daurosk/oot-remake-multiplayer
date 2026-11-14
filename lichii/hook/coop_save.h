@@ -46,6 +46,10 @@ bool HostSaveComing();
 // The host said it has no save yet (a new game): nothing to wait for.
 bool HostHasNoSave();
 
+// Hookshot: a session has chosen its save folder and is still connected (false before that, and once it ended:
+// the host dropped, the link went, Leave). A title waiting for the host's save stops when it goes off.
+bool SessionLive();
+
 // Hookshot's title module, each pad poll: whether the title's menu is up. A guest switches to the host's save only
 // then (never while a file loads).
 void NoteTitle(bool title_up);

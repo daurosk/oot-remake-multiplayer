@@ -324,7 +324,7 @@ TEST_CASE("save transfer: an ask again after 10 s is answered again (a lost answ
   CHECK(p.on_ask(3, 5 * s + save::Planner::kReaskUs + 3 * s));
 }
 
-TEST_CASE("save transfer: a guest asks again only when nothing at all came") {
+TEST_CASE("save transfer: a guest asks again when nothing at all came, or the transfer stopped part way") {
   const std::uint64_t s = 1'000'000;
   save::GuestSession g;
   CHECK_FALSE(save::reask_due(g, 100 * s));   // never asked: the first ask is not a re-ask
@@ -333,10 +333,26 @@ TEST_CASE("save transfer: a guest asks again only when nothing at all came") {
   g.asks = 1;
   CHECK_FALSE(save::reask_due(g, 10 * s + save::kGuestReaskUs - 1));
   CHECK(save::reask_due(g, 10 * s + save::kGuestReaskUs));
-  // parts came after the ask (a transfer under way or stopped: the stuck note, then the next send)
+  // parts came after the ask, none kept yet: nothing to ask for
   save::GuestSession part = g;
   part.last_part_us = 11 * s;
   CHECK_FALSE(save::reask_due(part, 100 * s));
+  // a transfer under way (a part came just now), then stopped part way: asked again once it is quiet
+  save::GuestSession stalled = g;
+  const auto parts = save::split(save::pack(Slot(5)), 3, proto::SaveReason::join, 2);
+  REQUIRE(parts.size() > 2);
+  REQUIRE(stalled.assembler.add(Relayed(parts[0], 1), 1) == save::Assembler::Result::partial);
+  stalled.last_part_us = 12 * s;
+  CHECK_FALSE(save::reask_due(stalled, 12 * s + save::kGuestReaskUs - 1));   // still coming
+  CHECK(save::reask_due(stalled, 12 * s + save::kGuestReaskUs));
+  // just asked again: not again before kGuestReaskUs (the old parts are still kept)
+  stalled.asked_us = 12 * s + save::kGuestReaskUs;
+  stalled.asks = 2;
+  CHECK_FALSE(save::reask_due(stalled, stalled.asked_us + save::kGuestReaskUs - 1));
+  CHECK(save::reask_due(stalled, stalled.asked_us + save::kGuestReaskUs));
+  // the new transfer's parts come in: not while they come
+  stalled.last_part_us = stalled.asked_us + 2 * s;
+  CHECK_FALSE(save::reask_due(stalled, stalled.asked_us + save::kGuestReaskUs));
   // the save is in, written, or the host said it has none
   save::GuestSession in = g;
   in.unwritten = save::SaveSlot{};

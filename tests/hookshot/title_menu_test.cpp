@@ -321,7 +321,7 @@ TEST_CASE("title menu: a hitch (the title seems gone a moment) lets no A in befo
     CHECK(Presses(a, 5000, 7000, Look(true, true, AutoLoad::kContinue)) > 0);
 }
 
-TEST_CASE("title menu: presses off the title stop after a while; on the title, stuck says press Continue") {
+TEST_CASE("title menu: presses off the title stop after a while, on the title, stuck says press Continue") {
     AutoLoad a;
     a.Start(0, "Saria");
     a.Step(100, Look(true, true, AutoLoad::kContinue));
@@ -338,7 +338,7 @@ TEST_CASE("title menu: presses off the title stop after a while; on the title, s
     CHECK_FALSE(a.Step(99000, Look(true, true, AutoLoad::kContinue)).press_a);
 }
 
-TEST_CASE("title menu: only title time with nothing coming counts toward 'late'; a late save still loads") {
+TEST_CASE("title menu: only title time with nothing coming counts toward late, a late save still loads") {
     AutoLoad a;
     a.Start(0, "");
     // a menu over the title, a file list, a slow PC (no title steps): no wait counted
@@ -397,7 +397,7 @@ TEST_CASE("title menu: a host with no save: AutoLoad stops waiting at once and p
     CHECK(c.active());
 }
 
-TEST_CASE("title menu: the player's Continue while the save comes is held back; late it plays their own") {
+TEST_CASE("title menu: the player's Continue while the save comes is held back, late it plays their own") {
     AutoLoad a;
     a.Start(0, "Saria");
     CHECK(a.HoldsPlayerA(true, AutoLoad::kContinue));
@@ -576,4 +576,49 @@ TEST_CASE("title menu: a colour the Look row does not list survives a Save that 
     std::string coop, opt = "color = gray\r\n";
     o.Write(coop, opt);
     CHECK(IniGet(opt, "color") == "red");
+}
+
+TEST_CASE("title menu: backed out of the file list, a new press on Continue gets its presses off the title again") {
+    AutoLoad a;
+    a.Start(0, "Saria");
+    a.Step(100, Look(true, true, AutoLoad::kContinue));
+    CHECK(Presses(a, 120, 2000, Look(true, true, AutoLoad::kContinue)) > 0);
+    // the file list: presses for kAfterTitleMs, then none
+    Run(a, 2000, 2000 + AutoLoad::kAfterTitleMs + 2000, Look(true, false, -1));
+    CHECK(Presses(a, 20000, 22000, Look(true, false, -1)) == 0);
+    // back on the title (the player backed out): AutoLoad presses Continue again, and the file list gets its A
+    CHECK(Presses(a, 22000, 24000, Look(true, true, AutoLoad::kContinue)) > 0);
+    CHECK(Presses(a, 24000, 27000, Look(true, false, -1)) > 0);
+    CHECK(a.active());
+}
+
+TEST_CASE("title menu: the host drops while the save is awaited: it stops waiting and says so") {
+    AutoLoad::Input off = Look(false, true, AutoLoad::kContinue);
+    off.session_live = false;
+    // a join still connecting (never on yet) is not a drop
+    AutoLoad a;
+    a.Start(0, "Saria");
+    Run(a, 100, 3000, off);
+    CHECK(a.active());
+    // on, then off: host gone; nothing pressed, the player's Continue is theirs
+    Run(a, 3000, 4000, Look(false, true, AutoLoad::kContinue));
+    a.Step(4000, off);
+    CHECK_FALSE(a.watching());
+    CHECK_FALSE(a.HoldsPlayerA(true, AutoLoad::kContinue));
+    CHECK(a.Line() == "Saria's game ended before the save came: Continue plays your own save, New Game starts a "
+                      "new one.");
+    // late or a pick backed out of: the same
+    AutoLoad late;
+    late.Start(0, "Saria");
+    Run(late, 100, AutoLoad::kWaitSaveMs + 2000, Look(false, true, 0));
+    late.Step(AutoLoad::kWaitSaveMs + 3000, off);
+    CHECK_FALSE(late.watching());
+    // once the save is in and loading, a drop does not stop it (the folder is already the host's)
+    AutoLoad load;
+    load.Start(0, "Saria");
+    load.Step(100, Look(true, true, AutoLoad::kContinue));
+    AutoLoad::Input gone = Look(true, true, AutoLoad::kContinue);
+    gone.session_live = false;
+    CHECK(Presses(load, 200, 2000, gone) > 0);
+    CHECK(load.Line() == "Loading Saria's save...");
 }

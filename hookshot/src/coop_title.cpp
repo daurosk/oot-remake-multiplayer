@@ -375,6 +375,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
             in.title_up = title;
             in.in_game = InGame();
             in.focused = focused;
+            in.session_live = CoopSave::SessionLive();
             const auto tick = g_autoload.Step(NowMs(), in);
             if (tick.reveal_continue) {
                 g_reveal_continue = true;   // (made at the title's next step, with its game context)

@@ -177,9 +177,13 @@ std::vector<std::string> LanLines(const std::vector<LanAddress>& addresses, std:
 //   it (again every kFocusEveryMs while it is elsewhere), and A pressed every
 //   kPressEveryMs: on the title only with the cursor on Continue; once that
 //   press went in, also off the title (the file list, its question) for
-//   kAfterTitleMs. kLoadMs on the title's menu without getting in: stuck.
+//   kAfterTitleMs (counted again from each press on Continue: the player may
+//   back out of the file list). kLoadMs on the title's menu without getting
+//   in: stuck.
 // - stuck: "Press Continue to play <host>'s save." (the folder is the host's).
 // - host none: the host has no save yet. done: Link is in the game.
+// - host gone: the session ended (the host dropped, the link went) while it
+//   waited for the save (wait or late): nothing more comes, nothing is pressed.
 class AutoLoad {
 public:
     static constexpr std::uint64_t kWaitSaveMs = 60000;    // title time with nothing coming, before "late"
@@ -198,6 +202,7 @@ public:
         bool title_up = false;          // the title's menu is up (TitleUp)
         bool in_game = false;           // Link is in the game
         int focused = -1;               // the title's focused button (-1: none, or no title)
+        bool session_live = true;       // the co-op session is on (CoopSave::SessionLive)
     };
 
     void Start(std::uint64_t now_ms, std::string host);
@@ -254,7 +259,7 @@ public:
     }
 
 private:
-    enum class Phase { kOff, kWait, kLate, kChose, kLoad, kDone, kHostNone, kStuck };
+    enum class Phase { kOff, kWait, kLate, kChose, kLoad, kDone, kHostNone, kStuck, kHostGone };
     void Load(std::uint64_t now_ms);
     Phase phase_ = Phase::kOff;
     std::string host_;
@@ -268,6 +273,7 @@ private:
     bool chose_gone_ = false;            // chose: the title went after the pick
     bool revealed_ = false;
     bool pressed_continue_ = false;
+    bool live_seen_ = false;             // the session was seen on since Start (a join still connecting is not off)
 };
 
 // ---------------------------------------------------------------------------

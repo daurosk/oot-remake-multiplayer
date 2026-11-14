@@ -239,9 +239,11 @@ struct GuestSession {
   int asks = 0;                 // asks sent this session
 };
 
-// A guest asks again when nothing at all came for kGuestReaskUs since its last ask (the ask or the whole answer was
-// lost, or the host refused it as too soon), at most kGuestMaxAsks times a session. Not while parts come in, once
-// the save (or "no save") is in, or once the slot waits to be written.
+// A guest asks again kGuestReaskUs after its last ask when nothing at all came (the ask or the whole answer was
+// lost, or the host refused it as too soon), or when a transfer stopped part way and no part came for
+// kGuestReaskUs (a part lost: the host sends the whole save again, under a new transfer id); at most
+// kGuestMaxAsks times a session. Not while parts come in, once the save (or "no save") is in, or once the slot
+// waits to be written.
 inline constexpr std::uint64_t kGuestReaskUs = 15'000'000;
 inline constexpr int kGuestMaxAsks = 4;
 bool reask_due(const GuestSession& s, std::uint64_t now_us);

@@ -574,6 +574,7 @@ void AutoLoad::Start(std::uint64_t now_ms, std::string host) {
     host_ = Trim(host).empty() ? std::string("your friend") : std::string(Trim(host));
     last_ms_ = now_ms;
     waited_ms_ = 0;
+    live_seen_ = false;
 }
 
 void AutoLoad::Load(std::uint64_t now_ms) {
@@ -592,6 +593,12 @@ AutoLoad::Tick AutoLoad::Step(std::uint64_t now_ms, const Input& in) {
     last_ms_ = now_ms;
     if (in.in_game && watching()) {
         phase_ = Phase::kDone;   // (Link is in: the host's save, or a file the player chose)
+        return t;
+    }
+    if (in.session_live) {
+        live_seen_ = true;
+    } else if (live_seen_ && waiting()) {
+        phase_ = Phase::kHostGone;   // (the host dropped before the save came: nothing more comes)
         return t;
     }
     if (phase_ == Phase::kChose) {
@@ -649,7 +656,10 @@ AutoLoad::Tick AutoLoad::Step(std::uint64_t now_ms, const Input& in) {
             if (PressAllowed(in.title_up, in.focused, pressed_continue_) &&
                 (in.title_up || after_title_ms_ < kAfterTitleMs)) {
                 t.press_a = true;
-                pressed_continue_ = pressed_continue_ || in.title_up;
+                if (in.title_up) {
+                    pressed_continue_ = true;
+                    after_title_ms_ = 0;   // (a new press on Continue: the file list's presses start over)
+                }
             }
         } else {
             next_press_ = now_ms + kPressEveryMs;
@@ -671,6 +681,9 @@ std::string AutoLoad::Line() const {
         return host_ + " has no save yet: New Game starts one, Continue plays your own.";
     case Phase::kStuck:
         return "Press Continue to play " + host_ + "'s save.";
+    case Phase::kHostGone:
+        return host_ + "'s game ended before the save came: Continue plays your own save, New Game starts a new "
+                       "one.";
     default:
         return {};
     }

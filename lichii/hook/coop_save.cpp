@@ -60,6 +60,7 @@ bool g_title_up = false;   // the title's menu is up (NoteTitle, Hookshot's titl
 // the game (their file), and comes back when they return to the title without one (ResumePendingSwitch).
 bool g_suspended = false;
 const void* g_decided_client = nullptr;   // the session's client it was made for
+bool g_live = false;   // decided and the session not over (SessionLive)
 
 // An environment variable's text ("" when unset).
 std::string EnvText(const char* name) {
@@ -125,6 +126,7 @@ void SwitchFrame(coop::net::Client& client) {
             g_suspended = false;
             LOG_INFO(Core, "coop: save: the session is over: the next one chooses the save folder again");
         }
+        g_live = g_decided && !over;   // (decided below in this frame: on from the next one)
     }
     if (!g_decided && !g_dir.empty()) {
         const bool connected = client.state() == coop::net::State::connected && client.host_number() != 0;
@@ -273,6 +275,11 @@ bool HostHasNoSave() {
     return g_guest.no_save;
 }
 
+bool SessionLive() {
+    std::lock_guard lock(g_mutex);
+    return g_live;
+}
+
 void NoteTitle(bool title_up) {
     std::lock_guard lock(g_mutex);
     g_title_up = title_up;
@@ -406,14 +413,14 @@ void OnFrame(coop::net::Client& client, bool host_reset) {
     }
     if (!client.is_host()) {
         g_outbox.clear();
-        // A transfer that stopped part way (a part lost): said once; the next
-        // save the host sends starts again.
+        // A transfer that stopped part way (a part lost): said once; the guest
+        // asks again (save::reask_due), and the host's next send starts again.
         if (!g_guest.said_stuck && g_guest.assembler.received() != 0 &&
             g_guest.assembler.received() < g_guest.assembler.count() &&
             CoopEvery::NowUs() - g_guest.last_part_us > CoopEvery::kSaveStuckUs) {
             g_guest.said_stuck = true;
             LOG_WARNING(Core, "coop: save: the host's save (transfer {}) stopped at part {} of {} "
-                              "for 10 s; waiting for the next one",
+                              "for 10 s; asking again soon",
                         g_guest.assembler.transfer_id(), g_guest.assembler.received(), g_guest.assembler.count());
         }
         // (Hookshot: only while the switch to the host's save is still wanted.)
@@ -421,12 +428,14 @@ void OnFrame(coop::net::Client& client, bool host_reset) {
         const std::uint64_t now = CoopEvery::NowUs();
         if (want && (!g_guest.asked || save::reask_due(g_guest, now))) {
             const bool again = g_guest.asked;
+            const bool stalled = g_guest.assembler.received() != 0;
             if (client.send(proto::Message{proto::SaveAsk{}})) {
                 g_guest.asked = true;
                 g_guest.asked_us = now;
                 ++g_guest.asks;
                 LOG_INFO(Core, "coop: save: asked the host (player {}) for its save{}", client.host_number(),
-                         again ? fmt::format(" again (nothing came in {} s; ask {} of {})",
+                         again ? fmt::format(" again ({} in {} s; ask {} of {})",
+                                             stalled ? "the transfer stopped: no part" : "nothing came",
                                              save::kGuestReaskUs / 1'000'000, g_guest.asks, save::kGuestMaxAsks)
                                : std::string());
             }

@@ -159,6 +159,11 @@ if (-not $NoUpdate -and (Test-Path $updater)) {
 # builds (no game, a moved game, another pin) ask Y/n first; a module antivirus took is said, not built.
 if ($Hookshot) {
     $need = Get-KitHookshotNeed $kit
+    if ($need -eq 'offline') {
+        # (no internet and only the randomizer's download left: the module step is not run again on every start)
+        Write-Host 'offline: using the tools already here (the randomizer is set up at the next start with internet)'
+        $need = ''
+    }
     if ($need -eq 'quarantine') {
         Write-Host (Get-KitHookshotNeedText $need) -ForegroundColor Yellow
         exit 1

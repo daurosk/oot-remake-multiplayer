@@ -655,8 +655,31 @@ try {
     Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: up to date again'
     # the randomizer the kit brings (hookshot\OOTRR.txt): fetched into the game's tools\ootrr by the module step
     $osha = 'a' * 64
+    $offlineWas = $env:OOT_COOP_OFFLINE
+    $env:OOT_COOP_OFFLINE = '0'   # (online, with no probe)
     Write-File (Join-Path $hk 'hookshot\OOTRR.txt') "# pin`nrelease=v0.5.0`nurl=https://x`nwindows=OOTRR-0.5.0-windows-x64.zip`nwindows_sha256=$osha`n"
     Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: the kit''s OOTRR not in the game yet -> module'
+    # no internet (kit-offline): only the OOTRR download is left -> 'offline' (play.ps1 says one line, no module step on
+    # every start); a zip already downloaded with the pinned SHA-256 still goes in; other stale work is still done
+    $env:OOT_COOP_OFFLINE = '1'
+    Check ((Test-KitOffline) -and -not (Test-KitOotrrZipReady $hk)) 'offline: OOT_COOP_OFFLINE=1 says offline; no OOTRR zip here'
+    Check ((Get-KitHookshotNeed $hk) -eq 'offline') 'hookshot need offline: only the OOTRR download left -> offline (no module step)'
+    $ozipBytes = [System.Text.Encoding]::ASCII.GetBytes('zip')
+    $ozip = Join-Path $hk 'hookshot\downloads\OOTRR-0.5.0-windows-x64.zip'
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ozip) | Out-Null
+    [System.IO.File]::WriteAllBytes($ozip, $ozipBytes)
+    Check ((Get-KitHookshotNeed $hk) -eq 'offline') 'hookshot need offline: a zip whose SHA-256 differs is not used -> offline'
+    $zsha = (Get-FileHash -LiteralPath $ozip -Algorithm SHA256).Hash.ToLowerInvariant()
+    Write-File (Join-Path $hk 'hookshot\OOTRR.txt') "# pin`nrelease=v0.5.0`nurl=https://x`nwindows=OOTRR-0.5.0-windows-x64.zip`nwindows_sha256=$zsha`n"
+    Check ((Test-KitOotrrZipReady $hk) -and (Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need offline: the zip here matches its SHA-256 -> module (no network needed)'
+    Remove-Item -LiteralPath $ozip -Force
+    Write-File (Join-Path $hk 'hookshot\OOTRR.txt') "# pin`nrelease=v0.5.0`nurl=https://x`nwindows=OOTRR-0.5.0-windows-x64.zip`nwindows_sha256=$osha`n"
+    $gmod = Join-Path $g 'hookshot_coop.dll'
+    $gmodWas = [System.IO.File]::ReadAllBytes($gmod)
+    [System.IO.File]::WriteAllBytes($gmod, [byte[]](1, 2, 3))
+    Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need offline: a new module is still put in -> module'
+    [System.IO.File]::WriteAllBytes($gmod, $gmodWas)
+    $env:OOT_COOP_OFFLINE = '0'
     Write-File (Join-Path $g 'tools\ootrr\ootrr.exe') 'MZ'
     Write-File (Join-Path $g 'tools\ootrr\coop-ootrr.txt') "v0.4.2 $osha`n"
     Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: another OOTRR release in the game -> module'
@@ -664,6 +687,7 @@ try {
     Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: the kit''s OOTRR in the game -> nothing'
     Check (-not (Test-KitOotrrStale (Join-Path $hk 'no-kit') $g)) 'OOTRR stale: a kit without OOTRR.txt brings none'
     Check ((Test-KitOotrrStale $hk (Join-Path $hk 'no-game'))) 'OOTRR stale: a game without tools\ootrr -> yes'
+    $env:OOT_COOP_OFFLINE = $offlineWas
     Check ((Test-KitPuppetPackStale (Join-Path $hk 'none\coop_puppet.json') (Join-Path $hk 'no-tool')) -and
         -not (Test-KitPuppetPackStale $pack (Join-Path $hk 'no-tool'))) 'pack stale: a missing pack yes, a current one no'
     # the game somewhere else (hs.py, -Out): game-folder.txt, and a builder's bin\ layout

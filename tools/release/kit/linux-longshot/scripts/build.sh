@@ -107,6 +107,7 @@ eval "$tools_env"
 # renderer. Its lift key hashes every A64_/OOT_/RX_ variable: co-op's OOT_COOP_* ones go.
 language=${OOT_COOP_LANGUAGE:-en-US}   # (read before the OOT_COOP_* variables go below)
 fetch_local=${OOT_COOP_FETCH_LOCAL-}   # (tests: a local OOTRR in step 5, after they go)
+offline=${OOT_COOP_OFFLINE-}           # (tests: 1 = no internet, for step 5)
 unset LONGSHOT_TOOLS LONGSHOT_VK_PREBUILT LONGSHOT_BUILDER_EXE LONGSHOT_NGX_SDK LONGSHOT_FFX_SDK
 while IFS='=' read -r v _; do [[ $v == OOT_COOP_* ]] && unset "$v"; done < <(env)
 export PYTHONIOENCODING=utf-8
@@ -232,7 +233,10 @@ if [[ -f $ootrr_pin ]]; then
     else
         mkdir -p "$B"
         o_tgz=$B/$o_file o_why=''
-        if [[ ! -f $o_tgz || $(sha256_of "$o_tgz") != "$o_sha" ]]; then
+        if [[ ! -f $o_tgz || $(sha256_of "$o_tgz") != "$o_sha" ]] && { [[ $offline == 1 || $o_url =~ ^https?:// ]] && kit_offline "$offline"; }; then
+            # (no internet: no download try, which would only wait for its timeout, on every start)
+            o_why=offline
+        elif [[ ! -f $o_tgz || $(sha256_of "$o_tgz") != "$o_sha" ]]; then
             say "  downloading $o_file ..."
             if ! OOT_COOP_FETCH_LOCAL=$fetch_local fetch "$o_url/$o_file" "$o_tgz.part"; then o_why='the download failed (no network?)'
             elif [[ $(sha256_of "$o_tgz.part") != "$o_sha" ]]; then o_why='its SHA-256 differs from the one this kit was made with'
@@ -249,7 +253,9 @@ if [[ -f $ootrr_pin ]]; then
                 o_why="unpacking $o_file failed"
             fi
         fi
-        if [[ -n $o_why ]]; then
+        if [[ $o_why == offline ]]; then
+            say "  offline: using the tools already here (the randomizer, OOTRR $o_rel, is set up at the next start with internet)"
+        elif [[ -n $o_why ]]; then
             warn "the randomizer (OOTRR $o_rel) was not set up: $o_why. Co-op works without it; start again to retry."
         else
             say "  randomizer: OOTRR $o_rel -> $o_dir"

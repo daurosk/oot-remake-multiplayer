@@ -3,9 +3,11 @@
 // (lichii/hook/coop_difficulty.cpp, no emulator code).
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <memory>
 #include <set>
@@ -24,15 +26,15 @@ using CoopDifficulty::Values;
 namespace proto = coop::protocol;
 
 TEST_CASE("difficulty: the automatic scaler grows with each further player and stops at its caps") {
-  CHECK(proto::auto_difficulty(0) == Values{100, 100, 100});
-  CHECK(proto::auto_difficulty(1) == Values{100, 100, 100});  // alone: the game as it is
-  CHECK(proto::auto_difficulty(2) == Values{140, 120, 125});
-  CHECK(proto::auto_difficulty(3) == Values{180, 140, 150});
-  CHECK(proto::auto_difficulty(4) == Values{220, 160, 175});
-  CHECK(proto::auto_difficulty(5) == Values{260, 180, 200});
-  CHECK(proto::auto_difficulty(6) == Values{300, 200, 200});
-  CHECK(proto::auto_difficulty(16) == Values{300, 200, 200});
-  CHECK(proto::auto_difficulty(1000000) == Values{300, 200, 200});
+  CHECK(proto::auto_difficulty(0) == Values{100, 100, 100, 100, 100});
+  CHECK(proto::auto_difficulty(1) == Values{100, 100, 100, 100, 100});  // alone: the game as it is
+  CHECK(proto::auto_difficulty(2) == Values{140, 120, 125, 200, 120});
+  CHECK(proto::auto_difficulty(3) == Values{180, 140, 150, 300, 140});
+  CHECK(proto::auto_difficulty(4) == Values{220, 160, 175, 400, 160});
+  CHECK(proto::auto_difficulty(5) == Values{260, 180, 200, 500, 180});
+  CHECK(proto::auto_difficulty(6) == Values{300, 200, 200, 600, 200});
+  CHECK(proto::auto_difficulty(16) == Values{300, 200, 200, 1600, 400});
+  CHECK(proto::auto_difficulty(1000000) == Values{300, 200, 200, 1600, 400});
   Values before = proto::auto_difficulty(1);
   for (std::size_t players = 2; players <= 16; ++players) {
     const Values now = proto::auto_difficulty(players);
@@ -40,6 +42,9 @@ TEST_CASE("difficulty: the automatic scaler grows with each further player and s
     CHECK(now.hp_pct >= before.hp_pct);
     CHECK(now.damage_pct >= before.damage_pct);
     CHECK(now.count_pct >= before.count_pct);
+    // Bosses: 100 life and 20 damage more for every further player, no cap but the 16 players.
+    CHECK(now.boss_hp_pct == before.boss_hp_pct + proto::kAutoBossHpStep);
+    CHECK(now.boss_damage_pct == before.boss_damage_pct + proto::kAutoBossDamageStep);
     before = now;
   }
 }
@@ -53,17 +58,17 @@ TEST_CASE("difficulty: the host's own choice is fixed, whatever the number of pl
   custom.preset = Preset::custom;
   custom.custom = {325, 75, 250};
   for (std::size_t players : {1u, 2u, 7u, 16u}) {
-    CHECK(proto::difficulty_in_force(hard, players) == Values{200, 150, 150});
-    CHECK(proto::difficulty_in_force(custom, players) == Values{325, 75, 250});
+    CHECK(proto::difficulty_in_force(hard, players) == Values{200, 150, 150, 200, 150});
+    CHECK(proto::difficulty_in_force(custom, players) == Values{325, 75, 250, 325, 75});
   }
   // Only the automatic scaler follows them.
   CHECK(proto::difficulty_in_force(Choice{}, 1) == Values{100, 100, 100});
-  CHECK(proto::difficulty_in_force(Choice{}, 3) == Values{180, 140, 150});
+  CHECK(proto::difficulty_in_force(Choice{}, 3) == Values{180, 140, 150, 300, 140});
   // The sliders do not change a preset, and are kept within their ends.
   hard.custom = {500, 400, 300};
-  CHECK(proto::difficulty_in_force(hard, 2) == Values{200, 150, 150});
+  CHECK(proto::difficulty_in_force(hard, 2) == Values{200, 150, 150, 200, 150});
   custom.custom = {9999, 1, 50};
-  CHECK(proto::difficulty_in_force(custom, 2) == Values{500, 25, 100});
+  CHECK(proto::difficulty_in_force(custom, 2) == Values{500, 25, 100, 500, 25});
 }
 
 TEST_CASE("difficulty: presets and slider ends are valid values") {
@@ -96,15 +101,15 @@ TEST_CASE("difficulty: the menu's rows turn the automatic scaler off") {
   Choice c = CoopDifficulty::WithSlider(start, shown, Slider::hp, +1);
   CHECK_FALSE(c.auto_scale);
   CHECK(c.preset == Preset::custom);
-  CHECK(c.custom == Values{150, 120, 125});
+  CHECK(c.custom == Values{150, 120, 125, 150, 120});
   c = CoopDifficulty::WithSlider(start, shown, Slider::hp, -1);
-  CHECK(c.custom == Values{125, 120, 125});
+  CHECK(c.custom == Values{125, 120, 125, 125, 120});
   c = CoopDifficulty::WithSlider(start, shown, Slider::damage, +2);
-  CHECK(c.custom == Values{140, 150, 125});
+  CHECK(c.custom == Values{140, 150, 125, 140, 150});
   c = CoopDifficulty::WithSlider(start, shown, Slider::count, -1);
-  CHECK(c.custom == Values{140, 120, 100});
+  CHECK(c.custom == Values{140, 120, 100, 140, 120});
   c = CoopDifficulty::WithSlider(start, shown, Slider::count, 0);
-  CHECK(c.custom == shown);
+  CHECK(c.custom == proto::bosses_as_enemies(shown));  // the host's sliders: bosses as enemies
   // The ends hold.
   CHECK(CoopDifficulty::WithSlider(start, shown, Slider::hp, +100).custom.hp_pct == 500);
   CHECK(CoopDifficulty::WithSlider(start, shown, Slider::hp, -100).custom.hp_pct == 25);
@@ -116,9 +121,9 @@ TEST_CASE("difficulty: the menu's rows turn the automatic scaler off") {
 
 TEST_CASE("difficulty: the line for the chat and the menu") {
   CHECK(CoopDifficulty::Describe(Choice{}, proto::auto_difficulty(3), 3) ==
-        "Automatic (3 players): life 180%, damage 140%, enemies 150%");
+        "Automatic (3 players): life 180%, damage 140%, enemies 150%; bosses: life 300%, damage 140%");
   CHECK(CoopDifficulty::Describe(Choice{}, proto::auto_difficulty(1), 1) ==
-        "Automatic (1 player): life 100%, damage 100%, enemies 100%");
+        "Automatic (1 player): life 100%, damage 100%, enemies 100%; bosses: life 100%, damage 100%");
   const Choice hard = CoopDifficulty::WithPreset(Choice{}, Preset::hard);
   CHECK(CoopDifficulty::Describe(hard, proto::preset_difficulty(Preset::hard), 3) ==
         "Hard: life 200%, damage 150%, enemies 150%");
@@ -580,4 +585,247 @@ TEST_CASE("difficulty: every game plans the same extras whatever order its walk 
   for (std::size_t i = 0; i < a.All().size(); ++i) {
     CHECK(a.All()[i].hash == b.All()[i].hash);
   }
+}
+
+TEST_CASE("difficulty: the game's placement data keeps copies off designed encounters") {
+  using CoopDifficulty::Treatment;
+  using CoopDifficulty::TreatmentOf;
+  using CoopDifficulty::TreatmentWhy;
+  // From coop_difficulty_placements.inc (the game's Banc placements).
+  constexpr std::uint64_t kMeadowMoblin = 0x1671480c27778737ULL;    // on a rail: a patrol
+  constexpr std::uint64_t kCastleStalfos = 0x42e984907f639cadULL;   // a shutter waits for it
+  constexpr std::uint64_t kSpiritDinolfos = 0x0df91796e703e5bbULL;  // linked with another Dinolfos
+  constexpr std::uint64_t kStageWolfos = 0x173a1753b8898689ULL;     // drops a key
+  constexpr std::uint64_t kBongoHand = 0x032aee3737186d25ULL;       // listed, but a boss's part
+  constexpr std::uint64_t kPlain = 0x1234'5678'9abc'def0ULL;
+  CHECK(TreatmentOf("Enemy_Moblin", kMeadowMoblin) == Treatment::fold);
+  CHECK(TreatmentWhy("Enemy_Moblin", kMeadowMoblin).starts_with("rail"));
+  CHECK(TreatmentOf("Enemy_Stalfos", kCastleStalfos) == Treatment::fold);
+  CHECK(TreatmentWhy("Enemy_Stalfos", kCastleStalfos).starts_with("shutter"));
+  CHECK(TreatmentOf("Enemy_Dinolfos", kSpiritDinolfos) == Treatment::fold);
+  CHECK(TreatmentWhy("Enemy_Dinolfos", kSpiritDinolfos).starts_with("group"));
+  CHECK(TreatmentOf("Enemy_Wolfos", kStageWolfos) == Treatment::fold);
+  CHECK(TreatmentWhy("Enemy_Wolfos", kStageWolfos).starts_with("drop"));
+  // A boss or a part stays as placed whatever its links say.
+  CHECK(TreatmentOf("Enemy_DungeonBoss_BongoBongo_RightHand", kBongoHand) == Treatment::as_placed);
+  CHECK(TreatmentWhy("Enemy_DungeonBoss_BongoBongo_RightHand", kBongoHand) == "boss");
+  // The same kinds elsewhere, with no such links, get copies (a beat-them-all room's
+  // Obj_EnemyCounter counts only its own linked placements, never a copy).
+  CHECK(TreatmentOf("Enemy_Moblin", kPlain) == Treatment::copies);
+  CHECK(TreatmentOf("Enemy_Stalfos", kPlain) == Treatment::copies);
+  CHECK(TreatmentWhy("Enemy_Stalfos", kPlain).empty());
+  CHECK_FALSE(CoopDifficulty::GetsExtras("Enemy_Moblin", kMeadowMoblin, true, false));
+  CHECK(CoopDifficulty::GetsExtras("Enemy_Moblin", kPlain, true, false));
+}
+
+TEST_CASE("difficulty: puzzle and set-piece kinds get their weight, never copies") {
+  using CoopDifficulty::Treatment;
+  using CoopDifficulty::TreatmentOf;
+  constexpr std::uint64_t kPlain = 0x1234'5678'9abc'def0ULL;
+  for (const char* fold :
+       {"Enemy_Amos", "Enemy_Amos_AlwaysRespawn", "Enemy_Beamos", "Enemy_Beamos_For_High_Place", "Enemy_LikeLike",
+        "Enemy_Wallmaster", "Enemy_Floormaster", "Enemy_Floormaster_Little", "Enemy_Floormaster_Truth",
+        "Enemy_DeadHand", "Enemy_Poe_Big", "Enemy_Poe_Amy", "Enemy_Poe_Beth", "Enemy_Poe_Joelle", "Enemy_Poe_Meg",
+        "Enemy_Poe_Sharp", "Enemy_Poe_Flat", "Enemy_Shabom", "Enemy_Shabom_AlwaysRespawn", "Enemy_ReDead",
+        "Enemy_ReDead_ClimaxOnly", "Enemy_TorchSlug", "Enemy_Anubis", "Enemy_IronKnuckle_Black", "Enemy_Keese_Truth",
+        "Enemy_Skulltula_Truth", "Enemy_Stalfos_AlwaysRespawn", "Enemy_Guay_Boss", "Enemy_Moblin_Club",
+        "Enemy_FlyingPot_ShadowTemple"}) {
+    CHECK_MESSAGE(TreatmentOf(fold, kPlain) == Treatment::fold, std::string(fold));
+    CHECK_MESSAGE(!CoopDifficulty::TreatmentWhy(fold, kPlain).empty(), std::string(fold));
+  }
+  for (const char* placed :
+       {"Enemy_DungeonBoss_Gohma", "Enemy_MiddleBoss_DarkLink", "Enemy_KotakeKoumeBattleManager",
+        "Enemy_DeadHand_Hand", "Enemy_Anubis_MagicField", "Enemy_Shabom_BigOctoChild", "Enemy_Skullwalltula",
+        "Enemy_Skulltula_Gold", "Enemy_Scrub_Business", "Enemy_Stalfos_Haribote", "Enemy_Amos_Dictionary",
+        "Enemy_GhostPicturePerformer_Poe_Meg", "Enemy_CrazyFloorTile", "Enemy_TrickyDoor", "Enemy_SkullKid",
+        "Enemy_Peahat_Larva_Independent", "Npc_Gerudo_FortressGuard", "Animal_Cucco"}) {
+    CHECK_MESSAGE(TreatmentOf(placed, kPlain) == Treatment::as_placed, std::string(placed));
+  }
+  for (const char* copies : {"Enemy_Keese", "Enemy_Keese_Fire", "Enemy_Octorok", "Enemy_Stalfos", "Enemy_Wolfos",
+                             "Enemy_Tektite_Red", "Enemy_Lizalfos", "Enemy_Dekubaba", "Enemy_Gibdo", "Enemy_Leever"}) {
+    CHECK_MESSAGE(TreatmentOf(copies, kPlain) == Treatment::copies, std::string(copies));
+  }
+}
+
+TEST_CASE("difficulty: an enemy that gets no copies has the enemy count folded into its life and damage") {
+  using CoopDifficulty::Folded;
+  using CoopDifficulty::Kind;
+  CHECK(Folded(100, 100) == 100);
+  CHECK(Folded(150, 80) == 150);  // a count at or below 100% leaves it as it is
+  CHECK(Folded(100, 200) == 200);
+  CHECK(Folded(200, 150) == 300);
+  CHECK(Folded(500, 300) == 1500);
+  CHECK(Folded(60000, 300) == 0xffff);
+
+  constexpr std::uint64_t kNow = 1000;
+  auto kinds = std::make_unique<CoopDifficulty::Kinds>();
+  constexpr std::uint64_t kPoeLife = 0x20'0000'1000, kPoe = 0x20'0000'2000;
+  constexpr std::uint64_t kKeese = 0x20'0000'3000, kLinkLife = 0x20'0000'4000;
+  CHECK(kinds->Mark(kPoeLife, Kind::folded_enemy_life));
+  CHECK(kinds->Mark(kPoe, Kind::folded_enemy));
+  CHECK(kinds->Mark(kKeese, Kind::enemy));
+  CHECK(kinds->Mark(kLinkLife, Kind::our_link_life));
+  std::uint64_t attacker = kPoe;
+  auto attacker_of = [&] { return attacker; };
+  // Enemies at 200%, life and damage as the game has them: the folded one takes half and hits twice as hard.
+  const Values count_only{100, 100, 200};
+  CHECK(kinds->Step(kPoeLife, 4, count_only, kNow, attacker_of) == 2);
+  CHECK(kinds->Step(kLinkLife, 4, count_only, kNow, attacker_of) == 8);
+  attacker = kKeese;  // an enemy with copies keeps the plain damage
+  CHECK(kinds->Step(kLinkLife, 4, count_only, kNow, attacker_of) == 4);
+  // On top of life and damage: life 200% and enemies 200% make 400% for it.
+  const Values hard{200, 150, 200};
+  CHECK(kinds->Step(kPoeLife, 4, hard, kNow, attacker_of) == 1);
+  attacker = kPoe;
+  CHECK(kinds->Step(kLinkLife, 2, hard, kNow, attacker_of) == 6);  // 150% * 2
+  // A reused address is forgotten as for any enemy.
+  kinds->Forget(kPoe);
+  CHECK(kinds->Of(kPoe) == Kind::none);
+}
+
+TEST_CASE("difficulty: the night horde grows with the players near a roll") {
+  using CoopDifficulty::Horde;
+  CHECK(Horde::PerRoll(4, 100) == 0);  // the game as it is
+  CHECK(Horde::PerRoll(1, 300) == 0);  // alone at the roll: the game's own
+  CHECK(Horde::PerRoll(2, 125) == 1);
+  CHECK(Horde::PerRoll(3, 150) == 2);
+  CHECK(Horde::PerRoll(8, 200) == Horde::kPerRollMost);
+
+  Horde h;
+  using Roll = Horde::Roll;
+  std::vector<Roll> rolls{{0xa000, "Enemy_Stalchild", {10.0f, 0.0f, 10.0f}, 2}};
+  // A roll is ours to grow only once it has settled (never one the director is still making).
+  CHECK(h.Plan("HyruleField_Child", rolls, 1, 150, 0) == 0);
+  CHECK(h.Plan("HyruleField_Child", rolls, 1, 150, Horde::kSettleMs - 1) == 0);
+  CHECK(h.Plan("HyruleField_Child", rolls, 1, 150, Horde::kSettleMs) == 1);
+  CHECK(h.Plan("HyruleField_Child", rolls, 1, 150, Horde::kSettleMs + 100) == 0);  // once
+  REQUIRE(h.All().size() == 1);
+  CHECK(h.All()[0].name == "Enemy_Stalchild");
+  const auto& at = h.All()[0].position;
+  CHECK(std::hypot(at[0] - 10.0f, at[2] - 10.0f) == doctest::Approx(CoopDifficulty::kExtraOffsetM));
+  // A third player comes near: one more for the same roll.
+  rolls[0].players_near = 3;
+  CHECK(h.Plan("HyruleField_Child", rolls, 2, 150, 2000) == 1);
+  CHECK(h.All().size() == 2);
+  // Made and bound: ours, never grown itself.
+  h.Bind({{h.All()[0].key, 0xb000}, {h.All()[1].key, 0xb100}});
+  CHECK(h.Ours(0xb000));
+  rolls.push_back({0xb000, "Enemy_Stalchild", {}, 4});
+  CHECK(h.Plan("HyruleField_Child", rolls, 3, 150, 5000) == 0);
+  // Gone from the walk: no longer ours, never made again.
+  h.Keep({0xa000, 0xb100});
+  CHECK_FALSE(h.Ours(0xb000));
+  CHECK(h.All()[0].gone);
+  // The cap: never more than kMostAlive rolled enemies in our walk at once.
+  std::vector<Roll> many;
+  for (std::uint64_t i = 0; i < 20; ++i) {
+    many.push_back({0xc000 + i, "Enemy_Stalchild", {}, 8});
+  }
+  CHECK(h.Plan("HyruleField_Child", many, 16, 300, 10000) == 0);  // (settling)
+  CHECK(h.Plan("HyruleField_Child", many, 16, 300, 12000) == 2);  // 16 alive: two more fill it
+  CHECK(h.Plan("HyruleField_Child", many, 16, 300, 12100) == 0);  // those two still being made count
+  CHECK(h.All().size() <= Horde::kMost);
+  // Another scene forgets them.
+  CHECK(h.Plan("Graveyard", {}, 0, 300, 13000) == 0);
+  CHECK(h.All().empty());
+}
+
+TEST_CASE("difficulty: the night horde goes when the spawner takes its roll away, and fights on when it was killed") {
+  using CoopDifficulty::Horde;
+  using Roll = Horde::Roll;
+  const std::string field = "HyruleField_Adult";
+  Horde h;
+  std::vector<Roll> rolls{{0xa000, "Enemy_Stalchild", {}, 2}, {0xa100, "Enemy_Stalchild", {}, 2}};
+  h.Plan(field, rolls, 2, 200, 0);
+  CHECK(h.Plan(field, rolls, 2, 200, Horde::kSettleMs) == 2);  // one beside each
+  REQUIRE(h.All().size() == 2);
+  h.Bind({{h.All()[0].key, 0xb000}, {h.All()[1].key, 0xb100}});
+  h.Keep({0xa000, 0xa100, 0xb000, 0xb100});
+  CHECK(h.Removes().empty());
+
+  // The first roll is killed (life 0) and leaves: ours beside it stays and joins the living one.
+  rolls[0].dead = true;
+  h.Plan(field, rolls, 4, 200, 2000);
+  h.Keep({0xa100, 0xb000, 0xb100});
+  CHECK(h.Removes().empty());
+  rolls.erase(rolls.begin());
+  h.Plan(field, rolls, 3, 200, 2100);
+  CHECK(h.All()[0].roll == 0xa100);  // adopted
+
+  // Dawn: the spawner takes the living roll away (it leaves alive): both of ours go with the game's delete.
+  h.Keep({0xb000, 0xb100});
+  auto removes = h.Removes();
+  std::sort(removes.begin(), removes.end());
+  CHECK(removes == std::vector<std::uint64_t>{0xb000, 0xb100});
+  h.Plan(field, {}, 2, 200, 3000);  // asked again while still there
+  CHECK(h.Removes().size() == 2);
+  h.Keep({});  // deleted
+  CHECK(h.Removes().empty());
+  CHECK(h.All()[0].gone);
+  CHECK(h.All()[1].gone);
+}
+
+TEST_CASE("difficulty: the night horde's orphans go by day, and a refused one stops counting") {
+  using CoopDifficulty::Horde;
+  using Roll = Horde::Roll;
+  const std::string field = "HyruleField_Adult";
+  Horde h;
+  std::vector<Roll> rolls{{0xa000, "Enemy_Stalchild", {}, 3}};
+  h.Plan(field, rolls, 1, 200, 0);
+  CHECK(h.Plan(field, rolls, 1, 200, Horde::kSettleMs) == 2);
+  // The director makes only the first; the other is given up after kBindWaitMs and never made.
+  h.Bind({{h.All()[0].key, 0xb000}});
+  h.Keep({0xa000, 0xb000});
+  h.Plan(field, rolls, 2, 200, Horde::kSettleMs + Horde::kBindWaitMs);
+  CHECK(h.All()[1].gone);
+  // The roll is killed: ours is an orphan; with no living roll for kOrphanMs (day) it goes too.
+  rolls[0].dead = true;
+  h.Plan(field, rolls, 2, 200, 6000);
+  h.Keep({0xb000});
+  constexpr std::uint64_t kT = 7000;
+  h.Plan(field, {}, 1, 200, kT);
+  h.Plan(field, {}, 1, 200, kT + Horde::kOrphanMs - 1);
+  CHECK(h.Removes().empty());
+  h.Plan(field, {}, 1, 200, kT + Horde::kOrphanMs);
+  CHECK(h.Removes() == std::vector<std::uint64_t>{0xb000});
+}
+
+TEST_CASE("difficulty: bosses and mini-bosses scale by the boss values") {
+  using CoopDifficulty::Kind;
+  CHECK(CoopDifficulty::ScalesAsBoss("Enemy_DungeonBoss_Gohma"));
+  CHECK(CoopDifficulty::ScalesAsBoss("Enemy_DungeonBoss_BongoBongo_LeftHand"));
+  CHECK(CoopDifficulty::ScalesAsBoss("Enemy_MiddleBoss_IronKnuckle_Nabooru"));
+  CHECK(CoopDifficulty::ScalesAsBoss("Enemy_KotakeKoumeBattleManager"));
+  CHECK_FALSE(CoopDifficulty::ScalesAsBoss("Enemy_DungeonBoss_Gohma_Dictionary"));  // picture book
+  CHECK_FALSE(CoopDifficulty::ScalesAsBoss("Enemy_DeadHand"));                       // a set piece: folded
+  CHECK_FALSE(CoopDifficulty::ScalesAsBoss("Enemy_Keese"));
+  constexpr std::uint64_t kPlain = 0x1234'5678'9abc'def0ULL;
+  CHECK(CoopDifficulty::LifeKind("Enemy_DungeonBoss_Gohma", kPlain) == Kind::boss_life);
+  CHECK(CoopDifficulty::AttackerKind("Enemy_DungeonBoss_Gohma", kPlain) == Kind::boss);
+  CHECK(CoopDifficulty::LifeKind("Enemy_DeadHand", kPlain) == Kind::folded_enemy_life);
+  CHECK(CoopDifficulty::AttackerKind("Enemy_Keese", kPlain) == Kind::enemy);
+
+  auto kinds = std::make_unique<CoopDifficulty::Kinds>();
+  constexpr std::uint64_t kBossLife = 0x30'0000'1000, kBoss = 0x30'0000'2000, kLinkLife = 0x30'0000'3000;
+  CHECK(kinds->Mark(kBossLife, Kind::boss_life));
+  CHECK(kinds->Mark(kBoss, Kind::boss));
+  CHECK(kinds->Mark(kLinkLife, Kind::our_link_life));
+  auto attacker_of = [&] { return kBoss; };
+  // Automatic, 4 players: enemies life 220%, bosses 400% and damage 160%.
+  const Values four = proto::auto_difficulty(4);
+  CHECK(kinds->Step(kBossLife, 8, four, 0, attacker_of) == 2);
+  CHECK(kinds->Step(kLinkLife, 5, four, 0, attacker_of) == 8);  // 5 x 1.6
+  // 16 players, the most: 1600% life (a sixteenth of each hit), 400% damage; no overflow.
+  const Values sixteen = proto::auto_difficulty(16);
+  CHECK(sixteen.boss_hp_pct == proto::kMaxBossHpPct);
+  CHECK(kinds->Step(kBossLife, 16, sixteen, 0, attacker_of) == 1);
+  CHECK(kinds->Step(kLinkLife, 80, sixteen, 0, attacker_of) == 320);
+  std::int32_t carry = 0;
+  CHECK(CoopDifficulty::EnemyTakes(std::numeric_limits<std::int32_t>::max(), proto::kMaxBossHpPct, carry) > 0);
+  // The host's own choice: bosses as the other enemies.
+  const Values hard = proto::preset_difficulty(Preset::hard);
+  CHECK(hard.boss_hp_pct == hard.hp_pct);
+  CHECK(hard.boss_damage_pct == hard.damage_pct);
+  kinds->Forget(kBoss);
+  CHECK(kinds->Of(kBoss) == Kind::none);
 }

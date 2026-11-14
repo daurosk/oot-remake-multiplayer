@@ -2577,7 +2577,8 @@ Error decode_body(Reader& r, LobbyResult& m) {
 }
 
 // DIFFICULTY: u8 set by (0 nobody, else a player), u8 automatic (0 or 1),
-// u8 preset, u16 life, u16 damage, u16 count (percent, within the sliders).
+// u8 preset, u16 life, u16 damage, u16 count (percent, within the sliders),
+// u16 boss life (25 to 1600), u16 boss damage (25 to 400).
 Error encode_body(const Difficulty& m, Writer& w) {
   if (m.set_by > kMaxPlayers || static_cast<std::uint8_t>(m.preset) >= kDifficultyPresets ||
       !valid_difficulty(m.values)) {
@@ -2589,6 +2590,8 @@ Error encode_body(const Difficulty& m, Writer& w) {
   w.u16(m.values.hp_pct);
   w.u16(m.values.damage_pct);
   w.u16(m.values.count_pct);
+  w.u16(m.values.boss_hp_pct);
+  w.u16(m.values.boss_damage_pct);
   return Error::none;
 }
 
@@ -2602,6 +2605,8 @@ Error decode_body(Reader& r, Difficulty& m) {
   COOP_READ(r.u16(m.values.hp_pct));
   COOP_READ(r.u16(m.values.damage_pct));
   COOP_READ(r.u16(m.values.count_pct));
+  COOP_READ(r.u16(m.values.boss_hp_pct));
+  COOP_READ(r.u16(m.values.boss_damage_pct));
   if (m.set_by > kMaxPlayers || automatic > 1 || preset >= kDifficultyPresets ||
       !valid_difficulty(m.values)) {
     return Error::bad_value;

@@ -100,6 +100,11 @@ std::int32_t EnemyTakes(std::int32_t sum, std::uint16_t hp_pct, std::int32_t& ca
 // (quarter hearts), the parts of a quarter carried in `carry` (hundredths,
 // below 100) to his next hit from an enemy.
 std::int32_t LinkTakes(std::int32_t sum, std::uint16_t damage_pct, std::int32_t& carry);
+// Enemy count, folded: what an enemy that gets no copies (Treatment::fold)
+// has instead, `pct` (its life or damage %) times count_pct / 100 (enemies at
+// 200%: twice the life and twice the damage), at most 65535. Never less than
+// `pct`: a count of 100% or less leaves it as it is.
+std::uint16_t Folded(std::uint16_t pct, std::uint16_t count_pct);
 
 // What the object walk found, for the Life step on the game's threads.
 enum class Kind : std::uint8_t {
@@ -107,6 +112,14 @@ enum class Kind : std::uint8_t {
     enemy_life = 1,     // an enemy's (or a boss's) Life component
     enemy = 2,          // an enemy actor, or an enemy's shot: an attacker whose hits on Link are scaled
     our_link_life = 3,  // our own Link's Life component
+    // An enemy that gets no extra copies but their weight instead (Treatment::fold):
+    // its life and its hits on Link are scaled by Folded(pct, count_pct).
+    folded_enemy_life = 4,
+    folded_enemy = 5,
+    // A boss or a mini-boss (ScalesAsBoss): its life at boss_hp_pct, its hits
+    // on Link at boss_damage_pct.
+    boss_life = 6,
+    boss = 7,
 };
 // An attacker whose hit on Link is the enemies' damage: an enemy or a boss
 // (Enemy_*), or an enemy's shot (`enemy_shot`: coop_enemy_shots.h).
@@ -155,12 +168,21 @@ public:
             return sum;
         }
         const Kind kind = static_cast<Kind>(s->kind.load(std::memory_order_acquire));
-        if (kind == Kind::enemy_life) {
+        if (kind == Kind::enemy_life || kind == Kind::folded_enemy_life || kind == Kind::boss_life) {
+            const std::uint16_t pct = kind == Kind::enemy_life  ? values.hp_pct
+                                      : kind == Kind::boss_life ? values.boss_hp_pct
+                                                                : Folded(values.hp_pct, values.count_pct);
             const std::int32_t passed = Passed(*s, sum, now_ms);
-            return passed == sum ? sum : passed + Scaled(*s, sum - passed, values.hp_pct, &EnemyTakes, enemy_hits_);
+            return passed == sum ? sum : passed + Scaled(*s, sum - passed, pct, &EnemyTakes, enemy_hits_);
         }
-        if (kind == Kind::our_link_life && values.damage_pct != 100 && Of(attacker()) == Kind::enemy) {
-            return Scaled(*s, sum, values.damage_pct, &LinkTakes, link_hits_);
+        if (kind == Kind::our_link_life) {
+            const Kind by = Of(attacker());
+            if (by == Kind::enemy || by == Kind::folded_enemy || by == Kind::boss) {
+                const std::uint16_t pct = by == Kind::enemy  ? values.damage_pct
+                                          : by == Kind::boss ? values.boss_damage_pct
+                                                             : Folded(values.damage_pct, values.count_pct);
+                return Scaled(*s, sum, pct, &LinkTakes, link_hits_);  // (100: unchanged)
+            }
         }
         return sum;
     }
@@ -212,11 +234,38 @@ unsigned ExtraCount(std::uint64_t key, std::uint16_t count_pct);
 // hits, its death and its drop as that enemy's own. The ones of a scene
 // visit stay until the scene changes; a lower count later takes none away.
 
-// Which placed enemy gets extras: an Enemy_ actor with a placement hash and
-// a life, never a boss or a part of one, nor an enemy the sync treats in its
-// own way (`special`: rolled, hatching, announced, a puzzle, a shot), nor
-// one a copy beside it could spoil (on a wall, a hand of another, a
-// manager, a flock).
+// What "more enemies" does with one placed enemy (docs/play-online.md,
+// "Difficulty"; the rules and their reasons are one table in
+// coop_difficulty.cpp, with the game's own placement data in
+// coop_difficulty_placements.inc):
+// - copies: it gets ExtraCount copies beside it (most enemies; also those a
+//   room's Obj_EnemyCounter counts: it counts only its own linked placements,
+//   so a copy never holds a room shut).
+// - fold: no copies, its weight instead: life and damage times the count
+//   (Folded). A patrol on a rail, an enemy a shutter, an event or a manager
+//   waits for, one linked with another enemy, one with a set drop, and the
+//   kinds whose number or spot is the puzzle (Armos, Beamos, Like Like,
+//   Wallmaster, Floormaster, Dead Hand, Big Poes, the Poe sisters, Shabom,
+//   ReDead, Torch Slug, Anubis, Iron Knuckles, Lens of Truth enemies, ...).
+// - as_placed: nothing more: not an enemy, a boss or mini-boss (their life
+//   and damage scale already), a part of a bigger enemy, a picture-book or
+//   cutscene stand-in, a scrub, a Gold Skulltula, a wall enemy.
+enum class Treatment : std::uint8_t { copies, fold, as_placed };
+// A boss or a mini-boss of that table (Enemy_DungeonBoss_*, Enemy_MiddleBoss_*,
+// a battle manager, and their parts under those names): scaled by the boss
+// values (boss_hp_pct, boss_damage_pct), never by the enemies' ones.
+bool ScalesAsBoss(std::string_view name);
+// The Kinds for an enemy's actor and its Life component: boss, folded or plain.
+Kind AttackerKind(std::string_view name, std::uint64_t hash);
+Kind LifeKind(std::string_view name, std::uint64_t hash);
+Treatment TreatmentOf(std::string_view name, std::uint64_t hash);
+// Why TreatmentOf said what it said, for the log and the tests ("rail",
+// "puzzle: Armos statues", "boss", ...); empty for copies.
+std::string_view TreatmentWhy(std::string_view name, std::uint64_t hash);
+
+// Which placed enemy gets extras: a placement hash, a life, TreatmentOf
+// copies, and not an enemy the sync treats in its own way (`special`:
+// rolled, hatching, announced, a puzzle, a shot).
 bool GetsExtras(std::string_view name, std::uint64_t hash, bool has_life, bool special);
 // The placement id of extra `index` (0 on) of the enemy placed with `hash`:
 // never 0 or ~0 (a made actor's), never `hash` itself.
@@ -282,6 +331,89 @@ private:
         std::string name;
     };
     std::map<std::uint64_t, Bound> by_address_;  // actor -> its extra
+    std::uint64_t next_key_ = 1;
+};
+
+// The night horde (Hyrule Field's Stalchild; docs/play-online.md
+// "Difficulty"). The game's own night spawner rolls Stalchild around a Link;
+// where players stand together one game keeps the rolls and shares them
+// (coop_objects_sync.h RollerFor). That game makes PerRoll more beside each
+// roll of its own, with the game's own create request (the director), the
+// more players stand within the roll range of it; they are hashless
+// Stalchild of its walk like the game's own, so the roll sync shares them
+// the same way (one game runs each, its hits and death everyone's).
+// Each one follows the roll it was made beside: when that roll leaves the
+// walk alive (the spawner took it away: dawn, the area turned it off, it
+// sank), ours are deleted with the game's own delete request (Removes). A
+// roll that died leaves ours to fight on: they join another living roll of
+// ours, and with none for kOrphanMs (day: the spawner rolls no more) they go
+// as well.
+class Horde {
+public:
+    static constexpr unsigned kPerRollMost = 3;        // beside one roll
+    static constexpr std::size_t kMostAlive = 18;      // Stalchild in our walk at once, the game's and ours
+    static constexpr std::size_t kMost = 48;           // made in one scene visit
+    // A roll seen this long is the game's own: the director binds ours sooner,
+    // so one of ours is never taken for a roll (no horde of a horde).
+    static constexpr std::uint64_t kSettleMs = 1000;
+    // One the director has not made this long after the ask is given up (the
+    // game refused it): it no longer counts as alive.
+    static constexpr std::uint64_t kBindWaitMs = 4000;
+    // Ours whose roll died, with no living roll of ours to join this long, go.
+    static constexpr std::uint64_t kOrphanMs = 30'000;
+
+    // At `count_pct` (enemies %; 100 or less: none), with `players_near`
+    // Links (ours among them) within the roll range: one more per player
+    // beyond the first, at most kPerRollMost.
+    static unsigned PerRoll(std::size_t players_near, std::uint16_t count_pct);
+
+    struct Roll {
+        std::uint64_t address = 0;  // its actor
+        std::string name;           // Enemy_Stalchild or Enemy_Stalchild_Big
+        std::array<float, 3> position{};
+        std::size_t players_near = 1;
+        bool dead = false;  // life 0 (killed): if it leaves now, ours stay
+    };
+    struct Made {
+        std::uint64_t key = 0;  // the director's key (1 on)
+        std::string name;
+        std::array<float, 3> position{};
+        std::uint64_t roll = 0;      // the roll's actor it follows (0: its roll died)
+        std::uint64_t asked_ms = 0;  // when it was planned
+        std::uint64_t address = 0;   // its actor, once the director made it
+        bool gone = false;           // no more (left the walk, given up): never made again
+        bool retired = false;        // its roll was taken away alive: to delete
+    };
+
+    // Our own rolls on this walk (the ones this game shares) in `scene`;
+    // `alive`: the rolled enemies in our walk now. A new scene forgets the
+    // old one's first. A roll gets more as more players come near it, up to
+    // PerRoll. Answers how many were added.
+    std::size_t Plan(std::string_view scene, const std::vector<Roll>& rolls, std::size_t alive,
+                     std::uint16_t count_pct, std::uint64_t now_ms);
+    // The director's actors (key to actor) after it made some.
+    void Bind(const std::map<std::uint64_t, std::uint64_t>& live);
+    // A whole walk's actors: a roll or one of ours that is not among them is
+    // gone; ours beside a roll that left alive are retired.
+    void Keep(std::vector<std::uint64_t> actors);
+    // Ours to delete now (retired, made, still here), for the game's delete request.
+    std::vector<std::uint64_t> Removes() const;
+    // Whether the actor at `address` is one we made.
+    bool Ours(std::uint64_t address) const { return by_address_.contains(address); }
+    const std::vector<Made>& All() const { return made_; }
+    void Reset();
+
+private:
+    struct Seen {
+        std::uint64_t first_ms = 0;
+        bool dead = false;  // as last seen
+    };
+    std::string scene_;
+    std::vector<Made> made_;
+    std::map<std::uint64_t, Seen> rolls_;       // a roll's actor -> when first seen, how last seen
+    std::map<std::uint64_t, unsigned> planned_;  // a roll's actor -> made beside it
+    std::map<std::uint64_t, std::uint64_t> by_address_;  // our actor -> its key
+    std::uint64_t orphan_since_ = 0;  // ms: orphans with no living roll to join since (0: none)
     std::uint64_t next_key_ = 1;
 };
 

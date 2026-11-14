@@ -679,6 +679,24 @@ std::uint8_t Sync::RollerFor(std::uint8_t self, const proto::Vec3& at, std::uint
     return roller;
 }
 
+std::size_t Sync::PlayersNear(const proto::Vec3& at, std::uint64_t now_us) const {
+    const auto fresh = [now_us](std::uint64_t t) {
+        return t <= now_us ? now_us - t < kSceneStaleUs : t - now_us < kSceneStaleUs;
+    };
+    std::size_t near = 1;  // us
+    std::lock_guard lock(inbox_mutex_);
+    for (const auto& [player, seen] : scenes_) {
+        if (player == self_ || player == 0 || !fresh(seen.second) || seen.first != scene_) {
+            continue;
+        }
+        const auto place = places_.find(player);
+        if (place != places_.end() && fresh(place->second.second) && Distance(place->second.first, at) <= kRollNearM) {
+            ++near;
+        }
+    }
+    return near;
+}
+
 void Sync::Bind(const std::map<std::uint64_t, std::uint64_t>& live) {
     bound_.clear();
     for (const auto& [key, address] : live) {

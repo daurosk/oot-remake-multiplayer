@@ -154,6 +154,8 @@ constexpr u64 kRequestDelete = 0xa6490;  // (actor, 0), as docs/puppet.md
 constexpr u64 kEnemyKey = u64{1} << 63;
 // Difficulty's extra enemies (coop_difficulty.h Extras) on the director's enemy list: their own keys there.
 constexpr u64 kExtraKey = kEnemyKey | u64{1} << 62;
+// Difficulty's night horde (coop_difficulty.h Horde): its own keys on the same list.
+constexpr u64 kHordeKey = kEnemyKey | u64{1} << 61;
 constexpr unsigned kMoverCallerOrder = 30;  // after the puppets, spawn copies (10) and fairies (20)
 constexpr unsigned kGrassCallerOrder = 40;  // the others' field grass cuts (coop_world.h)
 
@@ -1517,6 +1519,7 @@ public:
                          decider_logged_, enemies_logged_, refused_logged_);
             }
             PlanExtras(*scene, seen, enemies);
+            PlanHorde(*scene, self, server_now_us, seen, enemies);
             CoopSpawn::TheDirector().SetEnemies(main_, std::move(enemies));
         }
         for (const auto& note : sync_.TakeNotes()) {
@@ -2072,6 +2075,7 @@ private:
             world_.Reset();
             block_retry_.clear();
             extras_.Reset();  // difficulty: that run's extra enemies are gone with it
+            horde_.Reset();
             {
                 ScrubsBox& box = TheScrubs();  // a new game run: its block is gone
                 std::lock_guard lock(box.mutex);
@@ -2489,6 +2493,14 @@ private:
             }
             extras_.Keep(actors);  // (a whole walk: List) one whose actor is gone frees its address
             extras_.Bind(live);
+            std::map<u64, u64> horde;
+            for (const auto& [key, actor] : CoopSpawn::TheDirector().Live()) {
+                if ((key & (kExtraKey | kHordeKey)) == kHordeKey) {
+                    horde[key & ~kHordeKey] = actor;
+                }
+            }
+            horde_.Keep(actors);
+            horde_.Bind(horde);
         }
         const u64 now_ms = SteadyNowMs();
         for (const u64 a : actors) {
@@ -2517,7 +2529,8 @@ private:
             const bool extra_unbound = (known.second == 0 || known.second == ~u64{0}) &&
                                        extras_.Holds(known.first, now_ms);
             if (CoopDifficulty::IsEnemy(known.first, CoopEnemyShots::IsEnemyShot(known.first))) {
-                CoopDifficulty::TheKinds().Mark(a, CoopDifficulty::Kind::enemy);  // difficulty: an attacker
+                // Difficulty: an attacker (a boss, one with its copies' weight folded in, or plain).
+                CoopDifficulty::TheKinds().Mark(a, CoopDifficulty::AttackerKind(known.first, known.second));
             } else {
                 CoopDifficulty::TheKinds().Forget(a);  // difficulty: a reused address (our bomb where a Keese was)
             }
@@ -2650,7 +2663,8 @@ private:
                         if (const auto component = table ? r.Ptr(*table + kComponentLife) : std::nullopt) {
                             life_components.emplace(*component, a);  // (whose Life step is whose: StepHits)
                             if (CoopDifficulty::IsEnemy(s.name, false)) {  // difficulty: its hits are scaled
-                                CoopDifficulty::TheKinds().Mark(*component, CoopDifficulty::Kind::enemy_life);
+                                CoopDifficulty::TheKinds().Mark(*component,
+                                                                CoopDifficulty::LifeKind(s.name, s.hash));
                             } else {
                                 CoopDifficulty::TheKinds().Forget(*component);  // (a reused address)
                             }
@@ -2881,6 +2895,46 @@ private:
             c.place = false;  // its own AI moves it; the sync places it where it is a copy
             c.remakes = 0;    // one that went is not made again
             c.real = true;    // the game's own enemy, never a stand-in
+            enemies.push_back(std::move(c));
+        }
+    }
+
+    // Difficulty (coop_difficulty.h Horde): more night Stalchild beside the
+    // rolls this game keeps and shares, the more players stand near each.
+    void PlanHorde(const std::string& scene, std::uint8_t self, u64 server_now_us, const std::vector<Seen>& seen,
+                   std::vector<CoopSpawn::Copy>& enemies) {
+        std::vector<CoopDifficulty::Horde::Roll> rolls;
+        std::size_t alive = 0;
+        for (const Seen& s : seen) {
+            if (!IsRolled(s.name) || (s.hash != 0 && s.hash != ~u64{0})) {
+                continue;
+            }
+            ++alive;
+            const auto id = sync_.IdOf(s.address);
+            if (!id || id->kind != coop::protocol::ObjectKind::made || id->maker != self || horde_.Ours(s.address)) {
+                continue;  // another game's roll (a copy here), or one we made: no horde of its own
+            }
+            const bool dead = s.life && s.life->life <= 0;
+            rolls.push_back({s.address, s.name, {s.position[0], s.position[1], s.position[2]},
+                             sync_.PlayersNear(s.position, server_now_us), dead});
+        }
+        const std::uint16_t count = CoopDifficulty::Now().count_pct;
+        if (const std::size_t added = horde_.Plan(scene, rolls, alive, count, SteadyNowMs())) {
+            LOG_INFO(Core, "coop: difficulty: night horde: {} more Stalchild in {} ({} alive, enemies {}%)", added,
+                     scene, alive, count);
+        }
+        for (const auto& m : horde_.All()) {
+            CoopSpawn::Copy c;
+            c.key = kHordeKey | m.key;
+            c.actor = m.name;
+            c.position = {m.position[0], m.position[1], m.position[2]};
+            if (m.gone) {
+                continue;  // (one never made: off the director's list, so it is not made)
+            }
+            c.act = m.address != 0 ? CoopSpawn::Act::release : CoopSpawn::Act::show;
+            c.place = false;  // its own AI; the roll sync shares it as one of our rolls
+            c.remakes = 0;
+            c.real = true;
             enemies.push_back(std::move(c));
         }
     }
@@ -3249,6 +3303,9 @@ private:
             TheMover().Release(ours);
         }
         std::vector<u64> removes = sync_.Removes();
+        for (const u64 a : horde_.Removes()) {
+            removes.push_back(a);  // difficulty: night horde beside a roll the spawner took away
+        }
         for (const u64 a : world_.Removes()) {
             removes.push_back(a);
         }
@@ -3512,6 +3569,7 @@ private:
     std::unordered_map<u64, std::pair<std::string, u64>> names_;  // name, hash by actor
     std::unordered_map<u64, u64> life_components_;  // the actor by its Life component (shared actors with a life)
     CoopDifficulty::Extras extras_;  // difficulty: this scene visit's extra enemies
+    CoopDifficulty::Horde horde_;    // difficulty: the night horde we made beside our own rolls
     u64 share_now_us_ = 0;  // this Share's server time (WriteLife)
     Sync sync_;
     Kernel::KProcess* process_ = nullptr;

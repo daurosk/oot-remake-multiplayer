@@ -1,0 +1,139 @@
+"""Writes lichii/hook/coop_difficulty_placements.inc: the placed enemies an extra copy could spoil.
+
+    python -m puppet_pack.designed_enemies --romfs <romfs> --out lichii/hook/coop_difficulty_placements.inc
+
+Difficulty's "more enemies" (docs/play-online.md, "Difficulty") makes extra copies of placed
+enemies beside them. A copy is made by actor name only: it has none of its original's
+placement links, rails or event names. That is harmless for most enemies and wrong for the
+ones the game's own data ties into a designed encounter. Those are listed here by placement
+hash (the `Hash` of the placement, which the game keeps at runtime), each with its reason:
+
+- rail:    it follows a rail of its scene (`Rails`): a patrol (the Sacred Forest Meadow Moblins,
+           the Big Poes of Hyrule Field). A copy beside it would walk the same path inside it.
+- shutter: a shutter or door waits for it (an `Obj_*Shutter*` / `Obj_*Door*` links to it): the
+           room is built around beating that one.
+- event:   an event or a manager links to it (`EventRequestActor`, a scrub manager, a painting,
+           a timer, an NPC, a puzzle box), or it plays one when hit or talked to
+           (`AttackedEventName`, `TalkEventName`, `DamageEventName`) or appears for one
+           (`IsIntendedForEventAppear`).
+- group:   it is linked with another enemy (a pair that fights together, a body and its hands).
+- drop:    it drops a set item (`Drop__DropActor`: a small key, a heart).
+
+Not listed: an enemy only an `Obj_EnemyCounter` links to (a "beat them all" room). The counter
+counts the enemies it links to (its AI asks `QueryEnemyCounterDstActorCount`), so a copy is never
+counted and never holds the room shut; those keep their copies.
+"""
+import argparse
+import glob
+import os
+import re
+import sys
+
+if __package__ in (None, ""):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    __package__ = "puppet_pack"  # noqa: A001
+
+from . import byml, zs  # noqa: E402
+
+# The order is the priority when a placement has more than one reason.
+REASONS = ("rail", "shutter", "event", "group", "drop")
+EVENT_KEYS = ("AttackedEventName", "TalkEventName", "DamageEventName", "IsIntendedForEventAppear")
+
+
+def is_enemy(gyaml):
+    return gyaml.startswith("Enemy_") and "Dictionary" not in gyaml
+
+
+def u64(v):
+    """A placement's hash or link end as an int (byml gives an int or a typed value)."""
+    if isinstance(v, int):
+        return v
+    m = re.search(r"\d+", str(v).split("(", 1)[-1])
+    return int(m.group()) if m else None
+
+
+def source_reason(gyaml):
+    if is_enemy(gyaml):
+        return "group"
+    if gyaml.startswith("Obj_EnemyCounter"):
+        return None  # counts only its linked ones: copies stay (module docstring)
+    if gyaml.startswith("Obj_") and ("Shutter" in gyaml or "Door" in gyaml):
+        return "shutter"
+    return "event"
+
+
+def scene_actors(romfs):
+    """{scene: [actor, ...]}: a scene's Static and Dynamic placements together."""
+    dicts = zs.Dicts.from_romfs(romfs)
+    out = {}
+    for path in sorted(glob.glob(os.path.join(romfs, "Banc", "*", "*.bcett.byml.zs"))):
+        scene = re.sub(r"_(Static|Dynamic)$", "", os.path.basename(path)[: -len(".bcett.byml.zs")])
+        with open(path, "rb") as f:
+            root = byml.loads(dicts.decompress(f.read()))
+        out.setdefault(scene, []).extend(root.get("Actors", []) or [])
+    return out
+
+
+def designed(scenes):
+    """{hash: (reason, actor name, scene)} for every enemy placement with a reason."""
+    found = {}
+
+    def note(h, reason, name, scene):
+        if h is None:
+            return
+        was = found.get(h)
+        if was is None or REASONS.index(reason) < REASONS.index(was[0]):
+            found[h] = (reason, name, scene)
+
+    for scene, actors in scenes.items():
+        by_hash = {u64(a.get("Hash")): a for a in actors}
+        for a in actors:
+            g = str(a.get("Gyaml", ""))
+            h = u64(a.get("Hash"))
+            if is_enemy(g):
+                dyn = a.get("Dynamic") or {}
+                if a.get("Rails"):
+                    note(h, "rail", g, scene)
+                if any(k in dyn for k in EVENT_KEYS):
+                    note(h, "event", g, scene)
+                if "Drop__DropActor" in dyn and not str(dyn["Drop__DropActor"]).startswith("Obj_Rupee"):
+                    note(h, "drop", g, scene)
+            for link in a.get("Links") or []:
+                t = by_hash.get(u64(link.get("Dst")))
+                if t is None:
+                    continue
+                tg = str(t.get("Gyaml", ""))
+                if is_enemy(tg):
+                    reason = source_reason(g)
+                    if reason:
+                        note(u64(t.get("Hash")), reason, tg, scene)
+                    if is_enemy(g):
+                        note(h, "group", g, scene)  # both ends of an enemy link
+    return found
+
+
+def render(found):
+    lines = [
+        "// Generated by tools/puppet_pack/designed_enemies.py from the game's Banc placements;",
+        "// do not edit. The placed enemies an extra copy could spoil (coop_difficulty.cpp",
+        "// TreatmentOf): placement hash, reason, actor and scene for the reader.",
+    ]
+    for h, (reason, name, scene) in sorted(found.items()):
+        lines.append(f"    {{0x{h:016x}ull, Designed::{reason}}},  // {name}, {scene}")
+    return "\n".join(lines) + "\n"
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--romfs", required=True, help="your own extracted game (holds Banc and Pack)")
+    ap.add_argument("--out", required=True)
+    args = ap.parse_args(argv)
+    found = designed(scene_actors(args.romfs))
+    with open(args.out, "w", newline="\n") as f:
+        f.write(render(found))
+    counts = {r: sum(1 for v in found.values() if v[0] == r) for r in REASONS}
+    print(f"{len(found)} placements: {counts}")
+
+
+if __name__ == "__main__":
+    main()

@@ -111,7 +111,9 @@ max y at +0x38. On the layer's projection (+0x80) it writes the ratio w / h at +
 which makes the projection again. The module does the same write each frame for the world layer
 while local co-op is on, so player 1's view is its rect of the split. It writes only when the rect
 is not the one wanted, and gives the whole picture back once when local co-op stops.
-`LICHII_COOP_LOCAL_VIEWS=2` (tests) splits the picture with no second player. Tests:
+`LICHII_COOP_LOCAL_VIEWS=2` (tests) splits the picture with no second player. Seen in the game
+(Longshot, 2026-11-14): the world is drawn in the left half at the half's ratio (Link is not
+stretched); the HUD stays on the whole picture. Tests:
 `tests/lichii/local_view_test.cpp`.
 
 ### The other players' views (step 3b, not built yet)
@@ -140,6 +142,17 @@ does. It calls the maker main+0x1174620 (named `3D_0`, the tail of the game's `M
 the layer gets the right half and its camera (+0x78) looks at the first Link from in front. Every
 step and pointer goes to the log as `local co-op: layer research: ...`. A pass is a second picture
 of the world in the right half.
+
+Seen in the game (Longshot, 2026-11-14): the maker makes the layer (id 1, its own `LookAtCamera`
+at +0x78 and its own projection at +0x80), the binder runs, and the game runs on for a minute with
+it. But nothing is drawn in the right half: the layer is not in the pipeline's draw yet. Next: what
+the set-up does after the binder for the first layer, and the layer's flags (+0x88).
+
+### With no session
+
+Split screen needs no server. With co-op off, `lichii/hook/coop_hook.cpp`'s `LocalFrameOff` reads
+the first Link itself for local co-op's frame step (views, seats, the layer research). While
+local co-op has extra players, it also runs the puppet Director, which makes their Players.
 
 ## The switchboard
 

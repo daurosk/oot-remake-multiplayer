@@ -599,3 +599,56 @@ TEST_CASE("local game: a pad that was already there is never taken for a lost se
     CHECK(w.pads[1].npad == 1);
     CHECK(w.log.back().find("came back: taken again") != std::string::npos);
 }
+
+TEST_CASE("local game off: the step runs only with no session and never while co-op is refused for a code mod") {
+    using CoopLocalGame::OffFrame;
+    CHECK(OffFrame::Runs(false, false));
+    CHECK_FALSE(OffFrame::Runs(true, false));    // the session's frame does it
+    CHECK_FALSE(OffFrame::Runs(false, true));    // issue 136: refused, local co-op stays off too
+    CHECK_FALSE(OffFrame::Runs(true, true));
+}
+
+TEST_CASE("local game off: solo reads light and publishes nothing, seats publish, the last seat leaving publishes once") {
+    CoopLocalGame::OffFrame step;
+    // Solo: position and age only, no Director.
+    for (int i = 0; i < 3; i++) {
+        CHECK_FALSE(step.FullRead(false));
+        CHECK_FALSE(step.Publish(false));
+    }
+    // A seat comes in during this frame's step: light read before, publish after (the hook reads in full then).
+    CHECK_FALSE(step.FullRead(false));
+    CHECK(step.Publish(true));
+    // While seated: full read and publish every frame.
+    CHECK(step.FullRead(true));
+    CHECK(step.Publish(true));
+    // The last seat leaves in this frame's step: one more publish (no targets: the Director deletes its Player).
+    CHECK(step.FullRead(true));
+    CHECK(step.Publish(false));
+    // Left before the step (seen at the read): still the full read and that last publish, then quiet.
+    CoopLocalGame::OffFrame other;
+    CHECK(other.Publish(true));
+    CHECK(other.FullRead(false));
+    CHECK(other.Publish(false));
+    CHECK_FALSE(other.FullRead(false));
+    CHECK_FALSE(other.Publish(false));
+}
+
+TEST_CASE("local game off: the last publish gives the Director no target for the seat that left") {
+    World w;
+    CoopLocalGame::Game game(w.Deps());
+    CoopLocalGame::OffFrame step;
+    game.See(InPlay());
+    CHECK_FALSE(game.HasSeats());
+    REQUIRE(game.Add(1, SeatOn(1)));
+    CHECK(game.HasSeats());
+    CHECK(step.Publish(game.HasSeats()));
+    w.Live(17, 0x7000);
+    REQUIRE(game.Added(1) == CoopLocal::Game::Made::Yes);
+    game.Remove(1);
+    CHECK_FALSE(game.HasSeats());
+    REQUIRE(step.Publish(game.HasSeats()));
+    CoopPuppet::Input input;
+    game.AddTargets(input);
+    CHECK(input.targets.empty());
+    CHECK_FALSE(step.Publish(game.HasSeats()));
+}

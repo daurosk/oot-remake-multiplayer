@@ -127,6 +127,13 @@ void Game::Apply(const CoopLocal::Status& status) {
     want_.split = status.split;
 }
 
+bool Game::HasSeats() const {
+    for (const Extra& e : extra_) {
+        if (e.wanted) return true;
+    }
+    return false;
+}
+
 std::vector<SeatNow> Game::Seats() const {
     std::vector<SeatNow> out;
     for (int k = 1; k <= CoopLocalInput::kMostExtra; k++) {
@@ -330,6 +337,11 @@ void ForceViews(int players) {
 std::vector<SeatNow> Seats() {
     Game* game = Installed();
     return game ? game->Seats() : std::vector<SeatNow>{};
+}
+
+bool HasSeats() {
+    Game* game = Installed();
+    return game != nullptr && game->HasSeats();
 }
 
 }  // namespace CoopLocalGame

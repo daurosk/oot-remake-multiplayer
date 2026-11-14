@@ -244,6 +244,8 @@ struct RoomView {
 
 class Coop {
 public:
+    // main's address in a game process (split screen with co-op off: LocalFrameOff below).
+    static u64 MainOf(Core::System& system, Kernel::KProcess* process) { return FindMain(system, process); }
     explicit Coop(Settings settings)
         : settings_(std::move(settings)), debug_camera_(EnvFlag("LICHII_COOP_DEBUG_CAMERA")),
           flip_y_(EnvFlag("LICHII_COOP_CAMERA_FLIP_Y")) {
@@ -2106,6 +2108,48 @@ void Start() {
     }
 }
 
+// Split screen needs no session (docs/local-coop.md): with co-op off, the first Link is read here for local co-op's
+// frame step, as Coop::Read does while it is on. Only Ocarina of Time on a build the table knows. What is read and
+// when the Director is published: CoopLocalGame::OffFrame (tested).
+void LocalFrameOff(Core::System& system) {
+    static Kernel::KProcess* seen = nullptr;
+    static u64 base = 0;
+    static CoopLocalGame::OffFrame step;
+    auto* process = system.ApplicationProcess();
+    if (process == nullptr || system.GetApplicationProcessProgramID() != kOcarinaProgramId ||
+        CoopGameBuild::Find(Hex(system.GetApplicationProcessBuildID(), 8)) == nullptr) {
+        CoopLocalGame::Frame({});
+        return;
+    }
+    if (process != seen) {
+        seen = process;
+        base = Coop::MainOf(system, process);
+    }
+    EmulatorMemory memory(system.ApplicationMemory(), base);
+    coop::host::PlayerReader reader(memory);
+    std::optional<coop::host::PlayerReading> full;
+    CoopLocalGame::Facts facts;
+    if (step.FullRead(CoopLocalGame::HasSeats())) {
+        full = reader.read();
+        facts = {full.has_value(), full ? std::optional(full->position) : std::nullopt,
+                 full && full->age == coop::protocol::Age::adult};
+    } else {
+        // Solo: only what InPlay and Facts need.
+        const auto position = reader.read_position();
+        facts = {position.has_value(), position, position && reader.read_age() == coop::protocol::Age::adult};
+    }
+    CoopLocalGame::Frame(facts);
+    if (!step.Publish(CoopLocalGame::HasSeats())) return;
+    if (!full) full = reader.read();   // seats came in this frame's step
+    // The extra local players' Players are made (and deleted) by the puppet Director, as online (no remote players).
+    const bool event =
+        full && coop::host::local_event_hides(full->event_running.value_or(false),
+                                              full->animation ? std::optional<std::string_view>(full->animation->name)
+                                                              : std::nullopt);
+    CoopPuppet::Publish(full ? base : 0, full ? full->scene : std::nullopt,
+                        full ? std::optional(full->position) : std::nullopt, event, nullptr, 0);
+}
+
 void OnFrame(Core::System& system) {
     CoopObjects::OnFrame(system);
     CoopTestInput::OnFrame(system);
@@ -2127,6 +2171,8 @@ void OnFrame(Core::System& system) {
     }
     if (coop && !g_mod_refused) {
         coop->Frame(system);
+    } else if (CoopLocalGame::OffFrame::Runs(coop != nullptr, g_mod_refused)) {
+        LocalFrameOff(system);
     }
 }
 

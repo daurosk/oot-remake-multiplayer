@@ -113,6 +113,7 @@ public:
     const CoopLocalInput::Players& Players() const { return players_; }
     // The extra players asked for (calc thread).
     std::vector<SeatNow> Seats() const;
+    bool HasSeats() const;   // Seats() is not empty
     void Note(const std::string& line) const { Say(line); }
     // Tests (LICHII_COOP_LOCAL_VIEWS=<2 to 4>): the views split for that many players with no second player.
     void ForceViews(int players) { forced_views_ = players; }
@@ -165,6 +166,31 @@ void Frame(const Facts& facts);
 void AddTargets(CoopPuppet::Input& input);
 // The extra players asked for (calc thread); none before Install.
 std::vector<SeatNow> Seats();
+// The hook's local co-op step on a frame with co-op off (no session; docs/local-coop.md): split screen
+// still runs then. Pure, so tests cover it; coop_hook.cpp's LocalFrameOff does the reads and calls.
+class OffFrame {
+public:
+    // Whether the step runs: only with no session, and never while co-op is refused for a code mod
+    // (issue 136: local co-op and the puppet Director then stay off too).
+    static constexpr bool Runs(bool session, bool refused) { return !session && !refused; }
+    // Whether this frame needs the full player read (scene, event, animation: what Publish uses): while
+    // extra players are in play and on the frame after they all left (the last publish). Otherwise only
+    // the first Link's position and age are read (all InPlay and Facts need), so solo play stays cheap.
+    bool FullRead(bool seats) const { return seats || had_seats_; }
+    // After the frame step: whether to publish the Director's targets. While there are extra players, and
+    // once more on the frame they turn empty, so the Director gets no targets and deletes their Players.
+    bool Publish(bool seats) {
+        const bool publish = seats || had_seats_;
+        had_seats_ = seats;
+        return publish;
+    }
+
+private:
+    bool had_seats_ = false;
+};
+// Whether any extra player is asked for (calc thread): Seats() without its list.
+bool HasSeats();
+
 // hos_coop_wrap; its return value.
 int Wrap(std::uint32_t id, int phase, std::uint64_t* x);
 // Tests (LICHII_COOP_LOCAL=<slot>): at the first frame in play, local co-op

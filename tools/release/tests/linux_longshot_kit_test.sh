@@ -21,13 +21,13 @@ has() { grep -qF -- "$2" "$1"; }
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/oot-coop-ls-test-XXXXXX")
 trap '[ -n "${KEEP_TMP-}" ] || rm -rf "$tmp"' EXIT
 [ -n "${KEEP_TMP-}" ] && echo "tmp: $tmp"
-py=${TEST_PYTHON:-python3}
-"$py" -c 'import sys; sys.exit(sys.version_info < (3, 8))' 2>/dev/null || { echo "no Python 3 ($py): set TEST_PYTHON"; exit 1; }
+py=$(command -v "${TEST_PYTHON:-python3}")   # absolute: PATH gets $tmp/bin first later, and the shim there must not find itself
+[[ -n $py ]] && "$py" -c 'import sys; sys.exit(sys.version_info < (3, 8))' 2>/dev/null || { echo "no Python 3 (${TEST_PYTHON:-python3}): set TEST_PYTHON"; exit 1; }
 mkdir -p "$tmp/bin"
 printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$py" >"$tmp/bin/python3"
 chmod +x "$tmp/bin/python3"
 export PATH="$tmp/bin:$PATH" HOME=$tmp/home XDG_DATA_HOME=$tmp/xdg
-mkdir -p "$HOME"
+mkdir -p "$HOME" "$XDG_DATA_HOME"   # start.sh skips the menu entry when the XDG folder has no parent
 unset DISPLAY WAYLAND_DISPLAY
 log=$tmp/calls.log
 export FAKE_LOG=$log

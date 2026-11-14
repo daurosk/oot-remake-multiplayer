@@ -448,6 +448,13 @@ public:
     static constexpr std::uint64_t kCutAfterHitUs = 200'000;  // cut words this long after its hit
     static constexpr float kAnchorNearM = 0.5f;          // a block's base anchor is this near its old rest
     static constexpr std::uint64_t kAnchorHoldUs = 1'000'000;  // the anchor is put at the new rest this long
+    // deku-visuals-b (0.10.1 playtest: a block pushed by the second player
+    // jumped to a place between its old rest and where the first left it):
+    // after a followed push, a jump of our block this far in one walk, to
+    // nearer its rest from before that push than to where it was left, is
+    // our game's push starting from the stale place (BlockFix::snap).
+    static constexpr float kSnapM = 0.5f;
+    static constexpr std::uint64_t kSnapWatchUs = 120'000'000;  // watched this long after the hand-over
 
     struct Out {
         std::vector<coop::protocol::Message> send;
@@ -492,6 +499,12 @@ public:
             coop::protocol::Vec3 from{};
             coop::protocol::Vec3 to{};
             std::uint64_t anchor = 0;
+            // deku-visuals-b: a push here started from `from`, the place it
+            // rested before another game moved it (the stale push start):
+            // logged only (the owner's native rule: no memory writes; a fix
+            // runs the game's own push-node start once its address is
+            // checked, docs/world.md); no anchor, no wide search.
+            bool snap = false;
         };
         std::vector<BlockFix> blocks;
         std::vector<std::string> notes;  // log lines
@@ -627,6 +640,13 @@ private:
         std::optional<coop::protocol::Vec3> follow_from;  // where it rested before another game moved it
         std::uint64_t settle_us = 0;       // when we took it
         std::uint64_t quiet_until = 0;
+        // deku-visuals-b: where it rested before the last followed push
+        // (stale_from) and where that push left it (agreed), watched for a
+        // snap back until stale_until; and its place at the walk before.
+        std::optional<coop::protocol::Vec3> stale_from;
+        coop::protocol::Vec3 agreed{};
+        std::uint64_t stale_until = 0;
+        std::optional<coop::protocol::Vec3> last_walk;
     };
     struct Gone {  // left the walk near our Link: a break unless it was an unload
         Object object;

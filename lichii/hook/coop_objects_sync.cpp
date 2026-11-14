@@ -605,6 +605,7 @@ void Sync::Reset() {
     taken_.clear();  // a new scene's actors were made knowing every key
     chest_animations_.clear();
     chest_shown_.clear();
+    web_burns_.clear();
     hidden_.clear();
     dead_.clear();
     order_.clear();
@@ -1005,6 +1006,15 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         chest_animations_.swap(chests);
         std::erase_if(chest_shown_, [this](const auto& e) { return !chest_animations_.contains(e.first); });
     }
+    {  // a web gone from the walk (removed, or its room unloaded) burns no more
+        std::set<std::uint64_t> here;
+        for (const Seen& s : seen) {
+            if (IsWeb(s.name)) {
+                here.insert(s.address);
+            }
+        }
+        std::erase_if(web_burns_, [&here](const auto& e) { return !here.contains(e.first); });
+    }
     for (const Seen& s : seen) {
         if (s.hash != 0 && s.hash != kNoHash) {
             if (const auto t = taken_.find(s.hash); t != taken_.end() && RemovedWhenTaken(s.name)) {
@@ -1072,10 +1082,51 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                             }
                             const auto shown = chest_shown_.find(s.address);
                             if (shown == chest_shown_.end()) {
-                                chest_shown_.emplace(s.address, ChestShow{now_us, false});
+                                ChestShow show{now_us, false};
+                                show.opening = ChestOpening(s.name);
+                                show.lid_done = show.opening.empty();
+                                chest_shown_.emplace(s.address, show);
                                 notes_.emplace_back(s.name + ": opened in another game, shown open here (" +
-                                                    kChestOpenIdle + " played)");
+                                                    (show.opening.empty() ? std::string(kChestOpenIdle)
+                                                                          : show.opening + ", then " + kChestOpenIdle) +
+                                                    " played)");
                                 continue;
+                            }
+                            if (!shown->second.lid_done) {
+                                // deku-visuals-b: the lid opens first (its own
+                                // opening command), then the open idle.
+                                ChestShow& sh = shown->second;
+                                if (animation == sh.opening) {
+                                    if (sh.lid_seen_us == 0) {
+                                        sh.lid_seen_us = now_us;
+                                        notes_.emplace_back(s.name + ": the lid opens here ('" + sh.opening + "')");
+                                    } else if (now_us - sh.lid_seen_us >= kChestLidUs) {
+                                        sh.lid_done = true;
+                                        sh.since_us = now_us;
+                                        sh.idle_over = sh.opening + "|" + kChestClosedIdle;
+                                    }
+                                    continue;
+                                }
+                                if (animation != kChestOpenIdle &&
+                                    (animation.empty() || animation.find(kChestClosedIdle) != std::string::npos)) {
+                                    if (sh.lid_seen_us != 0 || now_us - sh.since_us < kChestLidTryUs) {
+                                        continue;
+                                    }
+                                    // Its AS has no such command: the open idle at
+                                    // once, on the same fail clock as before.
+                                    sh.lid_done = true;
+                                    notes_.emplace_back(s.name + ": '" + sh.opening +
+                                                        "' did not take here, open idle played");
+                                } else {
+                                    // The open idle (its AS went on by itself) or
+                                    // another animation: as below.
+                                    sh.lid_done = true;
+                                    sh.since_us = now_us;
+                                }
+                            }
+                            if (!shown->second.took && !shown->second.opening.empty() &&
+                                animation == shown->second.opening) {
+                                continue;  // the lid's end, before the open idle took
                             }
                             if (animation == kChestOpenIdle) {
                                 if (!shown->second.took) {
@@ -1120,11 +1171,38 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                             notes_.emplace_back(s.name + ": could not be shown open here, removed");
                         }
                     }
+                    // deku-visuals-b (0.10.1 playtest: webs went, but did not
+                    // burn here): a web and its parts play their own "Burn"
+                    // first; the break or remove below waits until it ran.
+                    if (IsWeb(s.name)) {
+                        auto burn = web_burns_.find(s.address);
+                        if (burn == web_burns_.end()) {
+                            web_burns_.emplace(s.address, WebBurn{now_us, 0});
+                            notes_.emplace_back(s.name + ": burnt in another game, burns here ('" +
+                                                std::string(kWebBurn) + "' played)");
+                            continue;
+                        }
+                        WebBurn& b = burn->second;
+                        if (b.seen_us == 0 && animation == kWebBurn) {
+                            b.seen_us = now_us;
+                            notes_.emplace_back(s.name + ": burns here");
+                        }
+                        if (b.seen_us != 0 ? now_us - b.seen_us < kWebBurnUs
+                                           : now_us - b.since_us < kWebBurnTryUs) {
+                            continue;  // burning (or still to take)
+                        }
+                        if (b.seen_us == 0 && !b.failed) {
+                            b.failed = true;
+                            notes_.emplace_back(s.name + ": '" + std::string(kWebBurn) +
+                                                "' did not take here, broken as before");
+                        }
+                    }
                     // A falling floor or a web's parts (dungeon-switches, the
                     // issue 177: the bridge and webs vanished): the fall
                     // comes here as the shifter's moves, the web's own break
                     // on life 0; removed only after they had time to play.
-                    if (CoopWorld::IsFallTaken(s.name) && now_us - t->second.since_us < kTakeFallUs) {
+                    if (CoopWorld::IsFallTaken(s.name) && !web_burns_.contains(s.address) &&
+                        now_us - t->second.since_us < kTakeFallUs) {
                         continue;
                     }
                     // Its own break where the game has one: life 0, then the
@@ -2332,11 +2410,54 @@ float FrameAfter(float frame, float rate, std::int64_t age_us) {
     return std::isfinite(after) && after > 0.0f ? after : 0.0f;
 }
 
+std::string ChestOpening(std::string_view actor) {
+    if (!actor.starts_with("Obj_TBox_A_")) {
+        return {};
+    }
+    return actor.starts_with("Obj_TBox_A_01") ? "FrontOpenSmall" : "FrontOpen";
+}
+
+bool IsWeb(std::string_view actor) {
+    return actor.starts_with("Obj_") && actor.find("SpiderWeb") != std::string_view::npos;
+}
+
+bool PlaysOver(std::string_view slot_name, std::string_view only_over) {
+    if (only_over.empty()) {
+        return true;
+    }
+    while (true) {
+        const std::size_t bar = only_over.find('|');
+        const std::string_view part = only_over.substr(0, bar);
+        if (!part.empty() && slot_name.find(part) != std::string_view::npos) {
+            return true;
+        }
+        if (bar == std::string_view::npos) {
+            return false;
+        }
+        only_over.remove_prefix(bar + 1);
+    }
+}
+
 void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
-    for (const auto& [address, since] : chest_shown_) {
+    for (const auto& [address, burn] : web_burns_) {
+        // deku-visuals-b: a web burnt elsewhere plays its own "Burn" once
+        // (from frame 0); no longer asked once it showed, so it never restarts.
+        if (burn.seen_us == 0 && !burn.failed) {
+            out.push_back({address, kWebBurn, 1.0f, 0.0f, 1, 0, {}});
+        }
+    }
+    for (const auto& [address, show] : chest_shown_) {
+        // deku-visuals-b: first its own opening (the lid), only over its
+        // closed idle, from frame 0 (sample 1: its frame is set once).
+        if (!show.lid_done) {
+            out.push_back({address, show.opening, 1.0f, 0.0f, 1, 0, kChestClosedIdle});
+            continue;
+        }
         // Issue 195: a chest opened elsewhere shows its open idle; played
-        // again only over its closed idle (sample 1: its frame is set once).
-        out.push_back({address, kChestOpenIdle, 1.0f, 0.0f, 1, 0, kChestClosedIdle});
+        // again only over its closed idle (sample 2: its frame is set once).
+        // Right after the lid it is played once over the finished opening.
+        out.push_back({address, kChestOpenIdle, 1.0f, 0.0f, 2, 0, show.took ? std::string(kChestClosedIdle)
+                                                                             : show.idle_over});
     }
     for (const auto& [address, o] : objects_) {
         if (o.received.empty() || now_us < o.received.back().time ||

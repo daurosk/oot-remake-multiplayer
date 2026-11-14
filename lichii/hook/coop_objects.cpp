@@ -756,8 +756,7 @@ public:
             }
             // Issue 195: a chest shown open is played again only over its
             // closed idle, never over its own opening (our Link opens it).
-            if (!p.only_over.empty() && !slot_name.empty() &&
-                slot_name.find(p.only_over) == std::string::npos) {
+            if (!slot_name.empty() && !PlaysOver(slot_name, p.only_over)) {
                 continue;
             }
             // Issue 157: the name we played last is gone from slot 0, so the
@@ -1576,6 +1575,9 @@ public:
             // Issue 147: a block another game moved rests here now; its own
             // memory's old rest place gets the new one.
             for (const auto& fix : block_fixes_) {
+                if (fix.snap) {
+                    continue;  // deku-visuals-b: logged by WorldSync; no write (native rule)
+                }
                 // world-objects-2: the block's push node (known fields,
                 // found by its vtables and owner): on unless
                 // LICHII_COOP_BLOCK_NODE=0.

@@ -759,7 +759,8 @@ TEST_CASE("objects: a chest opened elsewhere is shown open here, never removed (
     sync.Plays(30 * kMs, plays);
     REQUIRE(plays.size() == 1);
     CHECK(plays[0].address == 0x500);
-    CHECK(plays[0].name == "OpenWait");
+    // deku-visuals-b: first its own opening (the lid), only over its closed idle.
+    CHECK(plays[0].name == "FrontOpenSmall");
     CHECK(plays[0].only_over == "Close");
     chest.animation->name = "OpenWait";
     Tick(sync, 100 * kMs, {chest, Enemy(0x100, 0x11, 2)});
@@ -3489,4 +3490,154 @@ TEST_CASE("objects: a boss's minion is made by the game that owns the boss, the 
     CHECK(All<proto::ObjectSpawn>(lone).empty());
     REQUIRE(c.IdOf(0x310));
     CHECK(c.IdOf(0x310)->kind == proto::ObjectKind::placed);
+}
+
+// deku-visuals-b (0.10.1 playtest: the lid did not move for the other player).
+TEST_CASE("objects: a chest opened elsewhere opens its lid here, then shows its open idle") {
+    CHECK(CoopObjects::ChestOpening("Obj_TBox_A_01") == "FrontOpenSmall");
+    CHECK(CoopObjects::ChestOpening("Obj_TBox_A_02") == "FrontOpen");
+    CHECK(CoopObjects::ChestOpening("Obj_TBox_A_06") == "FrontOpen");
+    CHECK(CoopObjects::ChestOpening("Obj_HrlCity_Shop_TBox_A_01").empty());
+    CHECK(CoopObjects::PlaysOver("CloseWait", "Close"));
+    CHECK(CoopObjects::PlaysOver("FrontOpen", "FrontOpen|Close"));
+    CHECK(CoopObjects::PlaysOver("CloseWait", "FrontOpen|Close"));
+    CHECK_FALSE(CoopObjects::PlaysOver("Rattle", "FrontOpen|Close"));
+    CHECK(CoopObjects::PlaysOver("Rattle", ""));
+
+    Sync sync;
+    Seen chest = Chest(0x500);
+    chest.name = "Obj_TBox_A_02";
+    chest.animation = proto::Animation{"CloseWait", 0.0f, 1.0f};
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.Take(chest.hash);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    std::vector<PlayWish> plays;
+    sync.Plays(30 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "FrontOpen");
+    CHECK(plays[0].only_over == "Close");
+    CHECK(plays[0].frame == 0.0f);
+    // The lid opens; still the opening while it runs.
+    chest.animation->name = "FrontOpen";
+    Tick(sync, 100 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 1000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    plays.clear();
+    sync.Plays(1000 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "FrontOpen");
+    // After kChestLidUs: the open idle, over the finished opening (or the closed idle).
+    Tick(sync, 1700 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    plays.clear();
+    sync.Plays(1700 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "OpenWait");
+    CHECK(plays[0].only_over == "FrontOpen|Close");
+    // Still the opening's last frame for a walk: not "opened twice", not removed.
+    Tick(sync, 1800 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    chest.animation->name = "OpenWait";
+    Tick(sync, 1900 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    plays.clear();
+    sync.Plays(1900 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].only_over == "Close");
+    Tick(sync, 9000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    CHECK(sync.ChestsOpenedTwice() == 0);
+    bool lid = false, shows = false;
+    for (const auto& n : sync.TakeNotes()) {
+        lid |= n.find("the lid opens here ('FrontOpen')") != std::string::npos;
+        shows |= n.find("shows open here") != std::string::npos;
+    }
+    CHECK(lid);
+    CHECK(shows);
+}
+
+TEST_CASE("objects: a chest whose opening never takes gets the open idle after a second") {
+    Sync sync;
+    Seen chest = Chest(0x500);
+    chest.animation = proto::Animation{"CloseWait", 0.0f, 1.0f};
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.Take(chest.hash);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 900 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    std::vector<PlayWish> plays;
+    sync.Plays(900 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "FrontOpenSmall");
+    Tick(sync, 1100 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    plays.clear();
+    sync.Plays(1100 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "OpenWait");
+    CHECK(plays[0].only_over == "Close");
+    chest.animation->name = "OpenWait";
+    Tick(sync, 1200 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 5000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+}
+
+// deku-visuals-b (0.10.1 playtest: webs went in the other game, but did not burn).
+TEST_CASE("objects: a web burnt elsewhere burns here before it goes") {
+    CHECK(CoopObjects::IsWeb("Obj_InsideTheDekuTree_SpiderWeb_A_01"));
+    CHECK(CoopObjects::IsWeb("Obj_InsideTheDekuTree_InteractiveSpiderWebParts_A_02"));
+    CHECK_FALSE(CoopObjects::IsWeb("Obj_TBox_A_01"));
+    Sync sync;
+    Seen web;
+    web.address = 0x800;
+    web.name = "Obj_InsideTheDekuTree_SpiderWeb_A_01";
+    web.hash = 0x6b1c0e44a1f0d2c3;
+    web.position = {30.0f, 0.0f, 30.0f};
+    web.life = proto::ObjectLife{1, 1};
+    web.animation = proto::Animation{"Wait", 0.0f, 1.0f};
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.Take(web.hash);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {web, Enemy(0x100, 0x11, 2)});
+    std::vector<PlayWish> plays;
+    sync.Plays(30 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].address == 0x800);
+    CHECK(plays[0].name == "Burn");
+    CHECK(plays[0].frame == 0.0f);
+    // No life 0 and no remove while it burns.
+    web.animation->name = "Burn";
+    auto step = Tick(sync, 100 * kMs, {web, Enemy(0x100, 0x11, 2)});
+    CHECK(step.writes.empty());
+    CHECK(sync.Removes().empty());
+    plays.clear();
+    sync.Plays(100 * kMs, plays);
+    CHECK(plays.empty());  // asked once: it never restarts
+    step = Tick(sync, 2000 * kMs, {web, Enemy(0x100, 0x11, 2)});
+    CHECK(step.writes.empty());
+    // Burnt: then its own break (life 0) as before.
+    step = Tick(sync, 2700 * kMs, {web, Enemy(0x100, 0x11, 2)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].address == 0x800);
+    CHECK(step.writes[0].life == 0);
+    bool said = false;
+    for (const auto& n : sync.TakeNotes()) said |= n.find("burns here ('Burn' played)") != std::string::npos;
+    CHECK(said);
+}
+
+TEST_CASE("objects: a web whose burn never takes is broken as before") {
+    Sync sync;
+    Seen web;
+    web.address = 0x800;
+    web.name = "Obj_InsideTheDekuTree_SpiderWeb_A_02";
+    web.hash = 0x6b1c0e44a1f0d2c4;
+    web.position = {30.0f, 0.0f, 30.0f};
+    web.life = proto::ObjectLife{1, 1};
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.Take(web.hash);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {web, Enemy(0x100, 0x11, 2)});
+    CHECK(Tick(sync, 500 * kMs, {web, Enemy(0x100, 0x11, 2)}).writes.empty());
+    const auto step = Tick(sync, 1100 * kMs, {web, Enemy(0x100, 0x11, 2)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].life == 0);
+    std::vector<PlayWish> plays;
+    sync.Plays(1100 * kMs, plays);
+    CHECK(plays.empty());
 }

@@ -79,7 +79,8 @@ struct PlayWish {
     // (Gohma's eye guard): played and framed the same way, never counted
     // as the copy's own AI taking over.
     std::int32_t slot = 0;
-    // Not empty: played again only over an animation with this in its name
+    // Not empty: played again only over an animation with this (or, split
+    // at '|', one of these) in its name
     // (a chest shown open, issue 195: only over its closed idle "CloseWait",
     // never over its own opening when our Link opens it here).
     std::string only_over;
@@ -97,6 +98,21 @@ struct PlayWish {
 // The frame of an animation `age_us` after it showed `frame` at `rate`
 // (30 game frames a second); never below 0.
 float FrameAfter(float frame, float rate, std::int64_t age_us);
+
+// deku-visuals-b: a chest's own opening command, the lid opening (read from
+// the romfs: AS/Obj_TBox_A_01 has "FrontOpenSmall", AS/Obj_TBox_A_02
+// "FrontOpen"; the other Obj_TBox_A_* are tried with "FrontOpen"). Empty for
+// what is not a placed chest (the Treasure Chest Shop's game keeps its own).
+std::string ChestOpening(std::string_view actor);
+
+// deku-visuals-b: a cobweb or one of its parts (the Deku Tree's
+// Obj_InsideTheDekuTree_SpiderWeb_A_* and _InteractiveSpiderWebParts_A_*,
+// and any other Obj_*SpiderWeb*): their AS has a "Burn" command.
+bool IsWeb(std::string_view actor);
+
+// PlayWish::only_over: true when `only_over` is empty or one of its
+// '|'-separated parts is in `slot_name`.
+bool PlaysOver(std::string_view slot_name, std::string_view only_over);
 
 using Mat3 = std::array<float, 9>;
 
@@ -882,11 +898,36 @@ private:
     static constexpr const char* kChestOpenIdle = "OpenWait";
     static constexpr const char* kChestClosedIdle = "Close";  // "CloseWait"
     static constexpr std::uint64_t kChestShowFailUs = 3'000'000;
+    // deku-visuals-b (0.10.1 playtest: the lid did not move): before the
+    // open idle, the chest's own opening command is played (ChestOpening:
+    // "FrontOpenSmall" for Obj_TBox_A_01, "FrontOpen" for the others), so
+    // the lid opens here as in the opener's game. Once it showed for
+    // kChestLidUs (or its AS went on to OpenWait itself) the open idle is
+    // played over it. An opening that does not take in kChestLidTryUs (a
+    // chest whose AS has no such command) goes straight to the open idle.
+    static constexpr std::uint64_t kChestLidUs = 1'500'000;
+    static constexpr std::uint64_t kChestLidTryUs = 1'000'000;
     struct ChestShow {
-        std::uint64_t since_us = 0;  // when first played
+        std::uint64_t since_us = 0;  // when first played (its current phase)
         bool took = false;           // seen showing kChestOpenIdle since
         unsigned flicks = 0;         // walks that saw its closed idle again after
+        std::string opening;         // its opening command ("": none, the open idle at once)
+        bool lid_done = true;        // the opening phase is over (the open idle is played)
+        std::uint64_t lid_seen_us = 0;  // when the opening first showed (0: not yet)
+        std::string idle_over = "Close";  // the open idle's only_over until it took
     };
+    // deku-visuals-b: a web another player burnt plays its own kWebBurn
+    // here (Plays) before its break or remove: kWebBurnUs once it showed,
+    // or kWebBurnTryUs if it never takes (then as before).
+    static constexpr const char* kWebBurn = "Burn";
+    static constexpr std::uint64_t kWebBurnUs = 2'500'000;
+    static constexpr std::uint64_t kWebBurnTryUs = 1'000'000;
+    struct WebBurn {
+        std::uint64_t since_us = 0;  // when first asked
+        std::uint64_t seen_us = 0;   // when it first showed kWebBurn (0: not yet)
+        bool failed = false;         // never took: broken as before
+    };
+    std::map<std::uint64_t, WebBurn> web_burns_;
     unsigned chests_opened_twice_ = 0;
     std::map<std::uint64_t, ChestShow> chest_shown_;
     std::uint64_t last_tick_us_ = 0;

@@ -54,11 +54,11 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
     if (const auto items = env("LICHII_COOP_LOOK_ITEMS"); pack_look && items != "0" && items != "off") {
         auto look = pack_look();
         settings.look_items = std::move(look.actors);
-        settings.look_slots = settings.look_items.empty() ? 0 : look.slots;
-        if (log != nullptr && settings.look_slots > 0) {
+        settings.look_copies = settings.look_items.empty() ? 0 : look.copies;
+        if (log != nullptr && settings.look_copies > 0) {
             log->push_back("coop: the puppet pack has " + std::to_string(settings.look_items.size()) +
-                           " coloured items for " + std::to_string(settings.look_slots) +
-                           " players (gear colours on the puppets)");
+                           " coloured items in " + std::to_string(settings.look_copies) +
+                           " copies (gear colours on the puppets)");
         }
     }
     if (log != nullptr) {
@@ -150,7 +150,7 @@ std::optional<bool> PackTunicPuppets() {
 // The first manifest with item copies.
 CoopPuppet::LookItems PackLook() {
     for (const auto& text : PackManifests()) {
-        if (auto items = CoopPuppet::PackLookItems(text); items.slots > 0) {
+        if (auto items = CoopPuppet::PackLookItems(text); items.copies > 0) {
             return items;
         }
     }

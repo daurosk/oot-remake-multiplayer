@@ -13,17 +13,26 @@ own:
 - the slot's textures `Tex/C<k>_....bntx`: the game's texture under the slot's name, the game's own
   texels.
 
-A player who colours a part gets a slot (lichii/hook/coop_look_share.h) and their puppet wears
-that slot's copies (lichii/hook/coop_puppet.cpp). The co-op module finds the slot's textures in
-memory by their own name and paints them in that player's look (hookshot/src/coop_look_live.cpp),
-as it does your own gear. Nothing from the game is kept in the tool: everything is made from the
-user's own romfs.
+Each slot has two copies (COPIES_PER_SLOT; copy k = 2 * slot - 1 or 2 * slot). A player who colours
+a part gets a slot (lichii/hook/coop_look_share.h). The co-op module paints the slot's copy that
+is not worn now: it writes that copy's texture files in the pack's romfs/Tex/ in the player's
+look (hookshot/src/coop_look_live.cpp), and then their puppet wears that copy
+(lichii/hook/coop_puppet.cpp). The game loads the textures as any other, through its own file
+system: Hookshot indexes a mod's paths once at the start but opens the file each time a texture is
+loaded, and a copy that was not worn has no texture loaded to be stale. So the copies' textures
+are kept as zstd frames of raw blocks (raw_zstd: no compression), which the module writes again
+without a compressor; the size table holds the texture's unpacked size, which does not change.
+Nothing from the game is kept in the tool: everything is made from the user's own romfs.
 """
+import struct
+
 from . import byml, sarc
 from .look_live import GEAR
 from .tunic import TunicError, rename
 
 SLOTS = 4
+COPIES_PER_SLOT = 2
+MAX_SLOTS = 4  # copies 1..8: the texture prefix C<k>_ has one digit
 
 # The coloured items (hookshot/src/coop_look_parts.cpp names their textures). The Kokiri boots are
 # in the player's own model: they are not an item and stay the game's on puppets.
@@ -47,6 +56,46 @@ PREFIX = "Mt_"
 
 def actor_name(item, slot):
     return f"{item}_Look{slot}"
+
+
+def raw_zstd(data):
+    """A zstd frame holding `data` in raw blocks: single segment, the content size in 8 bytes,
+    no dictionary, no checksum (hookshot/src/coop_look_parts.cpp RawZstd writes the same)."""
+    out = [struct.pack("<IB", 0xFD2FB528, 0xE0), struct.pack("<Q", len(data))]
+    step = 128 * 1024
+    at = 0
+    while True:
+        chunk = data[at:at + step]
+        at += len(chunk)
+        last = at >= len(data)
+        out.append(struct.pack("<I", (len(chunk) << 3) | int(last))[:3])
+        out.append(chunk)
+        if last:
+            return b"".join(out)
+
+
+def unraw_zstd(frame):
+    """raw_zstd's data again; TunicError for any other frame."""
+    if len(frame) < 13 or struct.unpack_from("<IB", frame) != (0xFD2FB528, 0xE0):
+        raise TunicError("not a raw zstd frame")
+    size = struct.unpack_from("<Q", frame, 5)[0]
+    out, at = [], 13
+    while True:
+        if at + 3 > len(frame):
+            raise TunicError("raw zstd frame cut short")
+        h = int.from_bytes(frame[at:at + 3], "little")
+        at += 3
+        if (h >> 1) & 3 != 0:
+            raise TunicError("not a raw block")
+        n = h >> 3
+        out.append(frame[at:at + n])
+        at += n
+        if h & 1:
+            break
+    data = b"".join(out)
+    if len(data) != size:
+        raise TunicError("raw zstd frame: wrong size")
+    return data
 
 
 def tex_name(name, slot):

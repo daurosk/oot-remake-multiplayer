@@ -766,7 +766,7 @@ def write_look_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, slots, l
         if not models:
             log(f"look items: no Model/{project}.* in this romfs, {item} left out")
             continue
-        for slot in range(1, slots + 1):
+        for slot in range(1, slots * look_items.COPIES_PER_SLOT + 1):  # (each slot's two copies)
             actor = look_items.actor_name(item, slot)
             pack, ap, info = look_items.copy_pack(members, item, slot)
             dst = f"Pack/Actor/{actor}.pack.zs"
@@ -799,14 +799,16 @@ def write_look_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, slots, l
                 t_rel, t_raw = textures[g]
                 data = look_items.texture_for(dicts.decompress(t_raw), g, slot)
                 t_dst = f"Tex/{look_items.tex_name(g, slot)}.bntx.zs"
-                write(os.path.join(out_romfs, t_dst), recompress(dicts, t_raw, data))
+                write(os.path.join(out_romfs, t_dst), look_items.raw_zstd(data))  # the module writes it again
                 table.add_new(strip_zs(t_dst), table.get(strip_zs(t_rel)) or len(data) + PACK_SIZE_MARGIN)
                 paths.append(t_dst)
             files += paths
         made.append(item)
     if made:
-        log(f"look items: {len(made)} items x {slots} slots ({len(files)} files): puppets in their own gear colours")
-    return {"slots": slots, "actors": made, "files": files} if made else None, new_ai, new_gai
+        log(f"look items: {len(made)} items x {slots} slots x {look_items.COPIES_PER_SLOT} copies ({len(files)} files): "
+            "puppets in their own gear colours")
+    copies = slots * look_items.COPIES_PER_SLOT
+    return {"slots": slots, "copies": copies, "actors": made, "files": files} if made else None, new_ai, new_gai
 
 
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
@@ -869,6 +871,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
             look_files["gear"] = f"{look_live.DIR}/{look_live.GEAR_FILE}"
             log(f"look: {look_live.DIR}/{look_live.GEAR_FILE} ({len(gear_blob) >> 10} KB of gear textures)")
     look_item_files = None
+    look_slots = max(0, min(look_slots, look_items.MAX_SLOTS))
     if tunics and look_slots > 0:
         gai_rows = {r["__RowId"]: r for r in gai}
         look_item_files, rows, grows = write_look_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows,
@@ -1106,7 +1109,7 @@ def main(argv=None):
     ap.add_argument("--title-rows", action="store_true",
                     help="Hookshot's game: Host, Join and Co-op Settings as rows of the title (title_menu.py)")
     ap.add_argument("--look-slots", type=int, default=look_items.SLOTS, metavar="N",
-                    help="how many players' puppets wear gear colours of their own (look_items.py; 0: none)")
+                    help="how many players' puppets wear gear colours of their own (look_items.py; 0 to 4, 0: none)")
     a = ap.parse_args(argv)
     from_nup = os.path.isfile(a.romfs) and nup.is_nup(a.romfs)
     if from_nup:
@@ -1158,7 +1161,7 @@ def _main_build(a, romfs, hud_reader=None):
         build(romfs, mod_dir, heaps=heaps, sound=not a.no_sound, player_footsteps=a.player_footsteps,
               sound_user=a.sound_user, tunics=tunics, test_tunic=a.test_tunic,
               stand_in_effects=a.seed_trail and not a.no_seed_trail, basic_xlink=a.basic_xlink,
-              title_rows=a.title_rows, look_slots=max(0, min(a.look_slots, 9)))
+              title_rows=a.title_rows, look_slots=max(0, min(a.look_slots, look_items.MAX_SLOTS)))
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

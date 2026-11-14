@@ -469,61 +469,49 @@ TEST_CASE("look: an unpause with the look unchanged is told too") {
     CoopLook::Init(Look{}, nullptr);
 }
 
-TEST_CASE("look parts: the puppets' slot copies are named per slot and painted in each slot's look") {
+TEST_CASE("look parts: a puppet copy's texture names, and its file painted again") {
     CHECK(CoopLookParts::SlotName(kHylian, 2) == "C2_Weapon_Shield_Hylian_Alb");
     CHECK(CoopLookParts::SlotName("Mt_Weapon_Sword_Biggoron_Alb.00", 1) == "C1_Weapon_Sword_Biggoron_Alb.00");
     CHECK(CoopLookParts::SlotName("Angin_Tile_A_Alb", 1).empty());
     CHECK(CoopLookParts::SlotName(kHylian, 0).empty());
     for (const auto& g : CoopLookParts::Gear()) {
-        CHECK(CoopLookParts::SlotName(g.name, 4).size() == std::strlen(g.name));   // as long (look_items.py)
+        CHECK(CoopLookParts::SlotName(g.name, 8).size() == std::strlen(g.name));   // as long (look_items.py)
     }
+    // Raw zstd frames, as look_items.py raw_zstd writes them.
+    for (const std::size_t n : {std::size_t{0}, std::size_t{5}, std::size_t{128 * 1024}, std::size_t{300000}}) {
+        std::vector<std::uint8_t> data(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            data[i] = static_cast<std::uint8_t>(i * 7);
+        }
+        const auto frame = CoopLookParts::RawZstd(data);
+        CHECK(frame.size() == data.size() + 13 + 3 * std::max<std::size_t>(1, (n + 128 * 1024 - 1) / (128 * 1024)));
+        CHECK(CoopLookParts::UnrawZstd(frame) == data);
+        auto cut = frame;
+        cut.pop_back();
+        CHECK_FALSE(CoopLookParts::UnrawZstd(cut));
+    }
+    const std::vector<std::uint8_t> known = {0x28, 0xB5, 0x2F, 0xFD, 0xE0, 3, 0, 0, 0, 0, 0, 0, 0, 0x19, 0, 0, 'a', 'b', 'c'};
+    CHECK(CoopLookParts::RawZstd({'a', 'b', 'c'}) == known);   // (the bytes look_items.py makes)
+    CHECK_FALSE(CoopLookParts::UnrawZstd({0x28, 0xB5, 0x2F, 0xFD, 0x20, 3, 0, 0, 0}));   // another frame
+
+    // A copy's file: the BNTX with the painted texels at their offset.
+    const auto shield = Shield();
+    std::vector<std::uint8_t> bntx(kOffset + shield.size() + 32, 0x11);
+    std::copy(shield.begin(), shield.end(), bntx.begin() + kOffset);
     Look red;
     red[Part::hylian_face] = 0xFF0000u;
-    CoopLookParts::SlotLooks looks(3);
-    CHECK(CoopLookParts::SlotsName(looks) == CoopLookParts::kSlotsBase);
-    looks[1] = red;
-    const std::string name = CoopLookParts::SlotsName(looks);
-    CHECK(name != CoopLookParts::kSlotsBase);
-    looks[1] = Look{};
-    CHECK(CoopLookParts::SlotsName(looks) == CoopLookParts::kSlotsBase);   // a slot with no gear part
-    looks[1] = red;
-
-    const auto gear = Colour({{kHylian, Shield()}});
-    const auto slots = CoopLookParts::SlotTexels(*gear, looks);
-    REQUIRE(slots.size() == 3);
-    CHECK(slots[0].name == "C1_Weapon_Shield_Hylian_Alb");
-    CHECK(slots[0].texels == Shield());                                     // a free slot: the game's own
-    CHECK(slots[1].name == "C2_Weapon_Shield_Hylian_Alb");
-    CHECK(slots[1].texels == CoopLookParts::Painted(*gear, red)[0].texels);
-    CHECK(slots[2].texels == Shield());
-    CHECK(CoopLookTunic::SameLayout(slots, CoopLookParts::SlotTexels(*gear, CoopLookParts::SlotLooks(3))));
-}
-
-TEST_CASE("look parts: the puppets' wardrobe paints a slot's copy and leaves your own shield alone") {
-    FakeMemory m(kBase, 0x10000);
-    PutFile(m, kBase + 0x1000, kHylian, Shield());                          // your own
-    PutFile(m, kBase + 0x3000, "C2_Weapon_Shield_Hylian_Alb", Shield());    // slot 2's copy
-    PutFile(m, kBase + 0x5000, "C1_Weapon_Shield_Hylian_Alb", Shield());    // slot 1's copy
-    Look red;
-    red[Part::hylian_face] = 0xFF0000u;
-    CoopLookParts::SlotLooks looks(2);
-    looks[1] = red;
-    const auto gear = *CoopLookTunic::Parse(LookFile({{kHylian, Shield()}}));
-    CoopLookTunic::Wardrobe::Host host;
-    host.memory = &m;
-    host.range = [] { return std::pair<std::uint64_t, std::uint64_t>{kBase, kBase + 0x10000}; };
-    host.file = [&](const std::string& c) -> std::optional<std::vector<std::uint8_t>> {
-        return CoopLookTunic::Pack(CoopLookParts::SlotTexels(
-            gear, c == CoopLookParts::kSlotsBase ? CoopLookParts::SlotLooks(2) : looks));
-    };
-    host.log = [](const std::string&) {};
-    host.base = CoopLookParts::kSlotsBase;
-    host.what = "puppets' gear";
-    CoopLookTunic::Wardrobe w(host);
-    w.Wear(CoopLookParts::SlotsName(looks));
-    w.Step(0);
-    const auto want = CoopLookParts::Painted(gear, red)[0].texels;
-    CHECK(std::memcmp(m.at(kBase + 0x3000 + kOffset), want.data(), want.size()) == 0);
-    CHECK(std::memcmp(m.at(kBase + 0x1000 + kOffset), Shield().data(), kTexels) == 0);   // yours: not the puppets'
-    CHECK(std::memcmp(m.at(kBase + 0x5000 + kOffset), Shield().data(), kTexels) == 0);   // slot 1 is free
+    const auto gear = Colour({{kHylian, shield}});
+    const auto painted = CoopLookParts::Painted(*gear, red)[0];
+    REQUIRE(painted.offset == kOffset);
+    const auto out = CoopLookParts::Repainted(CoopLookParts::RawZstd(bntx), painted);
+    REQUIRE(out);
+    const auto file = CoopLookParts::UnrawZstd(*out);
+    REQUIRE(file);
+    CHECK(file->size() == bntx.size());
+    CHECK(std::equal(file->begin(), file->begin() + kOffset, bntx.begin()));   // the header as it was
+    CHECK(std::equal(painted.texels.begin(), painted.texels.end(), file->begin() + kOffset));
+    CHECK_FALSE(std::equal(shield.begin(), shield.end(), file->begin() + kOffset));   // painted
+    CHECK(std::equal(file->end() - 32, file->end(), bntx.end() - 32));
+    std::vector<std::uint8_t> small(kOffset + 8);
+    CHECK_FALSE(CoopLookParts::Repainted(CoopLookParts::RawZstd(small), painted));   // does not fit
 }

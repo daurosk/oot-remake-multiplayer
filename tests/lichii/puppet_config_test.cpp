@@ -135,7 +135,7 @@ TEST_CASE("puppet config: the pack's item copies, unless LICHII_COOP_LOOK_ITEMS=
     const auto look = [] {
         CoopPuppet::LookItems items;
         items.actors = {"Weapon_Shield_Hylian"};
-        items.slots = 4;
+        items.copies = 8;
         return items;
     };
     const auto env = [](std::string value) {
@@ -143,12 +143,12 @@ TEST_CASE("puppet config: the pack's item copies, unless LICHII_COOP_LOOK_ITEMS=
     };
     std::vector<std::string> log;
     auto s = CoopPuppetConfig::Settings(env(""), [] { return false; }, &log, {}, look);
-    CHECK(s.look_slots == 4);
+    CHECK(s.look_copies == 8);
     CHECK(s.look_items == std::vector<std::string>{"Weapon_Shield_Hylian"});
     CHECK(std::any_of(log.begin(), log.end(), [](const std::string& l) { return l.find("coloured items") != std::string::npos; }));
     s = CoopPuppetConfig::Settings(env("0"), [] { return false; }, nullptr, {}, look);
-    CHECK(s.look_slots == 0);
+    CHECK(s.look_copies == 0);
     CHECK(s.look_items.empty());
     s = CoopPuppetConfig::Settings(env(""), [] { return false; }, nullptr);
-    CHECK(s.look_slots == 0);
+    CHECK(s.look_copies == 0);
 }

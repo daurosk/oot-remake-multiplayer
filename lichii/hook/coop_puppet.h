@@ -551,9 +551,9 @@ struct Remote {
     std::optional<std::uint32_t> color;
     CoopPuppetSound::Wanted ocarina;                 // as Target::ocarina
     std::vector<CoopLinkSound::Sound> sounds;        // received since the last Collect
-    // The player's gear-colour slot (CoopLookShare::SlotOf, 1 to
-    // CoopLookShare::kSlots): their puppet wears that slot's item copies.
-    std::optional<std::size_t> look_slot;
+    // The item copy painted in the player's gear colours
+    // (CoopLookShare::CopyOf): their puppet wears it.
+    std::optional<std::size_t> look_copy;
 };
 
 struct PlannerSettings {
@@ -576,25 +576,25 @@ struct PlannerSettings {
     std::uint64_t debug_delay_ms = 3000;  // after the scene is known
     Vec3 debug_offset{2.0f, 0.0f, 0.0f};  // from you, in game units (about metres)
     // Gear colours on the puppets (docs/puppet.md, "Gear colours on the
-    // puppets"): the items the pack has per-slot copies of, and how many
-    // slots (PackLookItems). None: every puppet wears the game's items.
+    // puppets"): the items the pack has copies of, and how many copies
+    // (PackLookItems). None: every puppet wears the game's items.
     std::vector<std::string> look_items;
-    std::size_t look_slots = 0;
+    std::size_t look_copies = 0;
 };
 
-// The puppet pack's per-slot item copies (coop_puppet.json "look_items",
-// tools/puppet_pack/look_items.py): the items and the slot count. Nothing
-// for a pack without them.
+// The puppet pack's item copies (coop_puppet.json "look_items",
+// tools/puppet_pack/look_items.py): the items and the copy count (two per
+// slot). Nothing for a pack without them.
 struct LookItems {
     std::vector<std::string> actors;
-    std::size_t slots = 0;
+    std::size_t copies = 0;
 };
 LookItems PackLookItems(std::string_view manifest);
 
-// The slot's copy of an item: "Weapon_Shield_Hylian" -> "..._Look2".
-std::string LookItemName(std::string_view item, std::size_t slot);
-// Every piece of `gear` the pack has a copy of becomes the slot's copy.
-void DressInLook(Gear& gear, std::size_t slot, const std::vector<std::string>& items);
+// A copy of an item: "Weapon_Shield_Hylian", 2 -> "..._Look2".
+std::string LookItemName(std::string_view item, std::size_t copy);
+// Every piece of `gear` the pack has a copy of becomes that copy.
+void DressInLook(Gear& gear, std::size_t copy, const std::vector<std::string>& items);
 
 // A puppet pack's coop_puppet.json lists both green puppets
 // (CoopPuppet_Child_Green, CoopPuppet_Adult_Green): only then may

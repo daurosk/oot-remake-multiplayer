@@ -2,7 +2,6 @@
 #include "coop_look_share.h"
 
 #include <algorithm>
-#include <atomic>
 #include <utility>
 
 #include "coop/host/session.hpp"
@@ -33,6 +32,7 @@ bool Share::OnEvent(const coop::net::Event& event) {
         const bool had = !theirs_.empty();
         theirs_.clear();
         slots_.fill(0);
+        ready_.fill({});
         due_ = ours_.has_value();
         return had;
     }
@@ -90,19 +90,47 @@ std::optional<std::size_t> Share::SlotOf(std::uint8_t number) const {
     return std::nullopt;
 }
 
-std::array<std::optional<Parts>, kSlots> Share::SlotLooks() const {
-    std::array<std::optional<Parts>, kSlots> out;
+std::vector<Share::Job> Share::Jobs() const {
+    std::vector<Job> out;
     for (std::size_t i = 0; i < kSlots; ++i) {
-        if (slots_[i] != 0) {
-            out[i] = Of(slots_[i]);
+        const std::uint8_t player = slots_[i];
+        const auto parts = player != 0 ? Of(player) : std::nullopt;
+        if (!parts) {
+            continue;
         }
+        const Ready& r = ready_[i];
+        if (r.copy != 0 && r.player == player && r.parts == *parts) {
+            continue;   // painted already
+        }
+        const std::size_t first = kCopiesPerSlot * i + 1;
+        out.push_back({i + 1, r.copy == first ? first + 1 : first, player, *parts});
     }
     return out;
+}
+
+void Share::Done(const Job& job) {
+    if (job.slot < 1 || job.slot > kSlots || slots_[job.slot - 1] != job.player) {
+        return;   // the slot changed hands meanwhile: its next job paints it
+    }
+    ready_[job.slot - 1] = {job.copy, job.player, job.parts};
+}
+
+std::optional<std::size_t> Share::CopyOf(std::uint8_t number) const {
+    const auto slot = SlotOf(number);
+    if (!slot) {
+        return std::nullopt;
+    }
+    const Ready& r = ready_[*slot - 1];
+    if (r.copy == 0 || r.player != number) {
+        return std::nullopt;
+    }
+    return r.copy;
 }
 
 void Share::EnableSlots(bool on) {
     slots_on_ = on;
     slots_.fill(0);
+    ready_.fill({});
     if (on) {
         for (const auto& [number, parts] : theirs_) {   // in player order: the same slots every time
             if (HasGear(parts)) {
@@ -125,9 +153,10 @@ void Share::Assign(std::uint8_t number) {
 }
 
 void Share::Free(std::uint8_t number) {
-    for (auto& s : slots_) {
-        if (s == number) {
-            s = 0;
+    for (std::size_t i = 0; i < kSlots; ++i) {
+        if (slots_[i] == number) {
+            slots_[i] = 0;
+            ready_[i] = {};
         }
     }
 }
@@ -135,7 +164,6 @@ void Share::Free(std::uint8_t number) {
 namespace {
 std::mutex g_mutex;
 Share g_share;   // guarded
-std::atomic<std::uint64_t> g_serial{0};
 }  // namespace
 
 void Set(Parts parts) {
@@ -150,9 +178,6 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
         std::lock_guard lock(g_mutex);
         changed = g_share.OnEvent(event);
         send = g_share.TakeSend();
-    }
-    if (changed) {
-        g_serial.fetch_add(1);
     }
     if (send) {
         client.send(*send);   // the network thread: its own client, no lock taken twice
@@ -195,25 +220,24 @@ std::optional<std::size_t> SlotOf(std::uint8_t number) {
     return g_share.SlotOf(number);
 }
 
-std::array<std::optional<Parts>, kSlots> SlotLooks() {
+std::vector<Share::Job> Jobs() {
     std::lock_guard lock(g_mutex);
-    return g_share.SlotLooks();
+    return g_share.Jobs();
+}
+
+void Done(const Share::Job& job) {
+    std::lock_guard lock(g_mutex);
+    g_share.Done(job);
+}
+
+std::optional<std::size_t> CopyOf(std::uint8_t number) {
+    std::lock_guard lock(g_mutex);
+    return g_share.CopyOf(number);
 }
 
 void EnableSlots(bool on) {
-    {
-        std::lock_guard lock(g_mutex);
-        g_share.EnableSlots(on);
-    }
-    g_serial.fetch_add(1);
-}
-
-std::uint64_t Serial() {
-    return g_serial.load();
-}
-
-void NoteWorn() {
-    g_serial.fetch_add(1);
+    std::lock_guard lock(g_mutex);
+    g_share.EnableSlots(on);
 }
 
 }  // namespace CoopLookShare

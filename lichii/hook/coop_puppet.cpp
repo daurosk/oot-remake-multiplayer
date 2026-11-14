@@ -521,9 +521,6 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         }
         Say(who + " wears " + kGearNames[slot.equip_index] + " '" + slot.equip_name +
             "' (returned " + Hex(result & 0xff) + ")");
-        if (slot.equip_name.find("_Look") != std::string::npos) {
-            CoopLookShare::NoteWorn();   // a slot's copy to find and paint
-        }
         break;
     case Pending::unequip: {
         const std::size_t i = slot.equip_index;
@@ -1556,8 +1553,8 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         t.anim = r.anim;
         t.anim_serial = r.anim_serial;
         t.gear = r.gear;
-        if (r.look_slot && *r.look_slot >= 1 && *r.look_slot <= settings_.look_slots) {
-            DressInLook(t.gear, *r.look_slot, settings_.look_items);
+        if (r.look_copy && *r.look_copy >= 1 && *r.look_copy <= settings_.look_copies) {
+            DressInLook(t.gear, *r.look_copy, settings_.look_items);
         }
         t.drawn = r.drawn;
         t.ocarina = r.ocarina;
@@ -1584,20 +1581,20 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
     return in;
 }
 
-std::string LookItemName(std::string_view item, std::size_t slot) {
-    return std::string(item) + "_Look" + std::to_string(slot);
+std::string LookItemName(std::string_view item, std::size_t copy) {
+    return std::string(item) + "_Look" + std::to_string(copy);
 }
 
-void DressInLook(Gear& gear, std::size_t slot, const std::vector<std::string>& items) {
+void DressInLook(Gear& gear, std::size_t copy, const std::vector<std::string>& items) {
     for (auto& piece : gear) {
         if (piece && std::find(items.begin(), items.end(), *piece) != items.end()) {
-            piece = LookItemName(*piece, slot);
+            piece = LookItemName(*piece, copy);
         }
     }
 }
 
 LookItems PackLookItems(std::string_view manifest) {
-    // "look_items": {"slots": N, "actors": ["...", ...], "files": [...]}, as
+    // "look_items": {"slots": N, "copies": 2N, "actors": ["...", ...], "files": [...]}, as
     // build.py writes it (json.dumps); null for a pack without them.
     LookItems out;
     const auto at = manifest.find("\"look_items\"");
@@ -1613,18 +1610,18 @@ LookItems PackLookItems(std::string_view manifest) {
         return out;
     }
     const std::string_view body = manifest.substr(open, close - open);
-    std::size_t slots = 0;
-    if (const auto s = body.find("\"slots\""); s != std::string_view::npos) {
-        std::size_t i = body.find_first_not_of(" \t\r\n:", s + 7);
-        while (i < body.size() && body[i] >= '0' && body[i] <= '9' && slots < 100) {
-            slots = slots * 10 + static_cast<std::size_t>(body[i] - '0');
+    std::size_t copies = 0;
+    if (const auto s = body.find("\"copies\""); s != std::string_view::npos) {
+        std::size_t i = body.find_first_not_of(" \t\r\n:", s + 8);
+        while (i < body.size() && body[i] >= '0' && body[i] <= '9' && copies < 100) {
+            copies = copies * 10 + static_cast<std::size_t>(body[i] - '0');
             ++i;
         }
     }
     const auto a = body.find("\"actors\"");
     const auto lb = a == std::string_view::npos ? a : body.find('[', a);
     const auto rb = lb == std::string_view::npos ? lb : body.find(']', lb);
-    if (rb == std::string_view::npos || slots == 0) {
+    if (rb == std::string_view::npos || copies == 0) {
         return out;
     }
     std::string_view list = body.substr(lb + 1, rb - lb - 1);
@@ -1643,7 +1640,7 @@ LookItems PackLookItems(std::string_view manifest) {
         list.remove_prefix(q1 + 1);
     }
     if (!out.actors.empty()) {
-        out.slots = slots;
+        out.copies = copies;
     }
     return out;
 }
@@ -1868,7 +1865,7 @@ std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_n
                 r.ocarina = g_ocarina[r.number];
                 r.sounds = std::exchange(g_sounds[r.number], {});
             }
-            r.look_slot = CoopLookShare::SlotOf(r.number);
+            r.look_copy = CoopLookShare::CopyOf(r.number);
         }
     }
     return remotes;

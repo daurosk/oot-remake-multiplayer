@@ -293,8 +293,8 @@ jobs:
           release=$(if [ "$GITHUB_REF_TYPE" = tag ]; then echo "$GITHUB_REF_NAME"; else echo "ci-${GITHUB_SHA::8}"; fi)
           bash tools/release/make_kit_linux.sh --module "$MODULE" --server "$SERVER" --licenses build \
             --release "$release" --out "$RUNNER_TEMP/kit"
-          (cd "$RUNNER_TEMP/kit" && sha256sum -c oot-coop-*-linux-x86_64.zip.sha256)
-          unzip -l "$RUNNER_TEMP"/kit/oot-coop-*-linux-x86_64.zip | tail -n +4 | head -n 60
+          (cd "$RUNNER_TEMP/kit" && sha256sum -c oot-coop-*-linux.zip.sha256)
+          unzip -l "$RUNNER_TEMP"/kit/oot-coop-*-linux.zip | tail -n +4 | head -n 60
           echo "KIT=$(ls -d "$RUNNER_TEMP"/kit/oot-coop-*-linux)" >> "$GITHUB_ENV"
       - name: Longshot's Linux builder with our patches, and the patched renderer (no game)
         run: bash "$KIT/scripts/build.sh" --renderer-only "$RUNNER_TEMP/vk" --jobs 4
@@ -307,10 +307,10 @@ jobs:
           [ $code -ne 0 ] && printf '%s' "$out" | grep -q 'needs your game file' || { echo "::error::expected the no-game message"; exit 1; }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: oot-coop-linux-longshot-x86_64
+          name: oot-coop-linux
           path: |
-            ${{ runner.temp }}/kit/oot-coop-*-linux-x86_64.zip
-            ${{ runner.temp }}/kit/oot-coop-*-linux-x86_64.zip.sha256
+            ${{ runner.temp }}/kit/oot-coop-*-linux.zip
+            ${{ runner.temp }}/kit/oot-coop-*-linux.zip.sha256
           retention-days: 14
 
   # The co-op emulator on Linux (issue 127): Fritchii at lichii/PIN with our patches and the

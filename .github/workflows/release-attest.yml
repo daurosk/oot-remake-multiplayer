@@ -58,8 +58,8 @@ jobs:
             --pattern "oot-coop-$TAG-linux-*.tar.gz" --pattern "oot-coop-$TAG-linux-*.tar.gz.sha256" || true
           # The Longshot Linux kit (a zip: tools/release/make_kit_linux.sh), when the release has one.
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --pattern "oot-coop-$TAG-linux-x86_64.zip" --pattern "oot-coop-$TAG-linux-x86_64.zip.sha256" || true
-          for sum in oot-coop-*-linux-*.tar.gz.sha256 oot-coop-*-linux-x86_64.zip.sha256; do [ -f "$sum" ] && sha256sum -c "$sum"; done
+            --pattern "oot-coop-$TAG-linux.zip" --pattern "oot-coop-$TAG-linux.zip.sha256" || true
+          for sum in oot-coop-*-linux-*.tar.gz.sha256 oot-coop-*-linux.zip.sha256; do [ -f "$sum" ] && sha256sum -c "$sum"; done
           {
             echo "subjects<<EOF"
             ls -1 "$PWD"/oot-coop-*.zip "$PWD"/oot-coop-*-linux-*.tar.gz "$PWD"/Update.bat 2>/dev/null || true

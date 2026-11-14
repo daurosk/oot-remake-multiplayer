@@ -14,7 +14,7 @@ play together (same server, same version). There is no emulator.
 
 ## Steps
 
-1. Download `oot-coop-<version>-linux-x86_64.zip` and unzip it to a folder of your own, such as `~/OoT-Coop`.
+1. Download `oot-coop-<version>-linux.zip` and unzip it to a folder of your own, such as `~/OoT-Coop`.
 2. Open a terminal in that folder and type `bash start-oot-coop.sh`. (Typing `bash` first works even when the unzip
    tool dropped the file's "executable" mark.)
 3. The first time it asks for your game: drag your `.nup` into the terminal and press Enter. (It finds it by itself

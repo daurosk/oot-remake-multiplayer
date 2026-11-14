@@ -219,12 +219,12 @@ printf 'kit: oot-coop-v0.1.0-beta3-linux (release v0.1.0-beta3)\n' >"$new/VERSIO
 z = zipfile.ZipFile(sys.argv[1], "w")
 for d, _, fs in os.walk(sys.argv[2]):
     for f in fs: z.write(os.path.join(d, f))
-z.close()' oot-coop-v0.1.0-beta3-linux-x86_64.zip oot-coop-v0.1.0-beta3-linux)
-(cd "$tmp/rel" && sha256sum oot-coop-v0.1.0-beta3-linux-x86_64.zip >oot-coop-v0.1.0-beta3-linux-x86_64.zip.sha256)
+z.close()' oot-coop-v0.1.0-beta3-linux.zip oot-coop-v0.1.0-beta3-linux)
+(cd "$tmp/rel" && sha256sum oot-coop-v0.1.0-beta3-linux.zip >oot-coop-v0.1.0-beta3-linux.zip.sha256)
 cat >"$tmp/rel/releases.json" <<EOF
 [{"tag_name": "v0.1.0-beta3", "assets": [
-  {"browser_download_url": "$tmp/rel/oot-coop-v0.1.0-beta3-linux-x86_64.zip"},
-  {"browser_download_url": "$tmp/rel/oot-coop-v0.1.0-beta3-linux-x86_64.zip.sha256"},
+  {"browser_download_url": "$tmp/rel/oot-coop-v0.1.0-beta3-linux.zip"},
+  {"browser_download_url": "$tmp/rel/oot-coop-v0.1.0-beta3-linux.zip.sha256"},
   {"browser_download_url": "$tmp/rel/oot-coop-v0.1.0-beta3.zip"}]}]
 EOF
 (cd "$kit" && { echo MANIFEST.txt; find . -path ./data/game -prune -o -path ./data/builder -prune -o -path ./data/work -prune -o -path ./data/logs -prune -o -type f ! -name MANIFEST.txt -print | sed 's|^\./||'; } | sort >MANIFEST.txt)

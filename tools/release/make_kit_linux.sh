@@ -10,7 +10,7 @@
 #
 # --licenses: the CMake build folder that fetched ENet and fmt (_deps/enet-src, _deps/fmt-src): their
 # licence texts go in data/licenses/.
-# Out: <out>/oot-coop-<release>-linux/ and, unless --no-zip, <out>/oot-coop-<release>-linux-x86_64.zip
+# Out: <out>/oot-coop-<release>-linux/ and, unless --no-zip, <out>/oot-coop-<release>-linux.zip
 # and its .sha256 (the names scripts/update.sh looks for). The zip keeps the scripts' executable bit;
 # a player whose unzip drops it still starts the kit with `bash start-oot-coop.sh` (README.txt).
 #
@@ -134,7 +134,7 @@ rm -f "$kit/MANIFEST.txt.tmp"
 
 if ((zip)); then
     command -v zip >/dev/null || die 'zip is not installed (sudo apt install zip)'
-    z=$out/$name-x86_64.zip
+    z=$out/$name.zip
     rm -f "$z" "$z.sha256"
     (cd "$out" && zip -q -r -X "$z" "$name")
     printf '%s  %s\n' "$(sha256sum "$z" | cut -d' ' -f1)" "${z##*/}" >"$z.sha256"

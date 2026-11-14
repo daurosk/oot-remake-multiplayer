@@ -7,7 +7,7 @@
 #   bash scripts/update.sh --launch   update without asking, for start.sh (exit 3: updated)
 # As tools/release/kit/linux/update.sh, for the zip: it reads the kit's version from VERSION.txt,
 # asks GitHub for the releases of daurosk/oot-remake-multiplayer and takes the newest with a Linux
-# zip (oot-coop-<version>-linux-x86_64.zip and its .sha256). If that is newer, it downloads it,
+# zip (oot-coop-<version>-linux.zip and its .sha256). If that is newer, it downloads it,
 # checks the SHA-256, unpacks it to a temp folder and copies the kit's own files (MANIFEST.txt)
 # over this kit. Every file it replaces is first copied to backup-<old version>/; if anything fails,
 # those are put back. VERSION.txt is written last; update-in-progress.txt marks an update that has
@@ -51,7 +51,7 @@ newest_release() {
     local url name tag sha best='' best_zip='' best_sha=''
     while IFS= read -r url; do
         name=${url##*/}
-        [[ $name =~ ^oot-coop-(.+)-linux-x86_64\.zip$ ]] || continue
+        [[ $name =~ ^oot-coop-(.+)-linux\.zip$ ]] || continue
         tag=${BASH_REMATCH[1]}
         [[ $(kit_version_compare "$tag" 0.0.0-a) == 1 ]] || continue   # a version, not a draft name
         sha=$(grep -F -- "/$name.sha256" "$list.urls" | head -n1)

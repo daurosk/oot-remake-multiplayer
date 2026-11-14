@@ -798,7 +798,7 @@ try {
     # Whole starts of a Hookshot-only kit, with a stub play.ps1.
     function New-StartKit([string]$Dir) {
         Copy-KitFile (Join-Path $kitSrc 'Start OoT Co-op.bat') (Join-Path $Dir 'Start OoT Co-op.bat')
-        foreach ($f in 'start.ps1', 'start-checks.ps1', 'kit-paths.ps1') { Copy-KitFile (Join-Path $kitSrc "scripts\$f") (Join-Path $Dir "scripts\$f") }
+        foreach ($f in 'start.ps1', 'start-checks.ps1', 'kit-paths.ps1', 'windows-checks.ps1') { Copy-KitFile (Join-Path $kitSrc "scripts\$f") (Join-Path $Dir "scripts\$f") }
         Write-File "$Dir\scripts\play.ps1" ("param([string]`$Mode, [switch]`$Hookshot, [switch]`$NoUpdate)`r`n" +
             "[System.IO.File]::WriteAllText((Join-Path (Split-Path -Parent `$PSScriptRoot) 'played.txt'), `"`$Mode `$Hookshot `$NoUpdate `$env:OOT_COOP_KIT`")`r`n" +
             "if (`$env:OOT_TEST_PLAY_MS) { Start-Sleep -Milliseconds ([int]`$env:OOT_TEST_PLAY_MS) }`r`nexit 0`r`n")
@@ -949,11 +949,19 @@ try {
         Check ($why -eq '' -and (Test-Path "$mv\tools\nx2\make_game.py") -and (Read-File "$mv\tools\python\python.exe") -eq 'stub') "tools-move: held the whole time -> robocopy /MOVE copies it all [$why]"
         $why = Remove-KitFolderRetry "$mv\tools.new" 1 100
         Check ([bool]$why) "tools-move: a folder that stays held -> why, not a crash [$why]"
+        # (kit-friction: who holds it, by name. Here this test's own PowerShell holds python.exe; Restart Manager names it)
+        $who = @(Get-KitFolderHolders "$mv\tools.new")
+        Check ($who.Count -ge 1 -and ($who -join ',') -match "process $PID\)") "tools-move: the holder is named (Restart Manager) [$($who -join ', ')]"
+        $txt = Get-KitHeldFolderText "$mv\tools.new" $why
+        Check ($txt -match "Something still has a file in it open: .*process $PID\)") "tools-move: the message names the holder [$txt]"
     } finally { $script:held.Dispose() }
     Check ((Remove-KitFolderRetry "$mv\tools.new" 5 100) -eq '' -and -not (Test-Path "$mv\tools.new")) 'tools-move: let go -> removed'
     Check ((Remove-KitFolderRetry "$mv\none" 1 100) -eq '') 'tools-move: nothing to remove -> fine'
     $txt = Get-KitHeldFolderText 'D:\coop\hookshot\tools.new' 'Access denied'
     Check ($txt -match 'tools\.new' -and $txt -match 'antivirus' -and $txt -match 'Exclusions' -and $txt -match 'Explorer') "tools-move: the message names the folder, antivirus, Explorer and the exclusion [$txt]"
+    $txt = Get-KitHeldFolderText 'D:\coop\hookshot\tools.new' 'Access denied' @('MsMpEng.exe (process 4)') 'GoogleDrive'
+    Check ($txt -match 'open: MsMpEng\.exe \(process 4\)\.' -and $txt -match 'cloud-sync folder \(GoogleDrive\)' -and $txt -match 'move the kit out of it') "tools-move: in a sync folder: says so, and to move the kit [$txt]"
+    Check ((Get-KitSyncRoot ([System.IO.Path]::GetTempPath())) -eq '') 'tools-move: the temp folder is in no sync folder'
 } finally {
     Remove-Item -LiteralPath $mv -Recurse -Force -ErrorAction SilentlyContinue
 }
@@ -987,10 +995,10 @@ try {
     Write-File "$k2\hookshot\game-folder.txt" "$k1\hookshot\game`n"   # what a Windows copy of a 0.10.1 kit has
     Write-File "$k2\coop-options.ini" "LICHII_COOP_PAD=2`n"
     $keepKc = @($env:LOCALAPPDATA, $env:OOT_COOP_NO_SHORTCUT)
-    $env:LOCALAPPDATA = "$kc\appdata"; $env:OOT_COOP_NO_SHORTCUT = '1'
+    $env:LOCALAPPDATA = "$kc\appdata"; $env:OOT_COOP_NO_SHORTCUT = '1'; $env:OOT_COOP_NO_LONGSHOT_ASK = '1'   # (kit-friction: no "Built Longshot yourself?" here)
     $ErrorActionPreference = 'Continue'
     try { $out = (& powershell -NoProfile -ExecutionPolicy Bypass -File "$k2\scripts\hookshot-build.ps1" 2>&1) -join '|'; $code = $LASTEXITCODE }
-    finally { $env:LOCALAPPDATA = $keepKc[0]; $env:OOT_COOP_NO_SHORTCUT = $keepKc[1]; $ErrorActionPreference = 'Stop' }
+    finally { $env:LOCALAPPDATA = $keepKc[0]; $env:OOT_COOP_NO_SHORTCUT = $keepKc[1]; Remove-Item env:OOT_COOP_NO_LONGSHOT_ASK -ErrorAction SilentlyContinue; $ErrorActionPreference = 'Stop' }
     $b2 = "$k2\hookshot\game\bin"
     Check ($code -eq 0 -and $out -match 'copying the one another kit on this PC built' -and $out -match 'starts with that kit''s saves' -and $out -notmatch 'Building the game' -and (Test-Path "$b2\longshot.exe")) "kit-copy build: the copy gets its own game, copied not built [$code $out]"
     Check ((Read-File "$k2\hookshot\game-folder.txt").Trim() -eq 'hookshot\game') "kit-copy build: game-folder.txt is relative [$(Read-File "$k2\hookshot\game-folder.txt")]"
@@ -1001,13 +1009,123 @@ try {
     $k3 = "$kc\kit-2"
     Copy-Item -LiteralPath $k2 -Destination $k3 -Recurse
     Remove-Item -LiteralPath "$k3\hookshot\game", "$k3\hookshot\game-folder.txt" -Recurse -Force
-    $env:LOCALAPPDATA = "$kc\appdata"; $env:OOT_COOP_NO_SHORTCUT = '1'
+    $env:LOCALAPPDATA = "$kc\appdata"; $env:OOT_COOP_NO_SHORTCUT = '1'; $env:OOT_COOP_NO_LONGSHOT_ASK = '1'
     $ErrorActionPreference = 'Continue'
     try { $out = (& powershell -NoProfile -ExecutionPolicy Bypass -File "$k3\scripts\hookshot-build.ps1" 2>&1) -join '|'; $code = $LASTEXITCODE }
-    finally { $env:LOCALAPPDATA = $keepKc[0]; $env:OOT_COOP_NO_SHORTCUT = $keepKc[1]; $ErrorActionPreference = 'Stop' }
+    finally { $env:LOCALAPPDATA = $keepKc[0]; $env:OOT_COOP_NO_SHORTCUT = $keepKc[1]; Remove-Item env:OOT_COOP_NO_LONGSHOT_ASK -ErrorAction SilentlyContinue; $ErrorActionPreference = 'Stop' }
     Check ($code -eq 0 -and $out -match 'copying the one another kit' -and (Test-Path "$k3\hookshot\game\bin\longshot.exe")) "kit-copy build: a kit unzipped twice copies the first one's game too [$code $out]"
+    # (kit-friction) the same with a Longshot of the player's own given: a nightly, so its saves only
+    $k4 = "$kc\kit-3"
+    Copy-Item -LiteralPath $k2 -Destination $k4 -Recurse
+    Remove-Item -LiteralPath "$k4\hookshot\game", "$k4\hookshot\game-folder.txt" -Recurse -Force
+    $own = "$kc\My Longshot"
+    Write-File "$own\bin\image.bin" 'image'
+    Write-File "$own\longshot_version.txt" "version=nightly-2026-11-12`n"
+    Write-File "$own\bin\user\save\5a3c9e1f0b7d24680000000000000001\slot_00\progress.sav" 'MINE'
+    Write-File "$k1\hookshot\game\bin\image.bin" 'image'
+    $env:LOCALAPPDATA = "$kc\appdata"; $env:OOT_COOP_NO_SHORTCUT = '1'
+    $ErrorActionPreference = 'Continue'
+    try { $out = (& powershell -NoProfile -ExecutionPolicy Bypass -File "$k4\scripts\hookshot-build.ps1" -Longshot $own 2>&1) -join '|'; $code = $LASTEXITCODE }
+    finally { $env:LOCALAPPDATA = $keepKc[0]; $env:OOT_COOP_NO_SHORTCUT = $keepKc[1]; $ErrorActionPreference = 'Stop' }
+    Check ($code -eq 0 -and $out -match 'Found Longshot nightly-2026-11-12' -and $out -match 'Co-op is built on v3\.0\.0-rc\.3, so it is built fresh' -and
+        (Read-File "$k4\hookshot\game\bin\user\save\5a3c9e1f0b7d24680000000000000001\slot_00\progress.sav") -eq 'MINE' -and $out -match 'Copied your Longshot save slot\(s\) slot_00') "longshot build: a nightly is said to be another version, its save is copied in [$code $out]"
 } finally {
     Remove-Item -LiteralPath $kc -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# kit-friction: what Windows itself may block (windows-checks.ps1, run as "Start OoT Co-op.bat" runs it: its text through
+# powershell -Command), with stand-ins for Smart App Control, the language mode, the policy, the Code Integrity log and
+# controlled folder access. And a Longshot of the player's own: its saves, its downloads, its version.
+$wk = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-wc-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+$wcVars = 'OOT_COOP_WC_SAC', 'OOT_COOP_WC_MODE', 'OOT_COOP_WC_POLICY', 'OOT_COOP_WC_CI', 'OOT_COOP_WC_CFA', 'OOT_COOP_WC_WRITE'
+function Invoke-Wc([string]$Kit, [hashtable]$Vars = @{}, [switch]$Constrained) {
+    foreach ($v in $wcVars) { Remove-Item "env:$v" -ErrorAction SilentlyContinue }
+    foreach ($n in $Vars.Keys) { Set-Item "env:$n" $Vars[$n] }
+    $pre = if ($Constrained) { "`$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'; " } else { '' }
+    $cmd = "$pre`$k='$Kit\'; iex (Get-Content -Raw -LiteralPath (Join-Path `$k 'scripts\windows-checks.ps1')); exit 0"
+    $ErrorActionPreference = 'Continue'
+    try { $o = (& powershell -NoProfile -ExecutionPolicy Bypass -Command $cmd 2>&1) -join '|'; $c = $LASTEXITCODE }
+    finally { $ErrorActionPreference = 'Stop'; foreach ($v in $wcVars) { Remove-Item "env:$v" -ErrorAction SilentlyContinue } }
+    return @($c, $o)
+}
+try {
+    $wkit = Join-Path $wk 'OoT Co-op'
+    Copy-KitFile (Join-Path $kitSrc 'scripts\windows-checks.ps1') "$wkit\scripts\windows-checks.ps1"
+    Write-File "$wkit\Start OoT Co-op.bat" '@echo off'
+    Write-File "$wkit\scripts\start.ps1" '#'
+    Write-File "$wkit\hookshot\game\bin\big.dll" 'built here'
+    foreach ($f in "$wkit\Start OoT Co-op.bat", "$wkit\scripts\start.ps1", "$wkit\hookshot\game\bin\big.dll") {
+        Set-Content -LiteralPath $f -Stream 'Zone.Identifier' -Value "[ZoneTransfer]`r`nZoneId=3"
+    }
+    $marked = { param($f) [bool](Get-Item -LiteralPath $f -Stream 'Zone.Identifier' -ErrorAction SilentlyContinue) }
+    $r = Invoke-Wc $wkit
+    Check ($r[0] -eq 0 -and $r[1] -match "Took Windows' 'downloaded from the internet' mark off" -and -not (& $marked "$wkit\scripts\start.ps1") -and
+        -not (& $marked "$wkit\Start OoT Co-op.bat")) "windows checks: the kit's own files lose the internet mark, the start goes on [$($r[1])]"
+    Check (& $marked "$wkit\hookshot\game\bin\big.dll") 'windows checks: the built game''s files are not walked'
+    $log = Read-File "$wkit\logs\windows-checks.txt"
+    Check ($log -match 'internet mark: 2 file' -and $log -match 'language mode: FullLanguage' -and $log -match 'smart app control: off') "windows checks: logs\windows-checks.txt says what was found [$log]"
+    $r = Invoke-Wc $wkit
+    Check ($r[0] -eq 0 -and $r[1] -notmatch 'mark') "windows checks: unmarked: nothing said [$($r[1])]"
+    $r = Invoke-Wc $wkit -Constrained -Vars @{ OOT_COOP_WC_SAC = 'on' }
+    Check ($r[0] -eq 1 -and $r[1] -match 'Smart App Control is blocking this kit''s PowerShell scripts' -and $r[1] -match 'Smart App Control settings > Off' -and
+        $r[1] -match 'cannot turn Smart App Control back on' -and $r[1] -notmatch 'Exception|error') "windows checks: real Constrained Language mode with Smart App Control on: stops and says why [$($r[1])]"
+    $r = Invoke-Wc $wkit -Vars @{ OOT_COOP_WC_MODE = 'ConstrainedLanguage' }
+    Check ($r[0] -eq 1 -and $r[1] -match 'AppLocker or WDAC') "windows checks: locked without Smart App Control: a policy of the PC [$($r[1])]"
+    $r = Invoke-Wc $wkit -Vars @{ OOT_COOP_WC_POLICY = 'AllSigned' }
+    Check ($r[0] -eq 1 -and $r[1] -match 'Group Policy .* AllSigned') "windows checks: a Group Policy AllSigned stops the start [$($r[1])]"
+    $r = Invoke-Wc $wkit -Vars @{ OOT_COOP_WC_POLICY = 'RemoteSigned' }
+    Check ($r[0] -eq 0) "windows checks: RemoteSigned by policy goes on (the kit's files are unmarked) [$($r[1])]"
+    $dev = $wkit.Substring(2)
+    $r = Invoke-Wc $wkit -Vars @{ OOT_COOP_WC_SAC = 'on'; OOT_COOP_WC_CI = "Code Integrity determined that a process (\Device\HarddiskVolume3$dev\hookshot\game\bin\longshot.exe) attempted to load \Device\HarddiskVolume3$dev\hookshot\game\bin\hookshot_coop.dll that did not meet the requirements.|Another (\Device\HarddiskVolume3\Windows\x.dll)" }
+    Check ($r[0] -eq 0 -and $r[1] -match 'Smart App Control blocked hookshot\\game\\bin\\hookshot_coop\.dll of this kit\.' -and (Read-File "$wkit\logs\windows-checks.txt") -match 'blocked by code integrity: hookshot\\game\\bin\\hookshot_coop\.dll') "windows checks: the file Smart App Control blocked is named, from the Code Integrity log [$($r[1])]"
+    $r = Invoke-Wc $wkit -Vars @{ OOT_COOP_WC_SAC = 'on' }
+    Check ($r[0] -eq 0 -and $r[1] -match 'Smart App Control is on\. It may block') "windows checks: Smart App Control on, nothing blocked yet: said, goes on [$($r[1])]"
+    $r = Invoke-Wc $wkit -Vars @{ OOT_COOP_WC_WRITE = 'Access to the path is denied.'; OOT_COOP_WC_CFA = '1' }
+    Check ($r[0] -eq 1 -and $r[1] -match 'refused to let PowerShell write in this kit''s folder \(access denied\)' -and $r[1] -match 'Allow an app through Controlled folder access' -and
+        (Read-File "$wkit\logs\windows-checks.txt") -match 'write test in the kit folder: access denied' -and (Read-File "$wkit\logs\windows-checks.txt") -match 'controlled folder access: on') "windows checks: access denied with controlled folder access on: stops, says how to allow it [$($r[1])]"
+    $r = Invoke-Wc $wkit -Vars @{ OOT_COOP_WC_WRITE = 'Access to the path is denied.'; OOT_COOP_WC_CFA = '0' }
+    Check ($r[0] -eq 1 -and $r[1] -match 'Another antivirus') "windows checks: access denied without it: another antivirus or the folder [$($r[1])]"
+    Check ((Read-File "$wkit\logs\windows-checks.txt") -match 'execution policies: .*MachinePolicy=') 'windows checks: every execution policy scope is logged'
+    $keepProfile = $env:USERPROFILE
+    $env:USERPROFILE = $wk
+    Copy-KitFile (Join-Path $kitSrc 'scripts\windows-checks.ps1') "$wk\Documents\kit\scripts\windows-checks.ps1"
+    try { $r = Invoke-Wc "$wk\Documents\kit" -Vars @{ OOT_COOP_WC_CFA = '1' } } finally { $env:USERPROFILE = $keepProfile }
+    Check ($r[0] -eq 0 -and $r[1] -match 'Controlled folder access .* protects .*Documents') "windows checks: a kit under Documents with controlled folder access on is told to move [$($r[1])]"
+    Check ((Read-File "$wk\Documents\kit\logs\windows-checks.txt") -match 'controlled folder access over the kit: Documents' -and (Read-File "$wk\Documents\kit\logs\windows-checks.txt") -notmatch [regex]::Escape($wk)) 'windows checks: the log names the folder, not the user''s path'
+
+    # A Longshot of the player's own (Get-KitLongshot*, Copy-KitLongshot*)
+    $ls = Join-Path $wk 'Longshot\v3.0.0-rc.3'
+    $lsHome = Join-Path $wk 'LsHome'
+    Write-File "$ls\longshot.exe" 'launcher'
+    Write-File "$ls\bin\image.bin" 'image'
+    Write-File "$ls\longshot_version.txt" "version=v3.0.0-rc.3`nbuilder=$lsHome\versions\v3.0.0-rc.3\LongshotBuilder\LongshotBuilder.exe`n"
+    $acct = '5a3c9e1f0b7d24680000000000000001'
+    Write-File "$ls\bin\user\save\$acct\slot_00\progress.sav" 'MINE0'
+    Write-File "$ls\bin\user\save\$acct\slot_01\progress.sav" 'MINE1'
+    Write-File "$ls\bin\user\save\$acct\account.sav" 'ACCT'
+    Write-File "$ls\bin\user\save\$acct-coop\slot_00\progress.sav" 'GUEST'
+    Write-File "$lsHome\versions\current.txt" "v3.0.0-rc.3`n"
+    Write-File "$lsHome\downloads\$('ab' * 32).zip" 'ZIP'
+    Check ((Get-KitLongshotImageDir $ls) -eq "$ls\bin") 'longshot: a builder''s game folder: its image is in bin\'
+    Check ((Get-KitLongshotImageDir $wk) -eq '') 'longshot: no image.bin: no Longshot game'
+    $info = Get-KitLongshotGameInfo $ls
+    Check ($info.version -eq 'v3.0.0-rc.3' -and $info.home -eq $lsHome) "longshot: version and builder home from longshot_version.txt [$($info.version) $($info.home)]"
+    $homes = @(Get-KitLongshotHomes $info.home "$wk\no-appdata")
+    Check ($homes.Count -eq 1 -and $homes[0].version -eq 'v3.0.0-rc.3') 'longshot: the home and its version'
+    $zipTo = "$wk\kitdl\llvm-mingw-abababababab.zip"
+    Check ((Copy-KitLongshotDownload $homes ('AB' * 32) $zipTo) -eq $lsHome -and (Read-File $zipTo) -eq 'ZIP') 'longshot: a download with the same SHA-256 is copied'
+    Check ((Copy-KitLongshotDownload $homes ('cd' * 32) "$wk\kitdl\other.zip") -eq '' -and -not (Test-Path "$wk\kitdl\other.zip")) 'longshot: no zip with that SHA-256: nothing copied'
+    $ours = "$wk\coop-game\bin"
+    Write-File "$ours\user\save\$acct\slot_01\progress.sav" 'COOP1'
+    $said = (Copy-KitLongshotSaves "$ls\bin" $ours) -join '|'
+    Check ((Read-File "$ours\user\save\$acct\slot_00\progress.sav") -eq 'MINE0' -and (Read-File "$ours\user\save\$acct\account.sav") -eq 'ACCT') "longshot saves: a slot copied with account.sav [$said]"
+    Check ((Read-File "$ours\user\save\$acct\slot_01\progress.sav") -eq 'COOP1' -and $said -match 'left as they are: slot_01') "longshot saves: a slot the co-op game has is never overwritten [$said]"
+    Check (-not (Test-Path "$ours\user\save\$acct-coop") -and (Read-File "$ls\bin\user\save\$acct\slot_01\progress.sav") -eq 'MINE1') 'longshot saves: guest folders stay behind, the player''s own saves unchanged'
+    $need = Get-KitHookshotNeedText 'game' '' $true
+    Check ($need -match 'never used as it is' -and $need -match 'moving one into this folder does nothing' -and $need -match '60 GB' -and $need -match 'Longshot') "need text: says a self-built Longshot is not used, and where the 60 GB goes [$need]"
+} finally {
+    foreach ($v in $wcVars) { Remove-Item "env:$v" -ErrorAction SilentlyContinue }
+    Remove-Item -LiteralPath $wk -Recurse -Force -ErrorAction SilentlyContinue
 }
 if ($failed) { Write-Host "$failed failed"; exit 1 }
 Write-Host 'all passed'

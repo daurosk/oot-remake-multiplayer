@@ -38,6 +38,11 @@ $picked = @()
 $picked += Get-ChildItem (Join-Path $user 'log') -File -ErrorAction SilentlyContinue | ForEach-Object { @($_.FullName, "emulator\log\$($_.Name)") }
 $picked += @((Join-Path $user 'config\coop.ini'), 'emulator\coop.ini')
 $picked += Get-ChildItem (Join-Path $kit 'logs') -Filter '*.log' -File -ErrorAction SilentlyContinue | ForEach-Object { @($_.FullName, "server\$($_.Name)") }
+# What Windows itself may block (windows-checks.ps1, written by every start): Smart App Control, the internet mark, policies.
+foreach ($wcLog in @((Join-Path $kit 'logs\windows-checks.txt'), $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'OoT-Coop\windows-checks.txt' }))) {
+    # (the second when the kit's folder took no file)
+    if ($wcLog -and (Test-Path -LiteralPath $wcLog)) { $picked += @($wcLog, 'windows-checks.txt'); break }
+}
 $picked += @((Join-Path $kit 'VERSION.txt'), 'VERSION.txt')
 $picked += @((Join-Path $kit 'coop-options.ini'), 'coop-options.ini')
 # What the puppet pack was built from (file names and hashes only, no game data).

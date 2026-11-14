@@ -54,7 +54,7 @@ function Get-Sha([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SH
 $KitTop = @('Start OoT Co-op.bat', 'README.txt', 'start-server.cmd', 'coop-options.ini')
 $KitScripts = @('start.ps1', 'start-checks.ps1', 'play.ps1', 'coop-ini.ps1', 'kit-paths.ps1', 'hosting.ps1', 'relay-join.ps1',
     'invite.ps1', 'hookshot-build.ps1', 'apply_patch.py', 'update.ps1', 'start-server.ps1', 'collect-logs.ps1', 'collect-logs.cmd',
-    'log-mask.ps1')
+    'log-mask.ps1', 'windows-checks.ps1')
 $KitDocs = @(@('setup.md', 'SETUP.md'), @('known-issues.md', 'KNOWN-ISSUES.md'))
 # Never in this kit (emulator kits only); make_kit_hookshot refuses a kit that has one.
 $EmulatorOnly = '(?i)(^|\\)(emulator\\|lichii|fritchii|.*\.nx2recipe$|Host\.bat$|Join\.bat$|Host-Hookshot\.bat$|Join-Hookshot\.bat$|Play-OoT-Coop\.bat$|Build-Hookshot-Coop\.bat$|play\.cmd$|start-join\.cmd$|start-relay\.cmd$|make-puppet-pack\.cmd$|check-hosting\.cmd$|puppet-pack\.ps1$|qt6|Qt6|SDL2\.dll$)'

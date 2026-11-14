@@ -16,6 +16,7 @@
 #include "coop_input.h"
 #include "coop_lobby_tab.h"
 #include "coop_look.h"
+#include "coop_look_view.h"
 #include "coop_mods_tab.h"
 #include "coop_pause_files.h"
 #include "coop_title.h"
@@ -546,6 +547,19 @@ bool Picture(int tab, HosCoopMenuPicture* out) {
         picture = g_menu.Picture();
     }
     shapes.clear();
+    if (picture.empty()) {
+        return false;   // (not the Customize page)
+    }
+    // Your own Link in the game, through a clear window, the camera around him (coop_look_view.h); the flat picture
+    // when he cannot be shown (the title screen, a cutscene).
+    const CoopLookView::Window window{out->window[0], out->window[1], out->window[2], out->window[3], out->aspect};
+    if (window.Valid() && CoopLookView::LinkShown()) {
+        CoopLookView::Ask(window);
+        out->live = 1;
+        out->shapes_n = 0;
+        out->shapes = nullptr;
+        return true;
+    }
     for (const CoopLookMenu::Shape& p : picture) {
         if (shapes.size() == HOS_COOP_MENU_MAX_SHAPES) {
             break;

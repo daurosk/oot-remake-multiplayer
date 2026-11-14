@@ -1009,6 +1009,7 @@ public:
         }
         v.scene.assign(*frame_.scene);
         v.self = *frame_.position;
+        v.adult = frame_.age == coop::protocol::Age::adult;
         v.event = frame_.event;
         v.others.resize(frame_.others.size());
         for (std::size_t i = 0; i < frame_.others.size(); ++i) {

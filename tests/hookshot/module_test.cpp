@@ -537,14 +537,28 @@ TEST_CASE("hookshot: a module tab may draw a picture beside its page (patch 0019
           ReadFile(kRepo / "hookshot" / "src" / "hos_coop_menu_picture.h"));
     // Hookshot looks for the optional export and draws the shapes in the help column.
     CHECK(patch.find("look(\"hos_coop_menu_picture\")") != std::string::npos);
-    CHECK(patch.find("+        if (coop::menu_picture(coop_tab, &pic)) {") != std::string::npos);
-    // Only the Vulkan back end's files: no lift, no game code.
+    CHECK(patch.find("+        if (coop::menu_picture(coop_tab, &pic, where, ww / wh)) {") != std::string::npos);
+    // A live picture: the dim leaves its square out.
+    CHECK(patch.find("+    if (!(tune_mode && page == 0)) dim_game(c);") != std::string::npos);
+    // The camera (hos_coop_view.h): the bridge looks for the optional export, and the gameplay view asks it before the
+    // Debug tab's free camera.
+    CHECK(NewFile(patch, "host/hos_coop_view.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_view.h"));
+    CHECK(patch.find("GetProcAddress(m, \"hos_coop_view\")") != std::string::npos);
+    CHECK(patch.find("+    if (oot_coop_view(c, view)) return;") != std::string::npos);
+    // The Vulkan back end's files and the host's (the bridge, the view the game's own routine already calls): no lift,
+    // no game code, no new hook in the game.
     for (std::size_t at = patch.find("diff --git a/"); at != std::string::npos; at = patch.find("diff --git a/", at + 1)) {
-        CHECK(patch.compare(at, 20, "diff --git a/gpu/vk/") == 0);
+        bool allowed = false;
+        for (const std::string prefix : {"diff --git a/gpu/vk/", "diff --git a/host/coop_bridge.c ",
+                                         "diff --git a/host/hos_main.c ", "diff --git a/host/hos_coop_view.h "}) {
+            allowed = allowed || patch.compare(at, prefix.size(), prefix) == 0;
+        }
+        CHECK(allowed);
     }
     const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_menu_picture(int tab, HosCoopMenuPicture* out)") !=
           std::string::npos);
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_view(double eye[3], double target[3])") != std::string::npos);
 }
 
 TEST_CASE("hookshot: the sound wrap (patch 0014) is one row in 0005's table, its header hookshot/src's") {

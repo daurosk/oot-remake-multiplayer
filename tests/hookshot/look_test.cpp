@@ -468,3 +468,33 @@ TEST_CASE("look: an unpause with the look unchanged is told too") {
     CHECK(unpaused == 1);
     CoopLook::Init(Look{}, nullptr);
 }
+
+TEST_CASE("look: a look chosen with the menu open is shown on your own Link at once, applied on unpause") {
+    std::vector<Look> applied, previewed;
+    CoopLook::Init(Look{}, [&](const Look& l) { applied.push_back(l); }, {},
+                   [&](const Look& l) { previewed.push_back(l); });
+    Look red;
+    red[Part::hylian_frame] = 0xFF0000u;
+    CoopLook::SetPending(red);
+    CoopLook::Frame();   // the menu still open: shown, not applied
+    REQUIRE(previewed.size() == 1);
+    CHECK(previewed[0] == red);
+    CHECK(applied.empty());
+    CoopLook::Frame();   // nothing new: shown once
+    CHECK(previewed.size() == 1);
+    Look blue = red;
+    blue[Part::master_blade] = 0x0000FFu;
+    CoopLook::SetPending(red);
+    CoopLook::SetPending(blue);   // two choices in one frame: the last is shown
+    CoopLook::Frame();
+    REQUIRE(previewed.size() == 2);
+    CHECK(previewed[1] == blue);
+    CoopLook::SetPending(red);
+    CoopLook::ApplyOnUnpause();   // chosen and unpaused in one frame: applied, not shown first
+    CoopLook::Frame();
+    CHECK(previewed.size() == 2);
+    REQUIRE(applied.size() == 1);
+    CHECK(applied[0] == red);
+    CHECK(CoopLook::Worn() == red);
+    CoopLook::Init(Look{}, nullptr);
+}

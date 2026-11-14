@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    A picture beside a co-op module tab's page (oot-remake-multiplayer, docs/hookshot.md "The Multiplayer tab"; our patch
    0019): the module may hand Hookshot's menu coloured shapes, drawn in a square over the top of the help column with the
-   help box under it. The Multiplayer tab's Customize page draws Link in the colours chosen with it.
+   help box under it, or ask for the square `live`: a clear window onto the game behind the menu (no dim there), the
+   shapes over it. The Multiplayer tab's Customize page shows the player's own Link there, the game's camera turning
+   around him (hos_coop_view.h), and draws a flat Link when there is none to show.
 
    One optional export, hos_coop_menu_picture, asked right after hos_coop_menu_page on the same thread for the tab shown;
    the shapes belong to the module and hold until its next call on that thread (Hookshot draws them at once). A module
@@ -13,7 +15,7 @@
 #define HOS_COOP_MENU_PICTURE_H
 #include <stdint.h>
 
-#define HOS_COOP_MENU_PICTURE_VERSION 1
+#define HOS_COOP_MENU_PICTURE_VERSION 2
 #define HOS_COOP_MENU_SHAPE_POINTS 8
 #define HOS_COOP_MENU_MAX_SHAPES 256
 
@@ -31,6 +33,10 @@ typedef struct HosCoopMenuPicture {
     uint32_t size;                    /* sizeof(HosCoopMenuPicture), set by Hookshot */
     int32_t shapes_n;                 /* at most HOS_COOP_MENU_MAX_SHAPES are drawn */
     const HosCoopMenuShape *shapes;
+    /* (version 2) */
+    int32_t live;                     /* the module: 1 = the square is a clear window onto the game (shapes may be 0) */
+    float window[4];                  /* Hookshot: the square in the window, x0 y0 x1 y1 as fractions of it (y down) */
+    float aspect;                     /* Hookshot: the window's width over its height */
 } HosCoopMenuPicture;
 
 typedef int (*hos_coop_menu_picture_fn)(int tab, HosCoopMenuPicture *out);   /* 1: filled */

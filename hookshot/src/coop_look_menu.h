@@ -7,10 +7,10 @@
 // colours chosen, with the part selected outlined: the shield, sword and
 // tunic shown are the ones whose part was looked at last.
 //
-// Why a picture and not the game's model: the menu draws over a paused game
-// and has no way to draw a model (Hookshot's menu draws flat shapes, patch
-// 0019); a picture of Link's outline in the real colours shows the result at
-// once, part by part. The game's own Link wears the look when the menu closes.
+// The picture: when your Link is in the game, the tab shows him instead, the
+// real one through a clear window, the game's camera around him
+// (coop_look_view.h, patch 0019). This outline of Link in the colours chosen
+// is for when there is none (the title screen, a cutscene).
 //
 // This file is the page's logic only (no game, no files): the tab
 // (coop_pause_menu.h) hands it the presses and draws its View; a change is

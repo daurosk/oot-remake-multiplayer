@@ -241,13 +241,21 @@ def blockers(root, alive=hs.pid_alive, now=None):
     return out
 
 
-def lock_acquire(n, owner, wait=0.0, root=None, say=print, sleep=time.sleep, clock=time.time, pid=0):
+def lock_acquire(n, owner, wait=0.0, root=None, say=print, sleep=time.sleep, clock=time.time, pid=0, check=None):
+    """Takes laneN.lock FIRST, then looks for a game build; blocked: lets it go again and retries. A game build takes
+    build-game.lock first, then looks for lane locks (hs.build), so of the two one always sees the other."""
     root = root or hs.main_root(REPO)
+    check = check or blockers
+    name = "lane%d" % n
     end = clock() + wait
     while True:
-        b = blockers(root)
-        if not b and hs.lock_acquire(root, "lane%d" % n, owner, wait=0, say=say, pid=pid):
-            return True
+        b = []
+        if hs.lock_acquire(root, name, owner, wait=0, say=lambda *_: None, pid=pid):
+            b = check(root)
+            if not b:
+                say("lock: %s.lock taken by %s" % (name, owner))
+                return True
+            hs.lock_release(root, name, owner, say=lambda *_: None)
         if clock() >= end:
             say("lane %d: not free: %s" % (n, "; ".join(b) if b else "lane%d.lock is held" % n))
             return False

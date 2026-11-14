@@ -161,6 +161,22 @@ class Locks(Base):
         hs.lock_release(self.root, "game", say=q)
         self.assertTrue(lanes.lock_acquire(2, "run", root=self.root, say=q))
 
+    def test_a_build_starting_between_take_and_check_wins(self):
+        """The lane takes its lock, then a game build takes build-game.lock before the lane looks: the lane lets its lock
+        go again, so the build (which looks for lane locks after taking its own) and the run never both go."""
+        q = lambda *a: None
+
+        def build_slips_in(root):
+            hs.lock_acquire(root, "game", "a game build", say=q)
+            return lanes.blockers(root)
+        self.assertFalse(lanes.lock_acquire(1, "run", root=self.root, say=q, check=build_slips_in))
+        self.assertFalse(os.path.isdir(os.path.join(self.root, "lane1.lock")))
+        self.assertTrue(os.path.isdir(os.path.join(self.root, "build-game.lock")))
+        # and the other order: the lane's lock is there when the build looks
+        hs.lock_release(self.root, "game", say=q)
+        self.assertTrue(lanes.lock_acquire(2, "run", root=self.root, say=q))
+        self.assertFalse(hs.wait_free(os.path.join(self.root, "lane2.lock"), 0, say=q))
+
     def test_module_build_lock_blocks_no_lane_but_a_hand_made_one_does(self):
         q = lambda *a: None
         self.assertTrue(hs.lock_acquire(self.root, "hs", "compile-all", say=q))   # hs.py's JSON owner

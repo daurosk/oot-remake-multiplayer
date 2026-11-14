@@ -43,6 +43,8 @@
 #include "coop/host/game_items.hpp"
 #include "coop/host/game_memory.hpp"
 #include "coop/host/notify.hpp"
+#include "coop/host/map_drop_log.hpp"
+#include "coop/host/one_way_keeper.hpp"
 #include "coop/host/player_reader.hpp"
 #include "coop/host/scene.hpp"
 #include "coop/host/session.hpp"
@@ -218,6 +220,10 @@ std::string Hex(const std::array<u8, 0x20>& id, std::size_t bytes) {
 }
 
 // What OnFrame found, for the window.
+// minimap-b (defined below, near LocalFrameOff).
+void WatchMapDrops(EmulatorMemory& memory, bool in_play, const std::optional<std::string>& scene,
+                   const std::optional<std::array<float, 3>>& link);
+
 struct FrameView {
     Clock::time_point at{};
     bool game = false;               // Ocarina of the right build
@@ -563,6 +569,11 @@ public:
             session_->set_color(*color);
         }
         const auto report = session_->frame(reading, hold ? &*hold : nullptr);
+        if (memory) {  // minimap-b: the current dungeon's map or compass going 1 -> 0, logged with its context
+            WatchMapDrops(*memory, reading.has_value(),
+                          reading ? reading->scene : coop::host::PlayerReader(*memory).read_scene(),
+                          reading ? std::optional(reading->position) : std::nullopt);
+        }
         if (memory) {  // split screen: each extra local player is a player of the session (coop_local_net.h)
             CoopLocalNet::Online(
                 *memory, reading, report.connected, report.server_now_us,
@@ -599,6 +610,7 @@ public:
             LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene)",
                      report.save_load_flags, report.save_load_frames);
             CoopTime::SaveLoaded(report.server_now_us);  // issue 159
+            coop::host::map_drop_log().note("save load seen (" + std::to_string(report.save_load_flags) + " flags back)");
         }
         // deku-dungeon-2 (DUNGEON_EVENT, issues 176 and 196): a gimmick event
         // our game starts goes out at once, and another player's start is
@@ -2145,6 +2157,48 @@ void Start() {
     }
 }
 
+namespace {
+
+// minimap-b. Set when a session ran: the solo keeper forgets its baseline (the session's writes are not the game's).
+std::atomic<bool> g_keeper_reset{false};
+
+// A guard, not a fix (the cause is not found yet): with no session, a map or compass the game gave in this save is
+// written back if the game takes it back while Link is in that dungeon (coop/host/one_way_keeper.hpp). In a session
+// the flag watcher does it (issue 146). Through the game's own Bool setter (GameFlagStore). LICHII_COOP_KEEP_MAPS=0
+// turns it off.
+void KeepMapsAlone(EmulatorMemory& memory, bool in_play, const std::optional<std::string>& scene) {
+    static const bool on = EnvString("LICHII_COOP_KEEP_MAPS") != "0";
+    static coop::host::OneWayKeeper keeper = [] {
+        coop::host::OneWayKeeper k;
+        k.set_clock([] { return CoopEvery::NowUs(); });
+        return k;
+    }();
+    if (!on) return;
+    if (g_keeper_reset.exchange(false)) keeper.reset();
+    coop::host::GameFlagStore flags(memory);
+    const coop::host::MapDropBecause because("the solo keeper (minimap-b)");
+    const auto restored = keeper.frame(flags, in_play, scene ? std::optional<std::string_view>(*scene) : std::nullopt);
+    if (keeper.take_save_load()) coop::host::map_drop_log().note("save load (no scene for a while: the title)");
+    for (const auto key : restored) {
+        const auto* item = coop::host::find_item(key.hash);
+        LOG_INFO(Core, "coop: items: {} went back to 0 with no session: written back (minimap-b guard; restores {})",
+                 item != nullptr ? item->name : std::string_view("?"), keeper.stats().restores);
+    }
+}
+
+// minimap-b diagnostics: one line whenever any dungeon's map or compass goes from 1 to 0, with what happened
+// in the seconds before (coop/host/map_drop_log.hpp). In a session and alone.
+void WatchMapDrops(EmulatorMemory& memory, bool in_play, const std::optional<std::string>& scene,
+                   const std::optional<std::array<float, 3>>& link) {
+    coop::host::GameFlagStore flags(memory);
+    for (const auto& line : coop::host::map_drop_log().frame(
+             flags, scene ? std::optional<std::string_view>(*scene) : std::nullopt, in_play, link)) {
+        LOG_WARNING(Core, "{}", line);
+    }
+}
+
+}  // namespace
+
 // Split screen needs no session (docs/local-coop.md): with co-op off, the first Link is read here for local co-op's
 // frame step, as Coop::Read does while it is on. Only Ocarina of Time on a build the table knows. What is read and
 // when the Director is published: CoopLocalGame::OffFrame (tested).
@@ -2176,6 +2230,11 @@ void LocalFrameOff(Core::System& system) {
         facts = {position.has_value(), position, position && reader.read_age() == coop::protocol::Age::adult};
     }
     CoopLocalGame::Frame(facts);
+    {
+        const auto scene = full ? full->scene : reader.read_scene();
+        WatchMapDrops(memory, facts.position.has_value(), scene, facts.position);
+        KeepMapsAlone(memory, facts.position.has_value(), scene);
+    }
     if (!step.Publish(CoopLocalGame::HasSeats())) return;
     if (!full) full = reader.read();   // seats came in this frame's step
     // The extra local players' Players are made (and deleted) by the puppet Director, as online (no remote players).
@@ -2195,6 +2254,14 @@ void OnFrame(Core::System& system) {
     // one alive until Shutdown) and Shutdown (after
     // emulation has stopped), so it stays valid for this frame.
     auto* coop = Get();
+    {   // minimap-b: a session started or ended (the drop log's line; the solo keeper's baseline is dropped)
+        static bool had = false;
+        if ((coop != nullptr) != had) {
+            had = coop != nullptr;
+            coop::host::map_drop_log().note(had ? "co-op session started" : "co-op session ended");
+            g_keeper_reset.store(true);
+        }
+    }
     // The game's main may be patched (or refused for a code mod) after co-op
     // started: then co-op disconnects and stays off (issue 136). The
     // Coop object stays until Shutdown: the overlay may hold it.

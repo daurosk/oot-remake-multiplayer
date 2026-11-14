@@ -56,6 +56,13 @@ const ItemFlag* find_item(std::uint32_t hash);
 // `with_off`, also the shared ones not on yet (for tests and trials).
 SharedFlags item_shared_flags(bool with_off = false);
 
+// A dungeon's map or compass (DungeonInfo.<dungeon>.IsGetMap, .IsGetCompass;
+// issue 146): a Bool the game never takes back once got. Only entries that
+// are on.
+bool is_one_way_item(FlagKey key);
+// Every such flag, sorted by hash.
+std::vector<FlagKey> one_way_item_flags();
+
 // What the game should hold after `incoming` arrives for a flag of `rule`
 // and `kind` when it holds `local`. Values are raw FlagEntry bits. `base` is,
 // for count, the value the sender's change started from (its change is

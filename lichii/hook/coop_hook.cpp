@@ -43,6 +43,7 @@
 #include "coop/host/game_items.hpp"
 #include "coop/host/game_memory.hpp"
 #include "coop/host/notify.hpp"
+#include "coop/host/one_way_keeper.hpp"
 #include "coop/host/player_reader.hpp"
 #include "coop/host/scene.hpp"
 #include "coop/host/session.hpp"
@@ -2145,6 +2146,26 @@ void Start() {
     }
 }
 
+// With no session, a dungeon's map and compass once got stay got (coop/host/one_way_keeper.hpp, minimap-b): in a
+// session the flag watcher does it (issue 146). Through the game's own Bool setter (GameFlagStore).
+// LICHII_COOP_KEEP_MAPS=0 turns it off.
+void KeepMapsAlone(EmulatorMemory& memory, coop::host::PlayerReader& reader, bool in_play) {
+    static const bool on = EnvString("LICHII_COOP_KEEP_MAPS") != "0";
+    static coop::host::OneWayKeeper keeper = [] {
+        coop::host::OneWayKeeper k;
+        k.set_clock([] { return CoopEvery::NowUs(); });
+        return k;
+    }();
+    if (!on) return;
+    coop::host::GameFlagStore flags(memory);
+    const bool scene = in_play || reader.read_scene().has_value();
+    for (const auto key : keeper.frame(flags, in_play, scene)) {
+        const auto* item = coop::host::find_item(key.hash);
+        LOG_INFO(Core, "coop: items: {} went back to 0 with no session: written back (minimap-b; restores {})",
+                 item != nullptr ? item->name : std::string_view("?"), keeper.stats().restores);
+    }
+}
+
 // Split screen needs no session (docs/local-coop.md): with co-op off, the first Link is read here for local co-op's
 // frame step, as Coop::Read does while it is on. Only Ocarina of Time on a build the table knows. What is read and
 // when the Director is published: CoopLocalGame::OffFrame (tested).
@@ -2176,6 +2197,7 @@ void LocalFrameOff(Core::System& system) {
         facts = {position.has_value(), position, position && reader.read_age() == coop::protocol::Age::adult};
     }
     CoopLocalGame::Frame(facts);
+    KeepMapsAlone(memory, reader, facts.position.has_value());
     if (!step.Publish(CoopLocalGame::HasSeats())) return;
     if (!full) full = reader.read();   // seats came in this frame's step
     // The extra local players' Players are made (and deleted) by the puppet Director, as online (no remote players).

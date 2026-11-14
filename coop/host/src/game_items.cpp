@@ -720,13 +720,28 @@ std::size_t ItemFlagStore::mend() {
   return static_cast<std::size_t>(stats_.granted - before);
 }
 
-bool ItemFlagStore::is_one_way(FlagKey key) {
+namespace {
+bool one_way_entry(const ItemFlag& item) {
+  return item.on && item.kind == protocol::FlagKind::boolean && item.name.starts_with("DungeonInfo.") &&
+         (item.name.ends_with(".IsGetMap") || item.name.ends_with(".IsGetCompass"));
+}
+}  // namespace
+
+bool is_one_way_item(FlagKey key) {
   if (key.kind != protocol::FlagKeyKind::named || key.index != 0) return false;
   const ItemFlag* item = find_item(key.hash);
-  return item != nullptr && item->on && item->kind == protocol::FlagKind::boolean &&
-         item->name.starts_with("DungeonInfo.") &&
-         (item->name.ends_with(".IsGetMap") || item->name.ends_with(".IsGetCompass"));
+  return item != nullptr && one_way_entry(*item);
 }
+
+std::vector<FlagKey> one_way_item_flags() {
+  std::vector<FlagKey> keys;
+  for (const ItemFlag& item : item_flags()) {
+    if (one_way_entry(item)) keys.push_back(FlagKey{item.hash, 0});
+  }
+  return keys;
+}
+
+bool ItemFlagStore::is_one_way(FlagKey key) { return is_one_way_item(key); }
 
 bool ItemFlagStore::write_exact(const protocol::FlagEntry& entry) {
   if (entry.kind == protocol::FlagKind::count_delta) return write(entry);  // a change, never exact

@@ -1,0 +1,61 @@
+# hs-minimap (Hookshot, minimap-b): the Deku Tree's map on the minimap stays after the panel's Map page, the
+# pause menu and a new load of the room. The kit saves are past the Deku Tree (its map got). B only idles.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-minimap -Lane 1
+# Pass: every shot from "mini-in" on shows the dungeon's map in the minimap (bottom right) as in "mini-in" (the
+#   room bright, not a dark shape); A's log has no "bool 0x9a4dd779" (MapIconDeactivateByAreaActor) change to 1 and
+#   no change of 0x89787395 (DungeonInfo.InsideTheDekuTree.IsGetMap) to 0 that is not written back.
+# Research runs 2026-11-14 (existing build): PASS, also with plain Longshot (no module). The minimap reads the map
+#   again only when the Map page opens or a room loads (docs/dungeon.md, "The map and compass stay got").
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark mini-in
+press MINUS
+wait 120
+mark panel
+press R
+wait 90
+mark panel-r1
+press R
+wait 90
+mark panel-r2
+press L
+wait 90
+mark panel-l1
+press B
+wait 180
+mark panel-closed
+wait 240
+mark mini-after-panel
+press PLUS
+wait 180
+mark pause
+press R
+wait 90
+press R
+wait 90
+mark pause-r2
+press PLUS
+wait 240
+mark mini-after-pause
+stick 0 1 90
+wait 300
+mark mini-walked
+warp InsideTheDekuTree Entrance
+wait 900
+mark mini-rewarp
+wait 600
+mark late

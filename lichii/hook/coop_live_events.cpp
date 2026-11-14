@@ -3,7 +3,10 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
+
+#include "coop_fairy.h"
 
 namespace CoopLiveEvents {
 
@@ -289,6 +292,78 @@ void Requester::Want(std::string name, std::string scene, std::uint64_t at_us, s
     }
 }
 
+void Requester::WantFromRoom(std::string name, std::string scene) {
+    const std::string key = name;
+    Want(std::move(name), std::move(scene));  // no age limit: started when near, as before
+    for (Wanted& w : wanted_) {
+        if (w.name == key) {
+            w.room_asker = true;
+        }
+    }
+}
+
+std::uint64_t NearestActor(CoopPuppet::Guest& guest, std::uint64_t main, std::span<const std::string_view> names,
+                           const std::array<float, 3>& at, float max_m) {
+    namespace fa = CoopFairy::addr;
+    const auto read = [&](std::uint64_t a, auto& out) { return a != 0 && guest.Read(a, &out, sizeof out); };
+    std::uint64_t manager = 0, lists = 0, node = 0;
+    if (main == 0 || !read(main + fa::kManagerPtr, manager) || !read(manager + fa::kLists, lists) || lists == 0) {
+        return 0;
+    }
+    const std::uint64_t head = lists + fa::kListHead;
+    if (!read(head, node)) {
+        return 0;
+    }
+    std::uint64_t best = 0;
+    float best_d2 = max_m * max_m;
+    for (std::size_t walked = 0; node != 0 && node != head && walked < fa::kMaxWalk; ++walked) {
+        std::uint64_t owner = 0, text = 0;
+        std::uint32_t state = 0;
+        if (read(node + fa::kNodeOwner, owner) && owner != 0 && owner + fa::kActorNode == node &&
+            read(owner + fa::kActorState, state) && state == fa::kStatePresent &&
+            read(owner + fa::kActorName, text)) {
+            // Each name read at its own length and its 0 (as CoopFairy's NameIs): never past the actor's string.
+            const bool named = std::any_of(names.begin(), names.end(), [&](std::string_view n) {
+                char buf[64] = {};
+                return n.size() < sizeof buf && guest.Read(text, buf, n.size() + 1) &&
+                       std::string_view(buf, n.size()) == n && buf[n.size()] == 0;
+            });
+            {
+                std::array<float, 3> p{};
+                if (named && guest.Read(owner + kActorPosition, p.data(), sizeof p)) {
+                    const float dx = p[0] - at[0], dy = p[1] - at[1], dz = p[2] - at[2];
+                    const float d2 = dx * dx + dy * dy + dz * dz;
+                    if (d2 <= best_d2) {
+                        best_d2 = d2;
+                        best = owner;
+                    }
+                }
+            }
+        }
+        if (!read(node, node)) {
+            return best;
+        }
+    }
+    return best;
+}
+
+std::uint64_t Requester::FindAsker(CoopPuppet::Guest& guest, std::uint64_t main, const std::string& name,
+                                   const std::string& scene, std::string& where) {
+    for (const Place& p : Places()) {
+        if (p.event != name || (!scene.empty() && p.scene != scene)) {
+            continue;
+        }
+        const std::array<float, 3> at{p.x, p.y, p.z};
+        if (const std::uint64_t actor = NearestActor(guest, main, kAskerNames, at, kAskerNearM); actor != 0) {
+            char text[64];
+            std::snprintf(text, sizeof text, "%.1f %.1f %.1f", p.x, p.y, p.z);
+            where = text;
+            return actor;
+        }
+    }
+    return 0;
+}
+
 void Requester::WantWith(std::string name, std::vector<Arg> args, std::uint64_t starter) {
     const std::size_t before = wanted_.size();
     Want(name);
@@ -486,6 +561,15 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
         current_ = std::move(wanted_.front().name);
         current_args_ = std::move(wanted_.front().args);
         current_starter_ = wanted_.front().starter;
+        if (wanted_.front().room_asker && current_starter_ == 0) {
+            std::string where;
+            current_starter_ = FindAsker(guest, main, current_, wanted_.front().scene, where);
+            notes_.push_back(current_starter_ != 0
+                                 ? "live event " + current_ + ": started by our room's asker at " + where +
+                                       " (its EventBool moves the room)"
+                                 : "live event " + current_ + ": no asker actor within 1 m of its places here; "
+                                       "asked by name alone (its room may not move)");
+        }
         wanted_.pop_front();
     }
     c.function = main + addr::kArgBuild;

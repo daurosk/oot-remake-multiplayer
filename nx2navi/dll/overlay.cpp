@@ -931,6 +931,19 @@ int AskGame() {
     if (get == nullptr) {
         return 0;
     }
+    // A game that was told to load this library itself (NX2NAVI_MOD_DLLS, which the launcher
+    // sets beside putting the library into the process) calls nx2navi_plugin_init once its
+    // function table is built. The export answers earlier than that, and an interface taken
+    // then finds none of the game's functions: the runtime refused the title entry for the
+    // whole run ("a function does not start where the table says"). So the export is left
+    // alone for the game's first 20 seconds; after them it is the fallback it always was.
+    static const ULONGLONG loaded_at = GetTickCount64();
+    wchar_t listed[2] = {};
+    if (GetEnvironmentVariableW(L"NX2NAVI_MOD_DLLS", listed, 2) != 0 || GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
+        if (GetTickCount64() - loaded_at < 20000) {
+            return 1;
+        }
+    }
     // Version 2 (function hooks, fast memory) when the game serves it, else 1:
     // everything of 2 is used only where NX2_HAS finds it.
     const Nx2PluginApi* api = get(NX2_PLUGIN_API_VERSION);

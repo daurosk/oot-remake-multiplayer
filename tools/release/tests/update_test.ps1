@@ -395,6 +395,20 @@ try {
     Check (-not (Test-Path "$kit\backup-v0.1.0-beta2\emulator\user\cache\shader")) 'and not left in the backup'
     Test-PlayerKept $kit 'rolled back after a write'
 
+    # A file held for a moment (an antivirus scanning the exe it just saw written): the write is tried again and the
+    # update goes through (this flaked launch_test's update checks on a PC's first run).
+    $kit = Join-Path $tmp 'kit8b'; New-OldKit $kit
+    $held = Join-Path $tmp 'kit8b-held.txt'
+    $holder = Start-Process -FilePath $ps -WindowStyle Hidden -PassThru -ArgumentList @('-NoProfile', '-Command',
+        "`$f = [System.IO.File]::Open('$kit\emulator\lichii.exe', 'Open', 'Read', 'Read'); [System.IO.File]::WriteAllText('$held', 'x'); Start-Sleep -Milliseconds 1500; `$f.Dispose()")
+    $until = (Get-Date).AddSeconds(30)
+    while (-not (Test-Path -LiteralPath $held) -and (Get-Date) -lt $until) { Start-Sleep -Milliseconds 50 }
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $kit -Yes -Api $good 2>&1
+    $code = $LASTEXITCODE
+    $holder.WaitForExit(30000) | Out-Null
+    Check ((Test-Path -LiteralPath $held) -and $code -eq 0 -and (Get-KitVersion $kit) -eq 'v0.1.0-beta3') "a file held for a moment: tried again, the update goes through [$(($out | Select-Object -Last 2) -join ' ')]"
+    Check ((Read-File "$kit\emulator\lichii.exe") -ne 'old exe') 'and the held exe is the new one'
+
     # Same emulator (an update that keeps lichii.exe): the shader cache stays.
     $kit = Join-Path $tmp 'kit9'; New-OldKit $kit
     Copy-Item -LiteralPath "$newKit\emulator\lichii.exe" -Destination "$kit\emulator\lichii.exe" -Force

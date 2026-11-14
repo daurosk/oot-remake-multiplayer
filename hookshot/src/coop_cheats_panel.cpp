@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cctype>
 
+#include "coop_i18n.h"
+
 namespace CoopCheatsPanel {
 namespace {
 
@@ -17,13 +19,14 @@ std::string Lower(std::string s) {
 }  // namespace
 
 const std::vector<Row>& QuickRows() {
+    // (the labels in the player's language; the flags are the game's, and never translated)
     static const std::vector<Row> rows{
-        {"Gold Skulltula token (+1)", "PouchData.Item_Token_Gold.StockNum"},
-        {"Heart piece (+1, count only, no heart shown)", "PouchData.Obj_Heart_Piece.StockNum"},
-        {"Heart container (+1 heart)", "PlayerStatus.MaxLife"},
-        {"Small key, Forest Temple (+1)", "DungeonInfo.ForestTemple.SmallKeyNum"},
-        {"Hookshot", "PouchData.Item_Hookshot.StockNum"},
-        {"Song of Storms", "IsGet.Item_Melody_StormSong"},
+        {CoopI18n::Tr("Gold Skulltula token (+1)"), "PouchData.Item_Token_Gold.StockNum"},
+        {CoopI18n::Tr("Heart piece (+1, count only, no heart shown)"), "PouchData.Obj_Heart_Piece.StockNum"},
+        {CoopI18n::Tr("Heart container (+1 heart)"), "PlayerStatus.MaxLife"},
+        {CoopI18n::Tr("Small key, Forest Temple (+1)"), "DungeonInfo.ForestTemple.SmallKeyNum"},
+        {CoopI18n::Tr("Hookshot"), "PouchData.Item_Hookshot.StockNum"},
+        {CoopI18n::Tr("Song of Storms"), "IsGet.Item_Melody_StormSong"},
     };
     return rows;
 }

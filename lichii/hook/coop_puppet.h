@@ -22,6 +22,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -195,10 +196,24 @@ inline constexpr std::array<std::uint32_t, kGearCount> kGearKinds{0, 6, 7, 8, 9,
 inline constexpr std::array<const char*, kGearCount> kGearNames{
     "weapon", "shield",     "head",         "armor", "boots",   "held",
     "hand",   "sub weapon", "third weapon", "tool",  "sub tool", "ocarina holder", "ocarina"};
+// The child's Goron's Bracelet comes as `hand` too (PlayerReader reads it
+// from the player's own EquipmentUser), but the game wears it as an
+// accessory, not as hand armor: its pack has an AccessoryParam (the adult
+// gauntlets an ArmorParam), and the GameData equip path 0x2df6c80 wears
+// `Armor_Child_Gauntlet_Goron` with kind 14 (Accessory2, which
+// Player_Child's EquipmentUserParam binds to the bone Ph_Bangle). Worn with
+// kind 10 it would go to the hand armor link, not where the player has it.
+inline constexpr std::uint32_t kBraceletKind = 14;  // Accessory2
+inline constexpr std::string_view kBraceletPrefix = "Armor_Child_Gauntlet_";
+// The kind piece `i` named `name` is worn with.
+constexpr std::uint32_t GearKind(std::size_t i, std::string_view name) {
+    return i == kGearHand && name.starts_with(kBraceletPrefix) ? kBraceletKind : kGearKinds[i];
+}
 // Armor (mask, tunic, boots, gauntlets): taken off with addr::kUnequipArmor.
-constexpr bool GearIsArmor(std::size_t i) {
-    return i < kGearCount && kGearKinds[i] >= addr::kArmorKindFirst &&
-           kGearKinds[i] <= addr::kArmorKindLast;
+// The bracelet is no armor: it is taken off as the belt pieces are.
+constexpr bool GearIsArmor(std::size_t i, std::string_view name) {
+    return i < kGearCount && GearKind(i, name) >= addr::kArmorKindFirst &&
+           GearKind(i, name) <= addr::kArmorKindLast;
 }
 // Pieces the game keeps elsewhere while they are put away (seen for the
 // slingshot: state 6), so the left-behind check looks at them only in hand.

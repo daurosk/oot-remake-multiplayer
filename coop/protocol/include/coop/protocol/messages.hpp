@@ -643,7 +643,7 @@ struct Equipment {
   std::optional<std::string> armor;    // tunic
   std::optional<std::string> boots;
   std::optional<std::string> head;     // mask (child), or head armor
-  std::optional<std::string> hand;     // gauntlets
+  std::optional<std::string> hand;     // gauntlets, or the child's bracelet
   std::optional<std::string> ocarina;
   std::optional<std::string> arrow;    // arrow kind for the bow
   // Bit i set: the game's equipment slot i is drawn (in hand), not sheathed.

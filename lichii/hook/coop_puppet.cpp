@@ -966,7 +966,7 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
             if (now_ms - slot.off_since_ms[i] < kTakeOffMs) {
                 continue;
             }
-            if (GearIsArmor(i) && !slot.unequip_refused[i]) {
+            if (GearIsArmor(i, slot.worn[i]) && !slot.unequip_refused[i]) {
                 std::uint64_t parts = 0;
                 std::uint64_t eu = 0;
                 if (!ReadValue(guest, slot.actor + addr::kActorParts, parts) || parts == 0 ||
@@ -977,7 +977,7 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
                 Call c;
                 c.function = input_.main_base + addr::kUnequipArmor;
                 c.x[0] = eu;
-                c.x[1] = kGearKinds[i] - addr::kArmorKindFirst;
+                c.x[1] = GearKind(i, slot.worn[i]) - addr::kArmorKindFirst;
                 c.x[2] = 0;
                 pending_ = Pending::unequip;
                 return c;
@@ -1010,9 +1010,9 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
         Call c;
         c.function = input_.main_base + addr::kEquip;
         c.x[0] = eu;
-        c.x[1] = kGearKinds[i];
+        c.x[1] = GearKind(i, *want);
         c.x[2] = cell;
-        c.x[3] = EquipState(kGearKinds[i]);
+        c.x[3] = EquipState(GearKind(i, *want));
         c.x[4] = 0xFFFFFFFF;
         c.x[5] = 1;
         c.x[6] = 0;

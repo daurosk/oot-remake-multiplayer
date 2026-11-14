@@ -206,6 +206,13 @@ std::optional<protocol::Equipment> PlayerReader::read_equipment() {
   e.boots = flags.get_string64(addr::kEquipBoot);
   e.head = flags.get_string64(addr::kEquipHeadArmor);
   e.hand = flags.get_string64(addr::kEquipHandArmor);
+  // The child's Goron's Bracelet is no EquipHandArmor: the game wears it
+  // as an accessory (addresses.hpp, kArmorLinkBracelet). Sent as `hand`;
+  // the puppet wears a bracelet with the same accessory kind.
+  if (!e.hand || e.hand->empty()) {
+    const auto bracelet = read_armor_link_name(addr::kArmorLinkBracelet);
+    if (bracelet && bracelet->starts_with(addr::kBraceletPrefix)) e.hand = bracelet;
+  }
   e.ocarina = flags.get_string64(addr::kEquipOcarina);
   e.arrow = flags.get_string64(addr::kEquipArrow);
   e.drawn = read_drawn();
@@ -270,14 +277,22 @@ std::optional<std::uint8_t> PlayerReader::read_drawn() {
 
 std::optional<std::string> PlayerReader::read_slot_name(std::uint32_t slot_index) {
   if (slot_index >= addr::kEquipSlotCount) return std::nullopt;
+  return read_link_name(addr::kEquipSlots + addr::kEquipSlotStride * slot_index);
+}
+
+std::optional<std::string> PlayerReader::read_armor_link_name(std::uint32_t link_index) {
+  if (link_index >= addr::kArmorLinkCount) return std::nullopt;
+  return read_link_name(addr::kArmorLinks + addr::kEquipSlotStride * link_index);
+}
+
+std::optional<std::string> PlayerReader::read_link_name(std::uint64_t link_offset) {
   const auto actor = find_player_actor();
   if (!actor) return std::nullopt;
   const auto components = read_ptr(memory_, *actor + addr::kActorComponents);
   if (!components) return std::nullopt;
   const auto user = read_ptr(memory_, *components + addr::kComponentsEquipmentUser);
   if (!user) return std::nullopt;
-  const std::uint64_t slot =
-      *user + addr::kEquipSlots + addr::kEquipSlotStride * slot_index;
+  const std::uint64_t slot = *user + link_offset;
   const auto id = read_u32(memory_, slot + addr::kEquipSlotId);
   if (!id) return std::nullopt;
   if (*id == addr::kEmptyId) return std::string{};

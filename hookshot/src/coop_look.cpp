@@ -175,14 +175,18 @@ Choice g_choice;           // guarded
 Apply g_apply;             // guarded
 std::function<void()> g_unpaused;   // guarded
 bool g_to_apply = false;   // guarded: ApplyOnUnpause's, for the next Frame
+Apply g_preview;           // guarded
+bool g_to_preview = false;   // guarded: SetPending's, for the next Frame
 }  // namespace
 
-void Init(const Look& worn, Apply apply, std::function<void()> unpaused) {
+void Init(const Look& worn, Apply apply, std::function<void()> unpaused, Apply preview) {
     std::lock_guard lock(g_mutex);
     g_choice = Choice(worn);
     g_apply = std::move(apply);
     g_unpaused = std::move(unpaused);
+    g_preview = std::move(preview);
     g_to_apply = false;
+    g_to_preview = false;
 }
 
 Look Worn() {
@@ -198,6 +202,7 @@ Look Shown() {
 void SetPending(const Look& look) {
     std::lock_guard lock(g_mutex);
     g_choice.SetPending(look);
+    g_to_preview = true;
 }
 
 void ApplyOnUnpause() {
@@ -209,14 +214,25 @@ void Frame() {
     std::optional<Look> look;
     Apply apply;
     std::function<void()> unpaused;
+    std::optional<Look> preview;
+    Apply show;
     {
         std::lock_guard lock(g_mutex);
+        const bool previewing = std::exchange(g_to_preview, false);
         if (!std::exchange(g_to_apply, false)) {
-            return;
+            if (previewing && g_preview) {
+                preview = g_choice.Shown();
+                show = g_preview;
+            }
+        } else {
+            look = g_choice.Unpause();   // (worn now: a preview asked for too is not needed)
+            apply = g_apply;
+            unpaused = g_unpaused;
         }
-        look = g_choice.Unpause();
-        apply = g_apply;
-        unpaused = g_unpaused;
+    }
+    if (preview) {
+        show(*preview);   // outside the lock, as apply
+        return;
     }
     if (look && apply) {
         apply(*look);   // outside the lock: it may read and write files

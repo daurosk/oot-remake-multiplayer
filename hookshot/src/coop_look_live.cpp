@@ -19,6 +19,7 @@
 #include "common/logging.h"
 #include "coop_hook.h"
 #include "coop_look.h"
+#include "coop_look_view.h"
 #include "coop_look_parts.h"
 #include "coop_look_share.h"
 #include "coop_look_tunic.h"
@@ -208,11 +209,26 @@ void WearLook(const Look& look) {
     const auto& tunic = look[Part::tunic];
     CoopHook::SetColor(tunic);   // the others' puppet of you, and a session started later
     CoopLookShare::Set(Share(look));   // every part, for the others (PLAYER_LOOK)
-    Wear(TunicName(tunic), look);   // your own Link
+    PaintOwnLink(look);   // your own Link
     CoopTitle::SaveLook(look);   // the next start
 }
 
+// A look chosen with the menu still open (the Customize page's live picture):
+// your own Link only; the others and the settings get it on unpause.
+void PreviewLook(const Look& look) {
+    PaintOwnLink(look);
+}
+
 }  // namespace
+
+void PaintOwnLink(const Look& look) {
+    // NOT the game's own path yet: the gear's texels are written over on the heap (coop_look_paint, the wardrobes).
+    // customizer-native replaces the inside of this function with the game's material path; nothing else changes.
+    if (!g_wardrobe || !g_gear) {
+        return;   // (before StartModule or after StopModule)
+    }
+    Wear(TunicName(look[Part::tunic]), look);
+}
 
 void StartModule() {
     if (g_wardrobe) {
@@ -261,7 +277,7 @@ void StartModule() {
     for (const std::string& e : part_errors) {
         LOG_WARNING(Core, "coop: look: {}", e);
     }
-    Init(worn, WearLook, Unpaused);
+    Init(worn, WearLook, Unpaused, PreviewLook);
     g_stop = false;
     g_worker = std::thread(Work);
     LOG_INFO(Core, "coop: look: tunic {} (changed in the pause menu, worn on unpause)",
@@ -284,3 +300,68 @@ void StopModule() {
 }
 
 }  // namespace CoopLook
+
+// The Customize page's live picture (coop_look_view.h): the module's one orbit,
+// with your own Link from the co-op hook.
+namespace CoopLookView {
+
+namespace {
+
+std::mutex g_mutex;
+Orbit g_orbit;   // guarded
+
+std::uint64_t NowMs() {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          std::chrono::steady_clock::now().time_since_epoch())
+                                          .count());
+}
+
+// Link's top above his feet by age (the name tags' heights, coop_hook.cpp).
+constexpr float kHeightChild = 1.35f;
+constexpr float kHeightAdult = 1.9f;
+
+std::optional<Subject> OwnLink() {
+    thread_local CoopHook::MapView view;   // (keeps its room: no allocation once filled)
+    if (!CoopHook::CurrentMapView(view) || view.event) {
+        return std::nullopt;
+    }
+    return Subject{view.self, view.adult ? kHeightAdult : kHeightChild};
+}
+
+}  // namespace
+
+bool LinkShown() {
+    return OwnLink().has_value();
+}
+
+void Ask(const Window& window) {
+    std::lock_guard lock(g_mutex);
+    g_orbit.Ask(window, NowMs());
+}
+
+bool Camera(double eye[3], double target[3]) {
+    if (eye == nullptr || target == nullptr) {
+        return false;
+    }
+    const auto now = NowMs();
+    {
+        std::lock_guard lock(g_mutex);
+        if (!g_orbit.Asked(now)) {
+            g_orbit.Camera({}, {}, std::nullopt, now);   // (ends a turn)
+            return false;
+        }
+    }
+    const auto link = OwnLink();   // (outside the lock: the hook's own lock)
+    std::lock_guard lock(g_mutex);
+    const auto shot = g_orbit.Camera({eye[0], eye[1], eye[2]}, {target[0], target[1], target[2]}, link, now);
+    if (!shot) {
+        return false;
+    }
+    for (int i = 0; i < 3; ++i) {
+        eye[i] = shot->eye[i];
+        target[i] = shot->target[i];
+    }
+    return true;
+}
+
+}  // namespace CoopLookView

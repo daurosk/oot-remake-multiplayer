@@ -187,3 +187,17 @@ TEST_CASE("look items: a puppet wears its painted copy of the items the pack has
     CHECK(in.targets[2].gear[0] == std::string("Weapon_Sword_Kokiri"));
     CHECK(CoopPuppet::LookItemName("Armor_Adult_Zora", 1) == "Armor_Adult_Zora_Look1");
 }
+
+TEST_CASE("look share: a new room forgets the last room's looks, a reconnect keeps them") {
+    CoopLookShare::Share s;
+    CHECK_FALSE(s.OnEvent(Kind(EventKind::welcomed)));   // nothing to forget
+    CHECK(s.OnEvent(Look(2, {{11, 0xFF0000}})));
+    CHECK_FALSE(s.OnEvent(Kind(EventKind::reconnected)));
+    CHECK(s.Of(2));                                     // the same room: player 2 is still that player
+    CHECK(s.OnEvent(Kind(EventKind::welcomed)));         // another room: its player 2 is someone else
+    CHECK_FALSE(s.Of(2));
+    s.Set({{3, 0xE0C030}});
+    s.TakeSend();
+    s.OnEvent(Kind(EventKind::welcomed));
+    CHECK(s.TakeSend());                                // ours goes to the new room
+}

@@ -1,32 +1,48 @@
-From 9043adc781191a88c584e888775c5d040ccd1669 Mon Sep 17 00:00:00 2001
+From d63951958763062e56d8c69741b5a2d720beb892 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 16:33:05 -0900
-Subject: [PATCH] Co-op menu picture: a module tab may draw coloured shapes
- beside its page
+Subject: [PATCH] Co-op menu picture: a module tab may draw shapes, or show the
+ game through a window and frame its camera
 
 The optional export hos_coop_menu_picture (gpu/vk/hos_coop_menu_picture.h)
 hands Hookshot's menu a list of coloured convex shapes, drawn in a square
 over the top of the help column of a co-op module's tab, with the help box
-under it. The Multiplayer tab's Customize page draws a preview of Link in
-the colours chosen with it. A module without the export: no picture.
+under it. Version 2: the module may ask for the square `live`, a clear
+window onto the game behind the menu (no dim there, a thin frame); Hookshot
+tells it where the square is and the window's aspect.
+
+The optional export hos_coop_view (host/hos_coop_view.h), asked in
+hos_oot_free_view before the Debug tab's free camera, may replace the
+gameplay camera's eye and target for a frame; the view is rebuilt from them
+as the free camera's is.
+
+The Multiplayer tab's Customize page shows the player's own Link in the
+window, the camera turning around him, and a flat Link when there is none.
+A module without the exports: no picture, the game's camera.
 ---
- gpu/vk/hos_coop_menu_picture.h | 38 ++++++++++++++++++++++++++++++++++
- gpu/vk/vk_coop.cpp             | 12 +++++++++++
- gpu/vk/vk_coop.h               |  3 +++
- gpu/vk/vk_menu.cpp             | 26 +++++++++++++++++++++--
- 4 files changed, 77 insertions(+), 2 deletions(-)
+ gpu/vk/hos_coop_menu_picture.h | 44 ++++++++++++++++++++++++
+ gpu/vk/vk_coop.cpp             | 16 +++++++++
+ gpu/vk/vk_coop.h               |  4 +++
+ gpu/vk/vk_menu.cpp             | 61 ++++++++++++++++++++++++++++++++--
+ host/coop_bridge.c             |  8 +++++
+ host/hos_coop_view.h           | 18 ++++++++++
+ host/hos_main.c                | 28 ++++++++++++++++
+ 7 files changed, 176 insertions(+), 3 deletions(-)
  create mode 100644 gpu/vk/hos_coop_menu_picture.h
+ create mode 100644 host/hos_coop_view.h
 
 diff --git a/gpu/vk/hos_coop_menu_picture.h b/gpu/vk/hos_coop_menu_picture.h
 new file mode 100644
-index 0000000..4993ad2
+index 00000000..e1dad1c5
 --- /dev/null
 +++ b/gpu/vk/hos_coop_menu_picture.h
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,44 @@
 +/* SPDX-License-Identifier: GPL-3.0-or-later
 +   A picture beside a co-op module tab's page (oot-remake-multiplayer, docs/hookshot.md "The Multiplayer tab"; our patch
 +   0019): the module may hand Hookshot's menu coloured shapes, drawn in a square over the top of the help column with the
-+   help box under it. The Multiplayer tab's Customize page draws Link in the colours chosen with it.
++   help box under it, or ask for the square `live`: a clear window onto the game behind the menu (no dim there), the
++   shapes over it. The Multiplayer tab's Customize page shows the player's own Link there, the game's camera turning
++   around him (hos_coop_view.h), and draws a flat Link when there is none to show.
 +
 +   One optional export, hos_coop_menu_picture, asked right after hos_coop_menu_page on the same thread for the tab shown;
 +   the shapes belong to the module and hold until its next call on that thread (Hookshot draws them at once). A module
@@ -38,7 +54,7 @@ index 0000000..4993ad2
 +#define HOS_COOP_MENU_PICTURE_H
 +#include <stdint.h>
 +
-+#define HOS_COOP_MENU_PICTURE_VERSION 1
++#define HOS_COOP_MENU_PICTURE_VERSION 2
 +#define HOS_COOP_MENU_SHAPE_POINTS 8
 +#define HOS_COOP_MENU_MAX_SHAPES 256
 +
@@ -56,13 +72,17 @@ index 0000000..4993ad2
 +    uint32_t size;                    /* sizeof(HosCoopMenuPicture), set by Hookshot */
 +    int32_t shapes_n;                 /* at most HOS_COOP_MENU_MAX_SHAPES are drawn */
 +    const HosCoopMenuShape *shapes;
++    /* (version 2) */
++    int32_t live;                     /* the module: 1 = the square is a clear window onto the game (shapes may be 0) */
++    float window[4];                  /* Hookshot: the square in the window, x0 y0 x1 y1 as fractions of it (y down) */
++    float aspect;                     /* Hookshot: the window's width over its height */
 +} HosCoopMenuPicture;
 +
 +typedef int (*hos_coop_menu_picture_fn)(int tab, HosCoopMenuPicture *out);   /* 1: filled */
 +
 +#endif
 diff --git a/gpu/vk/vk_coop.cpp b/gpu/vk/vk_coop.cpp
-index 80bdc0d..8559697 100644
+index d0bc0ea1..9d638362 100644
 --- a/gpu/vk/vk_coop.cpp
 +++ b/gpu/vk/vk_coop.cpp
 @@ -167,6 +167,7 @@ std::atomic<hos_coop_menu_tab_name_fn> menu_tab_name_fn{nullptr};
@@ -81,23 +101,27 @@ index 80bdc0d..8559697 100644
      menu_tabs_fn.store(t, std::memory_order_release);
      logf("vk: co-op: the module's menu tabs found");
  }
-@@ -228,4 +230,14 @@ int menu_wanted() {
+@@ -228,4 +230,18 @@ int menu_wanted() {
      return w ? w() : HOS_COOP_MENU_WANT_NOTHING;
  }
  
-+bool menu_picture(int tab, HosCoopMenuPicture *out) {
++bool menu_picture(int tab, HosCoopMenuPicture *out, const float window[4], float aspect) {
 +    const auto p = menu_picture_fn.load(std::memory_order_acquire);
 +    if (!p || !out) return false;
 +    *out = HosCoopMenuPicture{};
 +    out->size = sizeof *out;
-+    if (!p(tab, out) || out->shapes_n <= 0 || !out->shapes) return false;
++    for (int i = 0; i < 4; i++) out->window[i] = window ? window[i] : 0.0f;
++    out->aspect = aspect;
++    if (!p(tab, out)) return false;
++    if (out->shapes_n <= 0 || !out->shapes) out->shapes_n = 0, out->shapes = nullptr;
 +    out->shapes_n = std::min(out->shapes_n, HOS_COOP_MENU_MAX_SHAPES);
-+    return true;
++    out->live = out->live ? 1 : 0;
++    return out->live || out->shapes_n > 0;
 +}
 +
  }  // namespace mkwvk::coop
 diff --git a/gpu/vk/vk_coop.h b/gpu/vk/vk_coop.h
-index bd3ff25..b821660 100644
+index 17c4cf0d..a3931bcb 100644
 --- a/gpu/vk/vk_coop.h
 +++ b/gpu/vk/vk_coop.h
 @@ -4,6 +4,7 @@
@@ -108,19 +132,51 @@ index bd3ff25..b821660 100644
  
  namespace mkwvk {
  struct Texture;
-@@ -30,5 +31,7 @@ bool menu_page(int tab, HosCoopMenuPage *out);
+@@ -30,5 +31,8 @@ bool menu_page(int tab, HosCoopMenuPage *out);
  bool menu_input(int tab, int event, int arg = 0, int arg2 = 0);
  /// What the module wants of the menu now: HOS_COOP_MENU_WANT_NOTHING, _CLOSE, or a tab to open on
  int menu_wanted();
-+/// (patch 0019) The picture beside the tab's page (hos_coop_menu_picture.h); false: none (an older module, or none now)
-+bool menu_picture(int tab, HosCoopMenuPicture *out);
++/// (patch 0019) The picture beside the tab's page (hos_coop_menu_picture.h), told where its square is (fractions of the
++/// window) and the window's aspect; false: none (an older module, or none now)
++bool menu_picture(int tab, HosCoopMenuPicture *out, const float window[4], float aspect);
  
  }  // namespace mkwvk::coop
 diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
-index 1a6e155..b80563d 100644
+index 7cc538be..a18dc8a3 100644
 --- a/gpu/vk/vk_menu.cpp
 +++ b/gpu/vk/vk_menu.cpp
-@@ -3064,8 +3064,30 @@ void draw_coop_page(ui::Ctx& c, float hh) {
+@@ -3040,6 +3040,30 @@ void row_value_cell(ui::Ctx& c, const Row& r, ImVec2 va, ImVec2 vb, bool selecte
+ /// own cells (an action's value cell, or the page arrow when it has none; a choice with its arrows; a toggle's Off and On
+ /// halves; a heading as Hookshot's; a note as one line of text), the help box beside it and the prompts the module names.
+ /// The hits are the module's row numbers, as Hookshot's own rows: coop_tick hands the cursor and the clicks on
++// (oot-remake-multiplayer, patch 0019) A live picture's clear window onto the game (hos_coop_menu_picture.h): draw_coop_page
++// leaves its square here, in the window's pixels, with the drawing's number and time; the next drawing's dim (draw_menu)
++// leaves it out, if that is the next drawing and it comes soon (not a menu opened again later). coop_win_w and coop_win_ox
++// (the window's width, the column's offset in it) are draw_menu's, for the fractions the module is told
++ImVec4 coop_clear{0, 0, 0, 0};
++unsigned coop_clear_at = 0, coop_drawing = 0;
++std::chrono::steady_clock::time_point coop_clear_when{};
++float coop_win_w = 0, coop_win_ox = 0;
++
++/// The game behind the menu, dimmed: all of it, or around last drawing's clear window
++void dim_game(ui::Ctx& c) {
++    const ImU32 dim = ui::rgba(8, 5, 2, ui::kDimAlpha);
++    const ImVec4 r = coop_clear;
++    const bool recent = std::chrono::steady_clock::now() - coop_clear_when < std::chrono::milliseconds(100);
++    if (coop_clear_at + 1 != coop_drawing || !recent || !(r.z > r.x && r.w > r.y)) {
++        c.d->AddRectFilled(ImVec2(0, 0), ImVec2(c.w, c.h), dim);
++        return;
++    }
++    c.d->AddRectFilled(ImVec2(0, 0), ImVec2(c.w, r.y), dim);
++    c.d->AddRectFilled(ImVec2(0, r.w), ImVec2(c.w, c.h), dim);
++    c.d->AddRectFilled(ImVec2(0, r.y), ImVec2(r.x, r.w), dim);
++    c.d->AddRectFilled(ImVec2(r.z, r.y), ImVec2(c.w, r.w), dim);
++}
++
+ void draw_coop_page(ui::Ctx& c, float hh) {
+     const float s = c.s;
+     float cx0, cx1, hx0, hx1;
+@@ -3064,8 +3088,37 @@ void draw_coop_page(ui::Ctx& c, float hh) {
          help_box(c, hx0, hx1, bottom + 8 * s, said(p.help_title), said(p.help), said(p.hint), said(p.gold), 0, false,
                   bottom + 8 * s, bar_top - 10 * s);
      } else {
@@ -130,11 +186,18 @@ index 1a6e155..b80563d 100644
 +        // column's top; the help box under it)
 +        float help_top = std::max(hh + 26 * s, c.h * 0.30f), help_min = hh + 18 * s;
 +        HosCoopMenuPicture pic{};
-+        if (coop::menu_picture(coop_tab, &pic)) {
-+            const float px0 = hx0 + 24 * s, px1 = hx1 - 24 * s, py0 = hh + 26 * s;
-+            const float side = std::max(0.0f, std::min(px1 - px0, (bar_top - py0) * 0.55f));
-+            const float ox = (px0 + px1 - side) * 0.5f;
-+            c.d->AddRectFilled(ImVec2(ox, py0), ImVec2(ox + side, py0 + side), ui::rgba(0, 0, 0, 110), 8 * s);
++        const float px0 = hx0 + 24 * s, px1 = hx1 - 24 * s, py0 = hh + 26 * s;
++        const float side = std::max(0.0f, std::min(px1 - px0, (bar_top - py0) * 0.55f));
++        const float ox = (px0 + px1 - side) * 0.5f, ww = std::max(1.0f, coop_win_w), wh = std::max(1.0f, c.h);
++        const float where[4] = {(ox + coop_win_ox) / ww, py0 / wh, (ox + side + coop_win_ox) / ww, (py0 + side) / wh};
++        if (coop::menu_picture(coop_tab, &pic, where, ww / wh)) {
++            if (pic.live) {   // (the game shows through: no dim there on the next drawing, a thin frame)
++                coop_clear = ImVec4(ox + coop_win_ox, py0, ox + side + coop_win_ox, py0 + side), coop_clear_at = coop_drawing;
++                coop_clear_when = std::chrono::steady_clock::now();
++                c.d->AddRect(ImVec2(ox, py0), ImVec2(ox + side, py0 + side), ui::rgba(255, 255, 255, 90), 8 * s, 0, 1.5f * s);
++            } else {
++                c.d->AddRectFilled(ImVec2(ox, py0), ImVec2(ox + side, py0 + side), ui::rgba(0, 0, 0, 110), 8 * s);
++            }
 +            for (int i = 0; i < pic.shapes_n; i++) {
 +                const HosCoopMenuShape& sh = pic.shapes[i];
 +                const int n = std::min<int>(sh.n, HOS_COOP_MENU_SHAPE_POINTS);
@@ -153,6 +216,130 @@ index 1a6e155..b80563d 100644
      }
      const float rh = 40 * s, pitch = 48 * s, top = hh + 24 * s, rx0 = cx0 + 44 * s, rx1 = cx1 - 44 * s,
                  split = rx0 + (rx1 - rx0) * 0.55f;
+@@ -3752,10 +3805,12 @@ float menu_ox = 0;   // (the menu's column's left edge in the window: more than
+ /// middle (a window of 16:9 or narrower: the whole of it). The pages draw from 0 as on 16:9; their vertices and clip
+ /// rectangles are moved over after, and menu_tick moves the mouse back by menu_ox before it tests the hits
+ void draw_menu(ui::Ctx& c) {
+-    if (!(tune_mode && page == 0)) c.d->AddRectFilled(ImVec2(0, 0), ImVec2(c.w, c.h), ui::rgba(8, 5, 2, ui::kDimAlpha));   // (the game behind, dimmed)
++    coop_drawing++;   // (patch 0019: a live picture's window, dim_game)
++    if (!(tune_mode && page == 0)) dim_game(c);   // (the game behind, dimmed)
+     ui::Ctx k = c;
+     k.w = std::min(c.w, std::floor(c.h * 16.0f / 9.0f + 0.5f));
+     menu_ox = std::floor((c.w - k.w) * 0.5f);
++    coop_win_w = c.w, coop_win_ox = menu_ox;
+     const int vtx0 = c.d->VtxBuffer.Size, cmd0 = c.d->CmdBuffer.Size;
+     hits.clear(0, 0, k.w, k.h);
+     if (page == 5) draw_ask(k);
+diff --git a/host/coop_bridge.c b/host/coop_bridge.c
+index edae1a3d..6bf35e14 100644
+--- a/host/coop_bridge.c
++++ b/host/coop_bridge.c
+@@ -7,6 +7,7 @@
+    module (no file, refused, or co-op off in its settings) every hook returns at once. */
+ #include "hos.h"
+ #include "hos_coop_api.h"
++#include "hos_coop_view.h"   /* (oot-remake-multiplayer, patch 0019) */
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -83,6 +84,7 @@ static hos_coop_keys_taken_fn coop_keys_taken;
+ static hos_coop_mouse_fn coop_mouse;   /* (optional: the cheats panel's clicks, display.c) */
+ static hos_coop_pad_fn coop_pad;       /* (optional: the title menu, nn_hid.c and nx2/coop_title_hooks.py below) */
+ static hos_coop_title_fn coop_title;
++static hos_coop_view_fn coop_view;     /* (optional, patch 0019: the camera, hos_main.c hos_oot_free_view) */
+ /* Bytes for the next call's pointers: in the game's stack between the call's stack words (bridge_call's sp + 32) and the
+    hook's own sp, which the called function does not touch (it only writes below its sp): [sp - 0x1c0, sp - 0xc0). x8,
+    where a function puts a result it returns in memory, is [sp - 0xb0, sp - 0x30) (bridge_call). */
+@@ -159,6 +161,7 @@ static void load(void) {
+     coop_mouse = (hos_coop_mouse_fn)(void *)GetProcAddress(m, "hos_coop_mouse");
+     coop_pad = (hos_coop_pad_fn)(void *)GetProcAddress(m, "hos_coop_pad");
+     coop_title = (hos_coop_title_fn)(void *)GetProcAddress(m, "hos_coop_title");
++    coop_view = (hos_coop_view_fn)(void *)GetProcAddress(m, "hos_coop_view");
+     if (!start || !coop_frame || !coop_hold || !coop_stop) {
+         hos_log("coop: %s lacks an export: co-op off", path);
+         __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
+@@ -209,6 +212,11 @@ void hos_coop_title(Ctx *c, uint64_t screen, int event) {
+     if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_title) coop_title(c, screen, event);
+ }
+ 
++/* hos_main.c hos_oot_free_view: the gameplay camera for the module first (hos_coop_view.h); 1 = eye and target replaced */
++int hos_coop_view_filter(double eye[3], double target[3]) {
++    return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_view ? coop_view(eye, target) : 0;
++}
++
+ /* nvn_native.c nvnQueuePresentTexture: every present, once the module is loaded (it loads at a frame hook). */
+ void hos_coop_present(void) {
+     if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2) coop_frame(NULL, HOS_COOP_SITE_PRESENT);
+diff --git a/host/hos_coop_view.h b/host/hos_coop_view.h
+new file mode 100644
+index 00000000..2e7b586d
+--- /dev/null
++++ b/host/hos_coop_view.h
+@@ -0,0 +1,18 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later
++   The co-op module may frame the game's camera (oot-remake-multiplayer, docs/hookshot.md "The Multiplayer tab"; our
++   patch 0019): the Multiplayer tab's Customize page turns the gameplay camera slowly around the player's own Link, shown
++   through a clear window in the menu (hos_coop_menu_picture.h, `live`).
++
++   One optional export, hos_coop_view, asked by hos_oot_free_view (host/hos_main.c) on the game's thread each time the
++   game builds its gameplay view, before the Debug tab's free camera. It gets the game's own eye and target (metres, the
++   world's axes, y up) and may replace them: 1 = the camera looks from `eye` at `target` this frame (the game's own
++   matrix is rebuilt from them, as the free camera's is), 0 = the game's camera as it is. A module without it: the game's
++   camera always. Generic: any module may frame the camera, with no further Hookshot build.
++   The same file is in Hookshot's host/ through our patch and in our repository (hookshot/src): keep them equal
++   (tests/hookshot/module_test.cpp checks it). Plain C. */
++#ifndef HOS_COOP_VIEW_H
++#define HOS_COOP_VIEW_H
++
++typedef int (*hos_coop_view_fn)(double eye[3], double target[3]);   /* 1: replaced */
++
++#endif
+diff --git a/host/hos_main.c b/host/hos_main.c
+index a78c1905..1737168e 100644
+--- a/host/hos_main.c
++++ b/host/hos_main.c
+@@ -1619,6 +1619,33 @@ static void oot_build_free_view(Ctx *c, uint64_t view, uint64_t out) {
+         }
+     }
+ }
++
++/* (oot-remake-multiplayer, patch 0019) The co-op module's camera (hos_coop_view.h): it gets the game's eye and target and
++   may give others; then the gameplay view is built from them as the free camera builds its own (right, up, back rows, the
++   eye's offset in the fourth column). 1: the module framed it */
++static int oot_coop_view(Ctx *c, uint64_t view) {
++    int hos_coop_view_filter(double eye[3], double target[3]);
++    double eye[3], target[3];
++    memcpy(eye, A64_PTR(view + 96), sizeof eye);
++    memcpy(target, A64_PTR(view + 120), sizeof target);
++    if (!hos_coop_view_filter(eye, target)) return 0;
++    const double x = eye[0] - target[0], y = eye[1] - target[1], z = eye[2] - target[2];
++    if (!(hypot(x, z) > 1e-6) || !isfinite(x + y + z)) return 0;   /* (straight down, or not a number: the game's own) */
++    const double yaw = atan2(x, z), pitch = atan2(y, hypot(x, z));
++    const double sy = sin(yaw), cy = cos(yaw), sp = sin(pitch), cp = cos(pitch);
++    const double axes[3][3] = {{cy, 0, -sy}, {-sp * sy, cp, -sp * cy}, {cp * sy, sp, cp * cy}};
++    for (int row = 0; row < 3; row++) {
++        const double *axis = axes[row];
++        const float values[4] = {(float)axis[0], (float)axis[1], (float)axis[2],
++            (float)-(axis[0] * eye[0] + axis[1] * eye[1] + axis[2] * eye[2])};
++        for (int col = 0; col < 4; col++) {
++            uint32_t bits;
++            memcpy(&bits, &values[col], sizeof bits);
++            recomp_store32(c, view + 8 + (row * 4 + col) * 4, bits);
++        }
++    }
++    return 1;
++}
+ #endif
+ 
+ void hos_oot_free_view(Ctx *c, uint64_t view) {
+@@ -1628,6 +1655,7 @@ void hos_oot_free_view(Ctx *c, uint64_t view) {
+ 
+     // Camera zero supplies the gameplay view. The same matrix routine also serves other cameras.
+     if (oot_gameplay_view(c) != view) return;
++    if (oot_coop_view(c, view)) return;   /* (oot-remake-multiplayer, patch 0019: the co-op module's camera first) */
+ 
+     static SRWLOCK lock = SRWLOCK_INIT;
+     AcquireSRWLockExclusive(&lock);
 -- 
 2.56.0.windows.4
 

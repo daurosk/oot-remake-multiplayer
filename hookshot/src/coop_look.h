@@ -131,14 +131,19 @@ using Apply = std::function<void(const Look&)>;
 // coop-options.ini's or coop.ini's `color`) and what applying one does.
 // The worn look is not applied again: the game started in it.
 // `unpaused`: called on the frame after any unpause with the look unchanged.
-void Init(const Look& worn, Apply apply, std::function<void()> unpaused = {});
+// `preview`: called on the frame after a look is chosen (SetPending), with
+// it, while the menu is still open: your own Link wears it at once, for the
+// Customize page's live picture (nothing saved or sent: `apply` does that on
+// unpause).
+void Init(const Look& worn, Apply apply, std::function<void()> unpaused = {}, Apply preview = {});
 Look Worn();
 Look Shown();
 void SetPending(const Look& look);
 // The pause screen closed. The look is applied on the game's next frame.
 void ApplyOnUnpause();
 // hos_coop_frame's every-frame site: applies a look ApplyOnUnpause asked
-// for (Init's `apply`).
+// for (Init's `apply`), else shows one chosen since the last frame (Init's
+// `preview`).
 void Frame();
 
 
@@ -147,5 +152,12 @@ void Frame();
 // that keeps your own Link's tunic in the worn colour; Stop ends it.
 void StartModule();
 void StopModule();
+
+// The one way your own Link's parts get their colours (coop_look_live.cpp):
+// unpause (Init's `apply`) and the Customize page's live picture (`preview`)
+// both come through here, so its inside can change without the menu or the
+// picture. Any thread. Today a texel write over the gear's textures on the
+// heap, not the game's own path (to be replaced: customizer-native).
+void PaintOwnLink(const Look& look);
 
 }  // namespace CoopLook

@@ -92,6 +92,7 @@ struct MapPlayer {
 struct MapView {
     std::string scene;
     std::array<float, 3> self{};
+    bool adult = false;  // our Link's age (the Customize page's camera, coop_look_view.h)
     bool event = false;
     std::vector<MapPlayer> others;
 };

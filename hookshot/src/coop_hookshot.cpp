@@ -60,6 +60,7 @@
 #include "coop_objects_sync.h"
 #include "coop_input.h"
 #include "coop_look.h"
+#include "coop_look_view.h"
 #include "coop_local_game.h"
 #include "coop_local_layer.h"
 #include "coop_local_probe.h"
@@ -82,6 +83,7 @@
 #include "hos_coop_sound.h"
 #include "hos_coop_host.h"
 #include "hos_coop_world.h"
+#include "hos_coop_view.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -1507,6 +1509,10 @@ COOP_HOOKSHOT_EXPORT int hos_coop_menu_wanted(void) {
 // The picture beside the tab's page (hos_coop_menu_picture.h, patch 0019): the Customize page's Link.
 COOP_HOOKSHOT_EXPORT int hos_coop_menu_picture(int tab, HosCoopMenuPicture* out) {
     return g_on && CoopPause::Picture(tab, out) ? 1 : 0;
+}
+// The gameplay camera (hos_coop_view.h, patch 0019): around your own Link while the Customize page shows him.
+COOP_HOOKSHOT_EXPORT int hos_coop_view(double eye[3], double target[3]) {
+    return g_on && CoopLookView::Camera(eye, target) ? 1 : 0;
 }
 COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) {
     if (!g_on || stick == nullptr) {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // CoopClipboard (hookshot/src/coop_clipboard_posix.h), the module's Linux clipboard, with stand-in
-// wl-copy / wl-paste / xclip scripts on PATH that keep the text in a file.
+// wl-copy / wl-paste / xclip / xsel scripts on PATH that keep the text in a file. It is the one Linux reader:
+// CoopFiles::ReadClipboard (the answer paste, the Join paste) is this.
 #include <doctest/doctest.h>
 
 #include <cstdint>
@@ -47,7 +48,8 @@ void Put(const char* name, const std::string& value) {
     }
 }
 
-// A folder of stand-in tools, put first on PATH; the desktop variables set as asked. Undone at the end.
+// A folder of stand-in tools, and PATH only that folder (plus the few programs the stand-ins use, linked in), so
+// the runner's own wl-paste, xclip or xsel never answer; the desktop variables set as asked. Undone at the end.
 struct Desktop {
     fs::path dir;
     std::string path, wayland, display;
@@ -64,7 +66,16 @@ struct Desktop {
                "[ \"$1 $2\" = '-selection clipboard' ] || exit 3\n"
                "if [ \"$3\" = -i ]; then cat > '" + clip + "'; ls /proc/$$/fd > '" + fds + "'; "
                "else cat '" + clip + "'; fi\n");
-        Put("PATH", dir.string() + ":" + path);
+        for (const char* tool : {"cat", "ls", "timeout", "yes", "touch"}) {
+            for (const char* bin : {"/usr/bin/", "/bin/"}) {
+                std::error_code ec;
+                if (fs::exists(std::string(bin) + tool, ec)) {
+                    fs::create_symlink(std::string(bin) + tool, dir / tool, ec);
+                    break;
+                }
+            }
+        }
+        Put("PATH", dir.string());
         Put("WAYLAND_DISPLAY", wayland_display);
         Put("DISPLAY", x_display);
     }
@@ -77,6 +88,8 @@ struct Desktop {
     }
     std::string Clip() const { return Slurp(dir / "clip.txt"); }
     std::string Fds() const { return Slurp(dir / "fds.txt"); }
+    void Remove(const char* tool) const { fs::remove(dir / tool); }
+    void Tool(const char* tool, const std::string& body) const { Script(dir / tool, body); }
 };
 
 }  // namespace
@@ -98,7 +111,7 @@ TEST_CASE("Linux clipboard: X11's xclip when there is no Wayland") {
 TEST_CASE("Linux clipboard: no desktop, no tool: nothing, and the game goes on") {
     Desktop d("", "");
     CHECK_FALSE(CoopClipboard::Copy("x"));
-    CHECK(CoopClipboard::Paste().empty());
+    CHECK_FALSE(CoopClipboard::Paste().has_value());   // (nothing: "install wl-clipboard or xclip")
     CHECK(d.Clip().empty());
 }
 
@@ -123,5 +136,47 @@ TEST_CASE("Linux clipboard: the tool gets none of the game's descriptors") {
 TEST_CASE("Linux clipboard: a long paste is cut at 4096 bytes") {
     Desktop d("wayland-0", "");
     REQUIRE(CoopClipboard::Copy(std::string(10000, 'a')));
-    CHECK(CoopClipboard::Paste().size() == 4096);
+    CHECK(CoopClipboard::Paste().value_or("").size() == 4096);
+}
+
+TEST_CASE("Linux clipboard: an empty clipboard is empty, not 'no tool'") {
+    Desktop d("wayland-0", "");
+    d.Tool("wl-paste", "echo 'Nothing is copied' >&2\nexit 1\n");   // (as wl-paste and xclip do)
+    const auto got = CoopClipboard::Paste();
+    REQUIRE(got.has_value());
+    CHECK(got->empty());
+}
+
+TEST_CASE("Linux clipboard: the tools in order: Wayland's first, then xclip, then xsel") {
+    Desktop d("wayland-0", ":7");
+    d.Tool("wl-paste", "printf wayland\n");
+    d.Tool("xclip", "printf xclip\n");
+    d.Tool("xsel", "[ \"$1 $2\" = '-b -o' ] || exit 3\nprintf xsel\n");
+    CHECK(CoopClipboard::Paste() == "wayland");
+    d.Remove("wl-paste");   // (a Wayland session without wl-clipboard: X11's tools through XWayland)
+    CHECK(CoopClipboard::Paste() == "xclip");
+    d.Remove("xclip");
+    CHECK(CoopClipboard::Paste() == "xsel");
+    d.Remove("xsel");
+    CHECK_FALSE(CoopClipboard::Paste().has_value());
+}
+
+TEST_CASE("Linux clipboard: a tool that prints without end: 64 KiB read, 4096 bytes kept") {
+    Desktop d("wayland-0", "");
+    d.Tool("wl-paste", "exec yes abcdefg\n");
+    const auto got = CoopClipboard::Paste();
+    REQUIRE(got.has_value());
+    CHECK(got->size() == 4096);
+    CHECK(got->rfind("abcdefg\nabcdefg", 0) == 0);
+}
+
+TEST_CASE("Linux clipboard: the clipboard's text never reaches a shell") {
+    Desktop d("", ":7");
+    const fs::path marker = d.dir / "ran";
+    const std::string evil = "$(touch '" + marker.string() + "')`touch '" + marker.string() + "'`; touch '" +
+                             marker.string() + "' #\n";
+    REQUIRE(CoopClipboard::Copy(evil));
+    CHECK(d.Clip() == evil);
+    CHECK(CoopClipboard::Paste() == evil.substr(0, evil.size() - 1));
+    CHECK_FALSE(fs::exists(marker));
 }

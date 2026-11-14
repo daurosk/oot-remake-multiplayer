@@ -43,7 +43,8 @@ CoopTitleMenu::Options ReadOptions();
 void SetCoopEnvironment(const CoopTitleMenu::Options& o);
 
 // The clipboard's text (at most 4096 bytes): nothing when it could not be read (another program held it on
-// Windows; no wl-paste, xclip or xsel on Linux). ClipboardText: "" then. And text put on it.
+// Windows; no wl-paste, xclip or xsel on Linux: CoopClipboard, coop_clipboard_posix.h). ClipboardText: "" then.
+// And text put on it.
 std::optional<std::string> ReadClipboard();
 std::string ClipboardText();
 bool SetClipboardText(const std::string& text);

@@ -1,0 +1,76 @@
+From fa5c46fa672010b463bcd0afc03cb90800057b79 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Fri, 13 Nov 2026 16:01:26 -0900
+Subject: [PATCH] Co-op map state: the game's menu state for the players on the
+ maps
+
+oot-remake-multiplayer's patch 0018 (host only, no lift). host/oot_menu.c
+keeps the panel's frame as seen and when a game menu last had the mouse,
+and exports hos_coop_menu_state for hookshot_coop.dll (found by name in
+the exe): the HUD screen (its layout holds the minimap and the Map page's
+map), the panel's frame, whether the Map page is shown and whether a game
+menu is in front. The module hides the minimap's player icons behind the
+game's menus and puts the players on the Map page's map.
+---
+ host/oot_menu.c | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/host/oot_menu.c b/host/oot_menu.c
+index 6e70423a..ad7b2fae 100644
+--- a/host/oot_menu.c
++++ b/host/oot_menu.c
+@@ -235,6 +235,8 @@ static int panel_page(uint64_t screen) { return panel_page_vt(peek64(screen)); }
+    many floors, +0x1370 the lowest; the top is the lowest + the count - 1. Kept as the screens are seen */
+ #define HUD_SCREEN_VTABLE 0x84c08300ULL
+ static volatile uint64_t hud_screen;
++static volatile uint64_t panel_screen;   /* (oot-remake-multiplayer's patch 0018: the panel's frame, as seen) */
++static volatile int64_t front_ns;        /* (patch 0018: when a screen last had the mouse: a game menu in front) */
+ static int map_floors(int *cur, int *top, int *bottom) {
+     int32_t f[3];
+     if (!hud_screen || !peek(hud_screen + 0x1368, f, sizeof f) || f[1] < 1 || f[1] > 12) return 0;
+@@ -749,6 +751,7 @@ static Seen *screen_seen(uint64_t screen, int64_t now) {
+     memset(free_one, 0, sizeof *free_one);
+     free_one->screen = screen, free_one->first_ns = now, free_one->vt = peek64(screen);
+     if (free_one->vt == HUD_SCREEN_VTABLE) hud_screen = screen;
++    if (free_one->vt == PANEL_FRAME_VTABLE) panel_screen = screen;
+     if (trace) {
+         const uint64_t mgr = peek64(peek64(screen + 32) + 96);
+         hos_log("menu: a screen: %#llx (vtable %#llx) entries %d, focus manager %#llx%s", (unsigned long long)screen,
+@@ -803,6 +806,7 @@ void hos_oot_menu_tick(Ctx *c, uint64_t screen) {
+     static uint64_t front_was;
+     if (trace && front && front->screen != front_was) hos_log("menu: the mouse is for screen %#llx", (unsigned long long)front->screen);
+     front_was = front ? front->screen : 0;
++    if (front) front_ns = now;
+     const int mine = front == me;
+     /* (no screen has held the mouse for 50 ms of frames, the HUD's among them in play: the game's menus have closed,
+        and the window gives the camera its mouse back now, not after display.c's 300 ms) */
+@@ -814,6 +818,26 @@ void hos_oot_menu_tick(Ctx *c, uint64_t screen) {
+     if (mine) mouse_tick(c, screen);
+     if (screen == pause_screen_now()) InterlockedIncrement(&ticks);
+ }
++
++/* (oot-remake-multiplayer's patch 0018, the other players on the game's maps) For hookshot_coop.dll, found by name in
++   this exe, any thread: the HUD screen (its layout holds the minimap and the Map page's map), the panel's frame (Key
++   Items, Threads of Time, Map), whether the Map page is shown and whether a game menu is in front (a screen had the
++   mouse in the last 150 ms: the pause menu, the panel, a dialog). 1 when filled (out->size covers what it has) */
++typedef struct HosCoopMenuState {
++    uint32_t size;
++    int32_t map_page, menu_open, reserved;
++    uint64_t hud_screen, panel_screen;
++} HosCoopMenuState;
++__declspec(dllexport) int hos_coop_menu_state(HosCoopMenuState *out) {
++    if (!out || out->size < sizeof *out) return 0;
++    out->size = sizeof *out;
++    out->map_page = map_page;
++    const int64_t at = front_ns;
++    out->menu_open = at && hos_now_ns() - at < 150000000;
++    out->reserved = 0;
++    out->hud_screen = hud_screen, out->panel_screen = panel_screen;
++    return 1;
++}
+ #else
+ void hos_oot_menu_focus(Ctx *c, uint64_t screen, uint64_t pane, uint64_t lr) { (void)c, (void)screen, (void)pane, (void)lr; }
+ void hos_oot_menu_tick(Ctx *c, uint64_t screen) { (void)c, (void)screen; }
+-- 
+2.56.0.windows.4
+

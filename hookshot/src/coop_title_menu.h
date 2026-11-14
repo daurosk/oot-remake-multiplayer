@@ -77,6 +77,8 @@ struct Options {
     int max_players = 4;           // max_players (the host's: 2 to kMaxPlayers)
     bool voice = false;            // LICHII_COOP_VOICE (ptt or open: proximity voice chat; unset, the default: off)
     std::string voice_in_file;     // that line's value as read ("open" written by hand stays open while voice is on)
+    bool map_players = true;       // LICHII_COOP_MAP (0: no other players on the minimap and the pause map)
+    bool map_names = true;         // LICHII_COOP_MAP_NAMES (0: their icons without names)
 
     // From the two files' texts (a missing file: "").
     static Options Read(std::string_view coop_ini, std::string_view options_ini);

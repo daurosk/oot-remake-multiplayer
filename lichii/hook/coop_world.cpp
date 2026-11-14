@@ -434,6 +434,10 @@ void WorldSync::Reset() {
     refunds_.clear();
     refund_notes_.clear();
     own_drops_.clear();
+    lent_hash_ = 0;
+    lend_back_.clear();
+    lend_quiet_until_ = 0;
+    ignore_drops_ = 0;
     player_.reset();
     pull_ = {};
     pulls_ = 0;
@@ -708,12 +712,64 @@ bool WorldSync::TakeOwnDrop(std::uint64_t now_us) {
 }
 
 void WorldSync::OwnCountDrop(std::uint32_t key_flag, std::uint64_t now_us) {
+    if (ignore_drops_ > 0) {
+        if (now_us < ignore_drops_until_) {
+            --ignore_drops_;  // our own take-back of a lent key, not a spend
+            return;
+        }
+        ignore_drops_ = 0;
+    }
     if (own_drops_.size() < 16) {
         own_drops_.emplace_back(key_flag, now_us);
     }
 }
 
+void WorldSync::Lend(Object& o, Break& b, std::uint64_t now_us, Out& out) {
+    const std::uint32_t key = SmallKeyFlag(scene_);
+    if (key == 0 || b.lent || b.refunded || b.lends >= kMaxLends || lent_hash_ != 0 ||
+        now_us < lend_quiet_until_ || now_us - o.held_us < kLendWaitUs) {
+        return;
+    }
+    auto count = KeyCountOf(scene_);
+    if (!count) {
+        return;
+    }
+    b.lent = true;
+    ++b.lends;
+    lent_hash_ = o.hash;
+    lent_count_ = std::move(*count);
+    out.key_refunds.push_back(key);
+    out.notes.push_back(Line("world: %016llx %s was opened by another player and is shut here with our "
+                             "Link at it: one key lent to open it%s",
+                             o.hash, o.name, ""));
+}
+
+void WorldSync::TakeBack(Break& b, std::uint64_t hash, std::uint64_t now_us, const char* why) {
+    b.lent = false;
+    if (lent_hash_ != hash) {
+        return;
+    }
+    lent_hash_ = 0;
+    lend_back_.push_back(lent_count_);
+    ++ignore_drops_;
+    ignore_drops_until_ = now_us + kLendQuietUs;
+    refund_notes_.push_back(Line("world: %016llx lent key not used (%s): taken back%s", hash, why, ""));
+}
+
+void WorldSync::LentGone(Break& b, std::uint64_t hash, std::uint64_t now_us) {
+    if (!TakeOwnDrop(now_us)) {
+        TakeBack(b, hash, now_us, "the lock went with no key of ours spent");
+        return;
+    }
+    b.lent = false;
+    b.refunded = true;  // settled: nothing more goes back for this lock
+    lent_hash_ = 0;
+    lend_quiet_until_ = now_us + kLendQuietUs;
+    refund_notes_.push_back(Line("world: %016llx lock opened here with the lent key%s%s", hash, "", ""));
+}
+
 void WorldSync::ForgetKept() {
+    lent_hash_ = 0;  // the save's key counts are written in: nothing to take back
     std::erase_if(broken_, [](const auto& b) { return b.second.kept; });
     for (auto& [address, o] : objects_) {
         if (o.kept) {
@@ -723,14 +779,34 @@ void WorldSync::ForgetKept() {
     }
 }
 
-void WorldSync::MakeBreak(Object& o, const Break& b, std::uint64_t now_us, Out& out) {
+void WorldSync::MakeBreak(Object& o, Break& b, std::uint64_t now_us, Out& out) {
     if (o.remove || b.local) {
         return;  // our own break: the game is doing it
     }
-    if (o.kept && player_ && Finite(o.position) && Distance(*player_, o.position) <= kLockHoldM) {
-        // Our Link is at this door: never take the lock from under them (they
-        // may be opening it). Deleted once they step away.
-        return;
+    if (o.kept && player_ && Finite(o.position)) {
+        const float away = Distance(*player_, o.position);
+        if (away <= kLockHoldM) {
+            // Our Link is at this door: never take the lock from under them (they
+            // may be opening it). A player with no key would be stuck here (the
+            // opener spent the group's key), so a key is lent for it.
+            if (o.held_us == 0) {
+                o.held_us = now_us;
+            }
+            if (!delete_locks_) {
+                Lend(o, b, now_us, out);  // only while locks are kept: with delete on, as before door-unlock
+            }
+            return;
+        }
+        o.held_us = 0;
+        if (b.lent) {
+            if (away <= kLendAwayM) {
+                return;  // a step back with the lent key: the lock stays
+            }
+            TakeBack(b, o.hash, now_us, "our Link left the lock");
+        }
+    }
+    if (o.kept && !delete_locks_) {
+        return;  // the lock stays: our player opens it with a lent key (SetDeleteLocks)
     }
     if (o.key) {
         // Taken in another game: ours goes at once (no life, no wait), also
@@ -933,8 +1009,12 @@ void WorldSync::Rides(std::uint64_t now_us, Out& out) {
 
 void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
                      const std::optional<proto::Vec3>& player, Out& out) {
-    if (o.faller || o.key) {
-        return;  // its fall (or its taking) is the break, not a move
+    if (o.faller || o.key || o.kept) {
+        // Its fall (or its taking) is the break, not a move. A door's lock is
+        // moved by its own game only: the two locks of a door part by 0.25 m
+        // when a player comes near (run lock-open, 2026-11-12: sent as moves
+        // and held in place in the other game).
+        return;
     }
     const auto found = remote_.find(o.hash);
     Remote* r = found != remote_.end() ? &found->second : nullptr;
@@ -1128,6 +1208,13 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
     self_ = self;
     player_ = player;
     if (scene != scene_) {
+        if (lent_hash_ != 0) {  // left the dungeon with a lent key: it goes back
+            lent_hash_ = 0;
+            lend_back_.push_back(lent_count_);
+            refund_notes_.push_back("world: lent key not used (our Link left the scene): taken back");
+            ++ignore_drops_;
+            ignore_drops_until_ = now_us + kLendQuietUs;
+        }
         probe_.Reset();
         scene_ = scene;
         scene_since_ = now_us;
@@ -1307,6 +1394,8 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
                 // Link: opened here too (a second key), or the room unloaded.
                 // Decided after the same wait and unload test as a break.
                 gone_.push_back({o, now_us, true});
+            } else if (b->second.lent) {
+                TakeBack(b->second, o.hash, now_us, "the lock left the walk");
             }
         } else if (o.breakable && player && (!o.life || *o.life > 0)) {
             const bool moved = Distance(o.position, o.first_position) >= 0.5f;
@@ -1317,6 +1406,11 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         it = objects_.erase(it);
     }
     if (!player) {
+        for (const Gone& g : gone_) {
+            if (const auto b = broken_.find(g.object.hash); b != broken_.end() && b->second.lent) {
+                TakeBack(b->second, g.object.hash, now_us, "no Link in the walk");
+            }
+        }
         gone_.clear();  // no Link in the walk: the scene is loading or going
     }
     for (auto it = gone_.begin(); it != gone_.end();) {
@@ -1338,9 +1432,20 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         if (together >= kUnloadCount && any_far) {
             out.notes.push_back(Line("world: %016llx %s left with the area: no break%s",
                                      it->object.hash, it->object.name, ""));
+            if (const auto b = broken_.find(it->object.hash); b != broken_.end() && b->second.lent) {
+                TakeBack(b->second, it->object.hash, now_us, "the room unloaded");
+            }
         } else if (it->refund) {
             if (const auto b = broken_.find(it->object.hash); b != broken_.end() && !b->second.refunded) {
-                Refund(b->second, it->object.hash, now_us, "opened here after another player");
+                if (b->second.lent) {
+                    LentGone(b->second, it->object.hash, now_us);
+                } else if (lent_hash_ != 0 || now_us < lend_quiet_until_) {
+                    // The door's other lock: the lent key opens (opened) the pair.
+                    refund_notes_.push_back(Line("world: %016llx lock went with the one a lent key "
+                                                 "opens: none back%s%s", it->object.hash, "", ""));
+                } else {
+                    Refund(b->second, it->object.hash, now_us, "opened here after another player");
+                }
             }
         } else {
             LocalBreak(it->object, now_us, "gone next to Link", out);
@@ -1359,6 +1464,10 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         out.notes.push_back(std::move(note));
     }
     refund_notes_.clear();
+    for (std::string& count : lend_back_) {
+        out.give_back.push_back(std::move(count));
+    }
+    lend_back_.clear();
 
     for (auto& [address, o] : objects_) {
         // Another player's swings at this sign, once our copy has settled in.

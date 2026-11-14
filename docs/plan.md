@@ -84,7 +84,7 @@ The same stages in a native recomp of the game, once it is playable. The runtime
 
 ## Decisions
 
-dauro's calls, taken 2026-11-09 (the suggested answers this plan assumed, plus the item rules).
+Alex's calls, taken 2026-11-09 (the suggested answers this plan assumed, plus the item rules).
 
 | Question | Decided |
 |---|---|

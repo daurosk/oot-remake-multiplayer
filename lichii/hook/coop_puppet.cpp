@@ -164,7 +164,12 @@ std::optional<Call> Director::Step(Guest& guest, bool after_call, std::uint64_t 
     for (const auto& t : input_.targets) {
         SlotFor(t.number);
     }
-    for (auto& slot : slots_) {
+    // The frame's call budget goes round the puppets: each frame starts one
+    // slot further on, so with many puppets (up to 15) the last ones are not
+    // starved by the first ones' calls.
+    const std::size_t n = slots_.size();
+    for (std::size_t i = 0; i < n; ++i) {
+        auto& slot = slots_[(first_slot_ + i) % n];
         if (auto call = Next(slot, guest, now_ms)) {
             pending_slot_ = slot.number;
             ++calls_;
@@ -192,6 +197,7 @@ void Director::PoseFrame(Guest& guest, std::uint64_t now_ms) {
 void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
     ++frames_;
     calls_ = 0;
+    first_slot_ = slots_.empty() ? 0 : (first_slot_ + 1) % slots_.size();
     if (pending_ != Pending::none) {
         // The cave did not make the call (its own limit): undo the phase.
         Slot& slot = SlotFor(pending_slot_);
@@ -654,7 +660,7 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
 
 // Whether a create now would be drawn. Made while the game loads a scene
 // (the scene is readable, the camera is gone), a puppet reaches state 4 but
-// never shows until it is made again (dauro's two-player run, 2026-11-09:
+// never shows until it is made again (Alex's two-player run, 2026-11-09:
 // B created P1 at 37.1 s, its loading screen ran 36.8 to 40.2 s).
 bool Director::Drawn(const Slot& slot, std::uint64_t now_ms) const {
     if (!input_.camera) {
@@ -1559,12 +1565,14 @@ struct Received {
     std::uint32_t serial = 0;
 };
 std::mutex g_anim_mutex;
-std::array<std::optional<Received>, 5> g_anims;  // by player number; guarded
-std::array<Gear, 5> g_gear;  // the same; guarded
-std::array<std::optional<std::uint8_t>, 5> g_drawn;                // the same; guarded
-std::array<std::optional<std::uint32_t>, 5> g_color;               // the same; guarded
-std::optional<std::uint32_t> g_own_color;                          // ours; guarded
-std::array<CoopPuppetSound::Wanted, 5> g_ocarina;  // the same; guarded (issue 152)
+// One entry per player number, 0 (unused) to kMaxPlayers (up to 16 players).
+constexpr std::size_t kNumbers = std::size_t{coop::protocol::kMaxPlayers} + 1;
+std::array<std::optional<Received>, kNumbers> g_anims;  // by player number; guarded
+std::array<Gear, kNumbers> g_gear;                         // the same; guarded
+std::array<std::optional<std::uint8_t>, kNumbers> g_drawn;  // the same; guarded
+std::array<std::optional<std::uint32_t>, kNumbers> g_color; // the same; guarded
+std::optional<std::uint32_t> g_own_color;                    // ours; guarded
+std::array<CoopPuppetSound::Wanted, kNumbers> g_ocarina;  // the same; guarded (issue 152)
 
 } // namespace
 

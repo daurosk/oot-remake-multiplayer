@@ -1,0 +1,7 @@
+# hs-voice-off, B: stands beside A for 15 s and must hear nothing (see hs-voice-off.A.txt).
+mark start
+wait 120
+place -35.70 98.10 8.50
+mark near
+wait 900
+mark end

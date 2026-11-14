@@ -328,7 +328,7 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
     remove_player(*holder, LeaveReason::timed_out, now_us,
                   "replaced: the same name came back from the same address");
   }
-  if (player_count() >= kMaxPlayers) {
+  if (player_count() >= max_players()) {
     refuse(id, c, RefuseReason::server_full, now_us);
     return;
   }
@@ -354,6 +354,7 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   c.last_ping = now_us;
   c.reliable_budget = 2.0 * config_.reliable_per_second;
   c.unreliable_budget = 2.0 * config_.unreliable_per_second;
+  c.voice_budget = 2.0 * config_.voice_per_second;
   c.byte_budget = 2.0 * config_.bytes_per_second;
   c.budget_time = now_us;
   if (player_count() == 1) session_game_build_ = hello.game_build_id;
@@ -462,6 +463,10 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     ++stats_.relayed;
     return;
   }
+  if (auto* voice = std::get_if<VoiceFrame>(&message)) {
+    on_voice(id, c, *voice, now_us);
+    return;
+  }
   if (std::holds_alternative<PlatformClock>(message) ||
       std::holds_alternative<PlatformCounter>(message)) {
     // platforms-b/-b2: as DUNGEON_EVENT, relayed to the sender's scene, never kept.
@@ -502,7 +507,11 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_life(c, life->life, now_us);
   }
   if (sender_of(message)) set_sender(message, c.number);
-  send_to_others(id, channel, message);
+  if (std::holds_alternative<PlayerSample>(message) || std::holds_alternative<PlayerPose>(message)) {
+    send_streamed(id, c, channel, message, now_us);
+  } else {
+    send_to_others(id, channel, message);
+  }
   ++stats_.relayed;
 }
 
@@ -1849,6 +1858,50 @@ void Session::announce_owner(const ObjectId& oid, const Object& o) {
   send_to_scene(o.scene, std::nullopt, kChannelOwnership, owner_message(oid, o));
 }
 
+void Session::on_voice(ConnectionId id, const Connection& c, VoiceFrame& m,
+                       std::uint64_t now_us) {
+  if (c.scene.empty()) {
+    ++stats_.voice_unplaced;
+    return;
+  }
+  m.player_number = c.number;  // the speaker, as set_sender writes it
+  std::vector<std::uint8_t> bytes;
+  if (encode(m, bytes) != Error::none) return;
+  auto placed = [&](const Connection& p) {
+    return p.position.has_value() &&
+           !(now_us > p.position_at && now_us - p.position_at > config_.position_stale_us);
+  };
+  // The end of a talk spurt goes to the whole scene: a listener who walked
+  // out of range mid-sentence stops at once instead of filling the gap.
+  const bool end = (m.flags & voice::end) != 0;
+  const bool ranged = config_.voice_range_m > 0.0f && !end && placed(c);
+  for (auto& [other, o] : connections_) {
+    if (other == id || o.state != State::joined || o.scene != c.scene) continue;
+    if (end) {
+      o.voices_heard.erase(c.number);
+      actions_.push_back(SendAction{other, kChannelVoice, bytes});
+      continue;
+    }
+    if (ranged && placed(o) && metres(*c.position, *o.position) > config_.voice_range_m) {
+      ++stats_.voice_out_of_range;
+      continue;
+    }
+    if (config_.voice_max_speakers > 0 && !o.voices_heard.contains(c.number)) {
+      std::erase_if(o.voices_heard, [&](const auto& v) {
+        return now_us > v.second && now_us - v.second > config_.voice_quiet_us;
+      });
+      if (o.voices_heard.size() >= config_.voice_max_speakers) {
+        ++stats_.voice_capped;
+        continue;
+      }
+    }
+    o.voices_heard[c.number] = now_us;
+    actions_.push_back(SendAction{other, kChannelVoice, bytes});
+  }
+  ++stats_.voice_relayed;
+  ++stats_.relayed;
+}
+
 void Session::send_to_scene(const std::string& scene, std::optional<ConnectionId> except,
                             std::uint8_t channel, const Message& m) {
   std::vector<std::uint8_t> bytes;
@@ -1894,8 +1947,11 @@ bool Session::within_rate(Connection& c, std::uint8_t channel, std::size_t bytes
   };
   refill(c.reliable_budget, config_.reliable_per_second);
   refill(c.unreliable_budget, config_.unreliable_per_second);
+  refill(c.voice_budget, config_.voice_per_second);
   refill(c.byte_budget, config_.bytes_per_second);
-  double& budget = channel <= kChannelOwnership ? c.reliable_budget : c.unreliable_budget;
+  double& budget = channel <= kChannelOwnership ? c.reliable_budget
+                   : channel == kChannelVoice   ? c.voice_budget
+                                                : c.unreliable_budget;
   const double size = static_cast<double>(bytes);
   // The unreliable channels (poses, samples) may not use the last quarter
   // second of bytes: it stays for the reliable ones (flags, items, chat), so
@@ -2132,8 +2188,8 @@ std::uint8_t Session::free_number(std::uint8_t preferred) const {
       return entry.second.state == State::joined && entry.second.number == n;
     });
   };
-  if (preferred >= 1 && preferred <= kMaxPlayers && !used(preferred)) return preferred;
-  for (std::uint8_t n = 1; n <= kMaxPlayers; ++n) {
+  if (preferred >= 1 && preferred <= max_players() && !used(preferred)) return preferred;
+  for (std::uint8_t n = 1; n <= max_players(); ++n) {
     if (!used(n)) return n;
   }
   return 0;  // unreachable: on_hello refuses a full session first
@@ -2152,6 +2208,68 @@ void Session::send_to_others(ConnectionId except, std::uint8_t channel, const Me
     if (id != except && c.state == State::joined) {
       actions_.push_back(SendAction{id, channel, bytes});
     }
+  }
+}
+
+std::uint8_t Session::max_players() const {
+  if (config_.max_players == 0) return 1;
+  return config_.max_players < kMaxPlayers ? config_.max_players : kMaxPlayers;
+}
+
+// Interest (SessionConfig::near_distance): who gets this sample or pose.
+void Session::send_streamed(ConnectionId from, const Connection& sender, std::uint8_t channel,
+                            const Message& m, std::uint64_t now_us) {
+  const bool pose = std::holds_alternative<PlayerPose>(m);
+  std::vector<std::uint8_t> bytes;
+  if (encode(m, bytes) != Error::none) return;
+  std::size_t receivers = 0;
+  for (const auto& [id, r] : connections_) {
+    if (id != from && r.state == State::joined) ++receivers;
+  }
+  const double share = receivers == 0 || config_.pose_upload_bytes_per_second == 0
+                           ? 0.0
+                           : static_cast<double>(config_.pose_upload_bytes_per_second) / receivers;
+  const std::size_t n = sender.number <= kMaxPlayers ? sender.number : 0;
+  for (auto& [id, r] : connections_) {
+    if (id == from || r.state != State::joined) continue;
+    const bool same = sender.scene.empty() || r.scene.empty() || sender.scene == r.scene;
+    bool near = same;
+    if (same && sender.position && r.position) {
+      const auto& a = *sender.position;
+      const auto& b = *r.position;
+      const float dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+      near = dx * dx + dy * dy + dz * dz <= config_.near_distance * config_.near_distance;
+    }
+    std::uint32_t every = 1;
+    if (pose) {
+      if (!same) {
+        ++stats_.interest_skipped;
+        continue;
+      }
+      if (!near) every = config_.far_pose_every;
+    } else if (!same) {
+      every = config_.other_scene_sample_every;
+    }
+    std::uint32_t& due = pose ? r.poses_due[n] : r.samples_due[n];
+    const bool take = every <= 1 || due % every == 0;
+    ++due;
+    if (!take) {
+      ++stats_.interest_skipped;
+      continue;
+    }
+    if (pose && share > 0) {
+      // Refilled with time, bursts of up to a quarter second.
+      const double since = r.upload_time == 0 ? 0.0 : static_cast<double>(now_us - r.upload_time) / 1e6;
+      r.upload_time = now_us;
+      r.upload_budget = std::min(share / 4, r.upload_budget + share * since);
+      if (r.upload_budget < static_cast<double>(bytes.size()) && since > 0) {
+        ++stats_.upload_capped;
+        continue;
+      }
+      r.upload_budget -= static_cast<double>(bytes.size());
+    }
+    stats_.stream_bytes += bytes.size();
+    actions_.push_back(SendAction{id, channel, bytes});
   }
 }
 

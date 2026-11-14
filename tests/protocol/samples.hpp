@@ -99,6 +99,10 @@ inline std::vector<Message> object_messages() {
   all.push_back(TimeOfDay{0, 0, 0});
   all.push_back(OcarinaNote{2, 11});
   all.push_back(OcarinaNote{0, 0});
+  all.push_back(VoiceFrame{2, 65535, 0, {0xf8, 0xff, 0xfe}});
+  all.push_back(VoiceFrame{0, 7, voice::end, {}});
+  all.push_back(PlayerExtra{3, 1, {'F', 'o', 'o', 't'}});
+  all.push_back(PlayerExtra{0, 2, {}});
   all.push_back(DropSpawn{0, kMadeId, "Graveyard", "Obj_Rupee_Green", {1.0f, 2.0f, 3.0f}, 123456789, drop_spawn::owned});
   all.push_back(DropSpawn{2, kMadeId, "spot00", "Obj_Heart", {0.0f, 0.0f, 0.0f}, 0, drop_spawn::again});
   all.push_back(DropTake{0, kMadeId, DropTakeReason::picked_up});

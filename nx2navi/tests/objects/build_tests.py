@@ -28,7 +28,7 @@ PORT = ['nx2navi/dll/objects/emu_port.cpp', 'nx2navi/dll/objects/hold.cpp', 'nx2
         'nx2navi/dll/objects/objects.cpp']
 # Compiled unchanged from the emulator hook: what the DLL does not have yet...
 HOOK = ['lichii/hook/' + n for n in (
-    'coop_objects.cpp', 'coop_objects_sync.cpp', 'coop_world.cpp', 'coop_spawn.cpp',
+    'coop_objects.cpp', 'coop_objects_sync.cpp', 'coop_npc_anim.cpp', 'coop_world.cpp', 'coop_spawn.cpp',
     'coop_projectiles.cpp', 'coop_pickups.cpp', 'coop_ocarina.cpp', 'coop_cheat_items.cpp',
     'coop_flags.cpp', 'coop_boss.cpp', 'coop_boss_game.cpp', 'coop_dungeon.cpp',
     'coop_scrubs.cpp', 'coop_platforms.cpp', 'coop_counters.cpp', 'coop_enemy_shots.cpp', 'coop_rooms.cpp',

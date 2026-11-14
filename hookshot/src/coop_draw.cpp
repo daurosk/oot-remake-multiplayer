@@ -495,7 +495,39 @@ std::vector<ChatShown> ShownChat(const std::vector<CoopHook::ChatLine>& lines, b
     return out;
 }
 
+// The title's Multiplayer prompt (the menu itself is the Multiplayer tab of
+// Hookshot's menu, coop_pause.h): the Minus button and the words, bottom left,
+// in the game's font with its soft shadow; the plain look (no pack): the same
+// with Hookshot's font.
+static void DrawTitle(const HosCoopDraw& d, const TitleView& t, const Look* look) {
+    const Pic p = Picture(d);
+    const float u = p.u;
+    auto text = [&](float x, float y, float px, std::uint32_t fill, const std::string& s) {
+        if (look) {
+            GameText(d, x, y, px, fill, s.c_str());
+        } else {
+            d.text(d.user, x, y, px, fill, s.c_str());
+        }
+    };
+    if (t.prompt.empty()) {
+        return;
+    }
+    // The control guide's place, bottom left: the Minus button and the words.
+    const std::uint32_t white = Rgba(255, 255, 255, 255);
+    Font(d, look ? look->regular : 0);
+    const float px = std::max(14.0f, 24.0f * u);
+    const float r = px * 0.62f;
+    const float cx = p.left + 48.0f * u + r, cy = p.height + (d.height - p.height) / 2 - 44.0f * u;
+    d.circle(d.user, cx, cy, r, Rgba(0, 0, 0, 130), 0.0f);
+    d.circle(d.user, cx, cy, r, Rgba(255, 255, 255, 230), std::max(1.5f, 2.0f * u));
+    d.rect(d.user, cx - r * 0.5f, cy - std::max(1.0f, 1.5f * u), cx + r * 0.5f, cy + std::max(1.0f, 1.5f * u), white, 0.0f);
+    text(cx + r + 10.0f * u, cy - px * 0.62f, px, white, t.prompt);
+}
+
 bool Wanted(const Scene& s) {
+    if (s.title && !s.title->prompt.empty()) {
+        return true;
+    }
     return !s.chat.empty() || !s.hud.empty() || s.box.has_value() || s.cheats.has_value() || (s.markers && !s.markers->items.empty()) || s.players.has_value() ||
            (s.panel && !s.panel->empty());
 }
@@ -526,6 +558,9 @@ void Draw(const HosCoopDraw& d, const Scene& s, const Look& look) {
     if (s.cheats) {
         Font(d, 0);
         DrawCheats(d, *s.cheats);
+    }
+    if (s.title) {
+        DrawTitle(d, *s.title, game);
     }
     Font(d, 0);
 }

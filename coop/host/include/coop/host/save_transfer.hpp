@@ -54,6 +54,10 @@ std::vector<std::uint8_t> pack(const SaveSlot& slot);
 // kSlotFiles or twice, sizes past the end, bytes after the last file, no
 // progress.sav, or more than protocol::kMaxSaveBytes.
 std::optional<SaveSlot> unpack(std::span<const std::uint8_t> bytes);
+// "The host has no save yet" (a new game, nothing on disk): "OOTSAVE1" and a file count of 0, sent as an ordinary
+// transfer (no new message type). unpack() refuses it, so an older guest logs "not a save slot" and waits on.
+std::vector<std::uint8_t> pack_no_save();
+bool is_no_save(std::span<const std::uint8_t> bytes);
 
 // CRC-32 (the zlib one: polynomial 0xEDB88320, start and end inverted).
 std::uint32_t crc32(std::span<const std::uint8_t> bytes);
@@ -103,17 +107,20 @@ class Assembler {
 inline constexpr std::size_t kMaxOutboxParts = 4 * protocol::kMaxSaveParts;
 
 // What the host sends, and when (on the network thread under the hook's lock).
-// A guest's ask is answered with the newest slot. After the host's own save
-// load (on_host_load) the newest slot on disk is not yet the loaded one (an
-// older manual save loaded, a newer autosave on disk), so nothing goes out
-// until the game writes a save after the load (the game saves at every door);
-// then every guest gets it (host_load), the asks waiting included.
+// A guest's ask is answered AT ONCE with the newest slot on disk, also right
+// after the host's own save load: a guest never waits on the host's next door
+// for a save. With no slot on disk the asker is told so at once
+// (Send::no_save). After the host's own save load (on_host_load) the newest
+// slot on disk may not be the loaded one (an older manual save loaded, a newer
+// autosave on disk), so when the game writes a save after the load (the game
+// saves at every door) every guest gets that one too (host_load).
 class Planner {
  public:
   using Time = std::filesystem::file_time_type;
   struct Send {
     std::uint8_t to_player = 0;  // 0: every guest (host_load)
     protocol::SaveReason reason = protocol::SaveReason::join;
+    bool no_save = false;  // the host has no save on disk: send pack_no_save()
     bool operator==(const Send&) const = default;
   };
   // A player's ask is answered once while it stays: a repeated ask (an honest
@@ -134,12 +141,22 @@ class Planner {
     asks_.erase(player);
     answered_.erase(player);
   }
+  // A Send that could not go out (the outbox full): owed again at the next look. A player who left meanwhile is
+  // not asked for again.
+  void retry(const Send& send) {
+    if (send.to_player == 0) {
+      reload_ = true;  // (loaded_at_ is gone: the next look sends)
+    } else if (answered_.count(send.to_player) != 0) {
+      asks_.insert(send.to_player);
+    }
+  }
   // Nothing owed: no ask and no reload.
   bool idle() const { return !reload_ && asks_.empty(); }
-  // Whether a send waits for the game's next save after the host's load.
-  bool waiting() const { return (reload_ || !asks_.empty()) && loaded_at_.has_value(); }
+  // Whether the send to every guest waits for the game's next save after the host's load.
+  bool waiting() const { return reload_ && loaded_at_.has_value(); }
   // What to send now, given the newest slot's write time (nothing when the
-  // host has no save yet). Each Send is handed out once.
+  // host has no save yet: then each ask gets a no_save Send). Each Send is
+  // handed out once.
   std::vector<Send> due(std::optional<Time> newest_write);
 
  private:
@@ -167,13 +184,56 @@ enum class WriteResult {
   not_coop,  // refused: the folder is not a co-op save folder (never a player's own saves)
   failed,    // a file could not be written
 };
-// Writes the host's slot into a co-op save folder: into slot_00 and every
-// other slot_NN already there (so whichever slot the load menu offers is the
-// host's), each file written to a .tmp and renamed over. The player's own
+// Writes the host's slot into a co-op save folder: into slot_00, every other
+// slot_NN already there and every slot_NN of `own_dir` (so whichever slot the
+// load menu offers is the host's). Each slot is written whole into
+// slot_NN.part (a name the game and newest_slot never use) and then renamed to
+// slot_NN, so a half-written slot is never loadable. The player's own
 // option.sav and account.sav are copied in from `own_dir` when the co-op
 // folder has none yet (copied, never moved). Refuses any folder that is not
 // a co-op folder.
 WriteResult write_coop_save(const std::filesystem::path& coop_dir, const SaveSlot& slot,
                             const std::filesystem::path& own_dir);
+
+// Which save folder a game plays from (issue 167). Never from coop.ini's address: an invite join is 127.0.0.1
+// (the join helper) and an old address may be a friend's while this player now hosts.
+// - Where the save folder can be switched while the game runs (Hookshot's patch 0008): the session decides at the
+//   first connection that has a host, whatever the start was (the title menu can Host or Join after any start): a guest
+//   plays from the co-op folder, the host from its own. A game that already has a save loaded (Link in the game) keeps
+//   its own: a switch then would mix two saves. `env` is not used there.
+// - Where it is fixed when the game starts (the emulator): `env`, LICHII_COOP_HOST_SAVE when set (play.ps1: 1 for a
+//   join, by address or invite; 0 for a host; or coop-options.ini), else its own.
+enum class FolderChoice { wait, own, coop };
+FolderChoice folder_choice(std::optional<bool> env, bool can_switch, bool connected, bool is_host, bool in_game);
+// Where the folder can be switched, the choice is per SESSION (the title menu: Join, back to the title, then Host in
+// the same run plays from its own saves again): a choice made goes when the session that made it is over (`over`: a
+// new client, or the client idle, stopped or refused; a reconnect is not), but never with a save loaded (Link in
+// the game: no switch then).
+bool decide_again(bool decided, bool over, bool in_game);
+
+// A guest's pending switch to the co-op folder (Hookshot), each frame: `go` only on the title's menu with the host's
+// save in (never during a load, where a re-mount changes the folder under the game's read: the 10.1 crash);
+// `drop` once Link is in the game (the player's own file or a new game). The hook also drops it when the player
+// picks a file on the title while waiting, or AutoLoad gives up (CoopSave::CancelPendingSwitch).
+enum class PendingStep { keep, go, drop };
+PendingStep pending_step(bool slot_in, bool title_up, bool in_game);
+
+// A guest's save state for ONE session (CoopSave): the ask sent, the parts coming in, a slot that came before the
+// save folder was open, whether the host's save is written, the "stuck" note said. A new session starts from a
+// fresh one (GuestSession{}), so a second Join in the same run asks again and gets the save again.
+struct GuestSession {
+  Assembler assembler;
+  std::optional<SaveSlot> unwritten;
+  bool asked = false;
+  bool ready = false;
+  bool no_save = false;   // the host said it has no save yet (pack_no_save)
+  bool said_stuck = false;
+  std::uint64_t last_part_us = 0;
+};
+
+// The slot_NN folders of a co-op save folder taken away, so it holds nothing until the host's save comes (a guest
+// switching to it must not find an older host's save and load that). Refuses a folder that is not a co-op one.
+// Returns the folders removed, or -1.
+int clear_coop_slots(const std::filesystem::path& coop_dir);
 
 }  // namespace coop::host::save

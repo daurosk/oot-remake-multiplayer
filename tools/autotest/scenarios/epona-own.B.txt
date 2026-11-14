@@ -1,0 +1,41 @@
+# epona-own, B: the first rider (see epona-own.A.txt for the run and the pass lines).
+# Rides its own Epona, gets off, then says Epona is won (the quest Get_Epona's Enum 0x92431c55 to
+# Complete, as winning the race does; shared by its end, lichii/hook/coop_quests.cpp) and rides
+# again while A rides its own.
+#! switches LICHII_COOP_DEBUG_ANIM=1
+mark start
+setflag Sequence_IsChildhood 0  # adult (Hookshot: run.ps1 loads the save first)
+warp HyruleField_Adult HyruleField_FrontOfMarket
+wait 1200               # the warp's load
+mark field
+place -99.0 151.0 264.5 # beside Epona (1.5 m east of her)
+wait 240
+toward -100.47 264.55 6 # face her
+wait 30
+mark by-horse
+press A 12              # get on
+wait 240
+mark mounted
+stick 0 0.8 120         # ride forward
+mark riding
+stick 0 0.8 120
+mark riding2
+wait 240                # let her stop
+press A 12              # get off
+wait 240
+mark dismounted
+wait 300
+mark owned              # (name kept: same time as A's)
+wait 270                # she stands where we got off
+press A 12              # get on again
+wait 240
+mark both-mounted
+stick 0 0.8 240         # ride forward while A rides too
+mark both-riding
+wait 120
+press A 12              # get off
+wait 240
+mark end
+setenum 0x92431c55 Complete   # Epona won (Get_Epona): only now, the field Epona leaves both games
+wait 300
+mark won

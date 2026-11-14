@@ -10,7 +10,9 @@
 // its own save load (once the game has saved after it).
 
 #include <cstdint>
+#include <functional>
 #include <string>
+#include <string_view>
 
 namespace coop::net {
 class Client;
@@ -19,11 +21,34 @@ struct Event;
 
 namespace CoopSave {
 
-// Whether this game uses the co-op save folder, decided once (the first call):
-// LICHII_COOP_HOST_SAVE=1 or 0 if set; else on when coop.ini names a server
-// that is not this PC (Join.bat), off for 127.0.0.1 or no server (Host.bat,
-// single player).
+// Whether this game uses the co-op save folder. Where the folder is fixed when
+// the game starts (the emulator): LICHII_COOP_HOST_SAVE=1 (play.ps1 sets it
+// for a join, by address or invite code), else its own saves. Never from
+// coop.ini's address (save::folder_choice). Where it can be switched while
+// the game runs (SetSwitch: Hookshot), the session decides it in OnFrame.
 bool UseCoopFolder();
+
+// Hookshot (patch 0008): the folder the account save is mounted from now ("" none yet), and a re-mount of it
+// from another folder (true when done). With them, a guest switches to <folder>-coop when it joins.
+void SetSwitch(std::function<std::string()> root, std::function<bool(const std::string&)> remount);
+
+// Each frame: whether Link is in the game (a loaded save): no switch then.
+void NoteInGame(bool in_game);
+
+// The host's save has been written whole into this game's co-op folder and (Hookshot) the game plays from it now:
+// a title menu may load it. Before that a guest's game stays on its own folder.
+bool HostSaveReady();
+
+// The host said it has no save yet (a new game): nothing to wait for.
+bool HostHasNoSave();
+
+// Hookshot's title module, each pad poll: whether the title's menu is up. A guest switches to the host's save only
+// then (never while a file loads).
+void NoteTitle(bool title_up);
+
+// A guest's switch to the host's save that has not happened yet is dropped for this session (the player picked a
+// file on the title while waiting, or the title said the save did not come): the game stays on its own saves.
+void CancelPendingSwitch(std::string_view why);
 
 // The emulator's save folder path for a user's account save (relative to the
 // NAND, "/user/save/0000000000000000/<user>/<title>"): with the co-op folder

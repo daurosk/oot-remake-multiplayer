@@ -79,6 +79,7 @@
 #include "coop_pose.h"
 #include "coop_puppet.h"
 #include "coop_ride.h"
+#include "coop_voice.h"
 #include "coop_settings.h"
 #include "coop_spawn.h"
 #include "coop_scrub_talk.h"
@@ -307,6 +308,7 @@ public:
                 }
             }
             CoopRide::OnEvent(event);  // their horses (PLAYER_RIDE, issue 199)
+            CoopVoice::OnEvent(event);  // their voices (VOICE_FRAME, docs/voice.md)
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -437,6 +439,7 @@ public:
                 // Issue 138: grants wait for a loaded save, and the capacities
                 // of held items are mended for a while after each load.
                 const bool mend = load_mend_.frame(reading.has_value());
+                CoopSave::NoteInGame(reading.has_value());  // issue 167: no save-folder switch once a save is loaded
                 store.emplace(*game_store, &load_mend_);
                 if (mend) {
                     if (const auto raised = store->mend(); raised != 0) {
@@ -631,7 +634,12 @@ public:
             if (view.position) {
                 link = std::array<float, 3>{(*view.position)[0], (*view.position)[1], (*view.position)[2]};
             }
-            if (const auto name = live_decider_.Next(held_events, hold_scene_, running, link)) {
+            // Never for a place in another room than ours: not loaded here.
+            const CoopLiveEvents::RoomOf room_of = [&](const std::array<float, 3>& at) -> std::optional<int> {
+                const auto guess = DungeonRooms().Nearest(hold_scene_, at);
+                return guess ? std::optional<int>(guess->room) : std::nullopt;
+            };
+            if (const auto name = live_decider_.Next(held_events, hold_scene_, running, link, &room_of)) {
                 LOG_INFO(Core, "coop: dungeon: starting the event {} here (another player played it)", *name);
                 std::lock_guard lock(live_mutex_);
                 live_requester_.Want(*name, hold_scene_);  // no age limit: started when near, as before
@@ -810,6 +818,9 @@ public:
         }
         CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                             report.connected ? session_.get() : nullptr, report.server_now_us);
+        // Proximity voice (docs/voice.md): our microphone out, theirs at their Links.
+        CoopVoice::Frame(view.game ? view.position : std::nullopt, view.others, view.hidden,
+                         report.connected ? session_.get() : nullptr);
         // Our Ocarina's notes for the other games (issue 152, coop_ocarina_sound.h).
         CoopOcarinaSound::Frame(system,
                                 reading && reading->animation
@@ -1591,6 +1602,13 @@ private:
     std::uint64_t presents_ = 0;
     coop::host::LoadMend load_mend_;  // issue 138: when ItemFlagStore grants and mends
 
+    // The dungeon rooms' table (coop_rooms.txt of the puppet pack), read once
+    // at its first use; empty without a pack (then no room is known).
+    static const CoopRooms::Table& DungeonRooms() {
+        static const CoopRooms::Table rooms = CoopFairy::RoomTable();
+        return rooms;
+    }
+
     // Shared story cutscenes (coop_shared_scenes.h): a story cutscene
     // our game starts goes to the others in our scene (DUNGEON_EVENT, as a
     // gimmick event's start); one another player started near us plays here
@@ -1613,7 +1631,13 @@ private:
                         starter = r.position;
                     }
                 }
-                shared_joiner_.Started(e.player_number, e.name, e.scene, starter, now_us);
+                std::optional<int> room;
+                if (starter) {
+                    if (const auto guess = DungeonRooms().Nearest(e.scene, *starter)) {
+                        room = guess->room;
+                    }
+                }
+                shared_joiner_.Started(e.player_number, e.name, e.scene, starter, now_us, room);
             }
         }
         const bool running = reading && reading->event_running.value_or(false);
@@ -1630,6 +1654,14 @@ private:
         here.can_start = reading && !running &&
                          (status & (proto::status::paused | proto::status::in_menu | proto::status::loading)) == 0;
         here.now_us = now_us;
+        // In a dungeon only a starter in our own room is joined (the other
+        // rooms are not loaded here: a black picture until the cutscene ends).
+        if (shared_joiner_.Waiting() != 0 && here.link && CoopDungeon::IsDungeonScene(here.scene)) {
+            here.dungeon = true;
+            if (const auto guess = DungeonRooms().Nearest(here.scene, *here.link)) {
+                here.room = guess->room;
+            }
+        }
         // Our own start: found in the event session on a few early frames.
         if (memory && !here.scene.empty()) {
             static const std::vector<std::string_view> names = [] {
@@ -1790,15 +1822,18 @@ std::mutex g_mutex;
 bool g_started = false;
 bool g_shut_down = false;
 std::atomic<bool> g_mod_refused{false};  // a game mod patches where co-op does (Start)
-std::unique_ptr<Coop> g_coop;  // set once by Start, cleared by Shutdown
+std::unique_ptr<Coop> g_coop;  // set by Start or Begin, cleared by End or Shutdown
+std::vector<std::unique_ptr<Coop>> g_ended;  // End's: kept until Shutdown (see End)
 
 // Joins the thread if the program ends without Shutdown.
 void Stop(bool quiet) {
     std::unique_ptr<Coop> coop;
+    std::vector<std::unique_ptr<Coop>> ended;
     {
         std::lock_guard lock(g_mutex);
         g_shut_down = true;
         coop = std::move(g_coop);
+        ended.swap(g_ended);
     }
     if (coop) {
         coop->End(quiet);
@@ -1864,7 +1899,8 @@ void OnFrame(Core::System& system) {
     CoopObjects::OnFrame(system);
     CoopTestInput::OnFrame(system);
     Start();
-    // g_coop only changes in Start (before this) and Shutdown (after
+    // g_coop only changes in Start (before this), End (which keeps the old
+    // one alive until Shutdown) and Shutdown (after
     // emulation has stopped), so it stays valid for this frame.
     auto* coop = Get();
     // The game's main may be patched (or refused for a code mod) after co-op
@@ -1885,6 +1921,37 @@ void OnFrame(Core::System& system) {
 
 void Shutdown() {
     Stop(false);
+}
+
+bool Begin(Settings settings) {
+    std::lock_guard lock(g_mutex);
+    if (g_shut_down || g_coop || g_mod_refused || settings.server.empty()) {
+        return false;
+    }
+    g_started = true;  // Start() then reads no coop.ini
+    LOG_INFO(Core, "coop: on (from the menu), server {}:{}, name '{}', join password {}", settings.server,
+             settings.port, settings.name, settings.password.empty() ? "none" : "set");
+    auto coop = std::make_unique<Coop>(std::move(settings));
+    if (!coop->Begin()) {
+        return false;
+    }
+    g_coop = std::move(coop);
+    return true;
+}
+
+void End() {
+    std::unique_ptr<Coop> coop;
+    {
+        std::lock_guard lock(g_mutex);
+        coop = std::move(g_coop);
+    }
+    if (!coop) {
+        return;
+    }
+    coop->End(false);
+    LOG_INFO(Core, "coop: off (left from the menu)");
+    std::lock_guard lock(g_mutex);
+    g_ended.push_back(std::move(coop));
 }
 
 std::vector<OverlayLine> OverlayLines() {

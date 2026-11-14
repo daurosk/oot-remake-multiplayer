@@ -125,3 +125,46 @@ TEST_CASE("LICHII_COOP_SHARED_CUTSCENES: on unless 0") {
     CHECK(CoopSharedScenes::OnFromEnv("1"));
     CHECK_FALSE(CoopSharedScenes::OnFromEnv("0"));
 }
+
+TEST_CASE("in a dungeon a story cutscene started in another room is not played here") {
+    // 12 m apart, but through a wall: the starter's room is not loaded in our
+    // game, and the cutscene would show a black picture until it ends.
+    Joiner j;
+    Here h = Free(120, {15.0f, 0.0f, 22.0f}, "ForestTemple");
+    h.dungeon = true;
+    h.room = 4;
+    j.Started(1, "Dm_ForestTemple_0010", "ForestTemple", Vec3{15.0f, 0.0f, 10.0f}, 100, 7);
+    CHECK_FALSE(j.Next(h, kNotPlayed));
+    CHECK(j.Waiting() == 0);  // skipped, not kept waiting
+    const auto notes = j.TakeNotes();
+    REQUIRE(notes.size() == 1);
+    CHECK(notes[0].find("another room of this dungeon") != std::string::npos);
+    // The same room: played.
+    j.Started(1, "Dm_ForestTemple_0011", "ForestTemple", Vec3{15.0f, 0.0f, 10.0f}, 200, 4);
+    const auto got = j.Next(h, kNotPlayed);
+    REQUIRE(got);
+    CHECK(*got == "Dm_ForestTemple_0011");
+}
+
+TEST_CASE("in a dungeon with no room known only a very near starter is joined") {
+    Joiner j;
+    Here h = Free(120, {15.0f, 0.0f, 22.0f}, "ForestTemple");
+    h.dungeon = true;  // no room: no table
+    j.Started(1, "Dm_ForestTemple_0010", "ForestTemple", Vec3{15.0f, 0.0f, 10.0f}, 100);  // 12 m
+    CHECK_FALSE(j.Next(h, kNotPlayed));
+    CHECK(j.TakeNotes().at(0).find("room in this dungeon is not known") != std::string::npos);
+    j.Started(1, "Dm_ForestTemple_0011", "ForestTemple", Vec3{15.0f, 0.0f, 17.0f}, 100);  // 5 m
+    CHECK(j.Next(h, kNotPlayed) == std::optional<std::string>("Dm_ForestTemple_0011"));
+    // Our room known, theirs not (or the other way): the same short reach.
+    h.room = 4;
+    j.Started(1, "Dm_ForestTemple_0012", "ForestTemple", Vec3{15.0f, 0.0f, 10.0f}, 100);
+    CHECK_FALSE(j.Next(h, kNotPlayed));
+}
+
+TEST_CASE("outside a dungeon rooms do not count: the 30 m rule alone") {
+    Joiner j;
+    Here h = Free(120);  // KokiriForest, not a dungeon
+    h.room = 1;          // ignored
+    j.Started(1, "Dm_Kokiri_0030", "KokiriForest", kBridge, 100, 2);
+    CHECK(j.Next(h, kNotPlayed) == std::optional<std::string>("Dm_Kokiri_0030"));
+}

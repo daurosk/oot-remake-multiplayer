@@ -578,6 +578,22 @@ public:
         return counts;
     }
 
+    // Townspeople, since the last ask: plays put under the copy's own AI's
+    // name, names given back, frames set.
+    std::array<std::size_t, 3> TakeNpc() {
+        std::lock_guard lock(mutex_);
+        return {std::exchange(aliased_, 0), std::exchange(unaliased_, 0),
+                std::exchange(npc_framed_, 0)};
+    }
+
+    // The owner's animation a copy plays while its slot names its AI's one
+    // (empty: not aliased, the slot's name is what plays).
+    std::string AliasedPlay(std::uint64_t actor) {
+        std::lock_guard lock(mutex_);
+        const auto* entry = aliases_.Find(actor);
+        return entry ? entry->played : std::string();
+    }
+
     std::optional<CoopPuppet::Call> Step(CoopPuppet::Guest& guest, bool after_call,
                                          std::uint64_t result, std::uint64_t now_ms) {
         std::lock_guard lock(mutex_);
@@ -585,6 +601,18 @@ public:
             allocating_ = false;
             block_ = result;
             return std::nullopt;  // next frame
+        }
+        if (after_call && alias_after_) {
+            // The play just made, on a townsperson: its slot names what its
+            // own AI asked for again, so that AI's request of every frame
+            // finds it there and leaves our animation playing.
+            const auto [actor, name_at, name, played] = *std::exchange(alias_after_, std::nullopt);
+            const u64 controller = Controller(guest, actor);
+            const u64 slot = controller != 0 ? Slot0(guest, controller) : 0;
+            if (slot != 0 && guest.Write(slot + kAsSlotName, &name_at, 8)) {
+                aliases_.Played(actor, played, name_at, name);
+                ++aliased_;
+            }
         }
         if (after_call && frame_after_) {
             // The play just made: start it at the owner's frame, not at 0.
@@ -595,6 +623,7 @@ public:
             }
         }
         if (!after_call) {
+            alias_after_.reset();  // its play's frame ended before we were asked again
             for (const u64 actor : std::exchange(releases_, {})) {
                 u32 flags = 0;
                 if (!Alive(guest, actor) || !guest.Read(actor + kActorFlags, &flags, 4)) {
@@ -618,6 +647,7 @@ public:
             }
             work_plays_ = plays_;
             next_play_ = 0;
+            Unalias(guest);
             work_wakes_ = std::exchange(wakes_, {});
             next_wake_ = 0;
             for (const Hit& h : hits_) {
@@ -719,9 +749,14 @@ public:
             // own animation back since the last one.
             const float rate = p.rate;
             const u64 since = now_ms >= want_ms_ ? std::min<u64>(now_ms - want_ms_, 100) : 0;
+            const std::int64_t since_us = static_cast<std::int64_t>(since) * 1000;
+            // A townsperson's (coop_npc_anim.h): the playing frame, inside its loop.
             const float frame =
-                FrameAfter(p.frame, rate, static_cast<std::int64_t>(since) * 1000);
+                p.npc ? CoopNpcAnim::Wrapped(
+                            FrameAfter(p.frame, p.run < 0.0f ? rate : p.run, since_us), p.loop)
+                      : FrameAfter(p.frame, rate, since_us);
             const std::string slot_name = SlotName(guest, controller, p.slot);
+            const u64 slot_name_at = p.alias ? SlotNameAt(guest, controller) : 0;
             if (EnemySlots()) {
                 // EnemySlots: the owner's commands are followed as they change. A one-shot
                 // ("NoWeaponAttack") leaves its name in the slot when it has ended, on the
@@ -738,15 +773,23 @@ public:
                     continue;
                 }
             }
-            if (!EnemySlots() && slot_name == p.name) {
+            if (!EnemySlots() && (p.alias ? aliases_.Shows(p.address, p.name, slot_name_at, slot_name)
+                                          : slot_name == p.name)) {
                 auto& checked = checked_sample_[key];
                 if (checked == p.sample) {
                     continue;
                 }
                 checked = p.sample;
                 float now_frame = 0.0f;
-                if (SlotFrame(guest, controller, now_frame, p.slot) &&
-                    std::fabs(now_frame - frame) <= kFrameSlack) {
+                if (p.npc) {
+                    if (PlayFrame(guest, controller, now_frame) &&
+                        CoopNpcAnim::FrameGap(now_frame, frame, p.loop) <=
+                            CoopNpcAnim::kFrameSlack) {
+                        continue;
+                    }
+                    ++npc_framed_;
+                } else if (SlotFrame(guest, controller, now_frame, p.slot) &&
+                           std::fabs(now_frame - frame) <= kFrameSlack) {
                     continue;
                 }
                 ++framed_;
@@ -816,6 +859,9 @@ public:
             checked_sample_[key] = p.sample;
             if (!EnemySlots()) {
                 frame_after_ = std::make_tuple(p.address, p.slot, frame);
+            }
+            if (p.alias && slot_name_at != 0 && !slot_name.empty()) {
+                alias_after_ = std::make_tuple(p.address, slot_name_at, slot_name, p.name);
             }
             CoopPuppet::Call c;
             c.function = main_ + kPlayAs;
@@ -992,6 +1038,48 @@ private:
         return std::string(text.data(), strnlen(text.data(), text.size()));
     }
 
+    // The pointer slot 0 keeps to its command name, or 0.
+    u64 SlotNameAt(CoopPuppet::Guest& guest, u64 controller) {
+        const u64 slot = Slot0(guest, controller);
+        u64 at = 0;
+        return slot != 0 && guest.Read(slot + kAsSlotName, &at, 8) ? at : 0;
+    }
+
+    // Slot 0's playing frame (coop_npc_anim.h).
+    bool PlayFrame(CoopPuppet::Guest& guest, u64 controller, float& frame) {
+        const u64 slot = Slot0(guest, controller);
+        return slot != 0 && guest.Read(slot + CoopNpcAnim::kSlotPlayFrame, &frame, 4) &&
+               std::isfinite(frame);
+    }
+
+    // Start of a game frame: the townspeople that are no longer wished to
+    // play an owner's animation under their own AI's name (ours now, the
+    // owner silent, our Link in an event beside them) get the name of what
+    // really plays back, so their own AI's next request plays its own.
+    void Unalias(CoopPuppet::Guest& guest) {
+        if (aliases_.Size() == 0) {
+            return;
+        }
+        std::unordered_set<u64> wished;
+        for (const PlayWish& p : work_plays_) {
+            if (p.alias) {
+                wished.insert(p.address);
+            }
+        }
+        for (const auto& [actor, entry] : aliases_.DropAllBut(wished)) {
+            const u64 controller = Alive(guest, actor) ? Controller(guest, actor) : 0;
+            if (controller == 0 || SlotNameAt(guest, controller) != entry.name_at ||
+                SlotName(guest, controller) != entry.name) {
+                continue;  // gone, or its AI chose another animation since
+            }
+            const u64 slot = Slot0(guest, controller);
+            if (const u64 text = Cell(guest, entry.played); slot != 0 && text != 0) {
+                guest.Write(slot + kAsSlotName, &text, 8);
+                ++unaliased_;
+            }
+        }
+    }
+
     bool SlotFrame(CoopPuppet::Guest& guest, u64 controller, float& frame, std::int32_t index = 0) {
         const u64 slot = Slot0(guest, controller, index);
         return slot != 0 && guest.Read(slot + kAsSlotFrame, &frame, 4) && std::isfinite(frame);
@@ -1101,6 +1189,13 @@ private:
     std::size_t framed_ = 0;  // frames set on a copy already showing the name
     u64 want_ms_ = 0;
     std::optional<std::tuple<u64, std::int32_t, float>> frame_after_;  // actor, slot, frame: set after the play
+    // Walking townspeople (coop_npc_anim.h): actor, the AI's name pointer
+    // and name, and what we played: aliased after the play.
+    std::optional<std::tuple<u64, u64, std::string, std::string>> alias_after_;
+    CoopNpcAnim::Aliases aliases_;
+    std::size_t aliased_ = 0;
+    std::size_t unaliased_ = 0;
+    std::size_t npc_framed_ = 0;
     std::unordered_map<u64, std::uint64_t> checked_sample_;  // actor: sample time checked
     // EnemySlots: the owner's command last wished per copy and slot (seen, name).
     std::unordered_map<u64, std::pair<bool, std::string>> last_wish_;
@@ -1463,6 +1558,14 @@ public:
                 }
             }
             world_.NotePuppets(puppets_);
+            // A lock another player opened is deleted here, as before door-unlock. Keeping it with a lent
+            // key (LICHII_COOP_LOCK_DELETE=0) is off: in a two-game run the lent key was shared to the
+            // other players as a found key, so the group ended with more keys than it had.
+            static const bool delete_locks = [] {
+                const char* v = std::getenv("LICHII_COOP_LOCK_DELETE");
+                return v == nullptr || std::string_view(v) != "0";
+            }();
+            world_.SetDeleteLocks(delete_locks);
             world_.Tick(*scene, self, server_now_us, seen, player_, world);
             for (auto& m : world.send) {
                 send.emplace_back(std::move(m));
@@ -2330,7 +2433,10 @@ private:
                 if (const auto m = r.Get<std::array<float, 9>>(a + kActorRotation)) {
                     s.rotation = *m;
                 }
-                s.animation = Animation(r, a);
+                // Townspeople send the playing frame (coop_npc_anim.h).
+                s.animation = s.name.starts_with("Npc_")
+                                  ? AnimationAt(r, a, 0, false, CoopNpcAnim::kSlotPlayFrame)
+                                  : Animation(r, a);
                 if (IsBoss(s.name)) {
                     s.slots = OtherSlots(r, a);  // issue 150
                 } else if (EnemySlots() && s.name.starts_with("Enemy_")) {
@@ -2405,7 +2511,8 @@ private:
     // AS slot `index` of an actor. empty_ok: a slot that plays nothing gives
     // an empty name (slot 0 gives nothing then).
     std::optional<coop::protocol::Animation> AnimationAt(Reader& r, u64 a, s32 index,
-                                                         bool empty_ok) {
+                                                         bool empty_ok,
+                                                         u64 frame_at = kAsSlotFrame) {
         const auto c = AsController(r, a);
         if (!c || index >= c->second) {
             return std::nullopt;
@@ -2432,7 +2539,7 @@ private:
                 return std::nullopt;
             }
         }
-        const float frame = r.Get<float>(*slot + kAsSlotFrame).value_or(0.0f);
+        const float frame = r.Get<float>(*slot + frame_at).value_or(0.0f);
         const float rate = r.Get<float>(*slot + kAsSlotRate).value_or(1.0f);
         if (!std::isfinite(frame) || !std::isfinite(rate) || std::fabs(frame) > 1e5f ||
             std::fabs(rate) > 100.0f) {
@@ -2678,8 +2785,10 @@ private:
     // owner's routine is not put on them. Logs the claim (our side) and, on the
     // other games, each NPC copy that moves to another owner; with
     // LICHII_COOP_DEBUG_NPC=1 every NPC copy's place and animation once a second.
-    void NpcAnim(u64 now_us, std::vector<u64>& removes, std::vector<Mover::Pose>& wish,
-                 std::vector<PlayWish>& plays) {
+    // Walking townspeople
+    // (coop_npc_anim.h): the 5 s line of plays and frame sets.
+    void NpcAnim(Reader& r, u64 now_us, std::vector<u64>& removes,
+                 std::vector<Mover::Pose>& wish, std::vector<PlayWish>& plays) {
         std::erase_if(removes, [&](u64 a) { return sync_.EventNpc(a, now_us); });
         std::erase_if(wish, [&](const Mover::Pose& p) { return sync_.EventNpc(p.actor, now_us); });
         std::erase_if(plays, [&](const PlayWish& p) { return sync_.EventNpc(p.address, now_us); });
@@ -2704,6 +2813,48 @@ private:
         const bool every = debug_npc && now_us - npc_log_at_ >= 1'000'000;
         if (every) {
             npc_log_at_ = now_us;
+        }
+        // Walking townspeople (coop_npc_anim.h). Every 5 s: how often an
+        // owner's animation had to be played on a copy (once for each change,
+        // not once a frame), and how often a copy's frame was put right.
+        if (now_us - npc_calls_at_ >= 5'000'000) {
+            npc_calls_at_ = now_us;
+            const auto [aliased, unaliased, framed] = TheMover().TakeNpc();
+            if (aliased + unaliased + framed > 0) {
+                LOG_INFO(Core,
+                         "coop: npc-anim: in 5 s {} owner animations played under the copy's "
+                         "own AI's name, {} names given back, {} frames set",
+                         aliased, unaliased, framed);
+            }
+        }
+        if (every) {
+            // What each copy really shows, and ours (the frame we send).
+            for (const PlayWish& p : plays) {
+                const auto name = names_.find(p.address);
+                if (!p.npc || name == names_.end()) {
+                    continue;
+                }
+                const auto shown = AnimationAt(r, p.address, 0, false, CoopNpcAnim::kSlotPlayFrame);
+                // Under an alias the slot names the AI's animation, not the
+                // one playing: say which plays, so a working alias and the
+                // AI winning read differently in the log.
+                const std::string aliased = TheMover().AliasedPlay(p.address);
+                LOG_INFO(Core,
+                         "coop: npc-anim: copy {} shows '{}'{} frame {:.1f}; its owner '{}' frame "
+                         "{:.1f} rate {:.2f} running {:.2f} loop {:.1f}",
+                         name->second.first, shown ? shown->name : std::string(),
+                         aliased.empty() ? std::string() : " (alias of '" + aliased + "')",
+                         shown ? shown->frame : 0.0f, p.name, p.frame, p.rate, p.run, p.loop);
+            }
+            for (const auto& [a, name] : sync_.Owned()) {
+                if (!name.starts_with("Npc_")) {
+                    continue;
+                }
+                if (const auto ours = AnimationAt(r, a, 0, false, CoopNpcAnim::kSlotPlayFrame)) {
+                    LOG_INFO(Core, "coop: npc-anim: ours {} plays '{}' frame {:.1f} rate {:.2f}",
+                             name, ours->name, ours->frame, ours->rate);
+                }
+            }
         }
         for (const Mover::Pose& p : wish) {
             const auto name = names_.find(p.actor);
@@ -2843,7 +2994,7 @@ private:
                 }
             }
         }
-        NpcAnim(now_us, removes, wish, plays);
+        NpcAnim(r, now_us, removes, wish, plays);
         TheMover().Want(main_, std::move(wish), std::move(removes), std::move(plays));
         if (now_us - drift_at_ >= kDriftLogUs) {
             const auto [moved, deleted, played, framed] = TheMover().TakeCounts();
@@ -3044,6 +3195,7 @@ private:
     std::size_t npc_claimed_ = 0;
     std::size_t npc_ours_ = 0;     // how many of them the server gave us (log)
     u64 npc_log_at_ = 0;
+    u64 npc_calls_at_ = 0;  // the 5 s line of the walking townspeople
     std::unordered_map<u64, u8> npc_owner_;  // the owner each NPC copy was last logged with
     u64 drive_enemy_ = 0;
     u64 drive_log_at_ = 0;

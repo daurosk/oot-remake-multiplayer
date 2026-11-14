@@ -1290,6 +1290,7 @@ namespace CoopSave {
 bool UseCoopFolder() { return false; }
 std::string SaveDirectory(const std::string& path, bool) { return path; }
 void NoteSaveDir(const std::string&) {}
+void NoteInGame(bool) {}  // upstream's save-folder switch (Hookshot patch 0008); this port has its own
 void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     CoopNx2navi::SaveSync::OnEvent(event, client);
     const auto& hooks = CoopNx2navi::Up::g_hooks;

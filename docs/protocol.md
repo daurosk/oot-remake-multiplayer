@@ -32,6 +32,7 @@ Each rule answers a way the TotK online sync was seen to break.
 | 2 | reliable, ordered | ownership and damage events |
 | 3 | unreliable, sequenced | player samples (position, rotation, animation) |
 | 4 | unreliable, sequenced | object and enemy samples from their owners |
+| 5 | unreliable, sequenced | proximity voice (`VOICE_FRAME`, protocol 11) |
 
 - Each message type has its channel, and each is sent by the client, the server or both (table below). A receiver refuses a message that came on the wrong channel or from a side that may not send it (`check_received` in the code).
 - The server relays and decides; it never runs the game. The host player's game is the source of truth for shared progress (stage 4).
@@ -46,14 +47,14 @@ Each rule answers a way the TotK online sync was seen to break.
 - A body made of components lists them as `u16 component_id`, `u16 length`, data. A reader skips any id it does not know. A known component must have exactly its length (below) and may appear only once.
 - Strings are `u16 length` + UTF-8 bytes, no terminator, with a maximum per field counted in characters (code points). The UTF-8 must be valid (no overlong forms, no surrogates, nothing past U+10FFFF) and hold no control characters (U+0000 to U+001F, U+007F to U+009F). A string is also never more than 4 bytes a character.
 - Floats must be finite: NaN and infinity are refused.
-- Player numbers are 1 to 4. `PLAYER_STATUS`, `CHAT`, `PLAYER_SAMPLE`, `PLAYER_EQUIP` and the object messages a client sends start with a `u8` player field: a client always sends 0 ("me"), and the server writes in the sender's number (1 to 4), which it knows from the connection, before relaying to the others. A client message with any other value there, or a server one with 0, is refused.
+- Player numbers are 1 to 16 (protocol 11; 1 to 4 before). A server holds at most its `--max-players` (1 to 16; default 16). `PLAYER_STATUS`, `CHAT`, `PLAYER_SAMPLE`, `PLAYER_EQUIP` and the object messages a client sends start with a `u8` player field: a client always sends 0 ("me"), and the server writes in the sender's number (1 to 16), which it knows from the connection, before relaying to the others. A client message with any other value there, or a server one with 0, is refused.
 - Times are `u64` microseconds. `PING` and `PONG` carry the sender's own clock, which is how the offset is found (below). Every other time is on the server clock: `WELCOME` carries the server's own, and a sample (`PLAYER_SAMPLE`, and later `OBJECT_SAMPLE`) carries the sender's estimate of the server clock when the state was taken, worked out from its own clock and its offset. The server relays samples with their time unchanged, so a receiver places another player's sample on the same time line as its own estimate of the server clock. A client sends no sample before it has an offset; the `WELCOME` time gives a first, rough one.
 
 ## Handshake
 
-1. The client connects and sends `HELLO`: protocol version (`u16`), build id (string, up to 64 characters: emulator or recomp, and its version), game build id (string, up to 32, for example `e0f3ccfaf50065ae`), game version (string, up to 16, for example `1.1.1`), nickname (string, 1 to 16 characters), since protocol 10 the game's 32-byte traffic key share (see "Encrypted traffic"), and, after it, one byte: the player number this game had in its last session (1 to 4; none on a first join). The server gives that number back when it is free (a server restart: the games come back in the order they notice it, and without this the numbers, colours and objects' owners swapped). The protocol version is the first 2 bytes of the body in every version of the protocol, so a server can read it, and refuse with the right reason, even from a `HELLO` whose rest it cannot read.
+1. The client connects and sends `HELLO`: protocol version (`u16`), build id (string, up to 64 characters: emulator or recomp, and its version), game build id (string, up to 32, for example `e0f3ccfaf50065ae`), game version (string, up to 16, for example `1.1.1`), nickname (string, 1 to 16 characters), since protocol 10 the game's 32-byte traffic key share (see "Encrypted traffic"), and, after it, one byte: the player number this game had in its last session (1 to 16; none on a first join). The server gives that number back when it is free (a server restart: the games come back in the order they notice it, and without this the numbers, colours and objects' owners swapped). The protocol version is the first 2 bytes of the body in every version of the protocol, so a server can read it, and refuse with the right reason, even from a `HELLO` whose rest it cannot read.
 2. The server first answers `JOIN_CHALLENGE` (see "Join password" below; every session has one since protocol 10, this release's), or `REFUSED` for a wrong version; `WELCOME` or `REFUSED` follows the client's `JOIN_PROOF`.
-   - `WELCOME`: `u8` the player's number (1 to 4), `u64` server time, `u16` tick rate (not 0), `u8` count (at most 4), then for each player already in: `u8` number, nickname. Every number in it is different, and the new player's own is not in the list.
+   - `WELCOME`: `u8` the player's number (1 to 16), `u64` server time, `u16` tick rate (not 0), `u8` count (at most 15), then for each player already in: `u8` number, nickname. Every number in it is different, and the new player's own is not in the list.
    - `REFUSED`: `u8` reason, which the client shows: 1 wrong protocol version, 2 wrong game build, 3 server full, 4 name taken, 5 bad name (a nickname of nothing but spaces), 6 bad password (the join password did not match, protocol 9). Reason 200, not encrypted, is the game's own and never sent ("Encrypted traffic", 7). A reason the client does not know is kept and shown as unknown.
 3. No `HELLO` within 10 seconds: the server drops the connection.
 4. One address may hold at most 4 connections that have not sent `HELLO` yet (a server option; 0 for no limit). The server drops one more at once, without `REFUSED`.
@@ -128,7 +129,7 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 14 | `FLAG_STATE` | 1 | both | `u8` player field, a flag list of 1 to 3600 entries |
 | 15 | `FLAG_SNAPSHOT` | 1 | both | `u16` part, `u16` part count (at least 1, more than part), a flag list of 0 to 3600 entries |
 | 135 | `FLAG_RESET` | 1 | both | `u8` player field, a flag list of 1 to 3600 entries, no count deltas (protocol 7; types 135 to 139 are for saves) |
-| 150 | `FLAG_ORIGIN` | 1 | server | `u8` player (1 to 4: who asked), a flag list of 1 to 3600 entries, count deltas allowed: the FLAG_SET the server just gave the host, sent to every other player but the host and the asker, before the host's answer (protocol 8; types 150 to 154 are for "who did it", the chat notices in [setup.md](setup.md)) |
+| 150 | `FLAG_ORIGIN` | 1 | server | `u8` player (1 to 16: who asked), a flag list of 1 to 3600 entries, count deltas allowed: the FLAG_SET the server just gave the host, sent to every other player but the host and the asker, before the host's answer (protocol 8; types 150 to 154 are for "who did it", the chat notices in [setup.md](setup.md)) |
 | 140 | `OCARINA_NOTE` | 0 | both | `u8` player field, `u8` note: 0 the note held so far was let go, 1 to 19 the game's note (protocol 10; types 140 to 144 are for the Ocarina, below) |
 | 191 | `JOIN_CHALLENGE` | 0 | server | 32-byte nonce (protocol 9, "Join password"; 191 to 195 kept for it) |
 | 192 | `JOIN_PROOF` | 0 | client | 32-byte HMAC-SHA256(password, nonce) |
@@ -141,7 +142,9 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 385 | `PLAYER_RIDE` | 3 | both | `u8` player field, `u8` flags (bit 0 riding; other bits refused), horse actor name (string, up to 64 characters; not empty when riding), offset 3 x f32 (each within 10 m), rotation 4 x f32 quaternion, `u8` 1 when an animation follows (string name up to 64 characters, f32 frame, f32 rate) else 0. Relayed (protocol 10, issue 199; 385 to 389 are for riding, [Riding](#riding-player_ride)) |
 | 401 | `PLATFORM_COUNTER` | 4 | both | `u8` player field, scene (string, 1 to 64), `u64` server time (microseconds), `u8` count (1 to 32), then per looping pause counter `u64` key (not 0, no key twice), `u32` period (microseconds, at least 100,000), `u32` time since its last start (microseconds), `u32` starts seen (at least 1). Relayed to the others in the sender's scene, never kept (protocol 10, branch `platforms-b2`; [Moving platforms](#moving-platforms-platform_clock)) |
 | 400 | `PLATFORM_CLOCK` | 4 | both | `u8` player field, scene (string, 1 to 64), `u64` server time (microseconds) the words were read at, `u8` count (1 to 16), then per platform `u64` placement hash of its driver, `u64` key (region << 32 or byte offset: region 0 the actor, offset under 0x600; 2 + n the component in table entry n, under 0x200; 0xffff the AS slot 0 frame, offset 0; offsets a multiple of 4), `f32` value, `f32` rate a second (not 0, at most 10,000 either way), `f32` cycle (0 to 10^7, 0: not seen); finite floats, no hash twice. Relayed to the others in the sender's scene, never kept (protocol 10, branch `platforms-b`; 401 to 404 kept; [Moving platforms](#moving-platforms-platform_clock)) |
-| 16 | `HOST` | 1 | server | `u8` the hosting player's number (1 to 4) |
+| 16 | `HOST` | 1 | server | `u8` the hosting player's number (1 to 16) |
+| 420 | `VOICE_FRAME` | 5 | both | `u8` player field, `u16` sequence, `u8` flags (bit 0 end; others refused), then the rest: one Opus packet of 1 to 400 bytes, none with end. Relayed to the players in the sender's scene within the voice range, never kept (protocol 11, branch `proximity-voip`; 420 to 424 kept; [Voice](#voice-voice_frame-protocol-11)) |
+| 900 | `PLAYER_EXTRA` | 0 | both | `u8` player field, `u8` kind, `u8` size (0 to 96), then that many bytes. Relayed to everyone else as it comes, never kept, the kinds not read by the server. The NX2navi port's (900 to 909 kept for it; [Player extras](#player-extras-player_extra-the-nx2navi-port)) |
 | 17 | `PLAYER_EQUIP` | 0 | both | `u8` player field, then the components below |
 | 251 | `PLAYER_LIFE` | 0 | both | `u8` player field, `u16` life, `u16` max life, quarter hearts (protocol 10; 251 to 255 are the co-op HUD's, [Hearts](#hearts-player_life)) |
 
@@ -183,7 +186,7 @@ If the player to join is not in the session, the server itself answers kind refu
 | accept | 1 | scene (string, 1 to 64 characters), position (3 x f32), rotation (4 x f32 quaternion, x y z w, as in `PLAYER_SAMPLE`) |
 | refuse | 2 | `u8` reason: 1 busy (loading, cutscene, menu, dead), 2 declined, 3 cannot warp here (a boss fight, for example), 4 not there (from the server); an unknown reason is kept |
 
-Any other kind is refused, since the rest of the body cannot be read. The other player is 1 to 4 and never the sender itself. Floats must be finite.
+Any other kind is refused, since the rest of the body cannot be read. The other player is 1 to 16 and never the sender itself. Floats must be finite.
 
 ### Who hosts
 
@@ -191,7 +194,7 @@ The first player in hosts. When the host leaves, the remaining player with the l
 
 ### Saves: the host's save decides (protocol 7, `FLAG_RESET`)
 
-dauro (2026-11-11): "Let's make it follow the hosts save." A host's build sends `FLAG_RESET` after its own save load, with every shared flag its load changed, as its game has them now, 0s included. The server takes it from the host only, keeps each value (replacing what it had, as with `FLAG_STATE`) and relays it to everyone else with the host's number. Every player writes each value exactly: no merging (max, OR) and no one-way rule, so items, keys, chests and switches go back to the host's save. A player's own save load sends nothing and changes nothing for the group: that game takes the group's values back. Progress made while playing still merges as before. When the host leaves, the new host's state is the truth from then on, with no reset. How a build tells a save load from a door, and when it sends, is in [flags.md](flags.md), "Saves". A build without protocol 7 does not know type 135; all players need the same release.
+Alex (2026-11-11): "Let's make it follow the hosts save." A host's build sends `FLAG_RESET` after its own save load, with every shared flag its load changed, as its game has them now, 0s included. The server takes it from the host only, keeps each value (replacing what it had, as with `FLAG_STATE`) and relays it to everyone else with the host's number. Every player writes each value exactly: no merging (max, OR) and no one-way rule, so items, keys, chests and switches go back to the host's save. A player's own save load sends nothing and changes nothing for the group: that game takes the group's values back. Progress made while playing still merges as before. When the host leaves, the new host's state is the truth from then on, with no reset. How a build tells a save load from a door, and when it sends, is in [flags.md](flags.md), "Saves". A build without protocol 7 does not know type 135; all players need the same release.
 
 ### Save transfer: the host's save file (protocol 9, `SAVE_ASK` and `SAVE_PART`)
 
@@ -199,7 +202,8 @@ Issue 167: a guest plays from the host's save file, not its own. The data is one
 
 - A guest's game (one that uses the co-op save folder, [flags.md](flags.md), "The host's save file") sends `SAVE_ASK` once a run, when it is connected and knows the host. The server passes it to the host only, with the asker's number; an ask from the host itself or with no host is dropped.
 - The host takes one ask per player while it stays (a repeated ask is ignored and logged; a player who left may ask again with its number), and keeps at most four slots' worth of parts waiting (a send past that is dropped and logged).
-- The host answers with its newest slot (by `progress.sav`'s write time) as `SAVE_PART`s to the asker (`to player` = the asker, reason 1). After its own save load the host waits until the game writes a save after it (the game saves at every door), then sends that slot to every guest (`to player` 0, reason 2); an ask that came meanwhile gets that one.
+- The host answers at once (within half a second) with its newest slot (by `progress.sav`'s write time) as `SAVE_PART`s to the asker (`to player` = the asker, reason 1), also right after its own save load: a guest never waits on the host's next door for a save. A host with no slot on disk (a new game) answers at once with "no save": the packed form with a file count of 0 (`OOTSAVE1`, then `00`, 9 bytes), as an ordinary one-part transfer (no new type; an older guest refuses it as "not a save slot" and waits on). After its own save load the host also waits until the game writes a save after it (the game saves at every door), then sends that slot to every guest (`to player` 0, reason 2).
+- A guest's game on Hookshot stays on its own save folder while it waits: it writes the host's slot whole into the co-op folder (each slot into `slot_NN.part`, then renamed) and only then moves the game to that folder, so the title never loads an empty or half-written co-op folder. With "no save", or nothing within a minute, the title says so and its own Continue / New Game play the player's own save or a new one.
 - Parts: the packed slot cut into 16384-byte parts (the last one the rest), `count` = ceil(total / 16384), at most 64 parts for 1 MiB. Every part carries the whole header, so each is checked alone: the codec refuses a wrong count, index, part size, reason, a size over 1 MiB, and reason 1 to player 0. The host sends a part a frame; the server takes `SAVE_PART` from the host only (outside the host's byte and message budgets: a dropped part would leave the transfer unfinished) and passes it to the named player, or to every other player for 0; a part for a player who is not there is dropped.
 - A guest keeps the parts of one transfer id (a newer id starts again), takes them out of order or twice, refuses a part not from the host or whose header differs from the transfer's, and checks the CRC-32 (zlib's) when all are in: a damaged save is dropped and the next one waited for.
 - A build without these messages refuses them as unknown types, so the server and every game must be protocol 9.
@@ -258,7 +262,7 @@ Protocol 10, type 251 (251 to 255 are the co-op HUD's). Each player's hearts, fo
 
 | Bytes | Field |
 |---|---|
-| u8 | player: 0 from a client, 1 to 4 relayed |
+| u8 | player: 0 from a client, 1 to 16 relayed |
 | u16 | life now, in quarter hearts (4 = one heart), as the game keeps it |
 | u16 | the most life can be (heart containers), same unit; 0: not known |
 
@@ -380,8 +384,8 @@ The server's rules today (`server/session.cpp`):
 | Type | Name | Channel | Sent by | Body |
 |---|---|---|---|---|
 | 18 | `OBJECT_PRESENT` | 2 | both | `u8` player field, scene (string, up to 64), `u16` count (up to 1024), then per object: object id, `u8` flags (bit 0 awake, bit 1 in a fight, bit 2 targeting our player: from the owner a fight; from another game its copy chases that game's Link, and out of a fight the server hands the object to it after 500 ms, issue 101). No id twice |
-| 19 | `OBJECT_OWNER` | 2 | server | object id, `u8` owner (0 none, else 1 to 4), `u16` epoch, `u32` group (0 none) |
-| 20 | `HANDOVER_ASK` | 2 | server | object id, `u16` epoch, `u8` to player (1 to 4) |
+| 19 | `OBJECT_OWNER` | 2 | server | object id, `u8` owner (0 none, else 1 to 16), `u16` epoch, `u32` group (0 none) |
+| 20 | `HANDOVER_ASK` | 2 | server | object id, `u16` epoch, `u8` to player (1 to 16) |
 | 21 | `HANDOVER_STATE` | 2 | both | `u8` player field, object id, `u16` epoch, then object components |
 | 22 | `OBJECT_SPAWN` | 2 | both | `u8` player field, object id (kind made; or kind placed, from its owner: the actor of a placed object that other games may not have loaded, such as a Gold Skulltula one game shook out of a tree), actor name (string, 1 to 64), `u8` flags (bit 0 projectile), then object components |
 | 23 | `OBJECT_SAMPLE` | 4 | both | `u8` player field, object id, `u16` epoch, then object components |
@@ -389,7 +393,7 @@ The server's rules today (`server/session.cpp`):
 | 29 | `OBJECT_GROUP` | 2 | client | `u8` player field, `u16` count (1 to 256), then per entry: member object id, root object id, `u8` flags (bit 0 the member is a boss; other bits refused). No member twice |
 | 25 | `DAMAGE` | 2 | both | `u8` player field, object id, `u16` epoch, `s32` amount (0 or more), `u8` cause (0 unknown, 1 sword, 2 arrow, 3 fire arrow, 4 ice arrow, 5 light arrow, 6 seed, 7 bomb, 8 nut, 9 boomerang, 10 hookshot, 11 hammer, 12 magic; others kept), position (3 x f32) |
 
-An **object id** is 10 bytes: `u8` kind (0 placed, 1 made), `u8` maker (0 for placed, 1 to 4 for made), `u64` value (the placement hash, or the maker's own counter). Any other kind, or a maker that does not fit the kind, is refused.
+An **object id** is 10 bytes: `u8` kind (0 placed, 1 made), `u8` maker (0 for placed, 1 to 16 for made), `u64` value (the placement hash, or the maker's own counter). Any other kind, or a maker that does not fit the kind, is refused.
 
 Object components use the same scheme as `PLAYER_SAMPLE` (`u16` id, `u16` length, unknown ids skipped, each known id at most once, `time` required): 1 `time` (12), 2 `position` (12), 3 `velocity` (12), 4 `rotation` (16), 7 `animation` (as in `PLAYER_SAMPLE`), 16 `life` (`s32` life, `s32` max, 8), 17 `fuse` (f32 seconds left, 4), 18 `state` (`u8`: bit 0 in a fight, bit 1 held, bit 2 asleep, 1), 19 `slots` (protocol 10, branch gohma-sync, issue 150: a boss's AS slots after slot 0, such as Gohma's eye guard and eyelids: `u8` count up to 8, then per slot `u8` slot 1 to 31, name as in `animation` (empty: the slot plays nothing), `f32` frame, `f32` rate; no slot twice; sent only for bosses, older builds skip it). Floats must be finite. Types 370 to 374 were kept for gohma-sync and are not used: the slots ride in the samples, so no new message was needed.
 
@@ -423,6 +427,32 @@ Type 401 `PLATFORM_COUNTER` (branch `platforms-b2`, the method of Hot Onion): th
 
 Both: on channel 4 like `WORLD_MOVE`, not reliable: the next one comes a second later. The server writes the sender's number, relays it to the others in the sender's scene (dropped when the sender is not in that scene) and keeps nothing. A version 10 server refuses it as unknown.
 
+### Voice (`VOICE_FRAME`, protocol 11)
+
+Type 420 (420 to 424 kept; branch `proximity-voip`). Proximity voice chat: each game sends its microphone as Opus, 48 kHz mono, one 20 ms frame per message, while its player talks (push-to-talk or open mic). Both sides, on channel 5, unreliable. It comes with protocol 11 (not released yet; the 16 players of branch `native-host-b` bring the same number) and needs no bump of its own: a version 10 server would refuse the channel and the type.
+
+| Field | Type | |
+|---|---|---|
+| player | `u8` | 0 from a game; the server writes the speaker's number |
+| sequence | `u16` | +1 per 20 ms frame, wraps; the listener's jitter buffer orders and times by it |
+| flags | `u8` | bit 0 `end`: the talk spurt ends here (the gate closed); no audio. Other bits refused |
+| opus | the rest | 1 to 400 bytes of one Opus packet; none with `end` |
+
+The server relays a frame only to the players in the speaker's scene whose Link is within `voice_range_m` (35 m; 0 = the whole scene) of the speaker's, by the positions of their latest `PLAYER_SAMPLE`; a listener or speaker whose place is not known or is older than `position_stale_us` hears the whole scene. A frame with `end` goes to the whole scene. A speaker whose scene is not known yet is not relayed (stat `voice_unplaced`). One listener gets at most `voice_max_speakers` (4) voices at once: the first to start keep their place until their `end` or 400 ms of quiet (stat `voice_capped`). Nothing is kept. Voice has a message budget of its own (60 a second, bursts of twice), apart from channels 3 and 4. The games play each voice at the speaker's Link in their own game sound, fading to silence at their own range (30 m), so the server's range is a little larger and a voice never cuts off at the edge (docs/voice.md).
+
+### Player extras (`PLAYER_EXTRA`, the NX2navi port)
+
+Type 900. Types 900 to 909 are kept for the NX2navi port ([nx2navi/README.md](../nx2navi/README.md)), well apart from the ranges the main builds take. It was 420 until 420 to 424 went to `VOICE_FRAME`; no release had it at 420. A small piece of data about the sender, on channel 0, reliable: the server writes the sender's number and relays it to every other player as it comes, keeps nothing and does not read the kind. No protocol version change: a game or server without the type counts the message as one it cannot decode and drops it (no disconnect).
+
+| Field | Type | |
+|---|---|---|
+| player | `u8` | 0 from a game; the server writes the sender's number |
+| kind | `u8` | the port's own (below); others ignored by a game that does not know them |
+| size | `u8` | 0 to 96 |
+| data | `size` bytes | |
+
+Kinds of the NX2navi port: 1 a sound the sender's Link started (data: the asset's name), 2 the sender's magic (`u16` now, `u16` most, little endian), 3 a floor switch the sender's game holds down (`u8` pressed, `u64` placement hash, the scene's name), 4 a footstep-like sound with the sound user's properties that choose its variation (`u8` name length, the name, `u8` count, then per property `u8` index and `u32` value).
+
 ### Boss rooms (`BOSS_ROOM`)
 
 Where a player stands with a dungeon's boss ([dungeons-boss.md](dungeons-boss.md)). On channel 0; the server relays it to everyone else with the sender's number in the player field and keeps nothing.
@@ -439,9 +469,9 @@ Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hoo
 
 | Type | Name | Channel | Sent by | Body |
 |---|---|---|---|---|
-| 241 | `PVP_MODE` | 0 | both | `u8` set by (0 the server's start, 1 to 4 the player who changed it), `u8` mode (0 off, 1 on; others refused). No player field |
-| 242 | `PVP_HIT` | 2 | both | `u8` player field (the attacker), `u8` victim (1 to 4, not the attacker), `u8` cause (as in `DAMAGE`; others kept), `s32` amount (quarter hearts, 1 to 80), 3 x `f32` where the blow landed, 3 x `f32` where the attacker stood (all finite) |
-| 243 | `PVP_HURT` | 2 | both | `u8` player field (the victim), `u8` attacker (1 to 4, not the victim), `s32` amount taken (0 to 80), `s32` life left (0 to 80), `u8` flags: bit 0 the hit took the last life, bit 1 kept off (amount 0); other bits refused |
+| 241 | `PVP_MODE` | 0 | both | `u8` set by (0 the server's start, 1 to 16 the player who changed it), `u8` mode (0 off, 1 on; others refused). No player field |
+| 242 | `PVP_HIT` | 2 | both | `u8` player field (the attacker), `u8` victim (1 to 16, not the attacker), `u8` cause (as in `DAMAGE`; others kept), `s32` amount (quarter hearts, 1 to 80), 3 x `f32` where the blow landed, 3 x `f32` where the attacker stood (all finite) |
+| 243 | `PVP_HURT` | 2 | both | `u8` player field (the victim), `u8` attacker (1 to 16, not the victim), `s32` amount taken (0 to 80), `s32` life left (0 to 80), `u8` flags: bit 0 the hit took the last life, bit 1 kept off (amount 0); other bits refused |
 
 - **The session's value is the server's.** `coop_server --pvp on|off` (the host's `pvp` line in coop-options.ini; off by default) sets it. A game starts every connection with PvP off; while it is on, the server sends `PVP_MODE` to each player at join, after `HOST`. The host may change it with its own `PVP_MODE` (the `/pvp` chat command): the server sends the new value, with the host's number, to everyone. A `PVP_MODE` from anyone else is not taken; the server answers that player alone with the value as it is. When the session empties, the value goes back to the server's start value.
 - **Hits go to their victim only, and only while PvP is on.** The server passes a `PVP_HIT` to the victim alone, with the attacker's number written in, and drops it while PvP is off (counted in `pvp_hits_dropped`), so a game with PvP off never gets one, whatever an attacker's game believes.
@@ -488,3 +518,16 @@ Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hoo
 - Version 10 also (branch `keep-number`, stray server restart, 2026-11-12): `HELLO` may end with one more byte, the player's previous number, after the key share. Version 10 also brings `PLATFORM_CLOCK` (400, branch `platforms-b`) and `PLATFORM_COUNTER` (401, branch `platforms-b2`; 402 to 404 kept).
 - Version 10 also (branch `encrypt-always-b`, 2026-11-12): every session has a join password and is encrypted; the plain path is gone both ways (a server refuses a `HELLO` without a key share and every `HELLO` when it has no password, and `coop_server` does not start without one; a game refuses a `WELCOME` without keys). No new type, no format change.
 - Version 10 is this release's protocol: everything above marked version 10 ships in it. `main` before this release had an unreleased draft of version 10 (without keep-number, encrypt-always and the platform types); a build of that draft and one of this release both say 10 but do not work together (the draft's `HELLO` has no previous number and may have no key share, and its server lets a game in without a password). The draft was never released, so no player has it. These were briefly numbered 11 on the integration branch.
+- Version 11 (branch `native-host-b`, 2026-11-12): up to 16 players. Player numbers are 1 to 16 (`kMaxPlayers`), `WELCOME` lists up to 15 others, 12 more slot colours; a version 10 game refuses a `WELCOME` with 5 or more players, so the version goes up. The server takes `--max-players` (1 to 16, default 4 until the games' side takes 16) and sends `PLAYER_SAMPLE` and `PLAYER_POSE` by where the players are ("Who gets which stream"). No new type.
+
+## Who gets which stream
+
+With up to 16 players a server cannot send every `PLAYER_POSE` to everyone: a pose stream is about 160 KB/s, so 16 players in one place would ask a home upload for about 300 Mbit/s. The server sends `PLAYER_SAMPLE` and `PLAYER_POSE` to each player by where the two are (`server/session.cpp` `send_streamed`, options in `SessionConfig`):
+
+| Where the receiver is | `PLAYER_SAMPLE` | `PLAYER_POSE` |
+|---|---|---|
+| Same scene, within 2000 units, or either place not known yet | every one | every one |
+| Same scene, farther | every one | every 3rd |
+| Another scene | every 6th (10 a second: the player list and markers) | none (nothing to draw) |
+
+A pose lists its moving bones with their whole values, not changes since the last one, so a pose left out costs a step of the animation, never a wrong bone. A server can also cap the pose bytes it sends a second (`pose_upload_bytes_per_second`, shared evenly by the players; 0 for none): past a player's share its poses wait for the next one. The counts are in the server's stats (`interest_skipped`, `upload_capped`, `stream_bytes`).

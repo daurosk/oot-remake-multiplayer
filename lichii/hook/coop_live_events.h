@@ -23,6 +23,7 @@
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <optional>
 #include <set>
 #include <span>
@@ -71,6 +72,9 @@ std::span<const Place> Places();
 // from that door, so that room's event waits until we are in it.
 inline constexpr float kNearM = 18.0f;
 
+// The dungeon room a place of the scene is in, if known (coop_rooms.h).
+using RoomOf = std::function<std::optional<int>(const std::array<float, 3>&)>;
+
 // Which held gimmick events to start here, and when. Pure.
 class Decider {
 public:
@@ -83,10 +87,14 @@ public:
     // event runs here, and our Link's position (x, height, z) if read.
     // Returns the one to start now, if any: never while an event runs, only
     // near one of its places in our scene, each at most once per visit of
-    // the scene.
+    // the scene. `room_of` (if given): a place near our Link but known to be
+    // in another room than Link does not count (18 m reaches through walls,
+    // and an event started for a room that is not loaded here shows a black
+    // picture until it ends); it waits until we are in that room.
     std::optional<std::string> Next(const std::vector<std::string>& held, const std::string& scene,
                                     bool event_running,
-                                    std::optional<std::array<float, 3>> link = std::nullopt);
+                                    std::optional<std::array<float, 3>> link = std::nullopt,
+                                    const RoomOf* room_of = nullptr);
 
     // deku-dungeon-2 (DUNGEON_EVENT): another player's game started `name` in
     // `scene` just now. If it is our scene and not asked yet this visit, Next

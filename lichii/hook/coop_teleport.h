@@ -57,16 +57,22 @@ struct Vec {
 // move stays within our room: by the puppet pack's room table when it knows
 // both rooms, else only within kNearMove. Outside dungeons (overworld,
 // interiors) any move is fine (teleport-other passes).
+// door-unlock (2026-11-12): that holds only right after a load (`after_load`).
+// A /teleport to a player in our own scene loads nothing, and the same move
+// (CoopBoss::MoveLink) puts Link in other rooms of a dungeon in the autotests'
+// `place` step (deku-ladder, lock-open) and the boss move-in: always ok. So a
+// player refused at the entrance types /teleport once more.
 enum class MoveCheck : std::uint8_t {
     ok,
     other_room,  // the room table puts `to` in another room of the dungeon
     too_far,     // no room known for one of them, and farther than kNearMove
 };
 inline constexpr float kNearMove = 10.0f;  // game units (about metres)
-MoveCheck CheckMove(const CoopRooms::Table& rooms, std::string_view scene, const Vec& from, const Vec& to);
+MoveCheck CheckMove(const CoopRooms::Table& rooms, std::string_view scene, const Vec& from, const Vec& to,
+                    bool after_load = true);
 // The chat line when CheckMove refused (not ok): "<name> is in another room of this dungeon;
-// you are at its entrance: walk there" (`after_load`: just arrived by a scene change) or
-// "...; walk there" (a /teleport within the dungeon: we stay where we were).
+// you are at its entrance: type /teleport again, or walk there" (`after_load`: just arrived
+// by a scene change) or "...; walk there" (not after a load: no longer refused, kept for the text).
 std::string NotMovedLine(MoveCheck check, std::string_view name, bool after_load);
 
 // The entrance start point of `scene` nearest `to` (coop_start_points.inc,

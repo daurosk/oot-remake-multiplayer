@@ -7,7 +7,7 @@
 # "coop: teleport: not moved to -33.2 ... another room of this dungeon (issue 197)" (or, with an
 # old pack without coop_rooms.txt, "far, and no room table"), no "boss: moved Link" after the load,
 # "test steer at" positions changing during the two gotos near the entrance, no "goto timed out".
-# Chat line: "B is in another room of this dungeon; you are at its entrance: walk there".
+# Chat line: "B is in another room of this dungeon; you are at its entrance: type /teleport again, or walk there".
 # Shots arrived / walked: A in the Deku Tree entrance room, not black.
 #! noload
 #! start coop: test warp done

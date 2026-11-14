@@ -47,9 +47,31 @@ def _align_for(name, data):
     return 8
 
 
+def read_entries(data):
+    """[(name, bytes)] in archive order, every entry (some of the engine's archives hold a file
+    more than once under one name, as Title's layouts four times each)."""
+    data = bytes(data)
+    if data[:4] != b"SARC" or data[6:8] != b"\xff\xfe":
+        raise SarcError("not a little-endian SARC")
+    hdr, = struct.unpack_from("<H", data, 4)
+    data_off, = struct.unpack_from("<I", data, 0x0C)
+    cnt, = struct.unpack_from("<H", data, hdr + 6)
+    nodes = hdr + 0x0C
+    names_at = nodes + 0x10 * cnt + 8
+    out = []
+    for i in range(cnt):
+        _h, attr, b, e = struct.unpack_from("<IIII", data, nodes + 0x10 * i)
+        if not attr & 0x01000000:
+            raise SarcError("nameless SARC entry not supported")
+        no = names_at + (attr & 0xFFFF) * 4
+        out.append((data[no:data.index(b"\0", no)].decode("utf-8"), data[data_off + b:data_off + e]))
+    return out
+
+
 def write(files, data_align=8):
-    """files: {name: bytes}. Entries are sorted by name hash, as the engine binary-searches them."""
-    items = sorted(files.items(), key=lambda kv: name_hash(kv[0]))
+    """files: {name: bytes}, or [(name, bytes)] with a name more than once (read_entries). Entries are
+    sorted by name hash (stable: repeats keep their order), as the engine binary-searches them."""
+    items = sorted(files.items() if hasattr(files, "items") else list(files), key=lambda kv: name_hash(kv[0]))
     names = bytearray()
     name_offs = []
     for n, _ in items:

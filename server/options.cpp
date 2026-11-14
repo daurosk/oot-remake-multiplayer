@@ -63,6 +63,17 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
         return std::nullopt;
       }
       line.owner_hold_ms = ms;
+    } else if (arg == "--max-players") {
+      if (!has_value || !parse_number(args[++i], line.max_players) || line.max_players < 1 ||
+          line.max_players > 16) {
+        error = "--max-players needs a number from 1 to 16";
+        return std::nullopt;
+      }
+    } else if (arg == "--pose-upload-kbps") {
+      if (!has_value || !parse_number(args[++i], line.pose_upload_kbps) || line.pose_upload_kbps > 4'000'000) {
+        error = "--pose-upload-kbps needs a number of kilobits a second (0 for no cap)";
+        return std::nullopt;
+      }
     } else if (arg == "--max-half-open") {
       if (!has_value || !parse_number(args[++i], line.max_half_open)) {
         error = "--max-half-open needs a number (0 for no limit)";
@@ -187,7 +198,8 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
 
 const char* usage() {
   return "usage: coop_server [--port N] [--bind ADDRESS] [--allow LIST]\n"
-         "                   [--game-build ID] [--max-half-open N] [--run-for-ms N]\n"
+         "                   [--game-build ID] [--max-players N] [--max-half-open N]\n"
+         "                   [--pose-upload-kbps N] [--run-for-ms N]\n"
          "                   [--password TEXT | --password-env NAME] [--pvp on|off]\n"
          "  --port N         UDP port to listen on (default 27510, 0 for any)\n"
          "  --bind ADDRESS   listen only on this IPv4 address of this PC, for\n"
@@ -196,6 +208,10 @@ const char* usage() {
          "                   comma-separated, ranges as 26.0.0.0/8 (default: any)\n"
          "  --game-build ID  game build every player must run (default: the\n"
          "                   first player to join decides)\n"
+         "  --max-players N  most players at once, 1 to 16 (default 16)\n"
+         "  --pose-upload-kbps N  most kilobits a second of other players' poses\n"
+         "                   this server sends everyone together (your upload);\n"
+         "                   far players' poses thin out first (default 0: no cap)\n"
          "  --max-half-open N  most connections one address may hold before\n"
          "                   sending HELLO (default 4, 0 for no limit)\n"
          "  --run-for-ms N   stop by itself after N milliseconds\n"

@@ -365,7 +365,7 @@ TEST_CASE("live events: the start watch looks for a while after an event starts,
 }
 
 TEST_CASE("live events: another player's start is offered at once near its place, our own never again") {
-    // Issue 176 / dauro's play-test: the timed platforms came in B only after A's
+    // Issue 176 / Alex's play-test: the timed platforms came in B only after A's
     // cutscene ended (the played flag comes then). The start now comes first.
     CoopLiveEvents::Decider d;
     d.Started(kPlatform, kDeku);
@@ -426,4 +426,45 @@ TEST_CASE("live events: a waiting request is dropped when we left its scene, it 
     r.Want("Again", "KokiriForest");
     r.Want("Again", "KokiriForest");
     CHECK(r.Waiting() == 1);
+}
+
+TEST_CASE("a gimmick event whose place is near but in another room waits for our room") {
+    // The slingshot room's ladder: its asker is at -37.5 117.8 12.5. A Link
+    // 11 m from it but in the room next door must not get the event: that
+    // room is not loaded there, and the event's camera would show black.
+    const std::vector<std::string> held{"InsideTheDekuTree_Gimmick_FallingLadder"};
+    const std::array<float, 3> link{-37.5f, 117.8f, 1.5f};
+    int link_room = 2;
+    const CoopLiveEvents::RoomOf room_of = [&](const std::array<float, 3>& at) -> std::optional<int> {
+        return at == link ? link_room : 5;  // the place is in room 5
+    };
+    CoopLiveEvents::Decider d;
+    CHECK_FALSE(d.Next(held, "InsideTheDekuTree", false, link, &room_of).has_value());
+    CHECK_FALSE(d.Next(held, "InsideTheDekuTree", false, link, &room_of).has_value());  // it waits
+    link_room = 5;  // we walked in
+    CHECK(d.Next(held, "InsideTheDekuTree", false, link, &room_of) ==
+          std::optional<std::string>("InsideTheDekuTree_Gimmick_FallingLadder"));
+}
+
+TEST_CASE("a gimmick event starts by distance alone where a room is not known") {
+    const std::vector<std::string> held{"InsideTheDekuTree_Gimmick_FallingLadder"};
+    const std::array<float, 3> link{-37.5f, 117.8f, 1.5f};
+    {
+        const CoopLiveEvents::RoomOf none = [](const std::array<float, 3>&) { return std::optional<int>(); };
+        CoopLiveEvents::Decider d;
+        CHECK(d.Next(held, "InsideTheDekuTree", false, link, &none).has_value());
+    }
+    {
+        // Our room known, the place's not: as before.
+        const CoopLiveEvents::RoomOf half = [&](const std::array<float, 3>& at) {
+            return at == link ? std::optional<int>(2) : std::optional<int>();
+        };
+        CoopLiveEvents::Decider d;
+        CHECK(d.Next(held, "InsideTheDekuTree", false, link, &half).has_value());
+    }
+    {
+        const CoopLiveEvents::RoomOf empty;  // no function at all
+        CoopLiveEvents::Decider d;
+        CHECK(d.Next(held, "InsideTheDekuTree", false, link, &empty).has_value());
+    }
 }

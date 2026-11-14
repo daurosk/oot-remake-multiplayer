@@ -1,0 +1,71 @@
+From 7ece4a7f76e145eeaea349187e25f6c33615b6eb Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Thu, 12 Nov 2026 18:34:41 -0900
+Subject: [PATCH] Co-op host save: the account save's folder and a re-mount,
+ for the module
+
+oot-remake-multiplayer's patch 0008 (issue 167 on Hookshot). host/nn_fs.c
+exports two functions that hookshot_coop.dll finds by name in the exe:
+hos_coop_fs_save_root (the folder the account save is mounted from) and
+hos_coop_fs_save_remount (the account save mounted from another folder,
+made if missing). A guest of another player's session plays from
+<folder>-coop, into which the host's save comes; the module decides that
+when it joins, before a save is loaded. Nothing else changes: without the
+module, or with a host, the game's own save folder is used as before.
+---
+ host/nn_fs.c | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/host/nn_fs.c b/host/nn_fs.c
+index f20cfee5..4c71587d 100644
+--- a/host/nn_fs.c
++++ b/host/nn_fs.c
+@@ -255,6 +255,7 @@ int hos_fs_save_root(char *out, size_t cap) {
+     return have;
+ }
+ 
++static char save_mount[32];   /* (oot-remake-multiplayer) the account save's mount name, for hos_coop_fs_save_remount */
+ static int user_mount(const char *name, const char *sub) {
+     char root[HOS_FS_PATH];
+     snprintf(root, sizeof root, "%s\\%s", hos_user_dir, sub);
+@@ -264,11 +265,40 @@ static int user_mount(const char *name, const char *sub) {
+     if (ok && !strncmp(sub, "save\\", 5)) {
+         AcquireSRWLockExclusive(&mount_lock);
+         snprintf(save_root, sizeof save_root, "%s", root);
++        snprintf(save_mount, sizeof save_mount, "%s", name);
+         ReleaseSRWLockExclusive(&mount_lock);
+     }
+     return ok;
+ }
+ 
++/* (oot-remake-multiplayer's patch 0008, the host's save for its guests, issue 167) For hookshot_coop.dll, found by
++   name in this exe (GetProcAddress on the exe): the folder the account save is mounted from (1 when there is one),
++   and the account save mounted from another folder (made if missing; 1 when done). A guest of another player's
++   session plays from <folder>-coop, into which the host's save comes; the module decides that when it joins, before a
++   save is loaded, and the game's next reads come from there. */
++#ifdef _WIN32
++#define HOS_COOP_FS_EXPORT __declspec(dllexport)
++#else
++#define HOS_COOP_FS_EXPORT __attribute__((visibility("default")))
++#endif
++HOS_COOP_FS_EXPORT int hos_coop_fs_save_root(char *out, size_t cap) { return out && cap && hos_fs_save_root(out, cap); }
++HOS_COOP_FS_EXPORT int hos_coop_fs_save_remount(const char *root) {
++    char name[sizeof save_mount], dir[HOS_FS_PATH];
++    if (!root || !*root || strlen(root) >= sizeof dir) return 0;
++    AcquireSRWLockShared(&mount_lock);
++    snprintf(name, sizeof name, "%s", save_mount);
++    ReleaseSRWLockShared(&mount_lock);
++    if (!name[0]) return 0;
++    snprintf(dir, sizeof dir, "%s", root);
++    make_dirs(dir);
++    CreateDirectoryA(dir, NULL);
++    if (!mount(name, dir, 1)) return 0;
++    AcquireSRWLockExclusive(&mount_lock);
++    snprintf(save_root, sizeof save_root, "%s", dir);
++    ReleaseSRWLockExclusive(&mount_lock);
++    return 1;
++}
++
+ /* nn::fs::IsSaveDataExisting(ApplicationId, account::Uid const&) -> bool */
+ HLE(_ZN2nn2fs18IsSaveDataExistingENS_13ApplicationIdERKNS_7account3UidE) {
+     char root[HOS_FS_PATH];

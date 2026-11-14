@@ -25,6 +25,7 @@
 
 #include "coop/protocol/messages.hpp"
 #include "enet_server.hpp"
+#include "host_service.hpp"
 #include "join_helper.hpp"
 #include "nat_codes.hpp"
 #include "nat_net.hpp"
@@ -58,12 +59,6 @@ BOOL WINAPI on_console_event(DWORD event) {
 void say(const std::string& text) {
   std::printf("coop_server: %s\n", text.c_str());
   std::fflush(stdout);
-}
-
-std::uint64_t steady_ms() {
-  return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                        std::chrono::steady_clock::now().time_since_epoch())
-                                        .count());
 }
 
 // The STUN servers from the command line, or the free public ones.
@@ -283,226 +278,57 @@ int main(int argc, char** argv) {
 
   int exit_code = 0;
   {
-    ServerOptions options;
-    options.port = line->port;
-    options.session.game_build_id = line->game_build_id;
-    options.session.max_half_open_per_address = line->max_half_open;
-    options.session.allowed = line->allowed;
+    HostServiceConfig config;
+    config.port = line->port;
+    config.bind = line->bind;
+    config.session.game_build_id = line->game_build_id;
+    config.session.max_half_open_per_address = line->max_half_open;
+    config.session.max_players = static_cast<std::uint8_t>(line->max_players);
+    config.session.pose_upload_bytes_per_second = line->pose_upload_kbps * 125u;  // kilobits to bytes
+    config.max_connections = line->max_players + 4u;  // a full server can still say so
+    config.session.allowed = line->allowed;
     // Guests through a relay come from this PC's own link (relay_link.hpp);
     // the relay let them in by the join code.
-    if (!line->relay_via.empty() && !options.session.allowed.empty()) {
-      options.session.allowed.push_back(AddressRange{0x7F000001u, 32});
+    if (!line->relay_via.empty() && !config.session.allowed.empty()) {
+      config.session.allowed.push_back(AddressRange{0x7F000001u, 32});
     }
-    options.session.join_password = line->password;
-    options.session.pvp = line->pvp;
-    options.session.nearest_owner = line->owner_nearest;
-    if (line->owner_nearest) options.session.owner_dead_us = 1'000'000;  // off a dead player at once
-    if (line->owner_hold_ms) options.session.owner_hold_us = std::uint64_t{*line->owner_hold_ms} * 1000;
-    options.bind = line->bind;
-    options.session.log = [](const std::string& text) {
-      std::printf("coop_server: %s\n", text.c_str());
-      std::fflush(stdout);
-    };
-    EnetServer server(options);
-    if (!server.start()) {
-      std::fprintf(stderr, "coop_server: cannot listen on port %u\n",
-                   static_cast<unsigned>(line->port));
+    config.session.join_password = line->password;
+    config.session.pvp = line->pvp;
+    config.session.nearest_owner = line->owner_nearest;
+    if (line->owner_nearest) config.session.owner_dead_us = 1'000'000;  // off a dead player at once
+    if (line->owner_hold_ms) config.session.owner_hold_us = std::uint64_t{*line->owner_hold_ms} * 1000;
+    config.upnp = line->upnp;
+    config.invite = line->invite;
+    if (line->invite) config.stun_servers = stun_servers(*line);
+    config.relay_via = line->relay_via;
+    config.relay_key = line->relay_key;
+    config.log = say;
+    HostService host(config);
+    std::string why;
+    // Signals before start: the router forward and the relay are asked for
+    // inside it, and a Ctrl+C then still ends the loop cleanly.
+    std::signal(SIGINT, on_signal);
+    std::signal(SIGTERM, on_signal);
+    if (!host.start(why)) {
+      std::fprintf(stderr, "coop_server: cannot listen on port %u\n", static_cast<unsigned>(line->port));
       exit_code = 1;
     } else {
-      // On every network adapter (a VPN's too) unless --bind, with VPN-safe
-      // datagrams (issue 143).
-      std::string where = "all network adapters";
-      if (line->bind) {
-        const std::uint32_t v = *line->bind;
-        where = "only " + std::to_string(v >> 24) + "." + std::to_string((v >> 16) & 255u) + "." +
-                std::to_string((v >> 8) & 255u) + "." + std::to_string(v & 255u);
-      }
-      std::printf("coop_server: listening on port %u (%s, datagrams of %u bytes)\n",
-                  static_cast<unsigned>(server.port()), where.c_str(),
-                  static_cast<unsigned>(coop::protocol::kDatagramBytes));
-      std::printf("coop_server: players must give the join password to join; the traffic is encrypted\n");
-      if (line->pvp) {
-        std::printf("coop_server: PvP is on: players can hurt each other\n");
-      }
-      if (line->owner_nearest) {
-        std::printf("coop_server: enemies belong to the nearest player's game (--owner nearest)\n");
-      }
-      if (!line->allowed.empty()) {
-        std::printf("coop_server: only the %u address range(s) given with --allow may connect\n",
-                    static_cast<unsigned>(line->allowed.size()));
-      }
-      std::fflush(stdout);
-      std::signal(SIGINT, on_signal);
-      std::signal(SIGTERM, on_signal);
-
-      // Router forward (upnp.hpp) and relay (relay_link.hpp), when asked for.
-      std::unique_ptr<coop::server::upnp::Mapping> mapping;
-      if (line->upnp) {
-        coop::server::upnp::Config config;
-        config.internal_port = server.port();
-        config.external_port = server.port();
-        config.log = say;
-        mapping = std::make_unique<coop::server::upnp::Mapping>(config);
-        if (!mapping->open()) mapping.reset();
-      }
-      std::unique_ptr<coop::server::relay::RelayLink> link;
-      if (!line->relay_via.empty()) {
-        coop::server::relay::RelayLinkConfig config;
-        if (!coop::server::relay::parse_relay_address(line->relay_via, config.relay_host,
-                                                      config.relay_port)) {
-          say("relay: '" + line->relay_via + "' is not a relay address (name or IPv4, optional :port)");
-        } else {
-          config.server_port = server.port();
-          config.key = line->relay_key;
-          config.log = [](const std::string& text) { say("relay: " + text); };
-          const std::string relay_text = line->relay_via;
-          config.on_code = [relay_text](const std::string& code) {
-            const std::string shown = coop::server::relay::show_code(code);
-            say("relay: join code " + shown + ". Give your friends " + shown + "@" + relay_text +
-                " (Join.bat takes it as the server address)");
-          };
-          link = std::make_unique<coop::server::relay::RelayLink>(config);
-          std::string why;
-          if (!link->start(why)) {
-            say("relay: " + why);
-            link.reset();
-          } else {
-            say("relay: asking " + line->relay_via + " for a join code");
-          }
-        }
-      }
-
-      // Invite code (punch.hpp): STUN from the game port, then the code, then
-      // answer codes typed into this window.
-      namespace nat = coop::server::nat;
-      std::unique_ptr<nat::HostRendezvous> rendezvous;
-      bool invite_shown = false;
-      if (line->invite) {
-        nat::HostConfig config;
-        config.password = line->password;
-        config.stun_servers = stun_servers(*line);
-        config.send = [&server](nat::Addr to, std::span<const std::uint8_t> data) {
-          server.send_raw(nat::to_enet(to), data);
-        };
-        config.log = say;
-        rendezvous = std::make_unique<nat::HostRendezvous>(config);
-        nat::HostRendezvous* r = rendezvous.get();
-        server.set_raw_handler([r](const ENetAddress& from, std::span<const std::uint8_t> data) {
-          return r->on_datagram(nat::from_enet(from), data, steady_ms());
-        });
-        say("invite: asking a public STUN server for this PC's internet address (it sees the address, no game "
-            "data)");
-        rendezvous->start(steady_ms());
-        TypedLines::get().start();
-      }
-
+      if (line->invite) TypedLines::get().start();
       auto started = std::chrono::steady_clock::now();
-      std::uint64_t shown_resets = 0;
-      std::uint64_t shown_limited = 0;
-      // Enemy counts (issues 105, 133), at most every 5 s while they change.
-      std::uint64_t shown_enemies = 0;
-      auto enemies_at = started;
       while (!g_stop) {
-        // Relayed datagrams wait for this round: keep it short with a relay.
-        server.service(link ? 1 : 5);
-        if (link) link->service();
-        if (mapping) mapping->renew_if_due();
-        if (rendezvous) {
-          rendezvous->service(steady_ms());
-          if (!invite_shown && rendezvous->stun_done()) {
-            invite_shown = true;
-            std::optional<nat::Addr> where;
-            const auto seen = rendezvous->public_address();
-            if (mapping) {
-              const auto ext = coop::server::upnp::parse_ipv4(mapping->external_address());
-              if (ext && nat::is_public(*ext)) where = nat::Addr{*ext, server.port()};
-              if (where && seen && seen->ip != where->ip) {
-                say("invite: note: the router's internet address is not the one the STUN server saw (two "
-                    "routers in a row); the invite uses the router's");
-              }
-            }
-            if (!where && seen && nat::is_public(seen->ip)) where = *seen;
-            const auto code = where ? nat::make_invite(nat::Invite{*where, line->password}) : std::nullopt;
-            if (!code) {
-              say("invite: no invite code: no STUN server answered (no internet, or a firewall blocks UDP) and "
-                  "the router did not forward the port. " + nat::no_way_help());
-            } else {
-              say("invite code: " + *code);
-              say("invite: send the invite code to your friends; they paste it into Join.bat. It holds your "
-                  "internet address and the join password, so send it only to friends. It stops working when "
-                  "this window closes, and changes each time.");
-              say("invite: if a friend's Join.bat window shows an ANSWER CODE, paste it here (right-click) and "
-                  "press Enter.");
-              if (rendezvous->symmetric() && !mapping) {
-                say("invite: note: your router gives every address its own port (symmetric NAT), so friends "
-                    "may not get through; upnp = yes or a VPN helps (docs/play-online.md)");
-              }
-            }
-          }
+        host.service(5);
+        if (line->invite) {
           for (const std::string& typed : TypedLines::get().take()) {
             if (typed.find_first_not_of(" \t\r") == std::string::npos) continue;
-            const nat::CodeError e = rendezvous->add_answer(typed, steady_ms());
-            if (e != nat::CodeError::kOk) say("answer code not used: " + nat::explain(e));
+            host.add_answer(typed);
           }
         }
-        // Counts a window or a test can read while the server runs (it is
-        // often closed, not stopped): each host save load, and messages over
-        // a player's rate (the first, then every 100th).
-        const Stats& now = server.session().stats();
-        if (now.host_resets != shown_resets) {
-          shown_resets = now.host_resets;
-          std::printf("coop_server: the host loaded a save: the group follows it (host_resets %llu)\n",
-                      static_cast<unsigned long long>(shown_resets));
-          std::fflush(stdout);
-        }
-        if (now.rate_limited != shown_limited &&
-            (shown_limited == 0 || now.rate_limited / 100 != shown_limited / 100)) {
-          std::printf("coop_server: messages over a player's rate dropped so far: %llu\n",
-                      static_cast<unsigned long long>(now.rate_limited));
-          std::fflush(stdout);
-        }
-        shown_limited = now.rate_limited;
-        const std::uint64_t enemies = now.group_links + now.group_refused + now.damage_relayed +
-                                      now.damage_dropped + now.dead_told;
-        if (enemies != shown_enemies &&
-            std::chrono::steady_clock::now() - enemies_at >= std::chrono::seconds(5)) {
-          shown_enemies = enemies;
-          enemies_at = std::chrono::steady_clock::now();
-          std::printf("coop_server: enemies: group entries taken %llu, refused %llu; "
-                      "damage relayed %llu, dropped %llu; kills told late %llu\n",
-                      static_cast<unsigned long long>(now.group_links),
-                      static_cast<unsigned long long>(now.group_refused),
-                      static_cast<unsigned long long>(now.damage_relayed),
-                      static_cast<unsigned long long>(now.damage_dropped),
-                      static_cast<unsigned long long>(now.dead_told));
-          std::fflush(stdout);
-        }
         if (line->run_for_ms &&
-            std::chrono::steady_clock::now() - started >=
-                std::chrono::milliseconds(*line->run_for_ms)) {
+            std::chrono::steady_clock::now() - started >= std::chrono::milliseconds(*line->run_for_ms)) {
           break;
         }
       }
-      if (link) link->stop();
-      if (mapping) mapping->close();
-      const Stats& stats = server.session().stats();
-      std::printf("coop_server: stopping; relayed %llu, dropped %llu, "
-                  "half-open refused %llu, not allowed %llu\n",
-                  static_cast<unsigned long long>(stats.relayed),
-                  static_cast<unsigned long long>(stats.dropped()),
-                  static_cast<unsigned long long>(stats.half_open_limited),
-                  static_cast<unsigned long long>(stats.not_allowed));
-      std::printf("coop_server: host save loads %llu, over the rate %llu\n",
-                  static_cast<unsigned long long>(stats.host_resets),
-                  static_cast<unsigned long long>(stats.rate_limited));
-      std::printf("coop_server: flags relayed %llu, refused %llu, clashes %llu; "
-                  "join relayed %llu, not there %llu, dropped %llu\n",
-                  static_cast<unsigned long long>(stats.flag_relayed),
-                  static_cast<unsigned long long>(stats.flag_refused),
-                  static_cast<unsigned long long>(stats.flag_clashes),
-                  static_cast<unsigned long long>(stats.join_relayed),
-                  static_cast<unsigned long long>(stats.join_not_there),
-                  static_cast<unsigned long long>(stats.join_dropped));
+      host.stop();
     }
   }
   g_done = true;

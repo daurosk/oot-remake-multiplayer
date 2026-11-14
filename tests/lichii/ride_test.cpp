@@ -118,6 +118,10 @@ TEST_CASE("ride: the rider sends its horse 30 times a second, and riding off whe
 
     CHECK_FALSE(rider.Tick(true, me, turn, {horse}, 1'050'000));  // too soon
     CHECK(rider.Tick(true, me, turn, {horse}, 1'080'000));
+    // Our place unread for a frame: no message and still riding (not a dismount,
+    // which would make the others delete the horse and make it again).
+    CHECK_FALSE(rider.Tick(true, std::nullopt, turn, {horse}, 1'080'500));
+    CHECK(rider.Riding());
 
     // Off: at once, then twice more, then nothing.
     CHECK(rider.Wants(false, 1'081'000));
@@ -182,8 +186,16 @@ TEST_CASE("ride: the others draw the horse under the riding puppet, turned with 
     CHECK(rides.Plan(scene, false, {Rider(puppet, turn)}, 0, 5'160'000).empty());
     CHECK(rides.Plan(std::string("LonLonRanch"), false, {Rider(puppet, turn)}, kP2Live, 5'170'000).empty());
     CHECK(rides.Plan(scene, true, {Rider(puppet, turn)}, kP2Live, 5'180'000).empty());
-    // Getting off: their command says so before riding off comes.
-    CHECK(rides.Plan(scene, false, {Rider(puppet, turn, "DismountHorse")}, kP2Live, 5'190'000).empty());
+    // The rider's game says when the ride ends, not the puppet's sampled
+    // command (it can trail or miss a frame): the horse stays under it.
+    (void)rides.Changes();
+    CHECK(rides.Plan(scene, false, {Rider(puppet, turn, "Wait")}, kP2Live, 5'190'000).size() == 1);
+    CHECK(rides.Changes().size() == 1);  // "P2 rides" again after our cutscene
+    // A child never gets a horse (only an adult rides Epona).
+    CoopPuppet::Remote child = Rider(puppet, turn);
+    child.adult = false;
+    CHECK(rides.Plan(scene, false, {child}, kP2Live, 5'192'000).empty());
+    CHECK(rides.Plan(scene, false, {child}, kP2Live, 5'194'000).empty());
     CHECK(rides.Changes().size() == 1);  // "P2 off the horse" once, not per frame
     // Stale (riding off lost): gone after kStaleUs.
     auto back_on = rides.Plan(scene, false, {Rider(puppet, turn)}, kP2Live, 5'200'000);
@@ -220,4 +232,25 @@ TEST_CASE("ride: a player who never sent a ride gets no horse (an old build): th
 TEST_CASE("ride: the ridable horse is never a shared object (one horse per game)") {
     CHECK(CoopRide::IsHorse(CoopRide::kHorse));
     CHECK_FALSE(CoopObjects::IsShared(CoopRide::kHorse));
+}
+
+TEST_CASE("ride: the highest player number rides too (16 players), one past it is ignored") {
+    CoopRide::Rider rider;
+    HorseSeen horse;
+    horse.address = 0x1;
+    horse.position = {0.0f, -1.0f, 0.0f};
+    horse.rotation = CoopPuppet::QuatToMatrix(Yaw(0.0f));
+    auto sent = rider.Tick(true, CoopRide::Vec3{0.0f, 0.0f, 0.0f}, Yaw(0.0f), {horse}, 5'000'000);
+    REQUIRE(sent);
+    const std::uint8_t top = proto::kMaxPlayers;
+    for (const std::uint8_t n : {top, static_cast<std::uint8_t>(top + 1)}) {
+        CoopRide::Rides rides;
+        proto::PlayerRide m = Relayed(*sent);
+        m.player_number = n;
+        rides.Receive(m, 5'000'000);
+        CoopPuppet::Remote r = Rider({0.0f, 0.0f, 0.0f}, Yaw(0.0f));
+        r.number = n;
+        const auto copies = rides.Plan(std::string("HyruleField"), false, {r}, 1u << n, 5'010'000);
+        CHECK(copies.size() == (n == top ? 1u : 0u));
+    }
 }

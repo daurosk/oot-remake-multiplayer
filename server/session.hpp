@@ -46,6 +46,9 @@ std::optional<AddressRange> parse_address_range(std::string_view text);
 // number with the first dotted part highest.
 std::uint32_t ipv4_of(std::uint32_t enet_host);
 
+// Players a server takes unless told otherwise (coop_server --max-players).
+inline constexpr std::uint8_t kDefaultMaxPlayers = 16;
+
 struct SessionConfig {
   // The game build every player must run. Empty: the first player to join
   // decides it, and it is forgotten again when the session empties.
@@ -57,6 +60,23 @@ struct SessionConfig {
   // both key shares; the traffic keys come from it too. Required: empty, every
   // HELLO is refused (there is no plain way in, docs/protocol.md).
   std::string join_password;
+  // Most players at once (coop_server --max-players), 1 to protocol::kMaxPlayers;
+  // one more is told the server is full. 4 until the game's side (puppets,
+  // HUD, tables) takes 16; the protocol already does.
+  std::uint8_t max_players = kDefaultMaxPlayers;
+  // Interest (16 players, docs/protocol.md "Who gets which stream"): each
+  // PLAYER_SAMPLE and PLAYER_POSE goes to a player by where the two are.
+  // Same scene within near_distance (game units), or either place unknown:
+  // all of them. Same scene, farther: every far_pose_every-th pose (samples
+  // all: they are small). Another scene: every other_scene_sample_every-th
+  // sample (the player list, markers) and no poses (nothing to draw).
+  float near_distance = 2000.0f;
+  std::uint8_t far_pose_every = 3;
+  std::uint8_t other_scene_sample_every = 6;
+  // Most PLAYER_POSE bytes a second the server sends everyone together (the
+  // host's upload), shared evenly by the players; past a player's share its
+  // poses wait for the next one. 0: no cap.
+  std::uint32_t pose_upload_bytes_per_second = 0;
   // PvP (coop_server --pvp): players hurt each other. The host may change it
   // in the session (PVP_MODE); every player gets the server's value.
   bool pvp = false;
@@ -78,6 +98,9 @@ struct SessionConfig {
   // messages a second) stay well under them.
   std::uint32_t reliable_per_second = 60;
   std::uint32_t unreliable_per_second = 240;
+  // VOICE_FRAME (channel 5) has a budget of its own, so talking never takes
+  // the poses' and samples' messages: 50 frames a second, bursts of twice.
+  std::uint32_t voice_per_second = 60;
   // Most message bytes a player may send a second, both kinds together, with
   // bursts of up to twice that. The message counts alone let a player relay
   // 300 messages of up to 64 KB a second (19 MB/s) to every other player; the
@@ -175,7 +198,7 @@ struct SessionConfig {
   // and only the owner's game runs the boss right (the other copies follow
   // its pose), and the boss then turns on that player. 0: off.
   std::uint64_t boss_hitter_cooldown_us = 8'000'000;
-  // gohma-sync (issue 150, dauro's play-test 2026-11-12): only a stun (a
+  // gohma-sync (issue 150, Alex's play-test 2026-11-12): only a stun (a
   // DAMAGE of 0: the stun is in the hitter's game alone) hands a boss over.
   // A hit that takes life is passed to the owner and the boss stays: every
   // hand-over ran the new owner's AI from a copy whose phase, eye guard and
@@ -206,6 +229,17 @@ struct SessionConfig {
   std::uint64_t owner_dead_us = 10'000'000;
   // A player position older than this is not used for distances.
   std::uint64_t position_stale_us = 5'000'000;
+  // Proximity voice (docs/protocol.md, "Voice"): VOICE_FRAME goes to the
+  // players in the sender's scene whose Link is within this of the sender's,
+  // in metres; 0: the whole scene. A player whose place is not known (or is
+  // stale) hears the whole scene. The games fade a voice out to silence at
+  // their own range (default 30 m), so this is a little larger.
+  float voice_range_m = 35.0f;
+  // At most this many voices reach one player at once (the first to start
+  // talking keep it until they stop or are quiet voice_quiet_us); 0: no cap.
+  // Bounds the host's upload with 16 players in one room.
+  std::uint32_t voice_max_speakers = 4;
+  std::uint64_t voice_quiet_us = 400'000;
   // How often tick runs the ownership rules.
   std::uint64_t ownership_check_us = 250'000;
   // Every this often a player's OBJECT_PRESENT is answered with OBJECT_OWNER
@@ -268,6 +302,11 @@ struct Stats {
   std::uint64_t after_refused = 0;   // packets from a connection being closed
   std::uint64_t rate_limited = 0;    // over a player's message rate
   std::uint64_t relayed = 0;         // messages passed on (once per message)
+  // Proximity voice. Relayed ones count in relayed too.
+  std::uint64_t voice_relayed = 0;      // VOICE_FRAME passed on (once per frame)
+  std::uint64_t voice_out_of_range = 0; // a listener left out: too far from the speaker
+  std::uint64_t voice_unplaced = 0;     // from a player whose scene is not known yet: dropped
+  std::uint64_t voice_capped = 0;       // a listener left out: voice_max_speakers others were talking
   std::uint64_t players_died = 0;    // PLAYER_LIFE went to 0 (on_life)
   // PvP (docs/protocol.md, "PvP"). Relayed ones count in relayed too.
   std::uint64_t pvp_hits_relayed = 0;   // PVP_HIT passed on to its victim
@@ -350,7 +389,13 @@ struct Stats {
   std::uint64_t spawns_replayed = 0;      // OBJECT_SPAWN sent again to a player entering
   std::uint64_t owners_refreshed = 0;     // OBJECT_OWNER repeated (owner_refresh_us)
   std::uint64_t owners_held = 0;          // objects given their first owner after owner_hold_us
-  std::uint64_t stale_scenes = 0;         // a late message's old scene, not taken back
+  std::uint64_t stale_scenes = 0;
+  // Interest (SessionConfig::near_distance): streamed messages not sent to a
+  // player (far, another scene), poses held back by the upload cap, and the
+  // stream bytes that were sent.
+  std::uint64_t interest_skipped = 0;
+  std::uint64_t upload_capped = 0;
+  std::uint64_t stream_bytes = 0;         // a late message's old scene, not taken back
   std::uint64_t group_links = 0;          // OBJECT_GROUP entries taken
   std::uint64_t group_refused = 0;        // OBJECT_GROUP entries turned away
   std::uint64_t late_removes = 0;         // a kill from the owner before, taken
@@ -431,6 +476,10 @@ class Session {
     // Message budgets for the rate limits, in messages, refilled with time.
     double reliable_budget = 0;
     double unreliable_budget = 0;
+    double voice_budget = 0;
+    // Proximity voice: the speakers this player hears now, by number, and
+    // when each one's last frame was passed on (voice_max_speakers).
+    std::map<std::uint8_t, std::uint64_t> voices_heard;
     double byte_budget = 0;
     std::uint64_t budget_time = 0;
     std::optional<std::uint32_t> address;
@@ -446,7 +495,7 @@ class Session {
     // HELLO: the token its REJOIN_CLAIM showed, if any.
     protocol::RejoinTokenBytes rejoin_token{};
     std::optional<protocol::RejoinTokenBytes> rejoin_claim;
-    std::uint8_t number = 0;  // 1 to 4 once joined
+    std::uint8_t number = 0;  // 1 to max_players once joined
     std::string nickname;
     // The scene the player is in, from its latest OBJECT_PRESENT or
     // PLAYER_SAMPLE scene; empty while not known.
@@ -460,6 +509,12 @@ class Session {
     // Where its Link is, from PLAYER_SAMPLE; forgotten at a scene change.
     std::optional<protocol::Vec3> position;
     std::uint64_t position_at = 0;
+    // As a receiver: how many samples and poses of each sender it was due
+    // (interest counts every n-th), and its share of the pose upload cap.
+    std::array<std::uint32_t, protocol::kMaxPlayers + 1> samples_due{};
+    std::array<std::uint32_t, protocol::kMaxPlayers + 1> poses_due{};
+    double upload_budget = 0;
+    std::uint64_t upload_time = 0;
     // PLAYER_STATUS bits, and since when it is paused or dead (0: it is not).
     std::uint8_t status = 0;
     std::uint64_t paused_since = 0;
@@ -553,6 +608,8 @@ class Session {
   void on_pvp_hit(ConnectionId id, Connection& c, protocol::Message& message);
   void on_object_group(ConnectionId id, Connection& c, const protocol::ObjectGroup& g);
   void on_fish_lure(Connection& c, const protocol::FishLure& m, std::uint64_t now_us);
+  // Proximity voice: to the others in the speaker's scene within voice_range_m.
+  void on_voice(ConnectionId id, const Connection& c, protocol::VoiceFrame& m, std::uint64_t now_us);
   // A fish's owner by the lures (issue 151): asks it over when another game's
   // lure is clearly better than its owner's.
   // unfit: its owner's game stands still (unfit_owner).
@@ -648,10 +705,14 @@ class Session {
                      const std::string& why = {});
   std::optional<ConnectionId> holder_of(const std::string& nickname) const;
   std::uint8_t free_number(std::uint8_t preferred = 0) const;
+  std::uint8_t max_players() const;  // config_.max_players, 1 to kMaxPlayers
 
   void send(ConnectionId to, std::uint8_t channel, const protocol::Message& m);
   void send_to_others(ConnectionId except, std::uint8_t channel,
                       const protocol::Message& m);
+  // PLAYER_SAMPLE and PLAYER_POSE: to each other player by interest.
+  void send_streamed(ConnectionId from, const Connection& sender, std::uint8_t channel,
+                     const protocol::Message& m, std::uint64_t now_us);
   void log(const std::string& line) const;
 
   SessionConfig config_;

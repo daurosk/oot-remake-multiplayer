@@ -13,6 +13,7 @@ add_library(coop_server_lib STATIC
   stun.cpp
   punch.cpp
   join_helper.cpp
+  host_service.cpp
 )
 target_include_directories(coop_server_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(coop_server_lib PUBLIC coop_protocol coop_net enet PRIVATE coop_warnings)

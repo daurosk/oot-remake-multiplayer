@@ -40,6 +40,10 @@ struct Quest {
     // opening is not moved on (time-story's CoopQuest DoorOfTime rule reads
     // our Goto, reports/review-time-story.md).
     std::int32_t floor = 0;
+    // Only the end is shared (Get_Epona): a game not at Complete reads as
+    // NotReady, and only Complete is ever written. The steps before it stay
+    // each game's own.
+    bool complete_only = false;
 };
 
 // Every shared quest, sorted by hash.
@@ -91,7 +95,9 @@ class Store final : public coop::host::FlagStore {
     bool is_max(coop::host::FlagKey key) override;
     bool is_one_way(coop::host::FlagKey key) override { return inner_.is_one_way(key); }
     bool holds(coop::host::FlagKey key) override { return inner_.holds(key); }
-    bool busy(coop::host::FlagKey key) override { return inner_.busy(key); }
+    // A complete_only quest our game is finishing itself counts as busy, so
+    // the end waits (FlagWatcher unwritten_) instead of being dropped.
+    bool busy(coop::host::FlagKey key) override;
 
     // Steps moved since the last call (for the log).
     std::vector<Raised> take_raised();

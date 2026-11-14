@@ -280,12 +280,15 @@ struct Sent {
 };
 
 struct HostFixture {
+  explicit HostFixture(bool remember = false) : remember_friends(remember) {}
+  bool remember_friends = false;
   std::vector<Sent> sent;
   std::vector<std::string> lines;
   std::uint64_t clock = kNow;
   std::uint8_t next_id = 1;
   HostRendezvous host{[this] {
     HostConfig c;
+    c.remember_friends = remember_friends;
     c.password = "join-pw";
     c.stun_servers = {kStunA, kStunB};
     c.send = [this](Addr to, std::span<const std::uint8_t> b) { sent.push_back({to, {b.begin(), b.end()}}); };
@@ -431,6 +434,35 @@ TEST_CASE("host rendezvous: punches go only toward a signed answer code's addres
   CHECK(f.host.answers() == 0);
   CHECK(f.host.on_datagram(kGuestAddr, f.punch(PunchType::kGuestPunch, a.nonce), 700'000));
   CHECK(f.sent.empty());
+}
+
+TEST_CASE("host rendezvous: the game's own host remembers a friend, so a rejoin needs no new answer code") {
+  HostFixture f(true);
+  f.host.start(0);
+  Answer a;
+  a.guest = kGuestAddr;
+  a.nonce = {7, 7, 7, 7, 7, 7, 7, 7};
+  a.time = static_cast<std::uint32_t>(kNow);
+  f.host.service(800);
+  f.host.service(1700);
+  f.sent.clear();
+  REQUIRE(f.host.add_answer(make_answer(a, "join-pw"), 1000) == CodeError::kOk);
+  // After the 10 s burst it keeps punching toward the friend, every 2 s, and never forgets them.
+  f.host.service(11'000);
+  f.sent.clear();
+  f.host.service(11'500);
+  f.host.service(13'100);
+  f.host.service(13'200);
+  REQUIRE(f.sent.size() == 1);
+  CHECK(f.sent[0].to == kGuestAddr);
+  CHECK(read_punch(f.sent[0].bytes, punch_key("join-pw"), kNow).punch.nonce == a.nonce);
+  f.host.service(1000 + 3'600'000);   // an hour later
+  CHECK(f.host.answers() == 1);
+  // The friend's game comes back with the same nonce (coop_host_menu.h RejoinIds): it is answered.
+  f.sent.clear();
+  CHECK(f.host.on_datagram(kGuestAddr, f.punch(PunchType::kGuestPunch, a.nonce), 1000 + 3'600'100));
+  REQUIRE(f.sent.size() == 1);
+  CHECK(f.sent[0].to == kGuestAddr);
 }
 
 TEST_CASE("nat codes: the same bytes as Join.bat's reader (tools/release/tests/hosting_test.ps1)") {

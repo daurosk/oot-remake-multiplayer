@@ -1,7 +1,7 @@
 @echo off
 rem Updates this co-op kit to the newest release (SETUP.md, "Updating"). Your saves, keys,
 rem settings, puppet pack and coop-options.ini are kept. It must sit in the kit folder,
-rem beside Host.bat. This one file is all it needs: the PowerShell script that does the
+rem beside "Start OoT Co-op.bat" (Host.bat in an older emulator kit). This one file is all it needs: the PowerShell script that does the
 rem work is the rest of this file, from the marker line below on (make_update_bat.ps1).
 rem It is copied to a temp file and run from there, so it can replace this file.
 rem Everything is on one line: cmd reads a .bat as it runs, and this one may be replaced.

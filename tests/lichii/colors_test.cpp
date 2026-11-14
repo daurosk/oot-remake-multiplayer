@@ -86,6 +86,18 @@ TEST_CASE("colours: names and #RRGGBB") {
     CHECK_FALSE(CoopColors::Parse("#12AG7F"));
     CHECK_FALSE(CoopColors::Parse("blurple"));
     CHECK(CoopColors::Text(0x0A0B0C) == "#0A0B0C");
+    // The forms players type in an ini (10.1: a hex colour did nothing for one).
+    CHECK(CoopColors::Parse("\"#FF8020\"") == 0xFF8020u);
+    CHECK(CoopColors::Parse("'ff8020'") == 0xFF8020u);
+    CHECK(CoopColors::Parse("0xFF8020") == 0xFF8020u);
+    CHECK(CoopColors::Parse("#F82") == 0xFF8822u);
+    CHECK(CoopColors::Parse("#FF8020FF") == 0xFF8020u);
+    CHECK(CoopColors::Parse("FF802080") == 0xFF8020u);
+    CHECK(CoopColors::Parse("rgb(255, 128, 32)") == 0xFF8020u);
+    CHECK(CoopColors::Parse("rgba(255,128,32,0.5)") == 0xFF8020u);
+    CHECK_FALSE(CoopColors::Parse("rgb(256, 0, 0)"));
+    CHECK_FALSE(CoopColors::Parse("\"#FF8020"));
+    CHECK(CoopColors::TunicOf(*CoopColors::Parse("#FF8020")) == CoopColors::TunicOf(*CoopColors::Parse("orange")));
     // Every name the error message lists is known.
     std::string names = CoopColors::Names();
     for (std::size_t at = 0; at < names.size();) {

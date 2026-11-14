@@ -18,7 +18,8 @@ Windows, a Unix socket on Linux, newline-delimited JSON. This module is our clie
   at every mark and every few seconds, the logs, then everything closed.
 
 Each player writes the lines the emulator's hook writes (`coop: test mark NAME`, `coop: test script done`, ...) to
-its own log, so the runner reads both the same way.
+its own log, so the runner reads both the same way. Marks also go through the module's commands file, so the game's
+log has them in order with its own lines (groups.py grades that log); a warp is done when its map is reached.
 
     python -I tools/autotest/hookshot.py play --sock coop-auto-A --script walk.A.txt --log a.txt --shots out
     python -I tools/autotest/hookshot.py run --game-a <folder> --game-b <folder> --server coop_server.exe --out <dir>
@@ -30,6 +31,7 @@ import json
 import math
 import os
 import queue
+import re
 import shutil
 import socket
 import struct
@@ -475,6 +477,11 @@ class Player:
 
     def mark(self, name):
         self.log("coop: test mark " + name)
+        # The same mark in the game's own log (the module writes "coop: test mark NAME (Link at x y z)"), so a
+        # grading line like "test mark near.*voice: ..." finds it in order with the game's lines: groups.py reads
+        # hookshot_log-X.txt, as it reads the emulator's log.
+        if self.commands and not self._send(["mark " + name]):
+            self.log("coop: test mark %s NOT taken (no module reading LICHII_COOP_TEST_COMMANDS?)" % name)
         if self.shot:
             try:
                 self.shot(name)
@@ -579,8 +586,20 @@ class Player:
                         self.sleep(0.5)
                         continue
                     if r.get("sent"):
-                        self.log("coop: test warp %s: sent (map %s)" % (s.name, r.get("map")))
-                        return
+                        to = r.get("map") or s.name
+                        self.log("coop: test warp %s: sent (map %s%s)" % (
+                            s.name, to, ", not accepted" if r.get("accepted") is False else ""))
+                        # "sent" is not "moved": a teleport asked while the arrival event of the save's load still
+                        # plays is dropped by the game (Longshot rc.3: "result 0", Link stays where the save put
+                        # him). So wait for the map, and ask again when it does not come.
+                        # Not accepted: usually dropped, so ask again soon (the game refuses a teleport within 8 s
+                        # of the last one); the map may still come (seen once), so wait for it that long first.
+                        if self._arrived(b, to, deadline, 9.0 if r.get("accepted") is False else 30.0):
+                            self.log("coop: test warp done (map %s)" % to)
+                            return
+                        why = "map %s not reached" % to
+                        self.log("coop: test warp %s: %s, asking again" % (s.name, why))
+                        continue
                     self.sleep(0.5)
                 self.log("coop: test warp %s gave up after %.0f s (%s)" % (s.name, self.warp_for, why))
             finally:
@@ -591,6 +610,21 @@ class Player:
         t.start()
         self.warps.append(t)
 
+    def _arrived(self, b, to, deadline, arrive_for=30.0):
+        """True once the game is in map `to` (the bridge's `wait map`); False if it is not within arrive_for s."""
+        left = min(arrive_for, deadline - self.clock())
+        if left <= 0:
+            return False
+        try:
+            b.request("wait", reply_timeout=left + 10.0, event="map", map=to, timeout=left)
+            return True
+        except BridgeError as e:
+            if e.code == "timeout":
+                return False
+            if e.code in ("bad_request", "unknown_cmd"):   # a bridge without `wait map`: trust "sent"
+                return True
+            raise
+
     # the module's test commands: written to its file, taken when it is empty again
     def module(self, batch):
         if not self.commands:
@@ -598,6 +632,14 @@ class Player:
                 self.log("coop: test %s skipped on hookshot (line %d: needs the co-op module's test commands)"
                          % (s.kind, s.line))
             return
+        taken = self._send([s.text for s in batch])
+        for s in batch:
+            self.log("coop: test %s %s (line %d: %s)" % (s.kind, "sent" if taken else "NOT taken", s.line,
+                                                         "the module's log says what it did" if taken else
+                                                         "no module reading LICHII_COOP_TEST_COMMANDS?"))
+
+    def _send(self, lines):
+        """Writes lines to the module's commands file; True once the module took them (emptied the file)."""
         deadline = self.clock() + self.take_for
         while self._waiting() and self.clock() < deadline:   # the last batch not taken yet
             self.sleep(0.05)
@@ -605,17 +647,13 @@ class Player:
         tmp = "%s.%d.tmp" % (self.commands, self.sent)
         with open(tmp, "w", encoding="utf-8", newline="\n") as f:
             f.write("# hookshot.py batch %d\n" % self.sent)
-            for s in batch:
-                f.write(s.text + "\n")
+            for line in lines:
+                f.write(line + "\n")
         os.replace(tmp, self.commands)
         deadline = self.clock() + self.take_for
         while self._waiting() and self.clock() < deadline:
             self.sleep(0.05)
-        taken = not self._waiting()
-        for s in batch:
-            self.log("coop: test %s %s (line %d: %s)" % (s.kind, "sent" if taken else "NOT taken", s.line,
-                                                         "the module's log says what it did" if taken else
-                                                         "no module reading LICHII_COOP_TEST_COMMANDS?"))
+        return not self._waiting()
 
     def _waiting(self):
         try:
@@ -643,7 +681,11 @@ class Player:
             if s.kind == "timed":
                 t = self.timed(s, t)
             elif s.kind == "mark":
+                self._until(t)
                 self.mark(s.name)
+                # The mark waits for the module to take it (up to a quarter second): the next step starts after
+                # it, or a short press scheduled from before it would be let go at once (a title press lost).
+                t = max(t, self.clock())
             elif s.kind in ("goto", "toward"):
                 t = max(t, self.steer(s, max(t, self.clock())))
             elif s.kind == "warp":
@@ -672,6 +714,33 @@ def to_play(bridge, log, timeout, clock=time.monotonic, sleep=time.sleep):
     raise TimeoutError("not in play after %d s" % timeout)
 
 
+# The renderer's start is done: its pipelines are made (from the caches or compiled now). Until then the game shows
+# nothing and reads no controller; with a cold driver cache that is minutes (~170 s seen), so a run waits for it.
+RENDERER_READY = re.compile(r"vk: precompile: \d+ programs, .* in \d+ ms")
+
+
+def read_text(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def wait_renderer(read_log, alive, timeout, clock=time.monotonic, sleep=time.sleep):
+    """Until read_log() has the renderer's 'precompile ... in N ms' line; the seconds waited. 0 = no wait."""
+    if timeout <= 0:
+        return 0.0
+    t0 = clock()
+    while not RENDERER_READY.search(read_log()):
+        if not alive():
+            raise RuntimeError("the game closed before its renderer started")
+        if clock() - t0 > timeout:
+            raise TimeoutError("renderer not started in %d s (shaders still compiling?)" % timeout)
+        sleep(0.5)
+    return clock() - t0
+
+
 SAVE_USER = "5a3c9e1f0b7d24680000000000000001"   # the user folder a Hookshot game reads its saves from
 
 
@@ -692,12 +761,12 @@ def restore_save(game):
 
 
 def exe_dir(game):
-    return os.path.join(game, "bin") if os.path.isfile(os.path.join(game, "bin", "hookshot.exe")) else game
+    return os.path.join(game, "bin") if os.path.isfile(os.path.join(game, "bin", "longshot.exe")) else game
 
 
 def find_log(game):
     for d in (exe_dir(game), game):
-        p = os.path.join(d, "hookshot_log.txt")
+        p = os.path.join(d, "longshot_log.txt")
         if os.path.isfile(p):
             return p
     return None
@@ -732,7 +801,7 @@ def run(a):
             time.sleep(1)
         for i, x in enumerate(tags):
             g = games[x]
-            if not os.path.isfile(os.path.join(exe_dir(g), "hookshot.exe" if WINDOWS else "hookshot")):
+            if not os.path.isfile(os.path.join(exe_dir(g), "longshot.exe" if WINDOWS else "longshot")):
                 raise FileNotFoundError("no Hookshot game in %s" % g)
             if not a.no_restore:
                 say("%s: save baseline %s" % (x, "restored" if restore_save(g) else "none (autotest-save missing)"))
@@ -740,9 +809,11 @@ def run(a):
             commands[x] = os.path.join(out, "commands-%s.txt" % x)
             open(commands[x], "w").close()
             env = dict(os.environ, HOS_CONTROL=sock, HOS_CONTROL_MEM="ro", LICHII_COOP_TEST_COMMANDS=commands[x])
+            # Each game plays the save its scenario put in (the joiner would load the host's): a switch can undo it.
+            env.setdefault("LICHII_COOP_TEST_OWN_SAVE", "1")
             if a.server:
                 env["LICHII_COOP_SERVER"] = "127.0.0.1:%d" % a.port
-                env["LICHII_COOP_NAME"] = "Hook" + x
+                env["LICHII_COOP_NAME"] = x   # "A", "B": the scripts type /teleport A, /teleport B
                 env["LICHII_COOP_PASSWORD"] = a.password
             for kv in a.env:
                 k, v = kv.split("=", 1)
@@ -751,7 +822,7 @@ def run(a):
                         continue
                     k = k[2:]
                 env[k] = v
-            exe = os.path.join(exe_dir(g), "hookshot.exe" if WINDOWS else "hookshot")
+            exe = os.path.join(exe_dir(g), "longshot.exe" if WINDOWS else "longshot")
             with open(os.path.join(out, "game-out-%s.txt" % x), "wb") as go:
                 kw = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {"start_new_session": True}
                 procs[x] = subprocess.Popen([exe], cwd=exe_dir(g), env=env, stdin=subprocess.DEVNULL, stdout=go,
@@ -760,6 +831,11 @@ def run(a):
             bridges[x] = (sock, Bridge.connect(sock, timeout=120))
             if i == 0:
                 time.sleep(3)
+        for x in tags:   # both games drawing before anything is pressed (a cold shader cache: minutes)
+            go = os.path.join(out, "game-out-%s.txt" % x)
+            waited = wait_renderer(lambda: read_text(go), lambda: procs[x].poll() is None, a.renderer_wait)
+            if a.renderer_wait > 0:
+                say("%s: renderer ready (%.0f s waited)" % (x, waited))
 
         def shooter(x, name):
             def shot(mark):
@@ -853,8 +929,8 @@ def run(a):
             if server:
                 server.terminate()
         for x in tags:
-            # Hookshot writes hookshot_log.txt only when its stderr goes nowhere; here stderr is game-out-<x>.txt, so
-            # that is the log (an old hookshot_log.txt in the folder is from another run). The game's file otherwise.
+            # Hookshot writes longshot_log.txt only when its stderr goes nowhere; here stderr is game-out-<x>.txt, so
+            # that is the log (an old longshot_log.txt in the folder is from another run). The game's file otherwise.
             go = os.path.join(out, "game-out-%s.txt" % x)
             lp = go if os.path.isfile(go) and os.path.getsize(go) > 0 else find_log(games[x])
             if lp:
@@ -896,6 +972,8 @@ def main(argv=None):
     r.add_argument("--every", type=float, default=3.0)
     r.add_argument("--timeout", type=int, default=900, help="seconds for the boot and the load")
     r.add_argument("--scenario-timeout", type=int, default=600)
+    r.add_argument("--renderer-wait", type=int, default=600,
+                   help="seconds each game may take to start its renderer before the load (0: no wait)")
     r.add_argument("--pipe", default="coop-auto")
     a = p.parse_args(argv)
     if a.what == "check":

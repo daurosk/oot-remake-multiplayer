@@ -48,7 +48,7 @@ SERVER_LIB = ['server/' + n for n in (
     'session.cpp', 'world.cpp', 'enet_server.cpp', 'options.cpp',
     # Hosting over the internet (server/CMakeLists.txt): the relay, UPnP, invite codes, hole punching.
     'relay.cpp', 'relay_link.cpp', 'relay_wire.cpp', 'upnp.cpp', 'nat_codes.cpp', 'stun.cpp', 'punch.cpp',
-    'join_helper.cpp')]
+    'join_helper.cpp', 'host_service.cpp')]
 SERVER = SERVER_LIB + ['server/main.cpp']
 DLL_LIB = ['nx2navi/dll/guest_memory.cpp', 'nx2navi/dll/settings.cpp', 'nx2navi/dll/overlay_model.cpp',
            'nx2navi/dll/teleport_auto.cpp', 'nx2navi/dll/menu_model.cpp', 'nx2navi/dll/save_sync.cpp',
@@ -72,7 +72,7 @@ DLL_MAIN = ['nx2navi/dll/coop_dll.cpp', 'nx2navi/dll/overlay.cpp', 'nx2navi/dll/
             'nx2navi/dll/objects/objects.cpp', 'nx2navi/dll/objects/emu_port.cpp',
             'nx2navi/dll/objects/hold.cpp', 'nx2navi/dll/objects/brain.cpp', 'nx2navi/dll/objects/anim_probe.cpp',
             'nx2navi/dll/objects/world_probe.cpp',
-            'lichii/hook/coop_objects.cpp', 'lichii/hook/coop_objects_sync.cpp',
+            'lichii/hook/coop_objects.cpp', 'lichii/hook/coop_objects_sync.cpp', 'lichii/hook/coop_npc_anim.cpp',
             'lichii/hook/coop_world.cpp', 'lichii/hook/coop_spawn.cpp',
             'lichii/hook/coop_projectiles.cpp', 'lichii/hook/coop_pickups.cpp',
             'lichii/hook/coop_ocarina.cpp', 'lichii/hook/coop_cheat_items.cpp',
@@ -96,8 +96,15 @@ UP_OWN = ['nx2navi/dll/coop_dll.cpp', 'nx2navi/dll/upstream.cpp', 'nx2navi/dll/o
           'nx2navi/dll/objects/brain.cpp', 'nx2navi/dll/objects/hold.cpp',
           'nx2navi/dll/objects/anim_probe.cpp', 'nx2navi/dll/objects/world_probe.cpp']
 UP_NOT = {'coop_svc.cpp', 'coop_teleport_game.cpp', 'coop_save.cpp'}
+# Proximity voice chat (coop/voice, lichii/hook/coop_voice.cpp, docs/voice.md) is built in because the hook
+# calls it, but it stays off here: the microphone, Opus and the mixer come from a Backend the host game hands
+# in (Hookshot's module: hookshot/src/coop_voice_hookshot.cpp), and NX2navi's plugin interface has no audio
+# capture or playback, so this port hands in none. Others' VOICE_FRAME messages are dropped unheard.
+VOICE = ['coop/voice/src/engine.cpp', 'coop/voice/src/gate.cpp', 'coop/voice/src/jitter.cpp',
+         'coop/voice/src/spatial.cpp']
 UP_INCLUDES = ['hookshot/compat', 'coop/include', 'coop/protocol/include', 'coop/net/include',
-               'coop/presence/include', 'coop/host/include', 'coop/overlay/include', 'server', 'lichii/hook',
+               'coop/presence/include', 'coop/host/include', 'coop/overlay/include', 'coop/voice/include',
+               'server', 'lichii/hook',
                'nx2navi/dll', 'nx2navi/dll/objects']
 
 
@@ -357,7 +364,8 @@ def main():
                     '-DLICHII_COOP_VERSION="nx2navi"', '-DLICHII_COOP_SPAWN_CREATE_TIMEOUT_MS=20000', '-DLICHII_COOP_RELEASE_SETTLE_FRAMES=12', '-DLICHII_COOP_TIME_RESYNC_SECONDS=180', '-DLICHII_COOP_TIME_SET_EVERY_US=15000000', '-Wno-unused-parameter', '-Wno-missing-field-initializers']
         lib = [o for o in dll_lib if 'coop_settings' not in o.name and 'coop_colors' not in o.name]
         dll = builder.link(BUILD / 'bin' / 'coop_nx2navi_up.dll',
-                           builder.compile_all(UP_OWN + hook_sources() + ['coop/overlay/src/overlay.cpp', 'coop/src/version.cpp'],
+                           builder.compile_all(UP_OWN + hook_sources() + VOICE +
+                                               ['coop/overlay/src/overlay.cpp', 'coop/src/version.cpp'],
                                                'dll_up', up_flags, up_includes) + lib +
                            coop_objects + enet_objects, shared=True,
                            extra=(f'-Wl,-Map={BUILD / "bin" / "coop_nx2navi_up.map"}',))

@@ -1774,3 +1774,26 @@ TEST_CASE("puppet planner: the Ocarina played freely (DemoOcarina) shows through
     CHECK(in.targets[0].show == CoopPuppet::Show::show);
     CHECK(std::string(in.targets[0].why) == "ocarina");
 }
+
+TEST_CASE("puppet: up to 15 puppets (16 players) all get made, within the frame's call budget") {
+    Game g;
+    Director d;
+    std::vector<Target> targets;
+    for (std::uint8_t n = 2; n <= coop::protocol::kMaxPlayers; ++n) {
+        targets.push_back(At(n, n, 0, 0));
+    }
+    d.SetInput(Wants(targets));
+    // Each puppet needs two calls (malloc, create): the budget spreads them over frames.
+    const std::size_t frames = (2 * targets.size() + Director::kMaxCallsPerFrame - 1) /
+                               Director::kMaxCallsPerFrame;
+    for (std::size_t f = 0; f < frames; ++f) {
+        CHECK(Frame(d, g, 100 + f).size() <= static_cast<std::size_t>(Director::kMaxCallsPerFrame));
+    }
+    const auto slots = d.Slots();
+    REQUIRE(slots.size() == targets.size());
+    for (const auto& s : slots) {
+        INFO("P" << int(s.number));
+        CHECK(s.phase == Phase::creating);
+    }
+    CHECK(coop::protocol::kMaxPlayers < 32);  // LiveMask: one bit per player number
+}

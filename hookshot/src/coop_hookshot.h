@@ -8,6 +8,7 @@
 
 #include "coop_draw.h"
 #include "coop_game_build.h"
+#include "coop_host_menu.h"
 #include "hos_coop_api.h"
 
 #if defined(_WIN32)
@@ -28,6 +29,11 @@ void Frame(void* ctx, int site);
 std::uint32_t Hold(std::uint64_t component, std::uint32_t bits);
 // hos_coop_stop: CoopHook::Shutdown.
 void Stop();
+
+// Host and Join from the game's title menu (hos_coop_host.h): the module's one
+// CoopHostMenu::Menu, which also answers the hos_coop_host_* exports. Stop
+// leaves it first, so our own server goes after our own client.
+CoopHostMenu::Menu& HostMenu();
 
 // The table's size in the first version, before pad_buttons: a Hookshot
 // built from an older patch gives this much, and co-op still runs on it.
@@ -55,6 +61,14 @@ inline bool HasPadButtons(const HosCoopApi* api) {
     return api != nullptr &&
            api->size >= offsetof(HosCoopApi, pad_buttons) + sizeof(api->pad_buttons) &&
            api->pad_buttons != nullptr;
+}
+
+// The title's Multiplayer menu can keep the module loaded with no server in
+// coop.ini: the table has patch 0004's scratch (its title hooks and pad are
+// there too) and LICHII_COOP_TITLE_MENU is not 0.
+inline bool TitleMenuPossible(const HosCoopApi* api, const std::string& env) {
+    return api != nullptr && api->size >= offsetof(HosCoopApi, scratch) + sizeof(api->scratch) &&
+           api->scratch != nullptr && env != "0";
 }
 
 // What a call of hos_coop_frame does. CoopHook::OnFrame runs once per
@@ -115,7 +129,7 @@ inline bool BuildSupported(const std::string& build_id_hex) {
 // Hookshot patch 0002 (nx2/coop_puppet_guard.py, host/coop_null_page.c) makes
 // them read 0 there too. AllowLinkPuppets: LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1
 // / 0 force it; unset, Link puppets are made when the guard is in this
-// hookshot.exe (always on Linux, where the guest window is readable whole).
+// longshot.exe (always on Linux, where the guest window is readable whole).
 inline bool AllowLinkPuppets(const std::string& env, bool guard_in_exe) {
     if (!env.empty()) {
         return env != "0";

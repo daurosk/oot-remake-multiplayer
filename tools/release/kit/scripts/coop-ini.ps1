@@ -30,10 +30,24 @@ function Test-CoopPassword([string]$Value) {
 # names below (case does not matter) or #RRGGBB / RRGGBB. The names are the emulator's
 # (lichii/hook/coop_colors.cpp); keep the two lists the same.
 $CoopColorNames = @('red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'pink', 'white', 'black', 'brown', 'gray', 'grey')
+# The colour as the emulator and the module read it: a name in lower case, or #RRGGBB. Takes the
+# forms players type: quotes around it, '#RRGGBB', 'RRGGBB', '0xRRGGBB', '#RGB'. '' when it is none.
+function ConvertTo-CoopColor([string]$Value) {
+    if (-not $Value) { return '' }
+    $v = $Value.Trim().Trim('"', "'").Trim()
+    if ($CoopColorNames -contains $v.ToLowerInvariant()) { return $v.ToLowerInvariant() }
+    if ($v -match '^(?:#|0x)?([0-9A-Fa-f]{6})(?:[0-9A-Fa-f]{2})?$') { return '#' + $Matches[1].ToUpperInvariant() }   # (an alpha after it: dropped)
+    if ($v -match '^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,[^)]*)?\)$') {
+        $p = @([int]$Matches[1], [int]$Matches[2], [int]$Matches[3])
+        if (($p | Where-Object { $_ -gt 255 }).Count -eq 0) { return '#{0:X2}{1:X2}{2:X2}' -f $p[0], $p[1], $p[2] }
+    }
+    if ($v -match '^#([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])$') {
+        return ('#' + $Matches[1] + $Matches[1] + $Matches[2] + $Matches[2] + $Matches[3] + $Matches[3]).ToUpperInvariant()
+    }
+    return ''
+}
 function Test-CoopColor([string]$Value) {
-    $v = $Value.Trim()
-    if ($CoopColorNames -contains $v.ToLowerInvariant()) { return $true }
-    return ($v -match '^#?[0-9A-Fa-f]{6}$')
+    return [bool](ConvertTo-CoopColor $Value)
 }
 
 # Returns @{ server; port; name; password } from an existing coop.ini (missing keys are empty).
@@ -60,5 +74,16 @@ function Write-CoopIni([string]$Template, [string]$Path, [string]$Server, [strin
     }
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
     # No byte order mark: the emulator reads the first line as it is.
+    [System.IO.File]::WriteAllText($Path, (($out -join "`r`n") + "`r`n"), [System.Text.UTF8Encoding]::new($false))
+}
+
+# Play-OoT-Coop.bat: coop.ini with no session in it. The server and join password lines are commented
+# out (the game then starts with co-op idle and offers Host and Join on its title screen); every other
+# line stays: the name, the port, the last invite code the title's "Join again" uses.
+function Clear-CoopIniSession([string]$Template, [string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { Write-CoopIni $Template $Path '' '' '' ''; return }
+    $out = foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
+        if ($line -match '^\s*(server|password)\s*=') { '# ' + $line } else { $line }
+    }
     [System.IO.File]::WriteAllText($Path, (($out -join "`r`n") + "`r`n"), [System.Text.UTF8Encoding]::new($false))
 }

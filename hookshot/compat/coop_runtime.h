@@ -16,7 +16,7 @@ namespace CoopRuntime {
 bool Running();                     // the game is up (the bridge's table is set)
 std::uint64_t MainBase();
 const std::string& MainBuildHex();  // as Hookshot gives it (32 hex digits)
-std::filesystem::path GameDir();    // the folder of hookshot.exe
+std::filesystem::path GameDir();    // the folder of longshot.exe
 bool Valid(std::uint64_t address, std::size_t size);
 bool Read(std::uint64_t address, void* out, std::size_t size);
 bool Write(std::uint64_t address, const void* in, std::size_t size);

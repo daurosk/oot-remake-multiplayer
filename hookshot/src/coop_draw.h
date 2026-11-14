@@ -112,8 +112,15 @@ CheatsBox CheatsAt(float width, float height, const CheatsView& c);
 // The row under (x, y), for the mouse; nothing outside the rows.
 std::optional<std::size_t> CheatsRowAt(float width, float height, const CheatsView& c, float x, float y);
 
+// The title screen's Multiplayer prompt while it is up (Minus opens the
+// Multiplayer tab of Hookshot's menu, coop_pause.h).
+struct TitleView {
+    std::string prompt;   // "Multiplayer" (or what co-op is doing); "" for none
+};
+
 // What to draw this present.
 struct Scene {
+    std::optional<TitleView> title;
     std::optional<CheatsView> cheats;
     std::vector<HudBlock> hud;
     std::optional<ChatBoxView> box;

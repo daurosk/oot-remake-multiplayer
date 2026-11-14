@@ -1,7 +1,8 @@
 # The host's self-check (check-hosting.cmd): is this kit's server running and on which
 # networks, does a firewall rule let it in (only coop_server.exe, only UDP), is server_allow
 # set. It reads only; for each problem it prints the exact command for the player to run.
-# Usage: check-hosting.cmd [port]   (default: the port in emulator\user\config\coop.ini)
+# Usage: check-hosting.cmd [port]   (default: the port this kit's server listens on, else the port of the
+#                                   coop.ini written last: the emulator's or the Hookshot game's)
 param([int]$Port = 0)
 $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
@@ -9,10 +10,18 @@ $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'hosting.ps1')
 $kit = Split-Path -Parent $PSScriptRoot
 $serverExe = [System.IO.Path]::GetFullPath((Join-Path $kit 'server\coop_server.exe'))
-if (-not $Port) {
-    $ini = Read-CoopIni (Join-Path $kit 'emulator\user\config\coop.ini')
-    $Port = if ($ini.port -match '^\d{1,5}$') { [int]$ini.port } else { @PORT@ }
-}
+$serverPids = @()
+$serverPorts = @()
+try {
+    $serverPids = @(Get-Process coop_server -ErrorAction SilentlyContinue | Where-Object { $_.Path -ieq $serverExe } | ForEach-Object { $_.Id })
+    if ($serverPids.Count) {
+        $serverPorts = @(Get-NetUDPEndpoint -ErrorAction SilentlyContinue | Where-Object { $_.OwningProcess -in $serverPids } |
+            ForEach-Object { [int]$_.LocalPort } | Sort-Object -Unique)
+    }
+} catch { }
+# (Host-Hookshot.bat writes the Hookshot game's coop.ini, not the emulator's: its port was not checked before)
+$defaultPort = @PORT@
+if (-not $Port) { $Port = Get-KitHostPort $kit $serverPorts $defaultPort }
 Write-Host "Checking this PC for hosting (kit: $kit, UDP port $Port)..."
 Write-Host ''
 

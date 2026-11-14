@@ -29,6 +29,7 @@ import hashlib
 import json
 import os
 import shutil
+import struct
 import sys
 import tempfile
 
@@ -36,7 +37,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import ainb, byml, dumpcheck, dungeon_rooms, hud, nup, nx2image, rstb, sarc, tunic, tunic_extra, zs  # noqa: E402
+from . import ainb, byml, dumpcheck, dungeon_rooms, hud, nup, nx2image, rstb, sarc, title_menu, tunic, tunic_extra, zs  # noqa: E402
 
 TITLE_ID = "0400486024DEC000"
 DEFAULT_MOD_NAME = "coop-puppet"
@@ -739,7 +740,8 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
 
 
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
-          tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, pouch=True):
+          tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False,
+          pouch=True):
     """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
     a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
     that colour too (a test of the colours with a hook that knows none).
@@ -903,6 +905,18 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                         "pack": dst_rel, "pack_bytes": len(pack), "members": sorted(files)})
         log(f"{name}: {key} on {elink_user or '-'} / {slink_user or '-'}, {len(pack)} bytes -> {dst_rel}")
 
+    # The title screen's Host, Join and Co-op Settings rows (title_menu.py): left out on any trouble,
+    # the puppets do not need them.
+    # Only for Hookshot's game (--title-rows): the emulator has no title menu, its rows would do nothing.
+    # All or nothing (title_menu.build writes only when every file was made).
+    title_files = []
+    if title_rows:
+        try:
+            title_files = title_menu.build(romfs, out_romfs, dicts, table,
+                                           lambda root, r, data: write(os.path.join(root, r), data), recompress, log)
+        except (title_menu.TitleMenuError, OSError, ValueError, KeyError, IndexError, struct.error) as e:
+            log(f"title menu: rows left out ({e}); the title keeps its own three, co-op uses the Minus prompt")
+
     ai_new = byml.dumps(upsert_rows(ai, new_ai))
     gai_new = byml.dumps(upsert_rows(gai, new_gai))
     for path, old, new in ((ai_path, ai_old, ai_new), (gai_path, gai_old, gai_new)):
@@ -934,6 +948,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "xlink": "player" if sound and not basic_xlink else "basic",
         "pouch": pouch,
         "tables": [rel(romfs, p) for p in (ai_path, gai_path, rs_path)],
+        "title_menu": title_files,
         "source_sha256": {rel(romfs, p): hashlib.sha256(read(p)).hexdigest()
                           for p in (ai_path, gai_path, rs_path)},
     }
@@ -1002,6 +1017,8 @@ def main(argv=None):
                     help="the language of the HUD's place names, e.g. USen, EUen, EUfr")
     ap.add_argument("--basic-xlink", action="store_true",
                     help="test switch: the puppets get the shared ActorBasic XLink param (the older pack)")
+    ap.add_argument("--title-rows", action="store_true",
+                    help="Hookshot's game: Host, Join and Co-op Settings as rows of the title (title_menu.py)")
     ap.add_argument("--no-pouch", action="store_true",
                     help="the puppets do not wear the local game's own equipment when made "
                          "(always for the NX2navi port, which stops on the null read that follows)")
@@ -1083,7 +1100,7 @@ def _main_build(a, romfs, hud_reader=None):
         build(romfs, mod_dir, heaps=heaps, sound=not a.no_sound, player_footsteps=a.player_footsteps,
               sound_user=a.sound_user, tunics=tunics, test_tunic=a.test_tunic,
               stand_in_effects=a.seed_trail and not a.no_seed_trail, basic_xlink=a.basic_xlink,
-              pouch=not a.no_pouch)
+              title_rows=a.title_rows, pouch=not a.no_pouch)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

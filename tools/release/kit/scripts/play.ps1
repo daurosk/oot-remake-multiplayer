@@ -5,7 +5,7 @@
 #        Host.bat (play.ps1 host)  starts this kit's server too and plays on it (127.0.0.1)
 #        Join.bat (play.ps1 join)  asks for the host's address each time
 #        Host-Hookshot.bat, Join-Hookshot.bat (play.ps1 host|join -Hookshot)  the same with the
-#                                  Hookshot game Build-Hookshot-Coop.bat built (coop.ini beside its hookshot.exe)
+#                                  Hookshot game Build-Hookshot-Coop.bat built (coop.ini beside its longshot.exe)
 # On every start it looks for a newer co-op release and, as auto_update in coop-options.ini
 # says, updates the kit (emulator included) and starts the new kit's play.ps1 with -NoUpdate.
 # Every later play.ps1 must accept -NoUpdate.
@@ -28,21 +28,34 @@ $emu = Join-Path $kit 'emulator'
 $exe = Join-Path $emu 'lichii.exe'
 $ini = Join-Path $emu 'user\config\coop.ini'
 $template = Join-Path $PSScriptRoot 'coop.ini.template'
+# Play-OoT-Coop.bat (play.ps1 choose -Hookshot): the game starts with no session (mode 'title' below);
+# Host and Join are on its title screen. A session started here (a server in coop.ini) would make the
+# title's Host and Join answer "Co-op is on already in this game".
+if ($Mode -eq 'choose' -and $Hookshot) { $Mode = 'title' }
+# play.ps1 choose without -Hookshot: asks host or join, the last answer first.
+if ($Mode -eq 'choose') {
+    $lastMode = Join-Path $kit 'hookshot\last-mode.txt'
+    $was = if (Test-Path -LiteralPath $lastMode) { "$(Get-Content -LiteralPath $lastMode -TotalCount 1)".Trim() } else { '' }
+    $default = if ($was -eq 'join') { 'J' } else { 'H' }
+    Write-Host 'H = host a game (your friends join you)    J = join a friend''s game'
+    $answer = "$(Read-Host "H or J [$default]")".Trim().ToUpperInvariant()
+    if (-not $answer) { $answer = $default }
+    $Mode = if ($answer.StartsWith('J')) { 'join' } else { 'host' }
+    try { New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lastMode) | Out-Null; [System.IO.File]::WriteAllText($lastMode, "$Mode`n") } catch { }
+}
 if ($Hookshot) {
     # The game Build-Hookshot-Coop.bat built (hookshot-build.ps1 notes where, for -Out); its module
-    # reads coop.ini beside hookshot.exe. The emulator's own steps below are skipped for it.
-    $hsGame = Join-Path $kit 'hookshot\game'
-    $hsWhere = Join-Path $kit 'hookshot\game-folder.txt'
-    if (Test-Path -LiteralPath $hsWhere) { $hsGame = (Get-Content -LiteralPath $hsWhere -TotalCount 1).Trim() }
-    $exe = @((Join-Path $hsGame 'bin\hookshot.exe'), (Join-Path $hsGame 'hookshot.exe')) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-    if (-not $exe -or -not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $exe) 'hookshot_coop.dll'))) {
-        Write-Host "No co-op Hookshot game in $hsGame yet. Run Build-Hookshot-Coop.bat first (SETUP.md, ""Play on Hookshot"")."
-        exit 1
-    }
-    $emu = Split-Path -Parent $exe
-    $ini = Join-Path $emu 'coop.ini'
+    # reads coop.ini beside longshot.exe. The emulator's own steps below are skipped for it. A game not
+    # built yet, or one an update left behind, is brought up to date after the update check below.
+    $hsGame = Get-KitHookshotGame $kit
+    $exe = Get-KitHookshotExe $hsGame
+    if ($exe) { $emu = Split-Path -Parent $exe; $ini = Join-Path $emu 'coop.ini' }
 }
-if (-not (Test-Path $exe)) { Write-Host "Not found: $exe"; exit 1 }
+if (-not $Hookshot -and -not (Test-Path $exe)) { Write-Host "Not found: $exe"; exit 1 }
+# A Hookshot-only kit (make_kit_hookshot.ps1) has one launcher and no Build-Hookshot-Coop.bat or Host/Join .bat files.
+$hsOnly = Test-Path -LiteralPath (Join-Path $kit 'Start OoT Co-op.bat')
+$hsRetry = if ($hsOnly) { 'Start "Start OoT Co-op.bat" again' } else { 'Run Build-Hookshot-Coop.bat' }
+if ($hsOnly) { $script:KitPackRemake = 'Start "Start OoT Co-op.bat" again: it makes the pack again.' }
 
 # Yes or no, yes when no key comes in $Seconds (an unattended start still updates).
 function Read-YesNo([string]$Question, [int]$Seconds) {
@@ -140,6 +153,66 @@ if (-not $NoUpdate -and (Test-Path $updater)) {
     }
 }
 
+# Hookshot: the game as this kit wants it, with no step of the player's. Build-Hookshot-Coop runs by
+# itself: co-op only (seconds) when the Hookshot pin is the same, the game built again when the update moved it,
+# and the first build when there is no game yet (the game files are asked for once and remembered). The long
+# builds (no game, a moved game, another pin) ask Y/n first; a module antivirus took is said, not built.
+if ($Hookshot) {
+    $need = Get-KitHookshotNeed $kit
+    if ($need -eq 'quarantine') {
+        Write-Host (Get-KitHookshotNeedText $need) -ForegroundColor Yellow
+        exit 1
+    }
+    if ($need) {
+        Write-Host (Get-KitHookshotNeedText $need $hsGame $hsOnly)
+        # The long builds ask first (yes by itself after a minute, so an unattended start still builds).
+        $question = Get-KitHookshotNeedQuestion $need
+        if ($question -and -not (Read-YesNo "$question (then the game starts; closing this window cancels)" 60)) {
+            Write-Host $(if ($hsOnly) { 'Not now. Start "Start OoT Co-op.bat" again when you want to set it up.' } else { 'Not now. Build-Hookshot-Coop.bat sets it up (SETUP.md, "Play on Hookshot"); then start this again.' })
+            exit 1
+        }
+        $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+        & $ps -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'hookshot-build.ps1')
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "The Hookshot game could not be brought up to date (above: why). $hsRetry to try again."
+            Wait-AnyKey 60
+            exit 1
+        }
+        $hsGame = Get-KitHookshotGame $kit
+        $exe = Get-KitHookshotExe $hsGame
+    }
+    if (-not $exe) {
+        Write-Host "Hookshot isn't set up yet: no Hookshot game in $hsGame. $(if ($hsOnly) { 'Start ""Start OoT Co-op.bat"" again and let it finish (SETUP.md).' } else { 'Run Build-Hookshot-Coop.bat and let it finish (SETUP.md, ""Play on Hookshot"").' })"
+        exit 1
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $exe) 'hookshot_coop.dll'))) {
+        # The build put it there a moment ago (or the game was ready): gone again means antivirus.
+        Write-Host (Get-KitHookshotQuarantineText) -ForegroundColor Yellow
+        exit 1
+    }
+    $emu = Split-Path -Parent $exe
+    $ini = Join-Path $emu 'coop.ini'
+}
+if ($Mode -eq 'title') {
+    if (-not $Hookshot) { Write-Host 'play.ps1 title is for Hookshot (Play-OoT-Coop.bat).'; exit 1 }
+    $running = Get-Process longshot, hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
+    if ($running) { Write-Host 'This Hookshot game is already running: Host and Join are on its title screen.'; exit 1 }
+    # No session from this start: no server and no join password in coop.ini (the name, the colour and the
+    # last invite code stay), and none in the variables an earlier start in this window may have left.
+    Clear-CoopIniSession $template $ini
+    foreach ($v in 'LICHII_COOP_SERVER', 'LICHII_COOP_PASSWORD', 'OOT_COOP_SESSION_PASSWORD', 'OOT_COOP_JOIN_PASSWORD', 'LICHII_COOP_HOST_SAVE') {
+        Remove-Item -Path "env:$v" -ErrorAction SilentlyContinue
+    }
+    [void](Use-KitPuppetPack (Join-Path $emu 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') (Join-Path $kit 'tools\puppet_pack') @(
+        'Puppet pack: not in the Hookshot game, so the other players show only as markers.',
+        $(if ($hsOnly) { '  It is made from your game file (the one hookshot\game-files.txt names): put that file back, then start again.' } else { '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").' })))
+    [void](Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru)
+    Write-Host 'The game started. Host or Join in its menu''s Multiplayer tab (F1, or Home on a pad; Minus on the title screen).'
+    Write-Host 'Same house or a VPN: Host, then "Same network or VPN".'
+    if (-not $hsOnly) { Write-Host 'Host-Hookshot.bat and Join-Hookshot.bat still host or join from a window like this one instead.' }
+    exit 0
+}
+
 $current = Read-CoopIni $ini
 $inviteJoin = $null
 $ask = $Mode -eq 'change'
@@ -226,13 +299,39 @@ if ($Port -notmatch '^\d{1,5}$' -or [int]$Port -lt 1 -or [int]$Port -gt 65535) {
 # asked each time (the invite code holds it), Enter keeps the saved one.
 $optionsFile = Join-Path $kit 'coop-options.ini'
 $Password = $current.password
+$rejoin = $false
 if ($inviteJoin) {
     # The invite code holds the join password: nothing to type.
     $Password = $inviteJoin.Password
 }
 elseif ($Mode -eq 'host') {
     $Password = (Read-KitServerAccess $optionsFile).Password
-    if ($null -eq $Password) {
+    $serverExe = Join-Path $kit 'server\coop_server.exe'
+    $kitServers = @()
+    try {
+        $kitServers = @(Get-CimInstance Win32_Process -Filter "Name = 'coop_server.exe'" -OperationTimeoutSec 5 -ErrorAction Stop |
+            Where-Object { $_.ExecutablePath -eq $serverExe } |
+            ForEach-Object { [pscustomobject]@{ StartTime = $_.CreationDate; CommandLine = $_.CommandLine } })
+    } catch {
+        $kitServers = @(Get-Process coop_server -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $serverExe } |
+            ForEach-Object { [pscustomobject]@{ StartTime = $_.StartTime; CommandLine = '' } })
+    }
+    if ($null -eq $Password -and $kitServers.Count -gt 0) {
+        # The host closed the game and the server of the earlier Host start still runs, with
+        # that session's password: the game joins it again with the password start-server.ps1
+        # saved (kit-paths.ps1). The server is left alone, so the friends stay connected.
+        $session = Read-KitHostSession $kit $kitServers
+        if (-not $session) {
+            Write-Host 'A co-op window of this kit (a server or a join helper) is still open, and its join password is not known here.'
+            Write-Host "Close that window, then start $(if ($Hookshot) { 'Host-Hookshot.bat' } else { 'Host.bat' }) again (closing a server disconnects the friends on it)."
+            exit 1
+        }
+        $Password = $session.Password
+        $Port = "$($session.Port)"
+        $rejoin = $true
+        Write-Host "Your server is still running: joining that session again as the host (same join password and invite code, UDP port $Port). Your friends stay connected."
+    }
+    elseif ($null -eq $Password) {
         # No server_password line: a new random password for this session only, put in the
         # invite code by the server (start-server.ps1 gets it in OOT_COOP_SESSION_PASSWORD).
         $Password = New-JoinPassword
@@ -267,7 +366,7 @@ Write-Host "Co-op: server $Server, port $Port, name $Name, join password $(if ($
 
 $user = Join-Path $emu 'user'
 if ($Hookshot) {
-    $running = Get-Process hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
+    $running = Get-Process longshot, hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
     if ($running) { Write-Host 'This Hookshot game is already running; close it first to use new settings.'; exit 1 }
 }
 elseif (-not (Get-ChildItem (Join-Path $user 'keys') -Filter '*.keys' -ErrorAction SilentlyContinue)) {
@@ -316,7 +415,8 @@ if ($Mode -eq 'host') {
         Write-Host 'The server from this kit is still running from an earlier Host.bat. Close its window, then start Host.bat again.'
         exit 1
     }
-    if ($serverUp) { Write-Host 'The server from this kit is already running.' }
+    if ($rejoin) { }  # said above: the running session is joined again
+    elseif ($serverUp) { Write-Host 'The server from this kit is already running.' }
     else {
         Write-Host "Starting the server in its own window (UDP port $Port). Keep that window open while you play."
         $serverArgs = @("$Port")
@@ -338,7 +438,19 @@ foreach ($key in $options.Keys) {
         $value = [System.IO.Path]::GetFullPath((Join-Path $kit $value))
     }
     Set-Item -Path "env:$key" -Value $value
-    Write-Host "Option: $key=$value"
+    $tunicNote = ''
+    if ($key -eq 'LICHII_COOP_COLOR' -and (Get-Command Get-KitTunic -ErrorAction SilentlyContinue)) {
+        $t = Get-KitTunic $value
+        if ($t) { $tunicNote = "   (your tunic: $t, the nearest of the ten tunic colours)" }
+    }
+    Write-Host "Option: $key=$value$tunicNote"
+}
+# The host's save (issue 167): a join (an address or an invite code, whose server is 127.0.0.1) plays from the
+# co-op save folder the host's save comes into; a host from its own saves. Not from coop.ini's address: an old
+# friend's address there says nothing about this start. coop-options.ini may set it itself.
+# (not on Hookshot: there the session's role decides, as the title menu may Host or Join after this start)
+if (-not $Hookshot -and -not $env:LICHII_COOP_HOST_SAVE) {
+    if ($Mode -eq 'join' -or $inviteJoin) { $env:LICHII_COOP_HOST_SAVE = '1' } elseif ($Mode -eq 'host') { $env:LICHII_COOP_HOST_SAVE = '0' }
 }
 # No colour chosen: the colour of the player number you will most likely get, for your own Link too
 # (kit-paths.ps1). Before the pack step, which puts that tunic over the game's.
@@ -349,10 +461,10 @@ if ($Hookshot) {
     # Hookshot indexes its mod files once at start: this runs before Start-Process.
     [void](Use-KitPuppetPack (Join-Path $emu 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') (Join-Path $kit 'tools\puppet_pack') @(
         'Puppet pack: not in the Hookshot game, so the other players show only as markers.',
-        '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").'))
+        $(if ($hsOnly) { '  It is made from your game file (the one hookshot\game-files.txt names): put that file back, then start again.' } else { '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").' })))
     $started = Get-Date
     $game = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru
-    Write-Host "Hookshot started. Its hookshot_log.txt (beside the game) says 'coop: module loaded', then 'coop: connected'."
+    Write-Host "The game started. Its longshot_log.txt (beside the game) says 'coop: module loaded', then 'coop: connected'."
     exit 0
 }
 # AMD cards: shader libraries off unless the player chose (kit-paths.ps1, issue 118).
@@ -364,6 +476,19 @@ if ($gpl) { Write-Host $gpl }
 # Built-in graphics only: point to the 30 FPS button (docs/setup.md, "Low frame rate").
 $speed = Get-GpuSpeedHint $cardQuery
 if ($speed) { Write-Host $speed }
+# No puppet pack, or an old one: made now, before the start, so the other players can be seen (puppet-pack.ps1,
+# what make-puppet-pack.cmd runs: it finds the game files in the emulator's game list, else asks once). A pack
+# that cannot be made is said, and the game starts anyway (the others show as markers).
+$packJson = Join-Path (Get-KitLoadDir $user) '0400486024DEC000\coop-puppet\coop_puppet.json'
+if (Test-KitPuppetPackStale $packJson (Join-Path $kit 'tools\puppet_pack')) {
+    Write-Host 'The puppet pack (how you see the other players) is missing or old: making it now (about a minute) ...'
+    $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+    & $ps -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'puppet-pack.ps1')
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host 'The puppet pack could not be made (above: why). The game starts; the other players show only as markers.'
+        Wait-AnyKey 30
+    }
+}
 # The pack hints, your own tunic (#202), the puppets off without a pack (kit-paths.ps1, the same for Hookshot above).
 [void](Use-KitPuppetPack (Join-Path (Get-KitLoadDir $user) '0400486024DEC000\coop-puppet\coop_puppet.json') (Join-Path $kit 'tools\puppet_pack') @(
     'Puppet pack: not made yet, so the other players show only as markers.',

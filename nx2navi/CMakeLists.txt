@@ -35,7 +35,8 @@ add_library(coop_nx2navi SHARED dll/coop_dll.cpp dll/overlay.cpp dll/puppet.cpp 
   # Shared enemies and boss rooms (dll/objects/INTEGRATION.md): the hook's files unchanged,
   # against the stand-in emulator headers in dll/objects/shim.
   dll/objects/objects.cpp dll/objects/emu_port.cpp dll/objects/hold.cpp dll/objects/brain.cpp dll/objects/anim_probe.cpp dll/objects/world_probe.cpp
-  ../lichii/hook/coop_objects.cpp ../lichii/hook/coop_objects_sync.cpp ../lichii/hook/coop_world.cpp
+  ../lichii/hook/coop_objects.cpp ../lichii/hook/coop_objects_sync.cpp ../lichii/hook/coop_npc_anim.cpp
+  ../lichii/hook/coop_world.cpp
   ../lichii/hook/coop_spawn.cpp ../lichii/hook/coop_projectiles.cpp ../lichii/hook/coop_pickups.cpp
   ../lichii/hook/coop_ocarina.cpp ../lichii/hook/coop_cheat_items.cpp ../lichii/hook/coop_flags.cpp
   ../lichii/hook/coop_boss.cpp ../lichii/hook/coop_boss_game.cpp ../lichii/hook/coop_dungeon.cpp)

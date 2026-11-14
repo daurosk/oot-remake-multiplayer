@@ -346,7 +346,8 @@ TEST_CASE("dungeon: the ladder event waits while B is in the Deku Tree, B's own 
         host::FlagKey(host::flag_hash("HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder"), 0);
     const auto cleared = host::FlagKey(host::flag_hash("InsideTheDekuTree_RoomC_Cleared"), 0);
     REQUIRE(CoopDungeon::HeldIn(ladder.hash) == std::optional<std::string_view>("InsideTheDekuTree"));
-    CHECK_FALSE(CoopDungeon::HeldIn(cleared.hash).has_value());  // the room's own flag is live
+    // deku-switches-b: the room clear deletes the ladder's asker in the room graph, so it waits with the event.
+    REQUIRE(CoopDungeon::HeldIn(cleared.hash) == std::optional<std::string_view>("InsideTheDekuTree"));
 
     Game b;
     b.set(ladder, 0);
@@ -362,16 +363,25 @@ TEST_CASE("dungeon: the ladder event waits while B is in the Deku Tree, B's own 
                                               {cleared, proto::FlagKind::boolean, 1}};
     wb.receive(proto::Message{proto::FlagState{1, from_a}});
     wb.frame(store);
-    CHECK(b.values[cleared].value == 1);
-    CHECK(b.values[ladder].value == 0);  // B's eye switch still plays the event
+    CHECK(b.values[cleared].value == 0);  // B's asker stays for B's event (or B's own eye shot)
+    CHECK(b.values[ladder].value == 0);   // B's eye switch still plays the event
     wb.frame(store);
     CHECK(b.values[ladder].value == 0);
 
-    // B leaves the Deku Tree (or loads): the event is written, so the room
-    // loads with the ladder down.
+    // B leaves the Deku Tree (or loads): both are written, so the room
+    // loads with the ladder down and the room cleared.
     scene = "KokiriForest";
     wb.frame(store);
     CHECK(b.values[ladder].value == 1);
+    CHECK(b.values[cleared].value == 1);
+}
+
+TEST_CASE("dungeon: only the slingshot room's clear waits with its event, other Deku Tree rooms stay live") {
+    for (const char* live : {"InsideTheDekuTree_RoomD_Cleared", "InsideTheDekuTree_RoomD_StepSwitch_On_01",
+                             "InsideTheDekuTree_RoomE_Cleared", "InsideTheDekuTree_RoomG_WaterLevel"}) {
+        CAPTURE(live);
+        CHECK_FALSE(CoopDungeon::HeldIn(host::flag_hash(live)).has_value());
+    }
 }
 
 TEST_CASE("dungeon: a held event B plays itself is not written again, and is sent as B's") {

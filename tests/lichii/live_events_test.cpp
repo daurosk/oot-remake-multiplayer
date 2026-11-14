@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "coop_dungeon.h"
+#include "coop_fairy.h"
 #include "coop_live_events.h"
 
 namespace {
@@ -710,4 +711,99 @@ TEST_CASE("live events: with no reader the ring keeps the newest requests and ne
     const auto more = requests.Since(cursor);
     REQUIRE(more.size() == 1);
     CHECK(std::string(more[0].name) == "after");
+}
+
+namespace {
+// A game actor list (CoopFairy::addr): each actor's node, name and place.
+struct ActorList {
+    Mem& m;
+    std::uint64_t lists = 0x9600000000;
+    std::uint64_t names = 0x9700000000;
+    std::vector<std::uint64_t> nodes;
+    explicit ActorList(Mem& mem) : m(mem) {
+        namespace fa = CoopFairy::addr;
+        constexpr std::uint64_t kActorManager = 0x9650000000;
+        m.Put64(kMain + fa::kManagerPtr, kActorManager);
+        m.Put64(kActorManager + fa::kLists, lists);
+        m.Put64(lists + fa::kListHead, lists + fa::kListHead);  // empty ring
+    }
+    void Add(std::uint64_t actor, const std::string& name, std::array<float, 3> at, std::uint32_t state = 4) {
+        namespace fa = CoopFairy::addr;
+        const std::uint64_t head = lists + fa::kListHead;
+        const std::uint64_t node = actor + fa::kActorNode;
+        m.Put64(node + fa::kNodeOwner, actor);
+        m.Put32(actor + fa::kActorState, state);
+        const std::uint64_t text = names + 0x40 * nodes.size();
+        m.Write(text, name.c_str(), name.size() + 1);
+        m.Put64(actor + fa::kActorName, text);
+        m.Write(actor + CoopLiveEvents::kActorPosition, at.data(), sizeof at);
+        // Push at the front of the ring.
+        m.Put64(node, m.Get64(head));
+        m.Put64(head, node);
+        nodes.push_back(node);
+    }
+};
+} // namespace
+
+TEST_CASE("live events: a room gimmick event is started by our room's asker, so the room's graph moves") {
+    Mem m;
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    ActorList list(m);
+    constexpr std::uint64_t kAsker = 0x9800000000, kOtherAsker = 0x9810000000, kLadder = 0x9820000000,
+                            kGone = 0x9830000000;
+    // The compass room's asker at its place, the slingshot room's elsewhere, a ladder on the place, a dead asker.
+    list.Add(kAsker, "EventRequestActor", {-22.62f, 122.58f, -3.81f});
+    list.Add(kOtherAsker, "EventRequestActor", {-37.5f, 117.8f, 12.5f});
+    list.Add(kLadder, "Obj_InsideTheDekuTree_ElevatorLift_A_01", {-22.6f, 122.6f, -3.8f});
+    list.Add(kGone, "EventRequestActor", {-22.6f, 122.6f, -3.8f}, 2);
+
+    const std::array<std::string_view, 1> names{"EventRequestActor"};
+    CHECK(CoopLiveEvents::NearestActor(m, kMain, CoopLiveEvents::kAskerNames, {-22.6f, 122.6f, -3.8f}, 1.0f) ==
+          kAsker);
+    CHECK(CoopLiveEvents::NearestActor(m, kMain, names, {-22.6f, 122.6f, -3.8f}, 0.001f) == 0);
+    CHECK(CoopLiveEvents::NearestActor(m, kMain, names, {0.0f, 0.0f, 0.0f}, 1.0f) == 0);
+
+    CoopLiveEvents::Requester r;
+    r.WantFromRoom("InsideTheDekuTree_Gimmick_RoomD_PlatformUp", "InsideTheDekuTree");
+    r.WantFromRoom("InsideTheDekuTree_Gimmick_RoomD_PlatformUp", "InsideTheDekuTree");  // once
+    CHECK(r.Waiting() == 1);
+    std::vector<std::uint64_t> order;
+    auto call = r.Step(m, false, 0, kMain);
+    while (call) {
+        order.push_back(call->function - kMain);
+        if (call->function == kMain + addr::kSetLink) {
+            CHECK(call->x[0] == kBlock + addr::kArgMember2);
+            CHECK(call->x[1] == kAsker);
+        }
+        call = r.Step(m, true, Run(m, *call), kMain);
+    }
+    CHECK(order == std::vector<std::uint64_t>{addr::kMalloc, addr::kArgBuild, addr::kSetLink, addr::kRequest,
+                                              addr::kStringFree, addr::kStringFree});
+    bool said = false;
+    for (const auto& n : r.TakeNotes()) said |= n.find("started by our room's asker at -22.6 122.6 -3.8") != std::string::npos;
+    CHECK(said);
+
+    // No asker here (its room not loaded, or deleted): asked by name alone, and said so.
+    r.WantFromRoom("InsideTheDekuTree_Gimmick_CandleAndSpiderWeb", "InsideTheDekuTree");
+    order.clear();
+    call = r.Step(m, false, 0, kMain);
+    while (call) {
+        order.push_back(call->function - kMain);
+        call = r.Step(m, true, Run(m, *call), kMain);
+    }
+    CHECK(order == std::vector<std::uint64_t>{addr::kArgBuild, addr::kRequest, addr::kStringFree, addr::kStringFree});
+    said = false;
+    for (const auto& n : r.TakeNotes()) said |= n.find("no asker actor") != std::string::npos;
+    CHECK(said);
+
+    // A plain Want (a story cutscene) never looks for an asker.
+    r.Want("InsideTheDekuTree_Gimmick_RoomD_PlatformUp");
+    order.clear();
+    call = r.Step(m, false, 0, kMain);
+    while (call) {
+        order.push_back(call->function - kMain);
+        call = r.Step(m, true, Run(m, *call), kMain);
+    }
+    CHECK(order == std::vector<std::uint64_t>{addr::kArgBuild, addr::kRequest, addr::kStringFree, addr::kStringFree});
 }

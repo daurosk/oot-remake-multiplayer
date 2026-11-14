@@ -94,6 +94,18 @@ std::span<const Place> Places();
 // from that door, so that room's event waits until we are in it.
 inline constexpr float kNearM = 18.0f;
 
+// The actors that ask a room's gimmick event (the Banc placements of Places() are these): the room graph's
+// ActorLogicEventRequestActor / ActorLogicEventProxyRequestActor. An actor stands where it is placed, so it is
+// within kAskerNearM of the place (the table rounds to 0.1 m).
+inline constexpr std::string_view kAskerNames[] = {"EventRequestActor", "EventProxyRequestActor"};
+inline constexpr float kAskerNearM = 1.0f;
+
+// The present actor whose name is one of `names` nearest `at` (x, height, z), within `max_m`; 0 none. Walks the
+// game's actor list (CoopFairy::addr, as FindActor); the actor's place at kActorPosition. The calc thread (or a test).
+inline constexpr std::uint64_t kActorPosition = 0x31c;  // three floats, as coop_puppet.h
+std::uint64_t NearestActor(CoopPuppet::Guest& guest, std::uint64_t main, std::span<const std::string_view> names,
+                           const std::array<float, 3>& at, float max_m);
+
 // The dungeon room a place of the scene is in, if known (coop_rooms.h).
 using RoomOf = std::function<std::optional<int>(const std::array<float, 3>&)>;
 
@@ -199,6 +211,15 @@ public:
     // event Dm_SY_BancChangeGo with NextBanc, NextStartPos, BootEventName and IsCheckAir, started by Link
     // (coop_teleport_game.cpp). The arguments are written into the request after the game built it.
     void WantWith(std::string name, std::vector<Arg> args, std::uint64_t starter);
+    // deku-switches-b (0.10.1 playtest, Deku Tree): a room gimmick event started by our room's own asker. The room
+    // graph acts on the asker's outputs, not on the event: the compass room's lifts rise from
+    // `EventRequestActor.EventBool` (IsOn <- OR(EventBool, flag AND plate)), the slingshot ladder falls from it, the web
+    // room's torch burns from it, and the event sets that bool only on the actor that asked it
+    // (EventTriggerSetEventBool on its `EventRequestActor` member). Asked by name alone, the event plays its camera
+    // and nothing in the room moves. So when the event is asked, the asker (an actor named in kAskerNames, within
+    // kAskerNearM of one of the event's places in `scene`, Places()) is linked as its starter, as the game's own
+    // member request does (kSetLink). None found: asked by name alone, as before, and a note says so.
+    void WantFromRoom(std::string name, std::string scene);
     // review-p11-interactions: one requester takes gimmick and story events,
     // and an event waits while another runs. Once a frame, under the same
     // lock as Step: drops each name still waiting (not one being asked now)
@@ -254,7 +275,11 @@ private:
         std::uint64_t max_age_us = 0;
         std::vector<Arg> args;
         std::uint64_t starter = 0;
+        bool room_asker = false;  // WantFromRoom: the starter is found when it is asked
     };
+    // WantFromRoom's asker for `name` in `scene`, read on the calc thread when the event is asked; 0 none.
+    static std::uint64_t FindAsker(CoopPuppet::Guest& guest, std::uint64_t main, const std::string& name,
+                                   const std::string& scene, std::string& where);
     std::deque<Wanted> wanted_;
     std::string current_;
     std::vector<Arg> current_args_;

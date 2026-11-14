@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdlib>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #ifdef LICHII_COOP
@@ -1638,6 +1639,15 @@ constexpr std::string_view kCorridor[] = {
 constexpr std::string_view kLiveOnTest6[] = {
     "InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop", "InsideTheDekuTree_Gimmick_RoomH_CandleStick"};
 
+// deku-switches-b (0.10.1 playtest): room flags that delete the asker of a held gimmick event, so they wait with
+// that event. The slingshot room's graph (Logic/InsideTheDekuTree_Level_Room_C_Prefab_efa7) deletes
+// EventRequestActor_d457 when RoomC_Cleared is set (Logic_Delete <- HoldGameDataGetBoolSimple), and the presser's
+// game sets it at its event's end. Taken live, it deleted our asker before our own event ran, so the ladder (IsOn <-
+// that asker's EventBool) never fell and our eye switch asked nothing. Held, our asker is there for the event (or
+// for our own eye shot), and the event's end sets the flag here too.
+constexpr std::pair<std::string_view, std::string_view> kHeldWithEvent[] = {
+    {"InsideTheDekuTree_RoomC_Cleared", "InsideTheDekuTree"}};
+
 std::string_view SceneOfEvent(std::string_view event) {
     // The game's own spellings, and the scene names that are not prefixes.
     if (event.starts_with("SpritTemple_")) return "SpiritTemple";
@@ -1686,6 +1696,9 @@ std::optional<std::string_view> HeldIn(std::uint32_t hash) {
         }
         for (const std::string_view c : kCorridor) {
             if (name == c) return std::string_view("ForestTemple");
+        }
+        for (const auto& [flag, scene] : kHeldWithEvent) {
+            if (name == flag) return scene;
         }
         return std::nullopt;
     }

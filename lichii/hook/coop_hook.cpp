@@ -698,7 +698,7 @@ public:
             if (const auto name = live_decider_.Next(held_events, hold_scene_, running, link, &room_of)) {
                 LOG_INFO(Core, "coop: dungeon: starting the event {} here (another player played it)", *name);
                 std::lock_guard lock(live_mutex_);
-                live_requester_.Want(*name, hold_scene_);  // no age limit: started when near, as before
+                live_requester_.WantFromRoom(*name, hold_scene_);  // with our room's asker as its starter
             }
         }
         // The scrub flags of issue 144 have their own log line (above).

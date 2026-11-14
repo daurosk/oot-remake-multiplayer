@@ -20,6 +20,7 @@ register(api); nx2navi/README.md lists the api this file uses.
 
 import base64
 import ctypes
+import json
 import os
 import re
 import socket
@@ -454,6 +455,54 @@ def puppet_pack_made(mod_dir):
         return False
 
 
+def _run_pack_tool(mod_dir, game_dir):
+    """Runs the pack tool and returns (what it printed, its exit code). The code is None when
+    the tool could not run at all, and the text then says why.
+
+    The tool runs as a process of its own, below normal priority, with the launcher's Python
+    and its packages. Run inside the launcher (as it was), its two minutes of pure Python work
+    shared the launcher's interpreter lock with the window, which answered late all that time.
+    A launcher whose program is not a Python (none today) still runs it inside itself."""
+    folder = str((mod_dir / 'tools').resolve())
+    args = ['--romfs', str(game_dir), '--mod-dir', str(mod_dir)]
+    python = Path(sys.executable)
+    if python.name.lower().startswith('python'):
+        env = dict(os.environ)
+        env['PYTHONIOENCODING'] = 'utf-8'
+        env['PYTHONDONTWRITEBYTECODE'] = '1'   # nothing new beside the launcher's own files
+        # The launcher's own search path goes in the command: its Python may read no PYTHONPATH.
+        start = ('import json, sys; sys.path[:0] = json.loads(sys.argv[1]); del sys.argv[1]; '
+                 'from puppet_pack import build; sys.exit(build.main(sys.argv[1:]))')
+        paths = json.dumps([folder] + [p for p in sys.path if p])
+        flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0) | getattr(subprocess, 'BELOW_NORMAL_PRIORITY_CLASS', 0)
+        try:
+            done = subprocess.run([str(python), '-c', start, paths] + args, cwd=folder, env=env,
+                                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                  creationflags=flags)
+            return done.stdout.decode('utf-8', errors='replace'), done.returncode
+        except OSError:
+            pass   # the same work inside the launcher, below
+    import contextlib
+    import importlib
+    import io
+    sys.path.insert(0, folder)
+    out = io.StringIO()
+    try:
+        for name in [n for n in sys.modules if n == 'puppet_pack' or n.startswith('puppet_pack.')]:
+            del sys.modules[name]
+        build = importlib.import_module('puppet_pack.build')
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            code = build.main(args)
+        return out.getvalue(), code
+    except SystemExit as e:
+        return str(e) or 'the pack tool stopped', None
+    except Exception as e:   # said to the player, never raised into the launcher
+        return f'{type(e).__name__}: {e}', None
+    finally:
+        if folder in sys.path:
+            sys.path.remove(folder)
+
+
 def make_puppet_pack(mod_dir, game_dir, log=lambda text: None):
     """Makes the puppet pack from the player's own game files (<game>/romfs: romfs.bin and
     index.json) into <mod>/romfs, with the tool shipped in the mod. Returns '' or why not.
@@ -464,30 +513,13 @@ def make_puppet_pack(mod_dir, game_dir, log=lambda text: None):
         return f'the pack tool is missing ({tool}); install the mod again'
     if not (game_dir / 'romfs' / 'index.json').is_file():
         return f'no game files in {game_dir / "romfs"} (romfs.bin and index.json)'
-    import contextlib
-    import importlib
-    import io
-    folder = str((mod_dir / 'tools').resolve())
-    sys.path.insert(0, folder)
-    out = io.StringIO()
-    code = 1
-    try:
-        for name in [n for n in sys.modules if n == 'puppet_pack' or n.startswith('puppet_pack.')]:
-            del sys.modules[name]
-        build = importlib.import_module('puppet_pack.build')
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-            code = build.main(['--romfs', str(game_dir), '--mod-dir', str(mod_dir)])
-    except SystemExit as e:
-        return str(e) or 'the pack tool stopped'
-    except Exception as e:   # said to the player, never raised into the launcher
-        return f'{type(e).__name__}: {e}'
-    finally:
-        if folder in sys.path:
-            sys.path.remove(folder)
-        for line in out.getvalue().splitlines():
-            log('puppet pack: ' + line)
+    text, code = _run_pack_tool(mod_dir, game_dir)
+    for line in text.splitlines():
+        log('puppet pack: ' + line)
+    if code is None:
+        return text.strip() or 'the pack tool stopped'
     if code != 0:
-        errors = [line for line in out.getvalue().splitlines() if line.startswith('error:')]
+        errors = [line for line in text.splitlines() if line.startswith('error:')]
         return errors[-1][7:] if errors else f'the pack tool ended with code {code}'
     return ''
 
@@ -680,6 +712,8 @@ class Multiplayer:
     def home_value(self):
         if self.api.game_running():
             return self.connection()
+        if self.pack_thread is not None and self.pack_thread.is_alive():
+            return 'preparing the player models...'   # the puppet pack, once after an install
         return 'server running' if self.server_running() else ''
 
     def connection(self):

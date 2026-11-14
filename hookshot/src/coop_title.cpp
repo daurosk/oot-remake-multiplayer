@@ -259,8 +259,12 @@ void SaveLook(const CoopLook::Look& look) {
 }
 
 void ApplyKitOptions() {
-    const auto kit = FindKit();
-    if (!kit) {
+    // No kit above the game (a game folder copied out of its kit, Nucleus Co-op's instance folders: docs/play-lan.md,
+    // "Split-screen with Nucleus Co-op"): the coop-options.ini beside longshot.exe, so each copy can have its own.
+    const auto found = FindKit();
+    const std::optional<fs::path> kit = found ? *found : CoopRuntime::GameDir();
+    std::error_code exists_ec;
+    if (!found && !fs::exists(*kit / "coop-options.ini", exists_ec)) {
         return;
     }
     int set = 0;
@@ -276,8 +280,8 @@ void ApplyKitOptions() {
         ++set;
     }
     if (set != 0) {
-        LOG_INFO(Core, "coop: {} switch(es) from {}\\coop-options.ini (the game was started without the kit's launcher)",
-                 set, Utf8Path(*kit));
+        LOG_INFO(Core, "coop: {} switch(es) from {}\\coop-options.ini ({})", set, Utf8Path(*kit),
+                 found ? "the game was started without the kit's launcher" : "beside the game: no kit above it");
     }
 }
 

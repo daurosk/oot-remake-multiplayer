@@ -52,6 +52,7 @@ linux_pin=$repo/hookshot/LINUX.txt
     die "hookshot/PIN and hookshot/LINUX.txt name different Longshot releases"
 
 name=oot-coop-${release:-dev}-linux
+mkdir -p "$out" && out=$(cd "$out" && pwd)   # absolute: the zip step below runs inside it
 kit=$out/$name
 rm -rf "$kit"
 mkdir -p "$kit/scripts" "$kit/data/server" "$kit/data/longshot/patches" "$kit/data/tools/puppet_pack" \

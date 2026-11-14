@@ -123,7 +123,7 @@ D=$kit/data
 # --- build.sh ------------------------------------------------------------------------------
 mkdir -p "$HOME/Downloads"
 printf 'nup' >"$HOME/Downloads/OoT [04004860224DEC000].nup"
-OOT_COOP_SECRET=x bash "$kit/scripts/build.sh" </dev/null >"$tmp/build1.txt" 2>&1
+OOT_COOP_SECRET=x OOT_COOP_LANGUAGE=ja-JP bash "$kit/scripts/build.sh" </dev/null >"$tmp/build1.txt" 2>&1
 code=$?
 check 'build: a first build ends well' [ $code -eq 0 ]
 check 'build: the builder is unpacked, its 95 MB file deleted' bash -c '[ -x "$1/builder/image/usr/python/bin/python3" ] && [ ! -e "$1/builder/Longshot-test.AppImage" ]' _ "$D"
@@ -133,6 +133,8 @@ check "build: the tools' downloads stay in the kit (LONGSHOT_BUILDER_HOME)" has 
 check 'build: make_game checks the game first, then builds into data/game' bash -c 'grep -q "^make_game --nup .* --check" "$1" && grep -q "^make_game --nup .* --out $2/game --work $2/work" "$1"' _ "$log" "$D"
 check "build: make_game runs on the patched source with Longshot's tools, no LONGSHOT_TOOLS, no prebuilt renderer, no OOT_COOP_ variable" \
     bash -c 'grep "^make_game" "$1" | grep -v -- --check | grep -q "LONGSHOT_TOOLS=- VK_PREBUILT=- EMSDK=/opt/emsdk OOT=- | patched=True"' _ "$log"
+check "build: the player's OOT_COOP_LANGUAGE still reaches make_game (read before the OOT_COOP_ variables are cleared)" \
+    bash -c 'grep "^make_game" "$1" | grep -v -- --check | grep -q -- "--language ja-JP "' _ "$log"
 check 'build: stages shown, @@ lines for the launcher left out' bash -c 'grep -q "  -- Building" "$1" && ! grep -q "@@" "$1"' _ "$tmp/build1.txt"
 check 'build: the module is put beside the game' [ "$(cat "$D/game/hookshot_coop.so" 2>/dev/null)" = module ]
 check 'build: coop.ini beside the game, empty server and name left as comments, port 27510' \

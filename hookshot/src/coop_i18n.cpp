@@ -269,7 +269,7 @@ constexpr Entry kzh_Hans[] = {
      "这个邀请码不对：请房主再复制一次。"},
     {"The join password after the address: no spaces, at most 128 characters.",
      "地址后面的加入密码：不能有空格，最多 128 个字符。"},
-    {"That is not an invite code or a server address.", "按「继续游戏」玩 {} 的存档。"},
+    {"That is not an invite code or a server address.", "这不是邀请码，也不是服务器地址。"},
 
     // ---- The title screen's prompt ---------------------------------------
     {"Multiplayer: {}", "联机：{}"},
@@ -537,7 +537,7 @@ constexpr Entry kzh_Hant[] = {
     {"It is copied: paste it into your chat with them (Ctrl+V).",
      "已複製：貼到和朋友的聊天裡（Ctrl+V）。"},
     {"Press \"Copy the code again\" to put it on the clipboard.", "按「再複製一次邀請碼」把它放進剪貼簿。"},
-    {"Waiting for your friends to join...", "{} 位朋友已加入。"},
+    {"Waiting for your friends to join...", "正在等朋友加入…"},
     {"Making your code...", "正在產生邀請碼…"},
     {"No code could be made: your internet connection blocks it.",
      "產生不了邀請碼：你的網路擋住了。"},
@@ -578,7 +578,7 @@ constexpr Entry kzh_Hant[] = {
      "這個邀請碼不對：請房主再複製一次。"},
     {"The join password after the address: no spaces, at most 128 characters.",
      "位址後面的加入密碼：不能有空格，最多 128 個字元。"},
-    {"That is not an invite code or a server address.", "連線：{}"},
+    {"That is not an invite code or a server address.", "這不是邀請碼，也不是伺服器位址。"},
     {"hosting", "開房中"},
     {"joining", "加入中"},
     {"joined", "已加入"},

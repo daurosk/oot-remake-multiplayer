@@ -183,9 +183,9 @@ TEST_CASE("coop i18n: every key is still a line of the module") {
             later = later || en == c;
         }
         if (!later) {
-            CHECK_MESSAGE(sources.find("\"" + Escaped(en)) != std::string::npos ||
-                              sources.find(Escaped(en) + "\"") != std::string::npos,
-                          en);
+            const bool found = sources.find("\"" + Escaped(en)) != std::string::npos ||
+                               sources.find(Escaped(en) + "\"") != std::string::npos;
+            CHECK_MESSAGE(found, en);
         }
     }
 }

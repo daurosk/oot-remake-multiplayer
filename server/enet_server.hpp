@@ -29,6 +29,9 @@ struct ServerOptions {
   // none: on every adapter.
   std::optional<std::uint32_t> bind;
   SessionConfig session;
+  // The server's clock in microseconds. Empty means std::chrono::steady_clock
+  // since the server was made. Tests step a clock of their own here.
+  std::function<std::uint64_t()> now_us;
 };
 
 // ENet flags for a packet on `channel`: 0 to 2 reliable, 3 and 4 unreliable

@@ -2,7 +2,10 @@
 # on this PC (docs/ci-runner.md). Run ONCE in a fresh elevated PowerShell (Run as
 # administrator, no transcript on), from a checkout of this repo:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tools\ci-runner\install.ps1
-# Run tools\ci-runner\uninstall.ps1 first to install again.
+# Stopped part way (an error, a closed window)? Run it again: every step before
+# registration can be redone, and a runner folder that was unpacked but never
+# registered is unpacked again. Once a runner is registered (or its service
+# exists) it refuses and says to run tools\ci-runner\uninstall.ps1 first.
 #
 # What it does:
 # - standard local user oot-ci (Users only, never admin), random password nobody
@@ -31,10 +34,20 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'rights.ps1')
+trap {
+    "install.ps1 stopped: $_"
+    'Fix that and run install.ps1 again; it picks up where it stopped.'
+    'To remove what it did instead: powershell -NoProfile -ExecutionPolicy Bypass -File tools\ci-runner\uninstall.ps1'
+    break
+}
 
 $me = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not $me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run this in an elevated PowerShell (Run as administrator).' }
-if (Test-Path (Join-Path $Root 'config.cmd')) { throw "$Root already has a runner. Run tools\ci-runner\uninstall.ps1 first." }
+# A registered runner (config.cmd writes .runner) or its service: only
+# uninstall.ps1 takes that apart cleanly.
+if ((Test-Path (Join-Path $Root '.runner')) -or (Get-Service 'actions.runner.*' -ErrorAction SilentlyContinue)) {
+    throw "$Root already has a registered runner. Run tools\ci-runner\uninstall.ps1 first, then install.ps1."
+}
 $login = (& $Gh api user --jq .login)
 if ($login -ne 'daurosk') { throw "gh is signed in as '$login', not daurosk." }
 
@@ -71,6 +84,8 @@ if ($LASTEXITCODE -ne 0) { throw 'icacls failed on the hook folder.' }
 $hook = Join-Path $HookDir 'job-started.ps1'
 foreach ($f in 'job-started.ps1', 'job-check.ps1') { Copy-Item (Join-Path $PSScriptRoot $f) (Join-Path $HookDir $f) -Force }
 Set-Content -Encoding utf8 (Join-Path $HookDir 'runner-dirs.txt') $Root
+# uninstall.ps1 needs the SID to undo the ACEs and rights even after the user is gone.
+Set-Content -Encoding ascii (Join-Path $HookDir 'user-sid.txt') $sid
 
 # 3. Deny ACEs on everything of the owner's that oot-ci could reach.
 & (Join-Path $PSScriptRoot 'deny.ps1') -Root $Root -HookDir $HookDir -User $User
@@ -87,6 +102,11 @@ function Set-RunnerAcl {
         & icacls (Join-Path $Root $sub) /grant "${acct}:(OI)(CI)M" | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "icacls failed on $sub." }
     }
+}
+# Unpacked by a run that stopped before registering: unpack it again.
+if (Test-Path (Join-Path $Root 'config.cmd')) {
+    "$Root holds an unregistered runner from an earlier run; unpacking it again."
+    Remove-Item -Recurse -Force $Root
 }
 New-Item -ItemType Directory -Force $Root | Out-Null
 Set-RunnerAcl

@@ -93,8 +93,12 @@ registration token and the generated password to `config.cmd` on its command lin
    (jobs go back to `windows-latest`). Set it off before the PC is off for long:
    with it on and the runner offline, windows jobs wait in the queue.
 5. Remove everything (runner, service, hook, Deny ACEs, logon rights, profile,
-   user): `tools\ci-runner\uninstall.ps1`. Safe to run twice; if the profile is
-   still loaded it says so, and a run after a reboot finishes.
+   user): `tools\ci-runner\uninstall.ps1`. Safe to run twice. Every step runs
+   even if one fails; the failures are listed at the end, and a second run does
+   what is left. If the profile is still loaded it says so (the user and
+   `C:\ProgramData\oot-ci` stay until then), and a run after a reboot finishes.
+   install.ps1 stopped part way: run it again, it picks up where it stopped;
+   once a runner is registered it says to run uninstall first.
 6. A job failed with "open to the runner user": run
    `tools\ci-runner\deny.ps1` elevated, then re-run the job.
 

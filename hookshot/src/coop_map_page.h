@@ -70,10 +70,16 @@ struct Picture {
 };
 
 // Whether the Map page shows our own place's map (the one it opens on, Y's
-// "Current Location"): Y (the pad's, or the mouse's tap on its prompt) turns
-// it to the World Map and back, so an odd count of Y presses since the page
-// came up is the World Map or an area picked on it: not ours, no icons. Fed
-// once a present with the page's state and whether Y is held.
+// "Current Location"): Y turns it to the World Map and back, so an odd count
+// of Y presses since the page came up is the World Map or an area picked on
+// it: not ours, no icons. Fed once a present with the page's state and
+// whether Y is held in the bridge's pad word (HosCoopApi::pad_buttons). That
+// word has the mouse's presses too: a click on the page's Y prompt (or the
+// middle button) is host/oot_menu.c's hos_hid_tap("0:Y/75"), which nn_hid.c's
+// read_input adds to the buttons (scripted_input) before it stores the word
+// (hos_coop_pad), held 75 to 80 ms: several presents. (The game's own state
+// of the page is not read: not found yet; the in-game check says whether the
+// count ever goes wrong.)
 struct PageWatch {
     bool shown = false, y_was = false, ours = true;
     bool Update(bool map_page, bool y_down) {

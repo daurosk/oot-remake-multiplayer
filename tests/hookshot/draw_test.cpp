@@ -692,3 +692,13 @@ TEST_CASE("hookshot map page: our place's map until Y turns it to the World Map,
     CHECK(w.Update(true, true));          // a new page opens on our place, even with Y still held
     CHECK(w.Update(true, false));
 }
+
+TEST_CASE("hookshot map page: a tap held for one present counts as a press, like a long one") {
+    CoopMapPage::PageWatch w;
+    CHECK(w.Update(true, false));
+    CHECK_FALSE(w.Update(true, true));  // the mouse's tap on the Y prompt: one present
+    CHECK_FALSE(w.Update(true, false));
+    CHECK_FALSE(w.Update(true, false));
+    CHECK(w.Update(true, true));        // and back
+    CHECK(w.Update(true, false));
+}

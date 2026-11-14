@@ -249,13 +249,36 @@ std::string GuestNotices::on_in_game(bool in_game) {
   return std::string(kTooEarly);
 }
 
-bool reask_due(const GuestSession& s, std::uint64_t now_us) {
-  if (!s.asked || s.ready || s.no_save || s.unwritten || s.asks >= kGuestMaxAsks) return false;
+std::string GuestNotices::on_gave_up() {
+  loading_ = false;
+  return std::string(kGaveUp);
+}
+
+namespace {
+// An ask is due again (reask_due), the kGuestMaxAsks cap left out.
+bool ask_again(const GuestSession& s, std::uint64_t now_us) {
+  if (!s.asked || s.ready || s.no_save || s.unwritten) return false;
   if (now_us - s.asked_us < kGuestReaskUs) return false;
   const auto& a = s.assembler;
   if (a.received() == 0 && s.last_part_us <= s.asked_us) return true;  // (nothing at all came)
   // Parts came: only a transfer that stopped part way (a part lost), quiet for kGuestReaskUs.
   return a.received() != 0 && a.received() < a.count() && now_us - s.last_part_us >= kGuestReaskUs;
+}
+}  // namespace
+
+bool reask_due(const GuestSession& s, std::uint64_t now_us) {
+  return s.asks < kGuestMaxAsks && ask_again(s, now_us);
+}
+
+void note_part(GuestSession& s, std::uint32_t transfer_id, std::uint64_t now_us) {
+  if (s.last_part_us == 0 || transfer_id != s.transfer) s.gave_up = false;
+  s.transfer = transfer_id;
+  s.last_part_us = now_us;
+  s.said_stuck = false;
+}
+
+bool give_up_due(const GuestSession& s, std::uint64_t now_us) {
+  return !s.gave_up && s.asks >= kGuestMaxAsks && ask_again(s, now_us);
 }
 
 std::optional<fs::path> newest_slot(const fs::path& game_dir) {

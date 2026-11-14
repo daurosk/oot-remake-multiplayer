@@ -239,7 +239,13 @@ struct GuestSession {
   std::uint64_t last_part_us = 0;
   std::uint64_t asked_us = 0;   // when the last ask went out
   int asks = 0;                 // asks sent this session
+  bool gave_up = false;         // the last ask got nothing whole: the guest stopped asking (give_up_due)
+  std::uint32_t transfer = 0;   // the transfer id of the last part that came (note_part)
 };
+
+// A part of the host's save came (transfer `transfer_id`) at `now_us`. A new transfer (the host loaded another
+// save, or answered again) starts fresh: gave_up ends, so it can give up (and say so) again if it stalls too.
+void note_part(GuestSession& s, std::uint32_t transfer_id, std::uint64_t now_us);
 
 // A guest asks again kGuestReaskUs after its last ask when nothing at all came (the ask or the whole answer was
 // lost, or the host refused it as too soon), or when a transfer stopped part way and no part came for
@@ -249,6 +255,9 @@ struct GuestSession {
 inline constexpr std::uint64_t kGuestReaskUs = 15'000'000;
 inline constexpr int kGuestMaxAsks = 4;
 bool reask_due(const GuestSession& s, std::uint64_t now_us);
+// Once a session: the kGuestMaxAsks-th ask got nothing whole either (it would be due again, but the asks are used
+// up). The guest stops waiting: Loading ends (GuestNotices::on_gave_up) and the player plays on.
+bool give_up_due(const GuestSession& s, std::uint64_t now_us);
 
 // A guest's chat lines about the host's save (the owner's wording). The player loads the save themselves (nothing
 // presses the title's buttons); these lines say when:
@@ -264,6 +273,7 @@ class GuestNotices {
   static constexpr std::string_view kSuccessPlaying = "Success, load any save for changes to occur.";
   static constexpr std::string_view kTooEarly =
       "That save loaded before the host's save was in: go back to the title and load a save after Success.";
+  static constexpr std::string_view kGaveUp = "The host's save did not come: play on, or join again to get it.";
   // A part of transfer `transfer_id` (of `count` parts) came: kLoading when it is a new transfer of a save, else "".
   // A "no save" answer is one part (pack_no_save: a few bytes); a save slot is about 170 KB, many parts.
   std::string on_part(std::uint32_t transfer_id, std::size_t count);
@@ -271,6 +281,8 @@ class GuestNotices {
   // the folder switch failed): no Loading any more (the caller says what happened), no kTooEarly.
   void on_no_save() { loading_ = false; }
   void on_failed() { loading_ = false; }
+  // The guest stopped asking (give_up_due): no Loading any more, no kTooEarly; kGaveUp.
+  std::string on_gave_up();
   // The save is written and played from: kSuccessTitle when Link is not in the game, else kSuccessPlaying.
   std::string on_ready(bool in_game);
   // Each frame: Link in the game or not. kTooEarly when Link came in while the save was still loading.

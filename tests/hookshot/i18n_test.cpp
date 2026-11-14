@@ -192,16 +192,6 @@ TEST_CASE("coop i18n: every key is still a line of the module") {
     // A text changed in the code no longer finds its line, and that language
     // shows English there: the table is re-keyed with it. (Shapes, with {},
     // are matched by their ends at run time and are left out here.)
-    // Lines of branches that come in the same release (join-continue: the
-    // join's chat lines; stall-fix: the give-up line) are listed until they are in.
-    const char* const coming[] = {
-        "Host save loading, don't load a save.",
-        "Success, load any save.",
-        "Success, load any save for changes to occur.",
-        "That save loaded before the host's save was in: go back to the title and load a save after Success.",
-        "The host has no save yet: New Game starts one, Continue plays your own.",
-        "The host's save did not come: play on, or join again to get it.",
-    };
     const std::string sources = Sources();
     REQUIRE(sources.size() > 100000);
     const CoopI18n::Lang& hans = *ByCode("zh-Hans");
@@ -210,14 +200,8 @@ TEST_CASE("coop i18n: every key is still a line of the module") {
         if (Braces(en) > 0) {
             continue;
         }
-        bool later = false;
-        for (const char* c : coming) {
-            later = later || en == c;
-        }
-        if (!later) {
-            const bool found = sources.find("\"" + Escaped(en)) != std::string::npos ||
-                               sources.find(Escaped(en) + "\"") != std::string::npos;
-            CHECK_MESSAGE(found, en);
-        }
+        const bool found = sources.find("\"" + Escaped(en)) != std::string::npos ||
+                           sources.find(Escaped(en) + "\"") != std::string::npos;
+        CHECK_MESSAGE(found, en);
     }
 }

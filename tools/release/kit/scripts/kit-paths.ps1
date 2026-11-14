@@ -537,13 +537,89 @@ function Use-KitPuppetPack([string]$Manifest, [string]$ToolDir, [string[]]$Missi
 # --- Hookshot: what the kit's game needs before it starts (updates without player steps) ---
 
 # The kit's Hookshot game folder: hookshot\game-folder.txt (hookshot-build.ps1 writes it), else hookshot\game.
+# The file holds a path relative to the kit (hookshot\game) or, for -Out, a full one. Kits up to 0.10.1 wrote
+# their own hookshot\game as a full path: a copy of such a kit (a player's "oot-coop-v0.10.1 - Copy" for two
+# players on one PC) or a moved one then named the other kit's game, and both started one exe. A full path that
+# is another kit's default game (<folder>\hookshot\game) is never followed: this kit uses its own.
 function Get-KitHookshotGame([string]$Kit) {
+    $own = Join-Path $Kit 'hookshot\game'
     $where = Join-Path $Kit 'hookshot\game-folder.txt'
     if (Test-Path -LiteralPath $where) {
         $g = "$(Get-Content -LiteralPath $where -TotalCount 1)".Trim()
-        if ($g) { return $g }
+        if ($g -and -not [System.IO.Path]::IsPathRooted($g)) { return (Join-Path $Kit $g) }
+        if ($g -and -not (Test-KitOtherKitGame $Kit $g)) { return $g }
     }
-    return (Join-Path $Kit 'hookshot\game')
+    return $own
+}
+
+# A folder removed or moved while something may still hold a file in it for a moment: antivirus scanning a fresh
+# unzip, Explorer or the search indexer, a python.exe that just ended (a 0.10.1 player: "Access to the path
+# 'D:\coop\hookshot\tools.new' is denied", as admin too). Tried again for $Seconds; a move then falls back to
+# robocopy /MOVE (it copies what is held and leaves only that behind). Returns '' when done, else why not.
+# ($OnWait: tests; it runs before each wait.)
+function Remove-KitFolderRetry([string]$Path, [int]$Seconds = 30, [int]$WaitMs = 500, [scriptblock]$OnWait = $null) {
+    $until = [DateTime]::UtcNow.AddSeconds($Seconds)
+    while ($true) {
+        if (-not (Test-Path -LiteralPath $Path)) { return '' }
+        try { Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop; return '' } catch { $why = $_.Exception.Message }
+        if ([DateTime]::UtcNow -ge $until) { return $why }
+        if ($OnWait) { & $OnWait }
+        Start-Sleep -Milliseconds $WaitMs
+    }
+}
+function Move-KitFolderRetry([string]$From, [string]$To, [int]$Seconds = 30, [int]$WaitMs = 500, [scriptblock]$OnWait = $null) {
+    $until = [DateTime]::UtcNow.AddSeconds($Seconds)
+    $why = ''
+    while ($true) {
+        # (Directory.Move: one rename or nothing; a Move-Item that fails half way leaves a part of $To, and the next
+        # try then moves $From INTO it)
+        try { [System.IO.Directory]::Move($From, $To); return '' } catch { $why = $_.Exception.InnerException.Message; if (-not $why) { $why = $_.Exception.Message } }
+        if ([DateTime]::UtcNow -ge $until) { break }
+        if ($OnWait) { & $OnWait }
+        Start-Sleep -Milliseconds $WaitMs
+    }
+    if (-not (Test-Path -LiteralPath $From)) { return $why }
+    & robocopy $From $To /MOVE /E /R:3 /W:2 /NFL /NDL /NJH /NJS /NP | Out-Null
+    $code = $LASTEXITCODE
+    $global:LASTEXITCODE = 0
+    if ($code -ge 8) { return "$why (robocopy $code)" }
+    # (what robocopy copied but could not delete stays in $From: gone later, or with the next build)
+    Remove-KitFolderRetry $From 2 $WaitMs | Out-Null
+    return ''
+}
+# What to say when a folder of the build stays held ($Why: Remove- or Move-KitFolderRetry's answer).
+function Get-KitHeldFolderText([string]$Folder, [string]$Why) {
+    return ("Windows would not let the build move or delete $Folder ($Why). Something still has a file in it open: " +
+        'most often the antivirus scanning the files just unpacked, or an Explorer window or the search indexer. ' +
+        'Close Explorer windows on this kit''s folder; in Windows Security > Virus & threat protection > Manage settings > ' +
+        'Exclusions > Add an exclusion > Folder, add this kit''s folder; then start it again (what was downloaded is kept).')
+}
+# Is $Game the default game folder of a kit other than $Kit (<that kit>\hookshot\game)?
+function Test-KitOtherKitGame([string]$Kit, [string]$Game) {
+    try {
+        $full = [System.IO.Path]::GetFullPath($Game).TrimEnd('\')
+        $mine = [System.IO.Path]::GetFullPath((Join-Path $Kit 'hookshot\game')).TrimEnd('\')
+    } catch { return $false }
+    if ($full -ieq $mine) { return $false }
+    return ((Split-Path -Leaf $full) -ieq 'game') -and ((Split-Path -Leaf (Split-Path -Parent $full)) -ieq 'hookshot')
+}
+
+# A built game another kit on this PC has, made from the same release, pin and patches as $Kit wants
+# ($Stamp: Get-KitHookshotStamp), so a second kit (unzipped twice or copied) copies it instead of a 10 to 45
+# minute build. $Others: the other kit folders (kits.txt and the kit game-folder.txt names). Returns the game
+# folder, or ''.
+function Find-KitHookshotGameToCopy([string]$Kit, [string]$Stamp, [string[]]$Others) {
+    if (-not $Stamp) { return '' }
+    $mine = [System.IO.Path]::GetFullPath($Kit).TrimEnd('\')
+    foreach ($o in @($Others | Where-Object { $_ } | Sort-Object -Unique)) {
+        try { $of = [System.IO.Path]::GetFullPath($o).TrimEnd('\') } catch { continue }
+        if ($of -ieq $mine) { continue }
+        $g = Join-Path $of 'hookshot\game'
+        if (-not (Get-KitHookshotExe $g)) { continue }
+        $s = Join-Path $g 'coop-built-from.txt'
+        if ((Test-Path -LiteralPath $s) -and [System.IO.File]::ReadAllText($s) -eq $Stamp) { return $g }
+    }
+    return ''
 }
 
 # longshot.exe of a game folder (a builder's game folder has it in bin\), or $null.
@@ -589,7 +665,7 @@ function Get-KitHookshotNeed([string]$Kit) {
     if (-not $gameHas -and (Test-Path -LiteralPath (Join-Path $Kit 'hookshot\PIN')) -and
         -not (Test-Path -LiteralPath (Join-Path $Kit 'hookshot\hookshot_coop.dll'))) { return 'quarantine' }
     if (-not $exe) {
-        if (Test-Path -LiteralPath (Join-Path $Kit 'hookshot\game-folder.txt')) { return 'moved' }
+        if ($game -ine (Join-Path $Kit 'hookshot\game')) { return 'moved' }
         return 'game'
     }
     $stampFile = Join-Path $game 'coop-built-from.txt'

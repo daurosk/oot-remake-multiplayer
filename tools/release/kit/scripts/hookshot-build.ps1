@@ -50,6 +50,7 @@ $ProgressPreference = 'SilentlyContinue'   # (Invoke-WebRequest's progress bar m
 
 $kit = Split-Path -Parent $PSScriptRoot
 $hs = Join-Path $kit 'hookshot'
+. (Join-Path $PSScriptRoot 'kit-paths.ps1')   # (Test-KitOtherKitGame, Find-KitHookshotGameToCopy)
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
 
 function Fail([string]$Text) { Write-Host ''; Write-Host "Longshot build: $Text" -ForegroundColor Red; exit 1 }
@@ -180,7 +181,8 @@ if ($toolsReady) {
 
     Write-Host '  unpacking ...'
     $staging = "$tools.new"
-    if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+    $why = Remove-KitFolderRetry $staging
+    if ($why) { Fail (Get-KitHeldFolderText $staging $why) }
     # The source: the archive's one top folder (longshot/) left out.
     Expand-Zip $sourceZip $staging 1
     if (-not (Test-Path -LiteralPath (Join-Path $staging 'nx2\make_game.py'))) { Fail "Longshot's source archive has no nx2\make_game.py." }
@@ -200,8 +202,11 @@ if ($toolsReady) {
     # (--refresh keeps the originals of what the patches change: a later patch change refreshes only those)
     & (Join-Path $staging 'python\python.exe') -I -B (Join-Path $PSScriptRoot 'apply_patch.py') --refresh (Join-Path $staging '.coop-orig') $staging @($patches | ForEach-Object FullName)
     if ($LASTEXITCODE -ne 0) { Fail "The co-op patches do not apply to Longshot $($pin.commit). This kit is broken: tell the co-op testers." }
-    if (Test-Path -LiteralPath $tools) { Remove-Item -LiteralPath $tools -Recurse -Force }
-    Move-Item -LiteralPath $staging -Destination $tools
+    # (antivirus, Explorer or the indexer may hold a file of the fresh unzip for a moment: tried again, then robocopy)
+    $held = $tools
+    $why = Remove-KitFolderRetry $tools
+    if (-not $why) { $held = $staging; $why = Move-KitFolderRetry $staging $tools }
+    if ($why) { Fail (Get-KitHeldFolderText $held $why) }
     # (the stamp last: a move that stopped half way, a long path or a full disk, leaves no folder that looks ready)
     [System.IO.File]::WriteAllText($toolsStamp, $stamp)
     Write-Host '  ready.'
@@ -217,7 +222,34 @@ function Find-HookshotExe([string]$Folder) {
     }
     return $null
 }
-$gameStamp = Join-Path $Out 'coop-built-from.txt'
+# A second kit on this PC (unzipped twice, or a Windows copy of a kit): another kit's game made from the same
+# release, pin and patches is copied into this kit's own hookshot\game (a minute or two) instead of built again
+# (10 to 45 minutes). A copy, never the other kit's folder itself: two kits never start one game. Its coop.ini,
+# coop-options.ini and logs stay behind, so this kit gets its own name, server and controller below.
+$defaultOut = [System.IO.Path]::GetFullPath((Join-Path $hs 'game'))
+if (-not $Rebuild -and -not $CheckOnly -and $Out -ieq $defaultOut -and -not (Find-HookshotExe $Out)) {
+    $others = @()
+    $named = Join-Path $hs 'game-folder.txt'
+    if (Test-Path -LiteralPath $named) {
+        $n = "$(Get-Content -LiteralPath $named -TotalCount 1)".Trim()
+        if ($n -and [System.IO.Path]::IsPathRooted($n) -and (Test-KitOtherKitGame $kit $n)) { $others += Split-Path -Parent (Split-Path -Parent $n) }
+    }
+    $list = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'OoT-Coop\kits.txt' } else { '' }
+    if ($list -and (Test-Path -LiteralPath $list)) { $others += @(Get-Content -LiteralPath $list | Where-Object { $_ }) }
+    $from = Find-KitHookshotGameToCopy $kit $stamp $others
+    if ($from) {
+        Step "The game: copying the one another kit on this PC built ($from), instead of building it again"
+        New-Item -ItemType Directory -Force -Path $Out | Out-Null
+        & robocopy $from $Out /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP /XF coop.ini coop-options.ini *.log *_log.txt | Out-Null
+        if ($LASTEXITCODE -ge 8 -or -not (Find-HookshotExe $Out)) {
+            Write-Host "  Copying failed (robocopy $LASTEXITCODE): the game is built here instead." -ForegroundColor Yellow
+            Remove-Item -LiteralPath $Out -Recurse -Force -ErrorAction SilentlyContinue
+        } else {
+            Write-Host "  Copied to $Out (this kit's own game from now on)."
+        }
+        $global:LASTEXITCODE = 0
+    }
+}$gameStamp = Join-Path $Out 'coop-built-from.txt'
 $exe = Find-HookshotExe $Out
 $gameReady = $exe -and (Test-Path -LiteralPath $gameStamp) -and ([System.IO.File]::ReadAllText($gameStamp) -eq $stamp)
 
@@ -325,7 +357,10 @@ if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
     [System.IO.File]::WriteAllText($gameStamp, $stamp)
 }
 # Where the game is, for Host-Hookshot.bat and Join-Hookshot.bat (play.ps1 -Hookshot).
-[System.IO.File]::WriteAllText((Join-Path $hs 'game-folder.txt'), "$Out`n")
+# (relative when it is inside the kit, so a copied or moved kit keeps its own game: kit-copy)
+$kitFull = [System.IO.Path]::GetFullPath($kit).TrimEnd('\') + '\'
+$outNote = if ($Out.StartsWith($kitFull, [StringComparison]::OrdinalIgnoreCase)) { $Out.Substring($kitFull.Length) } else { $Out }
+[System.IO.File]::WriteAllText((Join-Path $hs 'game-folder.txt'), "$outNote`n")
 
 # --- 4: co-op into the game ----------------------------------------------------------------
 Step 'Co-op into the game'

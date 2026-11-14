@@ -18,7 +18,8 @@ Windows, a Unix socket on Linux, newline-delimited JSON. This module is our clie
   at every mark and every few seconds, the logs, then everything closed.
 
 Each player writes the lines the emulator's hook writes (`coop: test mark NAME`, `coop: test script done`, ...) to
-its own log, so the runner reads both the same way.
+its own log, so the runner reads both the same way. Marks also go through the module's commands file, so the game's
+log has them in order with its own lines (groups.py grades that log); a warp is done when its map is reached.
 
     python -I tools/autotest/hookshot.py play --sock coop-auto-A --script walk.A.txt --log a.txt --shots out
     python -I tools/autotest/hookshot.py run --game-a <folder> --game-b <folder> --server coop_server.exe --out <dir>
@@ -476,6 +477,11 @@ class Player:
 
     def mark(self, name):
         self.log("coop: test mark " + name)
+        # The same mark in the game's own log (the module writes "coop: test mark NAME (Link at x y z)"), so a
+        # grading line like "test mark near.*voice: ..." finds it in order with the game's lines: groups.py reads
+        # hookshot_log-X.txt, as it reads the emulator's log.
+        if self.commands and not self._send(["mark " + name]):
+            self.log("coop: test mark %s NOT taken (no module reading LICHII_COOP_TEST_COMMANDS?)" % name)
         if self.shot:
             try:
                 self.shot(name)
@@ -580,8 +586,20 @@ class Player:
                         self.sleep(0.5)
                         continue
                     if r.get("sent"):
-                        self.log("coop: test warp %s: sent (map %s)" % (s.name, r.get("map")))
-                        return
+                        to = r.get("map") or s.name
+                        self.log("coop: test warp %s: sent (map %s%s)" % (
+                            s.name, to, ", not accepted" if r.get("accepted") is False else ""))
+                        # "sent" is not "moved": a teleport asked while the arrival event of the save's load still
+                        # plays is dropped by the game (Longshot rc.3: "result 0", Link stays where the save put
+                        # him). So wait for the map, and ask again when it does not come.
+                        # Not accepted: usually dropped, so ask again soon (the game refuses a teleport within 8 s
+                        # of the last one); the map may still come (seen once), so wait for it that long first.
+                        if self._arrived(b, to, deadline, 9.0 if r.get("accepted") is False else 30.0):
+                            self.log("coop: test warp done (map %s)" % to)
+                            return
+                        why = "map %s not reached" % to
+                        self.log("coop: test warp %s: %s, asking again" % (s.name, why))
+                        continue
                     self.sleep(0.5)
                 self.log("coop: test warp %s gave up after %.0f s (%s)" % (s.name, self.warp_for, why))
             finally:
@@ -592,6 +610,24 @@ class Player:
         t.start()
         self.warps.append(t)
 
+    def _arrived(self, b, to, deadline, arrive_for=30.0):
+        """True once the game is in map `to` (the bridge's `wait map`); False if it is not within arrive_for s."""
+        left = min(arrive_for, deadline - self.clock())
+        if left <= 0:
+            return False
+        try:
+            b.request("wait", reply_timeout=left + 10.0, event="map", map=to, timeout=left)
+            return True
+        except BridgeError as e:
+            if e.code == "timeout":
+                return False
+            if e.code in ("bad_request", "unknown_cmd"):   # a bridge without `wait map`: trust "sent"
+                return True
+            self.log("coop: test warp: wait for map %s: %s" % (to, e))
+            return False   # asked again until warp_for, then the "gave up" line
+        except TimeoutError:
+            return False
+
     # the module's test commands: written to its file, taken when it is empty again
     def module(self, batch):
         if not self.commands:
@@ -599,6 +635,14 @@ class Player:
                 self.log("coop: test %s skipped on hookshot (line %d: needs the co-op module's test commands)"
                          % (s.kind, s.line))
             return
+        taken = self._send([s.text for s in batch])
+        for s in batch:
+            self.log("coop: test %s %s (line %d: %s)" % (s.kind, "sent" if taken else "NOT taken", s.line,
+                                                         "the module's log says what it did" if taken else
+                                                         "no module reading LICHII_COOP_TEST_COMMANDS?"))
+
+    def _send(self, lines):
+        """Writes lines to the module's commands file; True once the module took them (emptied the file)."""
         deadline = self.clock() + self.take_for
         while self._waiting() and self.clock() < deadline:   # the last batch not taken yet
             self.sleep(0.05)
@@ -606,17 +650,13 @@ class Player:
         tmp = "%s.%d.tmp" % (self.commands, self.sent)
         with open(tmp, "w", encoding="utf-8", newline="\n") as f:
             f.write("# hookshot.py batch %d\n" % self.sent)
-            for s in batch:
-                f.write(s.text + "\n")
+            for line in lines:
+                f.write(line + "\n")
         os.replace(tmp, self.commands)
         deadline = self.clock() + self.take_for
         while self._waiting() and self.clock() < deadline:
             self.sleep(0.05)
-        taken = not self._waiting()
-        for s in batch:
-            self.log("coop: test %s %s (line %d: %s)" % (s.kind, "sent" if taken else "NOT taken", s.line,
-                                                         "the module's log says what it did" if taken else
-                                                         "no module reading LICHII_COOP_TEST_COMMANDS?"))
+        return not self._waiting()
 
     def _waiting(self):
         try:
@@ -644,7 +684,11 @@ class Player:
             if s.kind == "timed":
                 t = self.timed(s, t)
             elif s.kind == "mark":
+                self._until(t)
                 self.mark(s.name)
+                # The mark waits for the module to take it (usually a quarter second, at most 2 x take_for): the
+                # next step starts after it, or a short press scheduled before it is let go at once (a title press lost).
+                t = max(t, self.clock())
             elif s.kind in ("goto", "toward"):
                 t = max(t, self.steer(s, max(t, self.clock())))
             elif s.kind == "warp":
@@ -768,9 +812,11 @@ def run(a):
             commands[x] = os.path.join(out, "commands-%s.txt" % x)
             open(commands[x], "w").close()
             env = dict(os.environ, HOS_CONTROL=sock, HOS_CONTROL_MEM="ro", LICHII_COOP_TEST_COMMANDS=commands[x])
+            # Each game plays the save its scenario put in (the joiner would load the host's): a switch can undo it.
+            env.setdefault("LICHII_COOP_TEST_OWN_SAVE", "1")
             if a.server:
                 env["LICHII_COOP_SERVER"] = "127.0.0.1:%d" % a.port
-                env["LICHII_COOP_NAME"] = "Hook" + x
+                env["LICHII_COOP_NAME"] = x   # "A", "B": the scripts type /teleport A, /teleport B
                 env["LICHII_COOP_PASSWORD"] = a.password
             for kv in a.env:
                 k, v = kv.split("=", 1)

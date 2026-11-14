@@ -156,6 +156,19 @@ std::vector<std::string> Joiner::TakeNotes() {
     return out;
 }
 
+std::span<const Need> Needs(std::string_view name) {
+    // Saria's gift: after the Deku Tree's last scene, or once the Kokiri at
+    // the forest exit has stepped aside (a randomizer's open forest).
+    static constexpr Need kSariaGift[] = {
+        {0xebaec07fu, true, "HavePlayedEvent.Dm_Kokiri_0140"},
+        {0xe5dc5674u, false, "KokiriForest_Npc_Kokiri_007_Child_Blocker_00"},
+    };
+    if (name == "Dm_Kokiri_0150") {
+        return kSariaGift;
+    }
+    return {};
+}
+
 bool OnFromEnv(std::string_view text) {
     return text != "0";
 }

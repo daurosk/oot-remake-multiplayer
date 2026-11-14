@@ -168,3 +168,48 @@ TEST_CASE("outside a dungeon rooms do not count: the 30 m rule alone") {
     j.Started(1, "Dm_Kokiri_0030", "KokiriForest", kBridge, 100, 2);
     CHECK(j.Next(h, kNotPlayed) == std::optional<std::string>("Dm_Kokiri_0030"));
 }
+
+TEST_CASE("intro-ocarina: Saria's gift is never started in a game still in the opening") {
+    // A player's report (0.10.1, Longshot, hosting): a rupee taken in the intro gave the Fairy Ocarina and froze in
+    // the cutscene: Dm_Kokiri_0150 (Saria on the bridge) asked in a game where Saria is not at the bridge yet.
+    constexpr std::uint32_t kDekuTreeLast = 0xebaec07fu;  // HavePlayedEvent.Dm_Kokiri_0140
+    constexpr std::uint32_t kExitBlocker = 0xe5dc5674u;   // KokiriForest_Npc_Kokiri_007_Child_Blocker_00
+    std::optional<bool> deku_tree = false, blocker = true;
+    const auto flag = [&](std::uint32_t h) -> std::optional<bool> {
+        if (h == kDekuTreeLast) return deku_tree;
+        if (h == kExitBlocker) return blocker;
+        return std::nullopt;
+    };
+    CHECK(CoopSharedScenes::Needs("Dm_Kokiri_0150").size() == 2);
+    CHECK(CoopSharedScenes::Needs("Dm_Kokiri_0030").empty());
+    CHECK_FALSE(CoopSharedScenes::GateHolds("Dm_Kokiri_0150", flag));
+    CHECK(CoopSharedScenes::GateHolds("Dm_Kokiri_0030", flag));  // no gate
+
+    // The opening: another player's (wrongly found) Saria's gift is skipped, not waited for.
+    Joiner j;
+    j.Started(1, "Dm_Kokiri_0150", "KokiriForest", kBridge, 100);
+    CHECK_FALSE(j.Next(Free(120), kNotPlayed, flag));
+    CHECK(j.Waiting() == 0);
+    CHECK(j.TakeNotes().back().find("our story is not there yet") != std::string::npos);
+    // Unreadable flags hold nothing either.
+    deku_tree.reset();
+    blocker.reset();
+    CHECK_FALSE(CoopSharedScenes::GateHolds("Dm_Kokiri_0150", flag));
+
+    // After the Deku Tree's last scene: played here too (a new visit of the forest).
+    deku_tree = true;
+    Joiner after;
+    after.Started(1, "Dm_Kokiri_0150", "KokiriForest", kBridge, 100);
+    const auto got = after.Next(Free(120), kNotPlayed, flag);
+    REQUIRE(got);
+    CHECK(*got == "Dm_Kokiri_0150");
+    // Or the exit blocker gone (an open forest): it holds as well.
+    deku_tree = false;
+    blocker = false;
+    CHECK(CoopSharedScenes::GateHolds("Dm_Kokiri_0150", flag));
+    // Other scenes are not gated.
+    blocker = true;
+    Joiner other;
+    other.Started(1, "Dm_Kokiri_0050", "KokiriForest", kBridge, 100);
+    CHECK(other.Next(Free(120), kNotPlayed, flag) == std::optional<std::string>("Dm_Kokiri_0050"));
+}

@@ -20,6 +20,7 @@
 // No emulator code here: tested in tests/lichii/live_events_test.cpp.
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -380,31 +381,66 @@ inline std::optional<std::string> RequestedOf(const std::vector<GameRequest>& re
     return std::nullopt;
 }
 
+// Whether the manager took a request for an event that is NOT one of `names` (a pickup's or a talk's event): then
+// the event running now is that one, and a story name the search finds in the session is a leftover of another
+// (intro-ocarina: a rupee's event in Kokiri Forest found Saria's gift Dm_Kokiri_0150 and sent it).
+inline bool RequestedOtherOf(const std::vector<GameRequest>& requests, const std::vector<std::string_view>& names) {
+    for (const GameRequest& r : requests) {
+        if (!r.taken) {
+            continue;
+        }
+        const std::string_view name(r.name);
+        if (std::find(names.begin(), names.end(), name) == names.end()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Which of `names` our game just started, once per start: by the game's own request when the wrap is there
 // (`requested`: RequestedOf this frame's requests), else by StartWatch's search of the running event. With the
 // wrap, the search still runs as a net: an event it finds that no request named is given as before and counted
-// (ScanOnly), and one the request already named is not given twice.
+// (ScanOnly), and one the request already named is not given twice. When the request named another event
+// (`other`: RequestedOtherOf), the search finds nothing of ours until that event is over (Refused): the session
+// still holds names of events that are not running.
 class StartSource {
 public:
     static constexpr int kForgetFrames = 1800;  // a request whose event never ran is forgotten after this
 
     template <typename Find>
     std::optional<std::string> Frame(std::optional<std::string> requested, bool wrap_live, bool running, Find&& find) {
-        if (!by_request_.empty()) {
+        return Frame(std::move(requested), false, wrap_live, running, std::forward<Find>(find));
+    }
+    template <typename Find>
+    std::optional<std::string> Frame(std::optional<std::string> requested, bool other, bool wrap_live, bool running,
+                                     Find&& find) {
+        if (!by_request_.empty() || other_) {
             ran_ = ran_ || running;
             if ((ran_ && !running) || ++frames_ > kForgetFrames) {
                 by_request_.clear();  // its event is over
+                other_ = false;
             }
         }
         std::optional<std::string> found = watch_.Frame(running, std::forward<Find>(find));
         if (requested) {
             by_request_ = *requested;
+            other_ = false;
             ran_ = running;
             frames_ = 0;
             return requested;
         }
+        if (other && wrap_live) {
+            by_request_.clear();
+            other_ = true;
+            ran_ = running;
+            frames_ = 0;
+        }
         if (found && *found == by_request_) {
             return std::nullopt;  // the request said so already
+        }
+        if (found && other_) {
+            ++refused_;
+            return std::nullopt;  // another event runs: the name is a leftover in the session
         }
         if (found && wrap_live) {
             ++scan_only_;
@@ -415,13 +451,19 @@ public:
     std::uint64_t ScanOnly() const {
         return scan_only_;
     }
+    // Names the search found while the game's request had named another event: not given.
+    std::uint64_t Refused() const {
+        return refused_;
+    }
 
 private:
     StartWatch watch_;
     std::string by_request_;  // the start the request named, until its event is over
+    bool other_ = false;      // the request named an event not in the list, until its event is over
     bool ran_ = false;
     int frames_ = 0;
     std::uint64_t scan_only_ = 0;
+    std::uint64_t refused_ = 0;
 };
 
 } // namespace CoopLiveEvents

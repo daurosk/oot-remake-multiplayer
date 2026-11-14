@@ -22,6 +22,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace CoopSharedScenes {
@@ -63,6 +64,36 @@ struct Here {
     std::uint64_t now_us = 0;
 };
 
+// Story order (intro-ocarina, a player report 2026-11-13): a story cutscene
+// that only fits a later part of the story is never started in a game that is
+// not there yet, nor sent from one. Saria's gift on the bridge
+// (Dm_Kokiri_0150: it gives the Fairy Ocarina) asked in a game still in the
+// opening gave the ocarina and froze in the cutscene (Saria is not at the
+// bridge then). A gate holds when any of its flags has its value; a flag that
+// cannot be read does not hold it.
+struct Need {
+    std::uint32_t hash;
+    bool value;
+    std::string_view what;
+};
+// The flags of which one must hold for `name`; empty: no gate.
+std::span<const Need> Needs(std::string_view name);
+// Reads a saved Bool by hash (nothing: not readable).
+template <typename Flag>
+bool GateHolds(std::string_view name, Flag&& flag) {
+    const auto needs = Needs(name);
+    if (needs.empty()) {
+        return true;
+    }
+    for (const Need& n : needs) {
+        const std::optional<bool> v = flag(n.hash);
+        if (v && *v == n.value) {
+            return true;
+        }
+    }
+    return false;
+}
+
 class Joiner {
 public:
     // Another player's game started `name` in `scene`; `starter` is where
@@ -79,9 +110,24 @@ public:
     // then it is skipped. Each name at most once per visit of the scene.
     template <typename Played>
     std::optional<std::string> Next(const Here& here, Played&& played) {
+        return Next(here, std::forward<Played>(played), [](std::uint32_t) { return std::optional<bool>(true); },
+                    false);
+    }
+    // The same, with the story order (Needs) read from our game's flags.
+    template <typename Played, typename Flag>
+    std::optional<std::string> Next(const Here& here, Played&& played, Flag&& flag) {
+        return Next(here, std::forward<Played>(played), std::forward<Flag>(flag), true);
+    }
+
+private:
+    template <typename Played, typename Flag>
+    std::optional<std::string> Next(const Here& here, Played&& played, Flag&& flag, bool gated) {
         Visit(here.scene);
         while (!pending_.empty()) {
-            const std::string why = Why(pending_.front(), here, played(pending_.front().name));
+            std::string why = Why(pending_.front(), here, played(pending_.front().name));
+            if (gated && (why.empty() || why == "wait") && !GateHolds(pending_.front().name, flag)) {
+                why = "our story is not there yet";
+            }
             if (why == "wait") {
                 return std::nullopt;
             }
@@ -99,6 +145,8 @@ public:
         }
         return std::nullopt;
     }
+
+public:
     // Log lines since the last call.
     std::vector<std::string> TakeNotes();
     std::size_t Waiting() const { return pending_.size(); }

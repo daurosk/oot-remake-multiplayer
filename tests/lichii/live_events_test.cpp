@@ -833,3 +833,40 @@ TEST_CASE("live events: an asker deleted between the pick and the link is not ha
     for (const auto& n : r.TakeNotes()) said |= n.find("asker went away before the link") != std::string::npos;
     CHECK(said);
 }
+
+TEST_CASE("intro-ocarina: while the game runs another event it asked for, a story name left in the session is not given") {
+    using CoopLiveEvents::StartSource;
+    // The game asks for a pickup's event (not one of ours); the session still holds Saria's gift's name.
+    std::vector<CoopLiveEvents::GameRequest> asked(1);
+    std::memcpy(asked[0].name, "DmF_GetItem", sizeof "DmF_GetItem");
+    asked[0].taken = true;
+    const std::vector<std::string_view> names{"Dm_Kokiri_0150", "Dm_Kokiri_0050"};
+    CHECK(CoopLiveEvents::RequestedOtherOf(asked, names));
+    CHECK_FALSE(CoopLiveEvents::RequestedOf(asked, names));
+    asked[0].taken = false;  // refused by the manager: nothing runs from it
+    CHECK_FALSE(CoopLiveEvents::RequestedOtherOf(asked, names));
+    asked[0].taken = true;
+    std::vector<CoopLiveEvents::GameRequest> ours(1);
+    std::memcpy(ours[0].name, "Dm_Kokiri_0050", sizeof "Dm_Kokiri_0050");
+    ours[0].taken = true;
+    CHECK_FALSE(CoopLiveEvents::RequestedOtherOf(ours, names));
+    CHECK_FALSE(CoopLiveEvents::RequestedOtherOf({}, names));
+
+    std::optional<std::string> in_session = "Dm_Kokiri_0150";
+    const auto find = [&] { return in_session; };
+    StartSource s;
+    CHECK_FALSE(s.Frame(std::nullopt, true, true, false, find));  // asked, not running yet
+    for (int i = 0; i < 40; ++i) CHECK_FALSE(s.Frame(std::nullopt, false, true, true, find));
+    CHECK(s.Refused() == 1);
+    CHECK(s.ScanOnly() == 0);
+    // That event over: a start no request named is given again (the net), as before.
+    CHECK_FALSE(s.Frame(std::nullopt, false, true, false, find));
+    CHECK(s.Frame(std::nullopt, false, true, true, find) == "Dm_Kokiri_0150");
+    CHECK(s.ScanOnly() == 1);
+    CHECK_FALSE(s.Frame(std::nullopt, false, true, false, find));
+    // A request for one of ours in the same frames still names it.
+    CHECK(s.Frame(std::string("Dm_Kokiri_0050"), true, true, false, find) == "Dm_Kokiri_0050");
+    // Without the wrap (the emulator) `other` cannot be known and is ignored.
+    StartSource plain;
+    CHECK(plain.Frame(std::nullopt, true, false, true, find) == "Dm_Kokiri_0150");
+}

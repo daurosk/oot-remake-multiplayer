@@ -594,6 +594,54 @@ TEST_CASE("host reader: what the player wears") {
     CHECK(e->sub_tool == "");
     CHECK(e->held == "");
   }
+  SUBCASE("the child's Goron's Bracelet is sent as hand, from its accessory link") {
+    put_user(m, l);
+    // Armor link 9 is the 18th link of the same array (8 hand slots first).
+    const std::uint32_t link = 8 + addr::kArmorLinkBracelet;
+    m.put_u64(kUser + 0x20 + 0x18 * link + 8, kEquipHolders + 0x100 * link);
+    const auto wear = [&](const std::string& name) {
+      put_equipped(m, link, 70, 4, 0x0);
+      const std::uint64_t piece = kEquipActors + 0x1000 * link;
+      const std::uint64_t text = piece + 0x800;
+      m.put_u64(piece + 0x260, text);
+      const std::string room(80, char{0});
+      m.put(text, room.data(), room.size());
+      m.put(text, name.c_str(), name.size() + 1);
+    };
+    SUBCASE("no flag and no link read: hand not known") {
+      CHECK_FALSE(reader.read_equipment()->hand);
+    }
+    SUBCASE("an empty flag with the link unreadable is not known, not taken off") {
+      put_strings(m, {{addr::kEquipHandArmor, ""}, {addr::kEquipWeapon, "Weapon_Sword_Kokiri"}});
+      CHECK_FALSE(reader.read_equipment()->hand);
+    }
+    SUBCASE("an empty flag and an empty link: no hand piece") {
+      put_strings(m, {{addr::kEquipHandArmor, ""}});
+      m.put_u32(kUser + 0x20 + 0x18 * link + 0x10, 0xffffffffu);
+      CHECK(reader.read_equipment()->hand == "");
+    }
+    SUBCASE("the bracelet, while EquipHandArmor is empty") {
+      put_strings(m, {{addr::kEquipHandArmor, ""}});
+      wear("Armor_Child_Gauntlet_Goron");
+      CHECK(reader.read_equipment()->hand == "Armor_Child_Gauntlet_Goron");
+    }
+    SUBCASE("the adult's gauntlets flag stands") {
+      put_strings(m, {{addr::kEquipHandArmor, "Armor_Adult_Gauntlet_Silver"}});
+      wear("Armor_Child_Gauntlet_Goron");
+      CHECK(reader.read_equipment()->hand == "Armor_Adult_Gauntlet_Silver");
+    }
+    SUBCASE("another piece in that link is not a bracelet") {
+      put_strings(m, {{addr::kEquipHandArmor, ""}});
+      wear("Item_Ocarina_Fairy");
+      CHECK(reader.read_equipment()->hand == "");
+    }
+    SUBCASE("the bracelet gone") {
+      put_strings(m, {{addr::kEquipHandArmor, ""}});
+      wear("Armor_Child_Gauntlet_Goron");
+      m.put_u32(kEquipActors + 0x1000 * link + 0x2c, 8);
+      CHECK(reader.read_equipment()->hand == "");
+    }
+  }
   SUBCASE("a request lasts a moment: the last one stands") {
     put_user(m, l);
     const std::uint64_t request = kUser + 0x13bc;

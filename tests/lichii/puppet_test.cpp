@@ -895,6 +895,109 @@ TEST_CASE("puppet gear: tunic, boots and gauntlets come off by their armor index
     CHECK(Frame(d, g, 200 + Director::kTakeOffMs).empty());
 }
 
+TEST_CASE("puppet gear: the child's Goron's Bracelet is worn as Accessory2, as the game wears it") {
+    using namespace CoopPuppet;
+    CHECK(GearKind(kGearHand, "Armor_Child_Gauntlet_Goron") == 14u);
+    CHECK(GearKind(kGearHand, "Armor_Adult_Gauntlet_Silver") == 10u);
+    CHECK(GearKind(kGearHand, "Armor_Adult_Gauntlet_Gold") == 10u);
+    CHECK(GearKind(kGearHand, "") == 10u);
+    CHECK(GearKind(kGearHeld, "Armor_Child_Gauntlet_Goron") == 5u);  // only the hand piece
+    CHECK(GearIsArmor(kGearHand, "Armor_Adult_Gauntlet_Silver"));
+    CHECK_FALSE(GearIsArmor(kGearHand, "Armor_Child_Gauntlet_Goron"));
+    CHECK_FALSE(GearIsArmor(kGearOcarina, "Item_Ocarina_Fairy"));
+    CHECK(GearIsArmor(2, "Armor_Child_Mask_Keaton"));
+
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x1000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    Target t = At(1, 4, 5, 6);
+    t.gear[kGearHand] = "Armor_Child_Gauntlet_Goron";
+    d.SetInput(Wants({t}));
+    auto calls = Frame(d, g, 20);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kEquip);
+    CHECK(calls[0].x[0] == kEu);
+    CHECK(calls[0].x[1] == 14u);
+    CHECK(calls[0].x[3] == 2u);  // worn as the belt pieces are
+    CHECK(Frame(d, g, 30).empty());  // worn: not again
+    // Taken off: no armor index for an accessory, so the puppet is made again.
+    t.gear[kGearHand] = "";
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 100).empty());
+    CHECK(Frame(d, g, 100 + Director::kTakeOffMs).empty());
+    calls = Frame(d, g, 110 + Director::kTakeOffMs);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kRequestDelete);
+}
+
+TEST_CASE("puppet gear: each hand item is worn in the same hand slot as on its player") {
+    using namespace CoopPuppet;
+    // The game's two enums (rodata): the 8 hand slots (0x3ef2000) and the 18
+    // slot kinds of the equip call (0x3ef9490). A piece sent from hand slot
+    // n is worn with the kind of the same name, so it lands in slot n on the
+    // puppet whichever item it is.
+    const char* const slot_names[8] = {"Weapon", "SubWeapon", "ThirdWeapon", "Bow",
+                                       "Shield", "Tool",      "SubTool",     "Helmet"};
+    const char* const kind_names[18] = {
+        "Weapon",     "SubWeapon",  "ThirdWeapon", "Sheath",     "Quiver",     "Bow",
+        "Shield",     "ArmorHead",  "ArmorUpper",  "ArmorLower", "ArmorHand",  "Tool",
+        "SubTool",    "Accessory1", "Accessory2",  "Accessory3", "Accessory4", "Extra"};
+    for (std::size_t i = 0; i < kGearCount; ++i) {
+        if (kGearSlots[i] >= 0) {
+            CAPTURE(i);
+            CHECK(std::string(kind_names[kGearKinds[i]]) == slot_names[kGearSlots[i]]);
+        }
+    }
+    // Item by item: the piece that carries it and the kind it is worn with.
+    // Only the rows marked (run) are slots seen on a player. The hookshot,
+    // longshot, boomerang and hammer have not been seen in a slot: their
+    // rows put them in slots of our choosing, and only show that any slot
+    // routes the same way (GearOf and kGearKinds do not look at the name).
+    struct Item {
+        const char* name;
+        std::optional<std::string> coop::protocol::Equipment::*field;
+        std::size_t piece;
+        std::uint32_t kind;
+    };
+    using E = coop::protocol::Equipment;
+    const Item items[] = {
+        {"Weapon_Bottle", &E::sub_weapon, kGearSubWeapon, 1},  // held up: slot 1 (run)
+        {"Weapon_Bottle_Fairy", &E::sub_weapon, kGearSubWeapon, 1},
+        {"Weapon_DekuStick", &E::sub_weapon, kGearSubWeapon, 1},  // slot 1 (run)
+        {"Weapon_DekuStick", &E::weapon_slot, 0, 0},  // or in the sword hand
+        {"Weapon_Range_SlingShot", &E::held, kGearHeld, 5},  // slot 3 (run)
+        {"Weapon_Range_Bow", &E::held, kGearHeld, 5},  // a BowParam like the slingshot: not run
+        {"Weapon_Range_Hookshot", &E::tool, kGearTool, 11},  // slot chosen here
+        {"Weapon_Range_Longshot", &E::third_weapon, kGearThirdWeapon, 2},  // chosen here
+        {"Weapon_Boomerang", &E::tool, kGearTool, 11},  // chosen here
+        {"Weapon_Hammer", &E::sub_tool, kGearSubTool, 12},  // chosen here
+        {"Armor_Child_Mask_Keaton", &E::head, 2, 7},  // a mask is head armor
+    };
+    for (const Item& it : items) {
+        CAPTURE(it.name);
+        E e;
+        e.*it.field = it.name;
+        const Gear g = GearOf(e);
+        REQUIRE(g[it.piece]);
+        CHECK(*g[it.piece] == it.name);
+        CHECK(GearKind(it.piece, it.name) == it.kind);
+        for (std::size_t i = 0; i < kGearCount; ++i) {
+            if (i != it.piece) {
+                CHECK_FALSE(g[i]);  // in no other piece
+            }
+        }
+    }
+    // Not covered here: Deku Nuts, bombs, bombchus and the Lens of Truth.
+    // They are in no hand slot (thrown objects, which the objects sync
+    // shows, and magic with no actor), so there is nothing to send and no
+    // puppet test for them.
+}
+
 TEST_CASE("puppet gear: a refused take-off and a sword taken off make the puppet again") {
     Game g;
     Director d;

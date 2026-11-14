@@ -294,7 +294,7 @@ Components, as in `PLAYER_SAMPLE` (id, length, data; unknown ids skipped, a know
 | 3 | `armor` | string (the tunic) | `PlayerStatus.EquipArmor` |
 | 4 | `boots` | string | `PlayerStatus.EquipBoot` |
 | 5 | `head` | string (a mask, or head armor) | `PlayerStatus.EquipHeadArmor` |
-| 6 | `hand` | string (gauntlets) | `PlayerStatus.EquipHandArmor` |
+| 6 | `hand` | string (gauntlets, or the child's Goron's Bracelet) | `PlayerStatus.EquipHandArmor`; while that is empty, the piece in the player's accessory link 9 when it is a bracelet (`Armor_Child_Gauntlet_*`: the game wears the bracelet as Accessory2, not as hand armor) |
 | 7 | `ocarina` | string | `PlayerStatus.EquipOcarina` |
 | 8 | `arrow` | string | `PlayerStatus.EquipArrow` |
 | 9 | `drawn` | `u8`: bit *i* set when the player's equipment slot *i* is drawn (in hand), clear when sheathed or empty | the EquipmentUser component |

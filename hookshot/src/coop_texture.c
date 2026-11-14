@@ -9,6 +9,7 @@
    build it with stand-ins for the two functions below): keep them equal (tests/hookshot/module_test.cpp checks it). */
 #include "hos_coop_texture.h"
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #ifdef _WIN32
@@ -39,6 +40,11 @@ typedef pthread_rwlock_t coop_lock;
 void hos_mark_written(const void *p, size_t n);   /* (hos_mem.c: the GPU mirror picks the pages up) */
 uint8_t *hos_guest_base(void);                    /* (hos_main.c) */
 
+/* A guest address in this process (the unit tests have no guest memory: a null base, so through integers). */
+static const void *guest_at(uint64_t address) {
+    return (const void *)((uintptr_t)hos_guest_base() + (uintptr_t)address);
+}
+
 typedef struct {
     const void *tex;   /* the game's nvn_tex (its key) */
     HosCoopTexture t;
@@ -61,7 +67,7 @@ static void drop_at(size_t i) {   /* (lock held) */
     free(o.bytes);
     over[i] = over[--over_n];
     coop_count_set(&overrides, (long)over_n);
-    hos_mark_written(hos_guest_base() + o.address, (size_t)o.n);   /* (the game's own texels uploaded again) */
+    hos_mark_written(guest_at(o.address), (size_t)o.n);   /* (the game's own texels uploaded again) */
 }
 
 /* (lock held) every override of that texture (serial), or of any texture (0), that overlaps [a, a + n) */
@@ -152,7 +158,7 @@ COOP_TEXTURE_EXPORT int hos_coop_texture_override(uint64_t address, uint64_t ser
             over[over_n].address = address, over[over_n].n = n, over[over_n].serial = serial, over[over_n].bytes = copy;
             over_n++;
             coop_count_set(&overrides, (long)over_n);
-            hos_mark_written(hos_guest_base() + address, (size_t)n);   /* (uploaded again, from the overlay) */
+            hos_mark_written(guest_at(address), (size_t)n);   /* (uploaded again, from the overlay) */
             ok = 1;
         } else {
             free(copy);

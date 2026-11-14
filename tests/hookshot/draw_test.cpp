@@ -482,7 +482,7 @@ namespace {
 // sCapHeight); os2_version 0: no OS/2 table.
 std::vector<std::uint8_t> FakeFont(int ascender, int descender, int em, int os2_version, int cap) {
     std::vector<std::uint8_t> b;
-    auto put = [&](std::uint32_t v, int n) {
+    auto put = [&](std::uint64_t v, int n) {   // (n up to 6: the 0 padding; 64 bits so v >> 40 is defined)
         for (int i = n - 1; i >= 0; --i) {
             b.push_back(static_cast<std::uint8_t>(v >> (8 * i)));
         }

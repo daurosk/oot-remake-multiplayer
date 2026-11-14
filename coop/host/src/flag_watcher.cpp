@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 
+#include "coop/host/map_drop_log.hpp"
 #include "coop/protocol/codec.hpp"
 
 namespace coop::host {
@@ -253,6 +254,7 @@ void FlagWatcher::reset() {
 }
 
 std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
+  const MapDropBecause because("the flag watcher");  // (a write of ours in the drop log, minimap-b)
   std::vector<Outgoing> out;
   const unsigned step = ticks_.step();  // 1/60 s that passed (issue 106)
   frames_ += step;
@@ -354,6 +356,8 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
     from_ = reset->player_number;
     received_kind_ = ReceivedKind::reset;
     recording_ = true;
+    map_drop_log().note("FLAG_RESET from the host (its save load), " + std::to_string(reset->flags.size()) + " flags");
+    const MapDropBecause because("the flag watcher: the host's save-load reset");
     apply_reset(store, reset->flags);
     recording_ = false;
     reset_seen_ = true;
@@ -502,12 +506,15 @@ void FlagWatcher::end_window(FlagStore& store, std::vector<Outgoing>& out) {
   if (role_ == FlagRole::host && !changed.empty()) {
     ++stats_.host_resets;
     reset_seen_ = true;
+    map_drop_log().note("our save load: FLAG_RESET sent, " + std::to_string(changed.size()) + " flags");
     push_list<protocol::FlagReset>(out, changed, stats_.entries_unsent);
   }
 }
 
 void FlagWatcher::apply_snapshot(FlagStore& store) {
   holding_ = false;
+  map_drop_log().note("join snapshot applied, " + std::to_string(snapshot_.size()) + " flags");
+  const MapDropBecause because("the flag watcher: the join snapshot");
   for (const auto& [key, entry] : snapshot_) {
     if (!takes(entry)) {
       // not shared here, or a pickup's 0
@@ -790,6 +797,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       // A map or compass the game took back (issue 146: both players opened
       // the Deku Tree's map chest and neither kept the map). Never right for
       // a one-way Bool: put it back, send nothing.
+      const MapDropBecause because("the flag watcher: one-way restore (issue 146)");
       if (store.write(before)) {
         ++stats_.one_way_restores;
         ++stats_.applied;

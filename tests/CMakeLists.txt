@@ -33,6 +33,7 @@ add_executable(coop_tests
   host/game_flags_test.cpp
   host/flag_events_test.cpp
   host/game_items_test.cpp
+  host/map_drop_log_test.cpp
   host/notify_test.cpp
   host/one_way_keeper_test.cpp
   host/save_transfer_test.cpp

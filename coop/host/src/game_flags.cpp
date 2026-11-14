@@ -1,6 +1,7 @@
 #include "coop/host/game_flags.hpp"
 
 #include "coop/host/game_flag_events.hpp"
+#include "coop/host/map_drop_log.hpp"
 
 #include <algorithm>
 #include <array>
@@ -438,10 +439,16 @@ std::optional<int> GameFlags::find_type(std::uint32_t hash) {
 bool GameFlags::set_bool(WritableGameMemory& m, std::uint32_t hash, bool value) {
   const auto mgr = manager(m);
   if (!mgr || !find(m, *mgr, kBool, hash)) return false;
-  if (GameFlagCalls* calls = g_calls.load(std::memory_order_acquire))
-    return calls->put({GameFlagType::boolean, hash, value ? 1u : 0u});
-  return enqueue(m, *mgr, kBool.queue_cap, kBool.queue_buf, kBool.queue_word, kBool.slot_size,
-                 value ? 1 : 0, hash, true);
+  bool ok = false;
+  if (GameFlagCalls* calls = g_calls.load(std::memory_order_acquire)) {
+    ok = calls->put({GameFlagType::boolean, hash, value ? 1u : 0u});
+  } else {
+    ok = enqueue(m, *mgr, kBool.queue_cap, kBool.queue_buf, kBool.queue_word, kBool.slot_size, value ? 1 : 0, hash,
+                 true);
+  }
+  // (minimap-b: a map or compass written by us is in the drop log's line)
+  if (ok) map_drop_log().note_our_write(FlagKey{hash, 0}, value ? 1u : 0u, MapDropBecause::now());
+  return ok;
 }
 
 bool GameFlags::set_int(WritableGameMemory& m, std::uint32_t hash, std::int32_t value) {

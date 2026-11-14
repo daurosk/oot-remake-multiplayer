@@ -38,6 +38,7 @@
 #include "coop_cheats_panel.h"
 #include "coop_chatbox.h"
 #include "coop_draw.h"
+#include "coop/host/map_drop_log.hpp"
 #include "coop_flag_native.h"
 #include "coop_flags.h"
 #include "coop_game_build.h"
@@ -1008,6 +1009,9 @@ void Frame(void* ctx, int site) {
         RunCalls(ctx);
         LogBossNative();
         CoopMapPage::Frame(ctx, g_api);   // the Map page's panes, found once while the game plays
+        if (const auto menu = CoopMapPage::MenuState()) {  // minimap-b: the drop log's menu state (patch 0018)
+            coop::host::map_drop_log().set_menu(menu->menu_open, menu->map_page);
+        }
     }
 }
 

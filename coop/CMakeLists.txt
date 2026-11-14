@@ -42,6 +42,7 @@ add_library(coop_host STATIC
   host/src/game_flags.cpp
   host/src/game_flag_events.cpp
   host/src/game_items.cpp
+  host/src/map_drop_log.cpp
   host/src/notify.cpp
   host/src/one_way_keeper.cpp
   host/src/game_memory.cpp

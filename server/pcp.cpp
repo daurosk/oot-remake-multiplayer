@@ -235,6 +235,11 @@ Mapping::Try Mapping::ask_pcp(const Config::Router& router, std::uint32_t lifeti
     return Try::kRefused;
   }
   if (lifetime) {
+    // A forward of port 0, or one that ends at once, is no forward.
+    if (reply->external.port == 0 || reply->lifetime == 0) {
+      say("the router " + nat::show(router.at) + " answered PCP without a port or a lease; not used");
+      return Try::kRefused;
+    }
     external_ = reply->external;
     lease_ = reply->lifetime;
   }
@@ -258,6 +263,10 @@ Mapping::Try Mapping::ask_natpmp(const Config::Router& router, std::uint32_t lif
     return Try::kRefused;
   }
   if (!lifetime) return Try::kOk;
+  if (reply->external.port == 0 || reply->lifetime == 0) {
+    say("the router " + nat::show(router.at) + " answered NAT-PMP without a port or a lease; not used");
+    return Try::kRefused;
+  }
   const std::uint16_t port = reply->external.port;
   lease_ = reply->lifetime;
   if (!open_) {
@@ -272,8 +281,12 @@ bool Mapping::open() {
   if (open_) return true;
   std::vector<Config::Router> routers = config_.routers;
   if (routers.empty()) {
-    for (const nat::LocalNet& net : nat::local_networks()) {
-      if (!net.gateway || nat::is_public(net.gateway)) continue;  // a router on the home network
+    // Only a router on the card's own network, private, the default route's
+    // card first (the others, a VPN's or a virtual switch's, only if it fails).
+    std::vector<nat::LocalNet> nets = nat::local_networks();
+    std::stable_partition(nets.begin(), nets.end(), [](const nat::LocalNet& n) { return n.default_route; });
+    for (const nat::LocalNet& net : nets) {
+      if (!nat::gateway_on_link(net) || nat::is_public(net.gateway)) continue;
       const Config::Router r{Addr{net.gateway, kRouterPort}, net.ip};
       if (std::none_of(routers.begin(), routers.end(), [&](const Config::Router& o) { return o.at == r.at; })) {
         routers.push_back(r);
@@ -307,7 +320,9 @@ bool Mapping::open() {
 
 void Mapping::renew_if_due() {
   if (!open_ || !router_) return;
-  const std::uint64_t lease_ms = static_cast<std::uint64_t>(std::max<std::uint32_t>(lease_, 60)) * 1000;
+  // Our lease, or the router's when it gives less (one of hours is renewed on our timing).
+  const std::uint32_t lease = std::min(lease_, config_.lease_seconds);
+  const std::uint64_t lease_ms = static_cast<std::uint64_t>(std::max<std::uint32_t>(lease, 60)) * 1000;
   if (steady_ms() - opened_ms_ < lease_ms / 2) return;
   const std::uint16_t before = external_.port;
   const Try t = natpmp_ ? ask_natpmp(*router_, config_.lease_seconds, config_.renew_waits_ms)

@@ -60,7 +60,7 @@ std::vector<std::uint8_t> pcp_answer(std::span<const std::uint8_t> request, std:
 
 // A router on 127.0.0.1 that answers on its own thread.
 struct FakeRouter {
-  enum class Mode { kPcp, kNatPmp, kRefuse, kSilent };
+  enum class Mode { kPcp, kNatPmp, kRefuse, kSilent, kPcpPortZero, kNatPmpNoLease };
   explicit FakeRouter(Mode m) : mode(m) {
     socket = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
     ENetAddress local{};
@@ -100,17 +100,21 @@ struct FakeRouter {
       if (request[0] == 2 && request.size() == 60) {
         if (mode == Mode::kPcp) answer = pcp_answer(request, get32(&request[4]) ? 40001 : 0);
         if (mode == Mode::kRefuse) answer = pcp_answer(request, 0, 2);
-        if (mode == Mode::kNatPmp) answer = {0, 0x80, 0, 1, 0, 0, 0, 0};  // version 0: unsupported version
-      } else if (request[0] == 0 && request[1] == 0 && mode == Mode::kNatPmp) {
+        if (mode == Mode::kPcpPortZero) answer = pcp_answer(request, 0);  // "done", but no port
+        if (mode == Mode::kNatPmp || mode == Mode::kNatPmpNoLease) {
+          answer = {0, 0x80, 0, 1, 0, 0, 0, 0};  // version 0: unsupported version
+        }
+      } else if (request[0] == 0 && request[1] == 0 && (mode == Mode::kNatPmp || mode == Mode::kNatPmpNoLease)) {
         answer.assign(12, 0);
         answer[1] = 128;
         put32(&answer[8], kRouterInternet);
-      } else if (request[0] == 0 && request[1] == 1 && mode == Mode::kNatPmp && request.size() == 12) {
+      } else if (request[0] == 0 && request[1] == 1 && request.size() == 12 &&
+                 (mode == Mode::kNatPmp || mode == Mode::kNatPmpNoLease)) {
         answer.assign(16, 0);
         answer[1] = 129;
         std::memcpy(&answer[8], &request[4], 2);   // internal port
         put16(&answer[10], get32(&request[8]) ? 40002 : 0);
-        std::memcpy(&answer[12], &request[8], 4);  // lifetime
+        if (mode == Mode::kNatPmp) std::memcpy(&answer[12], &request[8], 4);  // lifetime (NoLease: 0)
       }
       if (answer.empty()) continue;
       ENetBuffer out{};
@@ -272,4 +276,29 @@ TEST_CASE("local networks: broadcast addresses and masks") {
   CHECK(broadcast_of(LocalNet{0x0A000005u, 0xFFFFFFFFu, 0}) == 0);  // /32
   // The system's list never has loopback, and never crashes.
   for (const LocalNet& net : coop::server::nat::local_networks()) CHECK((net.ip >> 24) != 127u);
+}
+
+TEST_CASE("pcp router: a 'done' without a port or a lease opens nothing") {
+  EnetLife enet;
+  {
+    FakeRouter router(FakeRouter::Mode::kPcpPortZero);
+    Mapping m(config_for(router));
+    CHECK_FALSE(m.open());
+    CHECK_FALSE(m.is_open());
+  }
+  {
+    FakeRouter router(FakeRouter::Mode::kNatPmpNoLease);
+    Mapping m(config_for(router));
+    CHECK_FALSE(m.open());
+    CHECK_FALSE(m.is_open());
+  }
+}
+
+TEST_CASE("local networks: only a router on the card's own network is asked") {
+  using coop::server::nat::gateway_on_link;
+  using coop::server::nat::LocalNet;
+  CHECK(gateway_on_link(LocalNet{0xC0A80105u, 0xFFFFFF00u, 0xC0A80101u}));
+  CHECK_FALSE(gateway_on_link(LocalNet{0xC0A80105u, 0xFFFFFF00u, 0xC0A80201u}));  // another network
+  CHECK_FALSE(gateway_on_link(LocalNet{0xC0A80105u, 0xFFFFFF00u, 0}));
+  CHECK_FALSE(gateway_on_link(LocalNet{0xC0A80105u, 0xFFFFFF00u, 0xC0A80105u}));  // itself
 }

@@ -13,7 +13,11 @@ struct LocalNet {
   std::uint32_t ip = 0;       // this PC's address on it (first part highest)
   std::uint32_t mask = 0;     // 255.255.255.0 = 0xFFFFFF00
   std::uint32_t gateway = 0;  // its router; 0 when it has none
+  bool default_route = false; // the card the system sends internet traffic through
 };
+
+// Its router lies in its own network (a gateway elsewhere is not one we ask).
+bool gateway_on_link(const LocalNet& net);
 
 // The cards that are up, without loopback ones. Empty when the system does
 // not say (or on a system this does not know).

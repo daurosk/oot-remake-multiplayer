@@ -74,8 +74,10 @@ struct Config {
   std::vector<Router> routers;
   // Waits for an answer, doubling each time (RFC 6886: 250 ms first).
   std::vector<std::uint32_t> waits_ms{250, 500, 1000};
-  // A renewal runs inside the server's loop, so it waits less.
-  std::vector<std::uint32_t> renew_waits_ms{250, 250};
+  // A renewal runs inside the server's loop, so it asks once and waits
+  // little (a router on the home network answers in milliseconds); a missed
+  // one is asked again a quarter of the lease later.
+  std::vector<std::uint32_t> renew_waits_ms{100};
   std::function<void(const std::string&)> log;
 };
 

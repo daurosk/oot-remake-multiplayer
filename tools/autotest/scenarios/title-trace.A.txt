@@ -1,0 +1,5 @@
+# title-trace: research for a native Continue (join-continue-b). The load presses A on the title; the trace logs the requests.
+#! switches LICHII_COOP_TITLE_TRACE=1
+mark start
+wait 300
+mark end

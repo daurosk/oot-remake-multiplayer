@@ -240,8 +240,11 @@ TEST_CASE("title menu: the kit's options as the launcher's variables") {
 
 namespace {
 // One look for AutoLoad::Step.
-AutoLoad::Input Look(bool ready, bool title, int focused = 0, bool coming = false, bool in_game = false) {
+constexpr int kNewGame = 1;   // (the title with saves: Continue 0, New Game 1, Options 2)
+// (native_ok off: these looks test the pad A, the fallback; Native() below tests the game's own decide.)
+AutoLoad::Input Look(bool ready, bool title, int focused = kNewGame, bool coming = false, bool in_game = false) {
     AutoLoad::Input in;
+    in.native_ok = false;
     in.host_save_ready = ready;
     in.save_coming = coming;
     in.title_up = title;
@@ -278,10 +281,10 @@ TEST_CASE("title menu: after Join the host's save loads in one step") {
     CHECK(t.reveal_continue);
     CHECK(a.Line() == "Loading Saria's save...");
     CHECK_FALSE(a.Step(3100, Look(true, true)).reveal_continue);   // once
-    t = a.Step(3300, Look(true, true, 0));
+    t = a.Step(3300, Look(true, true, kNewGame));
     CHECK(t.focus_continue);
     CHECK_FALSE(t.press_a);   // (the cursor first)
-    t = a.Step(3600, Look(true, true, 0));
+    t = a.Step(3600, Look(true, true, kNewGame));
     CHECK_FALSE(t.press_a);   // the cursor is not on Continue yet: no A on New Game
     t = a.Step(3610, Look(true, true, AutoLoad::kContinue));
     CHECK(t.press_a);
@@ -304,10 +307,10 @@ TEST_CASE("title menu: AutoLoad moves the cursor to Continue again while it is e
     a.Step(100, Look(true, true));   // (reveal)
     int focus = 0;
     for (std::uint64_t ms = 200; ms < 200 + 3 * AutoLoad::kFocusEveryMs; ms += 20) {
-        focus += a.Step(ms, Look(true, true, 0)).focus_continue ? 1 : 0;
+        focus += a.Step(ms, Look(true, true, kNewGame)).focus_continue ? 1 : 0;
     }
     CHECK(focus == 3);   // once, then every 2 s while it is not there
-    CHECK(Presses(a, 7000, 9000, Look(true, true, 0)) == 0);   // and never an A on New Game
+    CHECK(Presses(a, 7000, 9000, Look(true, true, kNewGame)) == 0);   // and never an A on New Game
 }
 
 TEST_CASE("title menu: a hitch (the title seems gone a moment) lets no A in before one went in on Continue") {
@@ -315,7 +318,7 @@ TEST_CASE("title menu: a hitch (the title seems gone a moment) lets no A in befo
     CHECK(AutoLoad::PressAllowed(false, -1, true));
     AutoLoad a;
     a.Start(0, "Saria");
-    a.Step(100, Look(true, true, 0));
+    a.Step(100, Look(true, true, kNewGame));
     CHECK(Presses(a, 120, 5000, Look(true, false, -1)) == 0);
     // and back on the title with the cursor on Continue: it presses
     CHECK(Presses(a, 5000, 7000, Look(true, true, AutoLoad::kContinue)) > 0);
@@ -332,7 +335,7 @@ TEST_CASE("title menu: presses off the title stop after a while, on the title, s
     CHECK(a.active());
     CHECK(a.Line() == "Loading Saria's save...");
     // never got in and the title is back for kLoadMs: the plain line
-    Run(a, 60000, 60000 + AutoLoad::kLoadMs + 2000, Look(true, true, 0));
+    Run(a, 60000, 60000 + AutoLoad::kLoadMs + 2000, Look(true, true, kNewGame));
     CHECK_FALSE(a.watching());
     CHECK(a.Line() == "Press Continue to play Saria's save.");
     CHECK_FALSE(a.Step(99000, Look(true, true, AutoLoad::kContinue)).press_a);
@@ -349,10 +352,10 @@ TEST_CASE("title menu: only title time with nothing coming counts toward late, a
     Run(a, 3 * AutoLoad::kWaitSaveMs, 5 * AutoLoad::kWaitSaveMs, Look(false, true, 0, true));
     CHECK(a.active());
     // a gap between two looks (a hitch, the game paused) counts as one second at most
-    a.Step(10 * AutoLoad::kWaitSaveMs, Look(false, true, 0));
+    a.Step(10 * AutoLoad::kWaitSaveMs, Look(false, true, kNewGame));
     CHECK(a.active());
     // a minute on the title with nothing coming: late, the title's rows work again, the line says what to do
-    Run(a, 10 * AutoLoad::kWaitSaveMs, 11 * AutoLoad::kWaitSaveMs + 200, Look(false, true, 0));
+    Run(a, 10 * AutoLoad::kWaitSaveMs, 11 * AutoLoad::kWaitSaveMs + 200, Look(false, true, kNewGame));
     CHECK_FALSE(a.active());
     CHECK(a.watching());
     CHECK(a.waiting());
@@ -362,7 +365,7 @@ TEST_CASE("title menu: only title time with nothing coming counts toward late, a
     a.Step(11 * AutoLoad::kWaitSaveMs + 300, Look(false, true, 0, true));
     CHECK(a.active());
     // ... and in: it loads by itself
-    const auto t = a.Step(11 * AutoLoad::kWaitSaveMs + 400, Look(true, true, 0));
+    const auto t = a.Step(11 * AutoLoad::kWaitSaveMs + 400, Look(true, true, kNewGame));
     CHECK(t.reveal_continue);
     CHECK(a.Line() == "Loading your friend's save...");
 }
@@ -401,7 +404,7 @@ TEST_CASE("title menu: the player's Continue while the save comes is held back, 
     AutoLoad a;
     a.Start(0, "Saria");
     CHECK(a.HoldsPlayerA(true, AutoLoad::kContinue));
-    CHECK_FALSE(a.HoldsPlayerA(true, 0));                     // New Game: their choice
+    CHECK_FALSE(a.HoldsPlayerA(true, kNewGame));                     // New Game: their choice
     CHECK_FALSE(a.HoldsPlayerA(false, AutoLoad::kContinue));  // not the title
     Run(a, 100, AutoLoad::kWaitSaveMs + 1000, Look(false, true));
     CHECK_FALSE(a.HoldsPlayerA(true, AutoLoad::kContinue));   // late: "Continue plays your own save"
@@ -449,18 +452,18 @@ TEST_CASE("title menu: backing out of their own file to the title offers the hos
     a.Step(100, Look(false, true, AutoLoad::kContinue));
     a.PlayerChose();
     // the title still up a moment after the A (TitleUp's 300 ms): nothing yet
-    for (std::uint64_t ms = 200; ms < 3000; ms += 100) CHECK_FALSE(a.Step(ms, Look(false, true, 0)).rearm);
+    for (std::uint64_t ms = 200; ms < 3000; ms += 100) CHECK_FALSE(a.Step(ms, Look(false, true, kNewGame)).rearm);
     // their file list (the title gone), then back on the title
     Run(a, 3000, 5000, Look(false, false, -1));
     bool rearm = false;
     std::uint64_t ms = 5000;
-    for (; ms < 5000 + AutoLoad::kBackMs + 500 && !rearm; ms += 100) rearm = a.Step(ms, Look(false, true, 0)).rearm;
+    for (; ms < 5000 + AutoLoad::kBackMs + 500 && !rearm; ms += 100) rearm = a.Step(ms, Look(false, true, kNewGame)).rearm;
     CHECK(rearm);
     CHECK(ms >= 5000 + AutoLoad::kBackMs);
     CHECK(a.active());
     CHECK(a.Line() == "Getting Saria's save: it loads by itself when it is here...");
     // the save comes (or was in already): it loads
-    CHECK(a.Step(ms + 100, Look(true, true, 0)).reveal_continue);
+    CHECK(a.Step(ms + 100, Look(true, true, kNewGame)).reveal_continue);
     // A New Game the player went on with: in the game, done, nothing re-armed
     AutoLoad b;
     b.Start(0, "Saria");
@@ -468,7 +471,7 @@ TEST_CASE("title menu: backing out of their own file to the title offers the hos
     Run(b, 100, 2000, Look(false, false, -1));
     b.Step(2000, Look(false, false, -1, false, true));
     CHECK_FALSE(b.watching());
-    CHECK_FALSE(b.Step(9000, Look(false, true, 0)).rearm);
+    CHECK_FALSE(b.Step(9000, Look(false, true, kNewGame)).rearm);
 }
 
 TEST_CASE("Same network or VPN: the addresses a friend can use, and the line Join takes") {
@@ -610,7 +613,7 @@ TEST_CASE("title menu: the host drops while the save is awaited: it stops waitin
     // late or a pick backed out of: the same
     AutoLoad late;
     late.Start(0, "Saria");
-    Run(late, 100, AutoLoad::kWaitSaveMs + 2000, Look(false, true, 0));
+    Run(late, 100, AutoLoad::kWaitSaveMs + 2000, Look(false, true, kNewGame));
     late.Step(AutoLoad::kWaitSaveMs + 3000, off);
     CHECK_FALSE(late.watching());
     // once the save is in and loading, a drop does not stop it (the folder is already the host's)
@@ -621,4 +624,77 @@ TEST_CASE("title menu: the host drops while the save is awaited: it stops waitin
     gone.session_live = false;
     CHECK(Presses(load, 200, 2000, gone) > 0);
     CHECK(load.Line() == "Loading Saria's save...");
+}
+
+namespace {
+AutoLoad::Input Native(bool title, int focused) {
+    AutoLoad::Input in = Look(true, title, focused);
+    in.native_ok = true;
+    return in;
+}
+// Steps every 20 ms over [from, to): how many looks asked for the game's decide.
+int Decides(AutoLoad& a, std::uint64_t from, std::uint64_t to, const AutoLoad::Input& in) {
+    int n = 0;
+    for (std::uint64_t ms = from; ms < to; ms += 20) n += a.Step(ms, in).decide_continue ? 1 : 0;
+    return n;
+}
+}  // namespace
+
+TEST_CASE("title menu: Continue goes through the game's own decide once, with no pad A on the title") {
+    AutoLoad a;
+    a.Start(0, "Saria");
+    a.Step(100, Native(true, AutoLoad::kContinue));   // (reveal)
+    int presses = 0, decides = 0;
+    for (std::uint64_t ms = 120; ms < 120 + AutoLoad::kNativeWaitMs - 200; ms += 20) {
+        const auto t = a.Step(ms, Native(true, AutoLoad::kContinue));
+        presses += t.press_a ? 1 : 0;
+        decides += t.decide_continue ? 1 : 0;
+    }
+    CHECK(decides == 1);
+    CHECK(presses == 0);
+    CHECK_FALSE(a.fell_back());
+    // the title goes (the Sequence runs Continue): Continue's file list and question still get the A for a while
+    CHECK(Presses(a, 3000, 3000 + AutoLoad::kAfterTitleMs, Native(false, -1)) > 0);
+    CHECK(Presses(a, 3000 + AutoLoad::kAfterTitleMs + 1300, 20000, Native(false, -1)) == 0);
+    AutoLoad::Input in = Native(false, -1);
+    in.in_game = true;
+    a.Step(20100, in);
+    CHECK_FALSE(a.watching());
+}
+
+TEST_CASE("title menu: the decide waits for the cursor on Continue, and never on another button") {
+    AutoLoad a;
+    a.Start(0, "Saria");
+    a.Step(100, Native(true, kNewGame));
+    CHECK(Decides(a, 120, 5000, Native(true, kNewGame)) == 0);   // (the cursor elsewhere: focus asked, no decide)
+    CHECK(Decides(a, 5000, 7000, Native(true, AutoLoad::kContinue)) == 1);
+}
+
+TEST_CASE("title menu: the title stays after the decide: the pad A takes over, once said") {
+    AutoLoad a;
+    a.Start(0, "Saria");
+    a.Step(100, Native(true, AutoLoad::kContinue));
+    CHECK(Decides(a, 120, 1000, Native(true, AutoLoad::kContinue)) == 1);
+    CHECK(Presses(a, 1000, 120 + AutoLoad::kNativeWaitMs - 100, Native(true, AutoLoad::kContinue)) == 0);
+    CHECK(Presses(a, 120 + AutoLoad::kNativeWaitMs + 600, 8000, Native(true, AutoLoad::kContinue)) > 0);
+    CHECK(a.fell_back());
+    CHECK(Decides(a, 8000, 10000, Native(true, AutoLoad::kContinue)) == 0);
+}
+
+TEST_CASE("title menu: the decide not callable (native_ok off): the pad A at once") {
+    AutoLoad a;
+    a.Start(0, "Saria");
+    a.Step(100, Look(true, true, AutoLoad::kContinue));
+    CHECK(Decides(a, 120, 2000, Look(true, true, AutoLoad::kContinue)) == 0);
+    CHECK(Presses(a, 2000, 4000, Look(true, true, AutoLoad::kContinue)) > 0);
+}
+
+TEST_CASE("title menu: backed out to the title after the decide: decided again") {
+    AutoLoad a;
+    a.Start(0, "Saria");
+    a.Step(100, Native(true, AutoLoad::kContinue));
+    CHECK(Decides(a, 120, 1000, Native(true, AutoLoad::kContinue)) == 1);
+    Run(a, 1000, 5000, Native(false, -1));   // (the title went)
+    CHECK(Decides(a, 5000, 7000, Native(true, AutoLoad::kContinue)) == 1);
+    CHECK_FALSE(a.fell_back());
 }

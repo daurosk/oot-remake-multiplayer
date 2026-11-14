@@ -1,0 +1,8 @@
+# title-decide: the game's own Continue decide, no pad press (join-continue-b). No load step: the module decides Continue 8 s into the title.
+#! noload
+#! switches LICHII_COOP_TITLE_TEST_DECIDE=1
+mark start
+wait 1500
+mark after-25s
+wait 1500
+mark end

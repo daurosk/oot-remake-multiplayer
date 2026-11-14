@@ -585,6 +585,9 @@ void AutoLoad::Load(std::uint64_t now_ms) {
     next_press_ = now_ms + 600;
     revealed_ = false;
     pressed_continue_ = false;
+    native_tried_ = false;
+    native_left_ = false;
+    fell_back_ = false;
 }
 
 AutoLoad::Tick AutoLoad::Step(std::uint64_t now_ms, const Input& in) {
@@ -650,6 +653,36 @@ AutoLoad::Tick AutoLoad::Step(std::uint64_t now_ms, const Input& in) {
     if (in.title_up && in.focused != kContinue && now_ms >= next_focus_) {
         next_focus_ = now_ms + kFocusEveryMs;
         t.focus_continue = true;
+    }
+    // The game's own decide first: once per title, with the cursor on Continue.
+    if (!in.title_up && native_tried_) {
+        native_left_ = true;
+    } else if (in.title_up && native_left_) {
+        native_tried_ = native_left_ = false;   // (back on the title: the player backed out; decide again)
+    }
+    if (in.native_ok && !fell_back_) {
+        if (!native_tried_) {
+            if (in.title_up && in.focused == kContinue && now_ms >= next_press_) {
+                t.decide_continue = true;
+                native_tried_ = true;
+                native_at_ = now_ms;
+                pressed_continue_ = true;
+                after_title_ms_ = 0;
+            }
+            return t;
+        }
+        if (in.decide_waiting) {
+            native_at_ = now_ms;   // (not in yet: the wait for the title to go starts when it is)
+            return t;
+        }
+        if (in.title_up) {
+            if (now_ms - native_at_ < kNativeWaitMs) {
+                return t;   // (the title's Sequence runs Continue: nothing pressed on the title)
+            }
+            fell_back_ = true;   // (the title stayed: the pad A from here)
+            next_press_ = now_ms;
+        }
+        // (off the title: Continue's file list and its question still take the pad A below, kAfterTitleMs)
     }
     if (now_ms >= next_press_) {
         if (now_ms < next_press_ + kPressHoldMs) {

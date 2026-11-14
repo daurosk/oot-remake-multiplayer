@@ -174,8 +174,12 @@ std::vector<std::string> LanLines(const std::vector<LanAddress>& addresses, std:
 //   of their own file or a new game): wait again (Tick::rearm).
 // - load: the save is in and the game plays from the co-op folder. Continue
 //   shown (a first-time joiner's title opened without it), the cursor put on
-//   it (again every kFocusEveryMs while it is elsewhere), and A pressed every
-//   kPressEveryMs: on the title only with the cursor on Continue; once that
+//   it (again every kFocusEveryMs while it is elsewhere), then Continue chosen
+//   through the game's own button decide (decide_continue: the title's
+//   Sequence then runs Continue itself, no pad press on the title). Only when
+//   that is not there, or the title is still up kNativeWaitMs after it
+//   (fell_back, logged once), A is pressed every kPressEveryMs: on the title
+//   only with the cursor on Continue; once that (or the decide)
 //   press went in, also off the title (the file list, its question) for
 //   kAfterTitleMs (counted again from each press on Continue: the player may
 //   back out of the file list). kLoadMs on the title's menu without getting
@@ -194,6 +198,7 @@ public:
     static constexpr std::uint64_t kPressHoldMs = 120;
     static constexpr std::uint64_t kStepGapMs = 1000;      // a longer gap between two looks counts as this much
     static constexpr std::uint64_t kBackMs = 1500;         // chose: back on the title this long, then wait again
+    static constexpr std::uint64_t kNativeWaitMs = 3000;   // load: the title still up this long after the decide: A
 
     // What the module sees at one look (each pad poll).
     struct Input {
@@ -203,6 +208,8 @@ public:
         bool in_game = false;           // Link is in the game
         int focused = -1;               // the title's focused button (-1: none, or no title)
         bool session_live = true;       // the co-op session is on (CoopSave::SessionLive)
+        bool native_ok = true;          // the game's button decide can be called (no failed call yet)
+        bool decide_waiting = false;    // the module still waits for Continue to take input before the decide
     };
 
     void Start(std::uint64_t now_ms, std::string host);
@@ -229,7 +236,8 @@ public:
     bool chose() const { return phase_ == Phase::kChose; }
     // One look: whether A is held now, and what the title should do (made at the title's next step).
     struct Tick {
-        bool press_a = false;           // AutoLoad's A
+        bool press_a = false;           // AutoLoad's A (the fallback)
+        bool decide_continue = false;   // once: Continue chosen through the game's own button decide
         bool reveal_continue = false;   // once: the title shows its Continue row
         bool focus_continue = false;    // the cursor to Continue
         bool rearm = false;             // chose -> wait: the module offers the host's save again (CoopSave)
@@ -237,9 +245,12 @@ public:
     Tick Step(std::uint64_t now_ms, const Input& in);
     // What the player sees (bottom left of the title); "" when nothing.
     std::string Line() const;
+    // The decide went in and the title stayed: the pad A took over (the module logs it once).
+    bool fell_back() const { return fell_back_; }
 
-    // The title's Continue (Pa_Button_02: OpenTitle.module.ainb gives it label 0001).
-    static constexpr int kContinue = 2;
+    // The title's Continue when the player has saves: its first button (Pa_Button_00; Pa_Button_02 is Options: a
+    // decide on it opened Options in a Longshot run, 2026-11-14). The buttons array is in pane order.
+    static constexpr int kContinue = 0;
     // Whether AutoLoad's A may go in: on the title only with the cursor on Continue (never New Game, never a row
     // the title hides); off the title only once an A went in on Continue (the file list, its question), never
     // while the title only seems gone for a moment (a hitch longer than TitleUp's 300 ms).
@@ -273,6 +284,10 @@ private:
     bool chose_gone_ = false;            // chose: the title went after the pick
     bool revealed_ = false;
     bool pressed_continue_ = false;
+    bool native_tried_ = false;          // load: the decide went in on this title (again after the title went)
+    bool native_left_ = false;           // load: the title went since the decide
+    std::uint64_t native_at_ = 0;
+    bool fell_back_ = false;
     bool live_seen_ = false;             // the session was seen on since Start (a join still connecting is not off)
 };
 

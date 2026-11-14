@@ -57,6 +57,13 @@ constexpr int kFirstRow = 4;
 constexpr std::array<const char*, 3> kRowLabels{"0100", "0101", "0102"};
 constexpr std::array<CoopPauseMenu::Page, 3> kRowPages{CoopPauseMenu::Page::kHost, CoopPauseMenu::Page::kJoin,
                                                        CoopPauseMenu::Page::kSettings};
+// A UI part's own "decide" (the parts' vtable entry, e.g. at 0x84c412c0): f_837924a0 (only when the part takes input:
+// flags +0x40 has both 0x10 and 0x04, which the title's step sets while its controller is not busy; its owner's
+// decide callback; state 2 queued at +58 and the part put on its controller's list),
+// then flag 0x4000 cleared. The title's Sequence (NormalTitle.module.ainb, SeqExecuteWaitScreenButtonInput) takes the
+// decided part from the screen's controller (f_83399160 -> f_83793090 -> f_837928c0) and runs that button's branch:
+// Continue (Pa_Button_00 on a title with saves) -> its load branch. The same as the player's A, without the pad.
+constexpr std::uint64_t kDecide = 0x83791e80;
 constexpr std::uint64_t kFocus = 0x8088ffc0;   // the screens' focus setter (screen, button, 0): Hookshot's oot_menu.c
 // The title's row count: its layout's BtnNum animation at a frame (frame N shows N rows), as UISystemWindowScreen
 // sets its own (f_83425740 takes it with kAnim, f_83425ad0.. sets it with kAnimFrame and s0).
@@ -71,6 +78,9 @@ constexpr std::uint64_t kA = 1ull << 0;
 constexpr std::uint64_t kMinus = 1ull << 11;
 
 const HosCoopApi* g_api = nullptr;
+std::atomic<bool> g_decide_continue{false};   // AutoLoad: Continue decided at the title's next step
+std::atomic<bool> g_decide_failed{false};     // the decide call did not go (no button, refused): pad A
+bool g_test_decide = false;   // LICHII_COOP_TITLE_TEST_DECIDE=1 (tests): Continue decided once, 8 s into the title
 bool g_trace = false;
 std::atomic<bool> g_trace_a{false};   // (an A went in on the title: the next step logs the pending requests)    // LICHII_COOP_TITLE_TRACE=1: the screen's requests logged (research for a native Continue)
 bool g_native = false;   // LICHII_COOP_TITLE_NATIVE=1: the 4th title button (Pa_Button_03) opens the tab too
@@ -114,11 +124,22 @@ void TraceRequests(std::uint64_t screen, bool a_now) {
     if (ctl != 0 && ctl != seen_240) {
         seen_240 = ctl;
         const std::uint64_t vt = Read64(ctl);
-        LOG_INFO(Core, "coop: title trace: screen+240 {:#x} vtable {:#x} slots {:#x} {:#x} {:#x} {:#x} {:#x} {:#x}", ctl,
-                 vt, Read64(vt), Read64(vt + 8), Read64(vt + 16), Read64(vt + 24), Read64(vt + 32), Read64(vt + 40));
+        LOG_INFO(Core, "coop: title trace: screen {:#x} +240 {:#x} vtable {:#x} slots {:#x} {:#x} {:#x} {:#x} {:#x} {:#x}", screen,
+                 ctl, vt, Read64(vt), Read64(vt + 8), Read64(vt + 16), Read64(vt + 24), Read64(vt + 32), Read64(vt + 40));
     }
-    std::uint64_t r = Read64(screen + 232);
-    for (int i = 0; i < 16 && r > 1; ++i, r = Read64(r + 8)) {
+    // Requests not done yet stay in the screen's array (f_802f1380: +184 count, +192 the items), new ones on the
+    // queue (+232, next at +8).
+    std::vector<std::uint64_t> reqs;
+    std::int32_t n = 0;
+    CoopRuntime::Read(screen + 184, &n, sizeof n);
+    const std::uint64_t items = Read64(screen + 192);
+    for (std::int32_t i = 0; i < n && i < 16 && items != 0; ++i) reqs.push_back(Read64(items + 8ull * i));
+    for (std::uint64_t q = Read64(screen + 232); q > 1 && reqs.size() < 32; q = Read64(q + 8)) reqs.push_back(q);
+    if (a_now) {
+        LOG_INFO(Core, "coop: title trace: A: screen {:#x}, {} requests pending", screen, reqs.size());
+    }
+    for (const std::uint64_t r : reqs) {
+        if (r == 0) continue;
         const std::uint64_t vt = Read64(r);
         if (a_now) {
             LOG_INFO(Core, "coop: title trace: A: request {:#x} vtable {:#x} state +36 {:#x} +184 {:#x}", r, vt,
@@ -278,6 +299,7 @@ void Init(const HosCoopApi* api) {
     g_api = api;
     g_native = Env("LICHII_COOP_TITLE_NATIVE") == "1";
     g_trace = Env("LICHII_COOP_TITLE_TRACE") == "1";
+    g_test_decide = Env("LICHII_COOP_TITLE_TEST_DECIDE") == "1";
     LOG_INFO(Core, "coop: title: {}{}",
              HasScratch() ? "the Multiplayer rows open the menu's Multiplayer tab"
                           : "this Hookshot has no patch 0004 (build it again): co-op is in the menu's Multiplayer tab",
@@ -376,6 +398,54 @@ void OnTitle(void* ctx, std::uint64_t screen, int event) {
             LOG_INFO(Core, "coop: title: the cursor on Continue for the host's save");
         }
     }
+    if (event == HOS_COOP_TITLE_STEP && g_test_decide) {
+        static std::uint64_t first = 0;
+        if (first == 0) first = NowMs();
+        static std::uint64_t focus_at = 0;
+        if (NowMs() - first > 6000 && FocusedIndex(screen) != kContinueButton) {
+            if (NowMs() - focus_at > 2000) {
+                focus_at = NowMs();
+                g_focus_continue = true;   // (the cursor to Continue first, as AutoLoad does)
+            }
+        } else if (NowMs() - first > 8000 && FocusedIndex(screen) == kContinueButton) {
+            g_test_decide = false;
+            LOG_INFO(Core, "coop: title: LICHII_COOP_TITLE_TEST_DECIDE: Continue decided (a test)");
+            g_decide_continue = true;
+        }
+    }
+    if (event == HOS_COOP_TITLE_STEP && g_decide_continue.load()) {
+        // Continue chosen through the game's own decide of that button (kDecide), as the player's A would: once the
+        // button takes input (the title's own step clears 0x04 while its intro runs or its controller is busy), at
+        // most 30 s.
+        static std::uint64_t since = 0;
+        if (since == 0) since = NowMs();
+        std::int32_t count = 0;
+        CoopRuntime::Read(screen + kTitleCount, &count, sizeof count);
+        const std::uint64_t button =
+            count > kContinueButton ? Read64(Read64(screen + kTitleButtons) + 8ull * kContinueButton) : 0;
+        std::uint32_t flags = 0;
+        const bool read = button != 0 && CoopRuntime::Read(button + 0x40, &flags, sizeof flags);
+        if (read && ctx != nullptr && (flags & 0x14) == 0x14) {
+            g_decide_continue = false;
+            since = 0;
+            HosCoopCall k{};
+            k.function = kDecide;
+            k.x[0] = button;
+            std::uint64_t x0 = 0;
+            if (g_api->call(ctx, &k, &x0)) {
+                LOG_INFO(Core, "coop: title: Continue chosen for the host's save through the game's own button decide");
+            } else {
+                g_decide_failed = true;
+                LOG_WARNING(Core, "coop: title: the game's button decide could not be called: pressing A instead");
+            }
+        } else if (NowMs() - since > 30000) {
+            g_decide_continue = false;
+            since = 0;
+            g_decide_failed = true;
+            LOG_WARNING(Core, "coop: title: Continue never took input for the game's button decide (button {:#x}, "
+                              "flags {:#x}): pressing A instead", button, flags);
+        }
+    }
     if (event == HOS_COOP_TITLE_STEP && g_trace) {
         TraceRequests(screen, g_trace_a.exchange(false));
     }
@@ -415,6 +485,9 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
             in.in_game = InGame();
             in.focused = focused;
             in.session_live = CoopSave::SessionLive();
+            in.native_ok = !g_decide_failed.load();
+            in.decide_waiting = g_decide_continue.load();
+            const bool fell_back = g_autoload.fell_back();
             const auto tick = g_autoload.Step(NowMs(), in);
             if (tick.reveal_continue) {
                 g_reveal_continue = true;   // (made at the title's next step, with its game context)
@@ -424,6 +497,12 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
             }
             if (tick.rearm) {
                 CoopSave::ResumePendingSwitch();   // (they backed out of their own pick: the host's save again)
+            }
+            if (tick.decide_continue) {
+                g_decide_continue = true;   // (made at the title's next step, with its game context)
+            }
+            if (g_autoload.fell_back() && !fell_back) {
+                LOG_WARNING(Core, "coop: title: the title stayed after the game's Continue decide: pressing A instead");
             }
             if (tick.press_a) {   // (Step lets it go in on the title only with the cursor on Continue)
                 buttons |= kA;

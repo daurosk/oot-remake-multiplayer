@@ -72,6 +72,7 @@ install -m 755 "$server" "$kit/data/server/coop_server"
 install -m 644 "$module" "$kit/data/longshot/hookshot_coop.so"
 text "$pin" "$kit/data/longshot/PIN"
 text "$linux_pin" "$kit/data/longshot/LINUX.txt"
+text "$repo/tools/release/kit/hookshot/OOTRR.txt" "$kit/data/longshot/OOTRR.txt"   # (the randomizer build.sh fetches)
 for p in "$repo"/hookshot/patches/*.patch; do cp -- "$p" "$kit/data/longshot/patches/"; done   # (byte for byte)
 # The puppet pack tool: make_kit_hookshot.ps1's list, plus every module build.py imports.
 pack=$repo/tools/puppet_pack

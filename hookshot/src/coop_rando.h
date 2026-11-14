@@ -12,7 +12,9 @@
 //   at its start, so a new seed plays after a restart of the game, never after
 //   a game build;
 // - nothing of the game is in this repository or the kit: OOTRR reads the
-//   player's own extracted game folder.
+//   player's own game files, by default the ones the kit's build unpacked
+//   beside the game (<game>\romfs). The kit brings OOTRR (<game>\tools\ootrr,
+//   hookshot\OOTRR.txt), so a player sets nothing up.
 //
 // The rules (what to build, which folders to switch, the command lines) are
 // plain functions for the tests; Rando runs them in the game.
@@ -86,15 +88,28 @@ std::wstring CommandLine(const std::filesystem::path& program, const std::vector
 
 // Runs a program with no window to its end, its output appended to `log_file`; its exit code, -1 when it could not
 // start, kStopped when it ran longer than `limit` or `stop` turned true (it is then ended) (Rando::Hooks::run).
+// Windows and Linux.
 inline constexpr int kStopped = -2;
-int RunProgram(const std::wstring& command_line, const std::filesystem::path& log_file, std::chrono::milliseconds limit,
-               const std::atomic<bool>* stop);
+int RunProgram(const std::filesystem::path& program, const std::vector<std::string>& args,
+               const std::filesystem::path& log_file, std::chrono::milliseconds limit, const std::atomic<bool>* stop);
 
-// Where OOTRR is: the "ootrr" setting when set, else ootrr.exe in <game>\tools\ootrr or <mods>\oot-remake-randomizer.
-// Where the game's extracted files are: the "game_folder" setting when set, else OOT_ROMFS.
+// OOTRR's program name on this system: ootrr.exe (Windows) or ootrr.
+const char* OotrrName();
+// Where OOTRR is: the "ootrr" setting when set, else <game>\tools\ootrr (where the kit puts it, hookshot\OOTRR.txt)
+// or <mods>\oot-remake-randomizer.
+// Where the game's extracted files are: the "game_folder" setting when set, else OOT_ROMFS, else <game>\romfs (the
+// files the kit's build unpacked: OOTRR only reads them). A folder counts when it has Pack and System.
 std::optional<std::filesystem::path> FindOotrr(const std::string& setting, const std::filesystem::path& game_dir,
                                                const std::filesystem::path& mods_root);
-std::optional<std::filesystem::path> FindGameFolder(const std::string& setting);
+std::optional<std::filesystem::path> FindGameFolder(const std::string& setting, const std::filesystem::path& game_dir);
+
+// What to do about a failed `ootrr build`, from its output: game files of another version than 1.1.1 (OOTRR says
+// "the game folder has no ...") say so plainly; anything else is empty (the caller gives the exit code).
+std::string BuildFailureHint(std::string_view ootrr_output);
+// The chat line a guest sends when it cannot build the host's seed (Hooks::tell_others): at most kTellChars bytes
+// (a chat line's limit), cut at a whole UTF-8 character.
+inline constexpr std::size_t kTellChars = 200;
+std::string TellLine(std::string_view why);
 
 // What the tab and the chat say when the randomizer is switched (by the player, or the host's switch reaching a guest).
 // A seed plays only after a restart, and only from a new save (a save from before has the items of the plain game).
@@ -108,8 +123,14 @@ public:
         std::filesystem::path game_dir;
         // Runs a program to its end (any thread); its output appended to `log_file`. The exit code, or -1 when it
         // could not start. Real processes in the game, fakes in the tests.
-        std::function<int(const std::wstring& command_line, const std::filesystem::path& log_file)> run;
+        std::function<int(const std::filesystem::path& program, const std::vector<std::string>& args,
+                          const std::filesystem::path& log_file)>
+            run;
         std::function<std::uint64_t()> entropy;
+        // A guest whose game could not build the host's seed tells the others, so the host's chat names the player
+        // and why: one chat line (any thread). False when it could not be sent (not connected): tried again at the
+        // next Recheck. Empty: said only in this game.
+        std::function<bool(const std::string& line)> tell_others;
     };
     Rando(CoopMods::Loader& loader, Hooks hooks);
     ~Rando();  // waits for a build that runs
@@ -123,7 +144,10 @@ public:
     std::string Status() const;
     // Looks at the settings again: after the host's values came or went (a host without the randomizer changes no
     // value of ours, so no setting call comes).
-    void Recheck() { Check(); }
+    void Recheck() {
+        TellOthers();
+        Check();
+    }
     // The chat lines since the last call (SwitchLine when the switch changed).
     std::vector<std::string> TakeLines();
     // Waits until no build runs (tests, exit).
@@ -136,6 +160,7 @@ private:
     void Work(Plan plan, Want want);      // the worker: builds until the settings stop changing
     void Build(const Plan& plan, const Want& want);
     void Say(std::string line);
+    void TellOthers();                    // sends tell_ (Hooks::tell_others)
 
     CoopMods::Loader& loader_;
     const Hooks hooks_;
@@ -148,6 +173,7 @@ private:
     bool on_now_ = false;      // the switch as the game started (mutex_)
     bool on_said_ = false;     // the switch as last said (mutex_)
     std::vector<std::string> lines_;  // mutex_
+    std::string tell_;                // a line for the others not sent yet (mutex_)
 };
 
 }  // namespace CoopRando

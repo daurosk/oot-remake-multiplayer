@@ -749,7 +749,8 @@ function Get-KitHookshotStamp([string]$Kit) {
 #   'pin'     the kit moved to another Hookshot release or pin (a full game build, about 15 minutes)
 #   'patches' the co-op patches changed (the game built again, only what changed: a few minutes)
 #   'module'  the co-op module changed, or the puppet pack is missing or stale (co-op and the pack put in
-#             again: seconds to a minute; without a pack the other players cannot be shown)
+#             again: seconds to a minute; without a pack the other players cannot be shown), or the kit's
+#             randomizer (hookshot\OOTRR.txt) is not in the game yet
 #   ''        nothing: start the game
 function Get-KitHookshotNeed([string]$Kit) {
     $game = Get-KitHookshotGame $Kit
@@ -783,7 +784,25 @@ function Get-KitHookshotNeed([string]$Kit) {
     }
     $manifest = Join-Path $exeDir 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json'
     if (Test-KitPuppetPackStale $manifest (Join-Path $Kit 'tools\puppet_pack')) { return 'module' }
+    if (Test-KitOotrrStale $Kit $exeDir) { return 'module' }
     return ''
+}
+
+# The randomizer the kit brings (hookshot\OOTRR.txt) is not in the game's tools\ootrr yet, or another release is:
+# the module step (hookshot-build.ps1) puts it in. A kit without OOTRR.txt brings none.
+function Test-KitOotrrStale([string]$Kit, [string]$ExeDir) {
+    $pin = Join-Path $Kit 'hookshot\OOTRR.txt'
+    if (-not (Test-Path -LiteralPath $pin)) { return $false }
+    $keys = @{}
+    foreach ($line in @(Get-Content -LiteralPath $pin -ErrorAction SilentlyContinue)) {
+        if ($line -match '^\s*([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$') { $keys[$Matches[1]] = $Matches[2] }
+    }
+    if (-not $keys.release -or -not $keys.windows_sha256) { return $false }
+    $dir = Join-Path $ExeDir 'tools\ootrr'
+    if (-not (Test-Path -LiteralPath (Join-Path $dir 'ootrr.exe'))) { return $true }
+    $stamp = Join-Path $dir 'coop-ootrr.txt'
+    $have = if (Test-Path -LiteralPath $stamp) { (Get-Content -LiteralPath $stamp -TotalCount 1).Trim() } else { '' }
+    return $have -ne "$($keys.release) $($keys.windows_sha256)"
 }
 
 # A puppet pack to make (again) before the game starts: none there, or one Get-PuppetPackHint calls old (no sound,

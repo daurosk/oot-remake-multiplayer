@@ -49,15 +49,21 @@ A setting marked `"shared"` is the host's in a co-op game: your tab shows the ho
 
 ### The randomizer
 
-The OoT Remake randomizer is [OOTRR](https://github.com/REALAZK/ootrr) (MIT, by REALAZK). It is not part of the game: it reads your own extracted game files and builds a mod from a seed.
+The OoT Remake randomizer is [OOTRR](https://github.com/REALAZK/ootrr) (by REALAZK, GPL-3.0-or-later since 0.5.0). The kit brings it: there is nothing to download or set.
 
-1. Get OOTRR (its releases page) and put `ootrr.exe` in `tools\ootrr\` beside `hookshot.exe`, or name it in the tab's **OOTRR program** row.
-2. In the Mods tab, open **OoT Remake Randomizer**: set **Game folder** to your extracted game (version 1.1.1: it holds `Pack`, `Banc`, `Event` and `System`). Without it, `OOT_ROMFS` is used.
-3. Turn **Randomizer** on. With no **Seed** a new one is made. Pick **Settings** (OOTRR's presets: default, easy, open world, keysanity, full shuffle).
-4. The game builds the seed in the background (about a minute; OOTRR's output is in `mods\oot-remake-randomizer\last-build.txt`) into `mods\randomizer-<seed>` and switches it on, first row. An OOTRR that runs longer than 10 minutes, or while the game closes, is stopped; the seed is built again at the next start.
-5. Start the game again, and start a new save.
+- **OOTRR comes with the kit.** The kit's game build (`Build-Hookshot-Coop`, or the launcher's "putting the updated co-op into the game" step) downloads the OOTRR release named in `hookshot\OOTRR.txt` (0.5.0), checks its SHA-256 and puts it in `tools\ootrr\` beside the game (`hookshot\game\tools\ootrr\ootrr.exe`, with its `LICENSE` and `NOTICE`). The Linux kit does the same into `data/game/tools/ootrr/`. When that download fails the build only warns, co-op plays without the randomizer, and the next start tries again.
+- **Your game files are the kit's own.** The kit's build already unpacks your game beside the program (`hookshot\game\romfs`, or `data/game/romfs` on Linux). OOTRR reads them there and never changes them; nothing is copied. They are the game version co-op needs (program 0400486024DEC000, update v131072, which is the 1.1.1 OOTRR asks for), so they always pass OOTRR's version check.
 
-In co-op the host's switch, seed and settings are everyone's: a guest's game builds the host's seed by itself and asks for a restart. Every pickup is shared as without the randomizer. Each seed is built once and kept; switching back to a seed built before needs no build.
+1. In the Mods tab, open **OoT Remake Randomizer** and turn **Randomizer** on. With no **Seed** a new one is made. Pick **Settings** (OOTRR's presets: default, easy, open world, keysanity, full shuffle).
+2. The game builds the seed in the background (about a minute; OOTRR's output is in `mods\oot-remake-randomizer\last-build.txt`) into `mods\randomizer-<seed>` and switches it on, first row. An OOTRR that runs longer than 10 minutes, or while the game closes, is stopped; the seed is built again at the next start.
+3. Start the game again, and start a new save.
+
+Two rows are only for players who want something else: **Game folder** (other extracted game files, version 1.1.1, with `Pack`, `Banc`, `Event` and `System`; `OOT_ROMFS` does the same) and **OOTRR program** (another OOTRR). Leave them empty to use the kit's own. A row that names a folder or program that is not there says so; it does not fall back to the kit's.
+
+When a seed cannot be built, the tab says why in plain words: OOTRR missing (start the game from the kit again, its setup downloads it), the game files missing (build the kit's game again), or game files of another version ("not version 1.1.1": dump the game with update v131072 and build again).
+
+
+In co-op the host's switch, seed and settings are everyone's: a guest's game builds the host's seed by itself, with its own kit's OOTRR and game files and nothing to set, and asks for a restart. A guest whose game still cannot build it (the download failed, for example) plays without the seed and sends one chat line, so the host's chat shows which player and why: "[randomizer] I play without the host's seed: <why>". Until that player builds it, their game differs from the host's (the Mods tab lists it). Every pickup is shared as without the randomizer. Each seed is built once and kept; switching back to a seed built before needs no build.
 
 **Off by default.** The **Randomizer** switch starts off: a new kit, a new mods folder or a kit put over an older one builds no seed and plays none until you (or, in co-op, the host) turn it on. A seed folder left from an earlier kit is switched off while the switch is off. Turning it on or off says so in the tab and in the chat: "Randomizer on: restart the game and start a new save to play it" (or "Randomizer off: restart the game to play without it"); the same when the host's switch reaches a guest. The game never restarts by itself. A guest whose host plays without the randomizer (switched off, or a game without it) plays without it too; its own switch is kept for a game alone.
 

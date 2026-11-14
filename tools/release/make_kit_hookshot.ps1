@@ -135,6 +135,7 @@ Copy-Item -LiteralPath $HookshotDll -Destination $hsKit
 foreach ($dir in $srv, $hsKit) { Get-ChildItem $crt.FullName -Filter '*.dll' | Copy-Item -Destination $dir }
 Copy-Text $hsPin (Join-Path $hsKit 'PIN')
 Copy-Text (Join-Path $src 'hookshot\TOOLS.txt') (Join-Path $hsKit 'TOOLS.txt')
+Copy-Text (Join-Path $src 'hookshot\OOTRR.txt') (Join-Path $hsKit 'OOTRR.txt')   # (the randomizer the build fetches)
 foreach ($p in $hsPatches) { Copy-Item -LiteralPath $p.FullName -Destination (Join-Path $hsKit "patches\$($p.Name)") }   # (byte for byte)
 
 # The puppet pack tool (hookshot-build.ps1 runs it with Hookshot's own Python): every module build.py imports.

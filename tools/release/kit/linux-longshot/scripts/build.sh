@@ -216,6 +216,45 @@ step 'Co-op into the game'
 [[ -f $LS/hookshot_coop.so ]] || fail 'data/longshot/hookshot_coop.so is missing: unzip the kit again.'
 cp -f "$LS/hookshot_coop.so" "$GAME/hookshot_coop.so"
 say "  hookshot_coop.so -> $GAME"
+# The randomizer, OOTRR (data/longshot/OOTRR.txt: its release and SHA-256), into data/game/tools/ootrr where the
+# module finds it with no setting; it reads the game's own files beside it (data/game/romfs) and never changes
+# them. A failed download only warns: co-op plays without it, and the next start tries again.
+ootrr_pin=$LS/OOTRR.txt
+if [[ -f $ootrr_pin ]]; then
+    o_rel=$(pin_get "$ootrr_pin" release || true) o_url=$(pin_get "$ootrr_pin" url || true)
+    o_file=$(pin_get "$ootrr_pin" linux || true) o_sha=$(pin_get "$ootrr_pin" linux_sha256 || true)
+    o_dir=$GAME/tools/ootrr o_want="$o_rel $o_sha"
+    if [[ -x $o_dir/ootrr && $(cat "$o_dir/coop-ootrr.txt" 2>/dev/null) == "$o_want" ]]; then
+        say "  randomizer: OOTRR $o_rel -> $o_dir (there already)"
+    elif [[ ! $o_file =~ ^[A-Za-z0-9._-]+$ || ! $o_sha =~ ^[0-9a-f]{64}$ || -z $o_url ]]; then
+        warn 'data/longshot/OOTRR.txt is incomplete: the randomizer is left out.'
+    else
+        mkdir -p "$B"
+        o_tgz=$B/$o_file o_why=''
+        if [[ ! -f $o_tgz || $(sha256_of "$o_tgz") != "$o_sha" ]]; then
+            say "  downloading $o_file ..."
+            if ! fetch "$o_url/$o_file" "$o_tgz.part"; then o_why='the download failed (no network?)'
+            elif [[ $(sha256_of "$o_tgz.part") != "$o_sha" ]]; then o_why='its SHA-256 differs from the one this kit was made with'
+            else mv -f "$o_tgz.part" "$o_tgz"; fi
+            rm -f "$o_tgz.part"
+        fi
+        if [[ -z $o_why ]]; then
+            rm -rf "$o_dir" && mkdir -p "$o_dir"
+            # (one folder, ootrr-<version>-linux-x86_64/: ootrr, LICENSE, NOTICE, README.md, install.sh, ootrr.desktop)
+            if tar -xzf "$o_tgz" -C "$o_dir" --strip-components=1 && [[ -f $o_dir/ootrr ]]; then
+                chmod +x "$o_dir/ootrr"
+                printf '%s\n' "$o_want" >"$o_dir/coop-ootrr.txt"
+            else
+                o_why="unpacking $o_file failed"
+            fi
+        fi
+        if [[ -n $o_why ]]; then
+            warn "the randomizer (OOTRR $o_rel) was not set up: $o_why. Co-op works without it; start again to retry."
+        else
+            say "  randomizer: OOTRR $o_rel -> $o_dir"
+        fi
+    fi
+fi
 # coop.ini beside the game (the module reads it there): the Multiplayer tab fills in the rest.
 if [[ ! -f $GAME/coop.ini ]]; then
     sed -e 's/^\(server\|name\|password\) = @[A-Z]*@$/# \1 =/' -e 's/@PORT@/27510/' "$KIT/scripts/coop.ini.template" >"$GAME/coop.ini"

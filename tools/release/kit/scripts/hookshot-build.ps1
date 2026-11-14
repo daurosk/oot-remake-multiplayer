@@ -518,6 +518,46 @@ if (-not (Test-Path -LiteralPath $options)) {
     if (Test-Path -LiteralPath $kitOptions) { Copy-Item -LiteralPath $kitOptions -Destination $options }
 }
 
+# The randomizer, OOTRR (hookshot\OOTRR.txt: its release and SHA-256), into <exe dir>\tools\ootrr where the co-op
+# module finds it with no setting; it reads the game's own files beside it (<exe dir>\romfs) and never changes them.
+# A failed download only warns: co-op plays without it, and the next run of this script tries again.
+$ootrrPin = Join-Path $hs 'OOTRR.txt'
+if (Test-Path -LiteralPath $ootrrPin) {
+    $op = Read-KeyFile $ootrrPin
+    $ootrrDir = Join-Path $exeDir 'tools\ootrr'
+    $ootrrStamp = Join-Path $ootrrDir 'coop-ootrr.txt'
+    $ootrrWant = "$($op.release) $($op.windows_sha256)"
+    $ootrrHave = if (Test-Path -LiteralPath $ootrrStamp) { (Get-Content -LiteralPath $ootrrStamp -TotalCount 1).Trim() } else { '' }
+    if ($ootrrHave -eq $ootrrWant -and (Test-Path -LiteralPath (Join-Path $ootrrDir 'ootrr.exe'))) {
+        Write-Host "  randomizer: OOTRR $($op.release) -> $ootrrDir (there already)"
+    } elseif (-not ($op.url -and $op.windows -and $op.windows_sha256 -match '^[0-9a-f]{64}$')) {
+        Write-Host '  hookshot\OOTRR.txt is incomplete: the randomizer is left out.' -ForegroundColor Yellow
+    } else {
+        New-Item -ItemType Directory -Force -Path $downloads | Out-Null
+        $ootrrZip = Join-Path $downloads $op.windows
+        $why = ''
+        if (-not ((Test-Path -LiteralPath $ootrrZip) -and (Get-Sha256 $ootrrZip) -eq $op.windows_sha256)) {
+            Write-Host "  downloading $($op.windows) ..."
+            try {
+                Invoke-WebRequest -Uri "$($op.url)/$($op.windows)" -OutFile "$ootrrZip.part" -UseBasicParsing
+                if ((Get-Sha256 "$ootrrZip.part") -ne $op.windows_sha256) { $why = 'its SHA-256 differs from the one this kit was made with' }
+                else { Move-Item -LiteralPath "$ootrrZip.part" -Destination $ootrrZip -Force }
+            } catch { $why = "the download failed: $($_.Exception.Message)" }
+            Remove-Item -LiteralPath "$ootrrZip.part" -Force -ErrorAction SilentlyContinue
+        }
+        if (-not $why) {
+            if (Test-Path -LiteralPath $ootrrDir) { Remove-Item -LiteralPath $ootrrDir -Recurse -Force }
+            New-Item -ItemType Directory -Force -Path $ootrrDir | Out-Null
+            # (the zip holds one folder, OOTRR-<version>-windows-x64\: ootrr.exe, LICENSE, NOTICE, README.md)
+            & "$env:SystemRoot\System32\tar.exe" -x -f $ootrrZip -C $ootrrDir --strip-components=1
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $ootrrDir 'ootrr.exe'))) { $why = "unpacking $($op.windows) failed" }
+            else { [System.IO.File]::WriteAllText($ootrrStamp, "$ootrrWant`n") }
+        }
+        if ($why) { Write-Host "  The randomizer (OOTRR $($op.release)) was not set up: $why. Co-op works without it; run Build-Hookshot-Coop.bat again to retry." -ForegroundColor Yellow }
+        else { Write-Host "  randomizer: OOTRR $($op.release) -> $ootrrDir" }
+    }
+}
+
 # The puppet pack, from the same game files, where the co-op hook looks for it: its load folder
 # (<exe dir>\mods\contents on Hookshot)\0400486024DEC000\coop-puppet, the emulator's layout, which Hookshot's
 # host/mods.c also loads as a mod. A pack an earlier version of this script put in mods\coop-puppet goes.

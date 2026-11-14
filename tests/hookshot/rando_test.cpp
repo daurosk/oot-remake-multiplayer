@@ -5,6 +5,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -45,6 +46,7 @@ struct World {
     std::mutex mutex;
     std::vector<std::wstring> runs;
     int fail_at = -1;  // the run (0, 1, ...) that fails
+    std::string fail_output;  // what OOTRR writes into its log (each run)
     World() {
         std::error_code ec;
         fs::remove_all(base, ec);
@@ -63,8 +65,10 @@ struct World {
         Rando::Hooks h;
         h.game_dir = base;
         h.entropy = [] { return std::uint64_t{123456789}; };
-        h.run = [this](const std::wstring& line, const fs::path&) {
+        h.run = [this](const fs::path& program, const std::vector<std::string>& args, const fs::path& log) {
+            const std::wstring line = CommandLine(program, args);
             const std::lock_guard lock(mutex);
+            if (!fail_output.empty()) Put(log, fail_output);
             const int at = static_cast<int>(runs.size());
             runs.push_back(line);
             if (at == fail_at) return 3;
@@ -242,7 +246,7 @@ TEST_CASE("rando: without OOTRR or the game folder it says what to set") {
     REQUIRE(loader.Set(kFolder, "ootrr", CoopMods::ToUtf8(w.base / "missing.exe")));
     REQUIRE(loader.Set(kFolder, "on", "1"));
     rando.Wait();
-    CHECK(rando.Status().find("OOTRR (ootrr.exe) not found") != std::string::npos);
+    CHECK(rando.Status().find("OOTRR not found at") != std::string::npos);
     CHECK(w.runs.empty());
 }
 
@@ -399,4 +403,122 @@ TEST_CASE("rando: a guest restarted on the host's seed is not told to restart ag
     REQUIRE(loader.Set(kFolder, "on", "0"));
     rando.Wait();
     CHECK(rando.TakeLines() == std::vector<std::string>{SwitchLine(false)});
+}
+
+TEST_CASE("rando: the kit's own OOTRR and game files are found with no setting") {
+    if (std::getenv("OOT_ROMFS") != nullptr) return;  // (a named game folder comes first)
+    World w;
+    Put(w.base / "tools" / "ootrr" / OotrrName(), "MZ");  // where the kit's build puts it (hookshot\OOTRR.txt)
+    CHECK(FindOotrr("", w.base, w.mods) == w.base / "tools" / "ootrr" / OotrrName());
+    CHECK(FindGameFolder("", w.base) == w.game);  // <game>\romfs, unpacked by the kit's build
+    CHECK(FindGameFolder("", w.base / "bin") == w.game);  // the program in <game>/bin
+    CHECK_FALSE(FindGameFolder("", w.base / "a" / "b"));
+    CHECK_FALSE(FindGameFolder(CoopMods::ToUtf8(w.base / "elsewhere"), w.base));  // a wrong setting is not passed over
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    loader.Start();
+    Rando rando(loader, w.Hooks());
+    rando.Start();
+    REQUIRE(loader.Set(kFolder, "seed", "KIT1"));
+    REQUIRE(loader.Set(kFolder, "on", "1"));
+    rando.Wait();
+    REQUIRE(w.runs.size() == 2);
+    CHECK(w.runs[1].find(L"romfs") != std::wstring::npos);  // the kit's game files, passed to ootrr build
+    CHECK(On(loader, "randomizer-KIT1"));
+}
+
+TEST_CASE("rando: without the kit's OOTRR or game files it says what to do") {
+    if (std::getenv("OOT_ROMFS") != nullptr) return;
+    World w;
+    fs::remove_all(w.game);
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    loader.Start();
+    Rando rando(loader, w.Hooks());
+    rando.Start();
+    REQUIRE(loader.Set(kFolder, "on", "1"));
+    rando.Wait();
+    CHECK(rando.Status().find("start the game from the kit again") != std::string::npos);
+    Put(w.base / "tools" / "ootrr" / OotrrName(), "MZ");
+    REQUIRE(loader.Set(kFolder, "seed", "NOGAME"));
+    rando.Wait();
+    CHECK(rando.Status().find("build the kit's game again") != std::string::npos);
+    CHECK(w.runs.empty());
+}
+
+TEST_CASE("rando: game files of another version than 1.1.1 say what to do") {
+    CHECK(BuildFailureHint("error: the game folder has no Pack/Actor/X.pack.zs").find("not version 1.1.1") !=
+          std::string::npos);
+    CHECK(BuildFailureHint("something else").empty());
+    World w;
+    w.fail_at = 1;
+    w.fail_output = "error: the game folder has no System/Resource/ResourceSizeTable.Product.112.rsizetable.zs\n";
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    loader.Start();
+    Rando rando(loader, w.Hooks());
+    rando.Start();
+    w.Settings(loader);
+    REQUIRE(loader.Set(kFolder, "on", "1"));
+    rando.Wait();
+    CHECK(rando.Status().find("not version 1.1.1") != std::string::npos);
+}
+
+TEST_CASE("rando: the line a guest sends fits a chat line") {
+    CHECK(TellLine("x").rfind("[randomizer] ", 0) == 0);
+    const std::string long_line = TellLine(std::string(150, 'a') + "\xC3\xA9\xC3\xA9\xC3\xA9" + std::string(100, 'b'));
+    CHECK(long_line.size() <= kTellChars);
+    CHECK((static_cast<unsigned char>(long_line.back()) & 0xC0) != 0xC0);  // no half character at the end
+}
+
+TEST_CASE("rando: a guest that cannot build the host's seed tells the others, once") {
+    World w;  // no OOTRR set and none in the kit's place
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    loader.Start();
+    std::mutex told_mutex;
+    std::vector<std::string> told;
+    bool connected = false;
+    auto hooks = w.Hooks();
+    hooks.tell_others = [&](const std::string& line) {
+        const std::lock_guard lock(told_mutex);
+        if (!connected) return false;
+        told.push_back(line);
+        return true;
+    };
+    Rando rando(loader, hooks);
+    rando.Start();
+    REQUIRE(loader.Set(kFolder, "game_folder", CoopMods::ToUtf8(w.game)));
+    loader.SetHostValues(std::vector<CoopMods::SharedValue>{{kId, "on", "1"}, {kId, "seed", "HOST9"}});
+    rando.Wait();
+    CHECK(w.runs.empty());
+    {
+        const std::lock_guard lock(told_mutex);
+        CHECK(told.empty());  // not connected: kept
+        connected = true;
+    }
+    rando.Recheck();
+    rando.Wait();
+    rando.Recheck();
+    rando.Wait();
+    const std::lock_guard lock(told_mutex);
+    REQUIRE(told.size() == 1);
+    CHECK(told[0].rfind("[randomizer] I play without the host's seed: OOTRR", 0) == 0);
+    CHECK(told[0].size() <= kTellChars);
+}
+
+TEST_CASE("rando: a host or a player alone whose build fails tells nobody") {
+    World w;
+    int told = 0;
+    auto hooks = w.Hooks();
+    hooks.tell_others = [&](const std::string&) {
+        ++told;
+        return true;
+    };
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    loader.Start();
+    Rando rando(loader, hooks);
+    rando.Start();
+    REQUIRE(loader.Set(kFolder, "ootrr", CoopMods::ToUtf8(w.base / "missing.exe")));
+    REQUIRE(loader.Set(kFolder, "on", "1"));
+    rando.Wait();
+    rando.Recheck();
+    rando.Wait();
+    CHECK(told == 0);
 }

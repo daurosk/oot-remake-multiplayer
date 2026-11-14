@@ -17,6 +17,16 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#else
+#include <fcntl.h>
+#include <signal.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include <thread>
+
+extern char** environ;
 #endif
 
 namespace CoopRando {
@@ -100,9 +110,9 @@ std::string ManifestText() {
            presets + R"(], "shared": true, "restart": true,
      "help": "OOTRR's presets (default, easy, open world, keysanity, full shuffle)."},
     {"key": "game_folder", "name": "Game folder", "type": "text", "max_length": 260,
-     "help": "Your own extracted game (1.1.1, with Pack, Banc, Event and System). Empty: OOT_ROMFS."},
+     "help": "Only for other game files (1.1.1, with Pack, Banc, Event and System). Empty: the kit's own (romfs beside the game)."},
     {"key": "ootrr", "name": "OOTRR program", "type": "text", "max_length": 260,
-     "help": "ootrr.exe. Empty: tools\\ootrr\\ootrr.exe beside the game, or this mod's folder."}
+     "help": "Only for another OOTRR. Empty: the one the kit brings (tools\\ootrr beside the game)."}
   ]
 }
 )";
@@ -217,36 +227,75 @@ std::wstring CommandLine(const fs::path& program, const std::vector<std::string>
     return CoopMods::FromUtf8(line).wstring();
 }
 
+const char* OotrrName() {
+#ifdef _WIN32
+    return "ootrr.exe";
+#else
+    return "ootrr";
+#endif
+}
+
 std::optional<fs::path> FindOotrr(const std::string& setting, const fs::path& game_dir, const fs::path& mods_root) {
     std::error_code ec;
     if (!setting.empty()) {
         const fs::path p = CoopMods::FromUtf8(setting);
         return fs::is_regular_file(p, ec) ? std::optional<fs::path>(p) : std::nullopt;
     }
-    for (const fs::path& p : {game_dir / "tools" / "ootrr" / "ootrr.exe", mods_root / kFolder / "ootrr.exe"}) {
+    for (const fs::path& p : {game_dir / "tools" / "ootrr" / OotrrName(), mods_root / kFolder / OotrrName()}) {
         if (fs::is_regular_file(p, ec)) return p;
     }
     return std::nullopt;
 }
 
-std::optional<fs::path> FindGameFolder(const std::string& setting) {
+std::optional<fs::path> FindGameFolder(const std::string& setting, const fs::path& game_dir) {
+    const auto game_files = [](const fs::path& p) {
+        std::error_code ec;
+        for (const char* part : {"Pack", "System"}) {
+            if (!fs::is_directory(p / part, ec)) return false;
+        }
+        return true;
+    };
     std::string where = setting;
     if (where.empty()) {
         const char* env = std::getenv("OOT_ROMFS");
         where = env != nullptr ? env : "";
     }
-    if (where.empty()) return std::nullopt;
-    const fs::path p = CoopMods::FromUtf8(where);
-    std::error_code ec;
-    for (const char* part : {"Pack", "System"}) {
-        if (!fs::is_directory(p / part, ec)) return std::nullopt;
+    if (!where.empty()) {
+        // Named: that folder or none (a wrong setting is said, not passed over for another folder).
+        const fs::path p = CoopMods::FromUtf8(where);
+        return game_files(p) ? std::optional<fs::path>(p) : std::nullopt;
     }
-    return p;
+    // The kit's own: Longshot's build unpacks the player's game beside the program (<game>\romfs).
+    // (a builder's bin\ layout has the program one folder down: <game>\bin\longshot.exe, <game>\romfs)
+    if (game_dir.empty()) return std::nullopt;
+    for (const fs::path& p : {game_dir / "romfs", game_dir.parent_path() / "romfs"}) {
+        if (game_files(p)) return p;
+    }
+    return std::nullopt;
 }
 
-int RunProgram(const std::wstring& command_line, const fs::path& log_file, std::chrono::milliseconds limit,
-               const std::atomic<bool>* stop) {
+std::string TellLine(std::string_view why) {
+    std::string line = "[randomizer] I play without the host's seed: " + std::string(why);
+    if (line.size() > kTellChars) {
+        std::size_t cut = kTellChars;
+        while (cut > 0 && (static_cast<unsigned char>(line[cut]) & 0xC0) == 0x80) --cut;  // a whole UTF-8 character
+        line.resize(cut);
+    }
+    return line;
+}
+
+std::string BuildFailureHint(std::string_view out) {
+    if (out.find("the game folder has no") != std::string_view::npos) {
+        return "your game files are not version 1.1.1 (co-op's game is update v131072): dump the game with that "
+               "update and build the kit's game again (Build-Hookshot-Coop)";
+    }
+    return {};
+}
+
+int RunProgram(const fs::path& program, const std::vector<std::string>& args, const fs::path& log_file,
+               std::chrono::milliseconds limit, const std::atomic<bool>* stop) {
 #ifdef _WIN32
+    const std::wstring command_line = CommandLine(program, args);
     SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};  // the child writes into it
     HANDLE log = CreateFileW(log_file.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
                              OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -286,11 +335,44 @@ int RunProgram(const std::wstring& command_line, const fs::path& log_file, std::
     CloseHandle(pi.hProcess);
     return ended ? static_cast<int>(code) : kStopped;
 #else
-    (void)command_line;
-    (void)log_file;
-    (void)limit;
-    (void)stop;
-    return -1;  // the game runs on Windows only
+    const int log = open(log_file.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    if (log < 0) {
+        return -1;
+    }
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
+    posix_spawn_file_actions_adddup2(&actions, log, 1);
+    posix_spawn_file_actions_adddup2(&actions, log, 2);
+    std::string path = program.string();
+    std::vector<std::string> owned = args;
+    std::vector<char*> argv;
+    argv.push_back(path.data());
+    for (std::string& a : owned) argv.push_back(a.data());
+    argv.push_back(nullptr);
+    pid_t pid = 0;
+    const int spawned = posix_spawn(&pid, path.c_str(), &actions, nullptr, argv.data(), environ);
+    posix_spawn_file_actions_destroy(&actions);
+    close(log);
+    if (spawned != 0) {
+        return -1;
+    }
+    const auto until = std::chrono::steady_clock::now() + limit;
+    int status = 0;
+    for (;;) {
+        const pid_t done = waitpid(pid, &status, WNOHANG);
+        if (done == pid) {
+            if (WIFEXITED(status)) return WEXITSTATUS(status);
+            return 1;  // ended by a signal
+        }
+        if (done < 0 || (stop != nullptr && stop->load()) || std::chrono::steady_clock::now() >= until) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    kill(pid, SIGKILL);
+    waitpid(pid, &status, 0);
+    return kStopped;
 #endif
 }
 
@@ -337,6 +419,18 @@ void Rando::Start() {
         if (id == kId) Check();
     });
     Check();
+}
+
+void Rando::TellOthers() {
+    std::string line;
+    {
+        const std::lock_guard lock(mutex_);
+        if (tell_.empty() || !hooks_.tell_others) return;
+        line = tell_;
+    }
+    if (!hooks_.tell_others(line)) return;  // not connected: the next Recheck tries again
+    const std::lock_guard lock(mutex_);
+    if (tell_ == line) tell_.clear();
 }
 
 std::vector<std::string> Rando::TakeLines() {
@@ -489,12 +583,26 @@ void Rando::Build(const Plan& plan, const Want& want) {
     const fs::path root = loader_.Root();
     const fs::path control = root / kFolder;
     const fs::path log = control / kLogFile;
+    // The host's seed (a guest): a failure is also said in the chat and told to the others, so the host knows which
+    // player plays without it and why (the chat line carries the player's name).
+    bool hosts_seed = false;
+    if (loader_.HostValuesSet()) {
+        for (const CoopMods::SettingRow& s : loader_.Settings(kFolder)) {
+            if (s.setting.key == "seed") hosts_seed = s.locked;
+        }
+    }
     const auto fail = [&](std::string line) {
         {
             const std::lock_guard lock(mutex_);
             last_failed_ = plan.folder;
+            if (hosts_seed) {
+                // (sent, the line shows in this game's chat too, as "you: ...")
+                tell_ = TellLine(line);
+                if (!hooks_.tell_others) lines_.push_back(tell_);
+            }
         }
         Say(std::move(line));
+        TellOthers();
     };
     const auto exit_text = [](int code) {
         return code == kStopped ? std::string("stopped: it ran too long or the game closed")
@@ -507,11 +615,19 @@ void Rando::Build(const Plan& plan, const Want& want) {
     }
     const auto ootrr = FindOotrr(ootrr_setting, hooks_.game_dir, root);
     if (!ootrr) {
-        return fail("OOTRR (ootrr.exe) not found: set \"OOTRR program\" in the Mods tab (docs/mods.md)");
+        return fail(ootrr_setting.empty()
+                        ? std::string("OOTRR (the randomizer the kit brings) is not in tools/ootrr beside the game: "
+                                      "start the game from the kit again (its setup downloads it)")
+                        : "OOTRR not found at \"" + ootrr_setting + "\" (the OOTRR program setting): empty it to use "
+                                                                    "the kit's own");
     }
-    const auto game = FindGameFolder(game_setting);
+    const auto game = FindGameFolder(game_setting, hooks_.game_dir);
     if (!game) {
-        return fail("your extracted game folder (1.1.1) not found: set \"Game folder\" in the Mods tab");
+        return fail(game_setting.empty()
+                        ? std::string("the game's files (romfs beside the game, with Pack and System) are not there: "
+                                      "build the kit's game again (Build-Hookshot-Coop)")
+                        : "no game files (Pack and System) in \"" + game_setting +
+                              "\" (the Game folder setting): empty it to use the kit's own");
     }
     for (const CoopMods::Row& r : loader_.Rows()) {
         if (CoopMods::NameSame(r.name, plan.folder) && r.on_now) {
@@ -524,14 +640,19 @@ void Rando::Build(const Plan& plan, const Want& want) {
     fs::remove(log, ec);
     Say(plan.why + " (about a minute)");
     const fs::path seed_file = control / (plan.folder + ".ootrr");
-    const int made = hooks_.run(CommandLine(*ootrr, GenerateArgs(want.preset, want.seed, seed_file)), log);
+    const int made = hooks_.run(*ootrr, GenerateArgs(want.preset, want.seed, seed_file), log);
     if (made != 0) {
         return fail("OOTRR could not make the seed (" + exit_text(made) + "): see " + CoopMods::ToUtf8(log));
     }
-    const int built = hooks_.run(CommandLine(*ootrr, BuildArgs(seed_file, *game, root, plan.folder)), log);
+    const int built = hooks_.run(*ootrr, BuildArgs(seed_file, *game, root, plan.folder), log);
     if (built != 0 || !fs::is_regular_file(target / kSeedFile, ec)) {
         fs::remove_all(target, ec);
-        return fail("OOTRR could not build the seed (" + exit_text(built) + "): see " + CoopMods::ToUtf8(log));
+        std::ifstream in(log, std::ios::binary);
+        std::ostringstream out;
+        out << in.rdbuf();
+        const std::string hint = BuildFailureHint(out.str());
+        return fail("OOTRR could not build the seed (" + exit_text(built) + "): " +
+                    (hint.empty() ? "see " + CoopMods::ToUtf8(log) : hint));
     }
     WriteText(target / kPresetFile, (want.preset.empty() ? std::string("default") : want.preset) + "\n");
     {

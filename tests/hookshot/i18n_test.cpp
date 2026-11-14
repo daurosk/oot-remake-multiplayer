@@ -107,7 +107,7 @@ TEST_CASE("coop i18n: Tr fills a built line") {
 }
 
 TEST_CASE("coop i18n: a language code picks its table") {
-    // Longshot's menu codes (patch 0021's hos_coop_menu_lang) and language.txt's,
+    // Longshot's menu codes (MenuLanguageCode) and language.txt's,
     // any case, and the first part of a longer one ("zh-Hans-CN").
     CHECK(CoopI18n::ForCode("zh-Hans") == ByCode("zh-Hans"));
     CHECK(CoopI18n::ForCode("ZH-hant") == ByCode("zh-Hant"));
@@ -119,6 +119,24 @@ TEST_CASE("coop i18n: a language code picks its table") {
     CHECK(CoopI18n::ForCode("") == nullptr);
 }
 
+TEST_CASE("coop i18n: the Menu language row from longshot_options.ini") {
+    // Longshot writes menu_language=N (0 Auto, else its kLangs[N - 1]) with
+    // the other rows; a missing line is Auto, and the last line wins.
+    CHECK(CoopI18n::MenuLanguageSetting("") == 0);
+    CHECK(CoopI18n::MenuLanguageSetting("vsync=1\nmenu_language=13\nfps=60\n") == 13);
+    CHECK(CoopI18n::MenuLanguageSetting("menu_language=14\r\n") == 14);
+    CHECK(CoopI18n::MenuLanguageSetting("menu_language=13\nmenu_language=0\n") == 0);
+    CHECK(CoopI18n::MenuLanguageSetting("game_menu_language=13\n") == 0);
+    CHECK(CoopI18n::MenuLanguageSetting("menu_language=x\n") == 0);
+    CHECK(CoopI18n::MenuLanguageCode(0) == nullptr);   // (Auto: the game's language)
+    CHECK(std::string(CoopI18n::MenuLanguageCode(1)) == "en");
+    CHECK(std::string(CoopI18n::MenuLanguageCode(13)) == "zh-Hans");
+    CHECK(std::string(CoopI18n::MenuLanguageCode(14)) == "zh-Hant");
+    CHECK(std::string(CoopI18n::MenuLanguageCode(99)) == "en");
+    CHECK(CoopI18n::ForCode(CoopI18n::MenuLanguageCode(13)) == ByCode("zh-Hans"));
+    CHECK(CoopI18n::ForCode(CoopI18n::MenuLanguageCode(11)) == nullptr);   // (ja: no table, English)
+}
+
 namespace {
 
 // The module's sources as one text, adjacent string literals joined, so a key
@@ -127,11 +145,12 @@ std::string Sources() {
     namespace fs = std::filesystem;
     const fs::path repo = fs::path(COOP_TEST_SOURCE_DIR) / "..";
     std::string all;
-    for (const fs::path dir : {repo / "hookshot" / "src", repo / "lichii" / "hook"}) {
+    for (const fs::path dir : {repo / "hookshot" / "src", repo / "lichii" / "hook", repo / "coop" / "host" / "src",
+                               repo / "coop" / "host" / "include" / "coop" / "host"}) {
         for (const auto& e : fs::directory_iterator(dir)) {
             const std::string name = e.path().filename().string();
             const std::string ext = e.path().extension().string();
-            if (name.rfind("coop_i18n", 0) == 0 || (ext != ".cpp" && ext != ".h")) {
+            if (name.rfind("coop_i18n", 0) == 0 || (ext != ".cpp" && ext != ".h" && ext != ".hpp")) {
                 continue;
             }
             std::ifstream in(e.path(), std::ios::binary);

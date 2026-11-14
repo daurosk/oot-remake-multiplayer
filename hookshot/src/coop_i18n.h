@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The Multiplayer tab's own words, in the menu's language: one table per
 // language, as Longshot's own menu does it (gpu/vk/menu_i18n.h). The language
-// is the one that menu shows now (its Menu language row, Auto the game's own:
-// patch 0021's hos_coop_menu_lang), so the tabs match the menu they are drawn
-// in and its glyphs; a Longshot without that export: language.txt (or
-// HOS_LANGUAGE when set). A text that is not in the table stays English, so a
+// is the one that menu shows now (its Menu language row, menu_language= in
+// longshot_options.ini, which it writes on every change; Auto: the game's
+// own, HOS_LANGUAGE or language.txt), so the tabs match the menu they are
+// drawn in and its glyphs. A text that is not in the table stays English, so a
 // language can grow one line at a time.
 //
 // Tr() also knows the lines the tab builds around a number, a name or a code
@@ -35,6 +35,12 @@ extern const int kLangCount;
 // The table the menu's language picks now, or nullptr for English (asked
 // each time: a change of the Menu language row shows at once).
 const Lang* Current();
+
+// The Menu language row's value in longshot_options.ini's text (0 Auto, also
+// when the line is missing), and the language code it stands for (nullptr for
+// Auto).
+int MenuLanguageSetting(std::string_view ini);
+const char* MenuLanguageCode(int setting);
 
 // The table for a language code (any case; "zh-Hans-CN" takes "zh-Hans"), or
 // nullptr for English and codes with no table.

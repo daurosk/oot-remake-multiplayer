@@ -16,10 +16,14 @@
 // this table does not know stay English.
 #include "coop_i18n.h"
 
-#include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
+#include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <mutex>
+#include <sstream>
 #include <string>
 
 #ifdef _WIN32
@@ -668,58 +672,100 @@ std::string Trim(std::string s) {
     return s;
 }
 
-// The game's language when the menu cannot say (a Longshot without patch
-// 0021): HOS_LANGUAGE when the game was started with it, else language.txt's
-// first line that is not a comment (as host/nn_applet.c reads it: a UTF-8
-// mark at its start skipped). Read once: the game reads it at its start too.
+// The game's folder: the exe's, or the one above it when the exe is in a
+// "bin" folder beside image.bin (Longshot's game_module_path, vk_paths.h).
+// Longshot keeps language.txt and longshot_options.ini there.
+std::string GameFolder() {
+#ifdef _WIN32
+    char exe[MAX_PATH] = {};
+    const DWORD n = GetModuleFileNameA(nullptr, exe, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) {
+        return {};
+    }
+    std::string dir(exe, n);
+    const std::size_t cut = dir.find_last_of("\\/");
+    if (cut == std::string::npos) {
+        return {};
+    }
+    dir.resize(cut);
+    const std::size_t up = dir.find_last_of("\\/");
+    if (up != std::string::npos && dir.size() - up - 1 == 3 && _strnicmp(dir.c_str() + up + 1, "bin", 3) == 0 &&
+        GetFileAttributesA((dir.substr(0, up) + "\\image.bin").c_str()) != INVALID_FILE_ATTRIBUTES) {
+        dir.resize(up);
+    }
+    return dir;
+#else
+    return {};
+#endif
+}
+
+// The game's language, which the Menu language row's Auto follows: HOS_LANGUAGE
+// when the game was started with it, else language.txt's first line that is
+// not a comment (a UTF-8 mark at its start skipped). Read once: the game
+// reads it at its start too, and Auto keeps that one until a restart.
 std::string ReadLanguage() {
     if (const char* env = std::getenv("HOS_LANGUAGE"); env != nullptr && *env != '\0') {
         return Trim(env);
     }
-#ifdef _WIN32
-    char exe[MAX_PATH] = {};
-    if (GetModuleFileNameA(nullptr, exe, MAX_PATH) != 0) {
-        std::string path = exe;
-        const std::size_t cut = path.find_last_of("\\/");
-        if (cut != std::string::npos) {
-            std::ifstream file(path.substr(0, cut) + "\\language.txt");
-            std::string line;
-            bool first = true;
-            while (std::getline(file, line)) {
-                if (first && line.rfind("\xEF\xBB\xBF", 0) == 0) {
-                    line.erase(0, 3);
-                }
-                first = false;
-                const std::string text = Trim(line);
-                if (!text.empty() && text.front() != '#') {
-                    return text;
-                }
+    const std::string folder = GameFolder();
+    if (!folder.empty()) {
+        std::ifstream file(folder + "\\language.txt");
+        std::string line;
+        bool first = true;
+        while (std::getline(file, line)) {
+            if (first && line.rfind("\xEF\xBB\xBF", 0) == 0) {
+                line.erase(0, 3);
+            }
+            first = false;
+            const std::string text = Trim(line);
+            if (!text.empty() && text.front() != '#') {
+                return text;
             }
         }
     }
-#endif
     return "en";
 }
 
-// The language Longshot's own menu shows now (patch 0021's export in
-// longshot_vk: the Menu language row, Auto the game's own), or nullptr when
-// this renderer has none. The tabs are drawn in that menu, with the glyphs it
-// merged for that language (vk_imgui.cpp script_fonts), so they follow it.
-const char* MenuLanguage() {
-#ifdef _WIN32
-    using Fn = const char* (*)();
-    static std::atomic<Fn> found{nullptr};
-    Fn fn = found.load(std::memory_order_acquire);
-    if (fn == nullptr) {   // (asked again until the renderer is loaded)
-        if (HMODULE vk = GetModuleHandleW(L"longshot_vk.dll")) {
-            fn = reinterpret_cast<Fn>(reinterpret_cast<void*>(GetProcAddress(vk, "hos_coop_menu_lang")));
-            found.store(fn, std::memory_order_release);
-        }
+// longshot_options.ini as it was last read: Longshot's menu writes it on
+// every change of a row, so a change of Menu language shows here within a
+// moment (its write time is looked at a few times a second, the file read
+// only when that changed).
+struct MenuIni {
+    std::mutex mutex;
+    std::chrono::steady_clock::time_point checked{};
+    std::filesystem::file_time_type written{};
+    bool seen = false;
+    int value = 0;   // (menu_language=: 0 Auto)
+};
+
+int MenuLanguageNow() {
+    static MenuIni ini;
+    std::lock_guard lock(ini.mutex);
+    const auto now = std::chrono::steady_clock::now();
+    if (ini.seen && now - ini.checked < std::chrono::milliseconds(250)) {
+        return ini.value;
     }
-    return fn != nullptr ? fn() : nullptr;
-#else
-    return nullptr;
-#endif
+    ini.checked = now;
+    ini.seen = true;
+    const std::string folder = GameFolder();
+    if (folder.empty()) {
+        return ini.value = 0;
+    }
+    // (the ANSI path GetModuleFileNameA gave, as language.txt's)
+    const std::filesystem::path path(folder + "\\longshot_options.ini");
+    std::error_code error;
+    const auto written = std::filesystem::last_write_time(path, error);
+    if (error) {
+        return ini.value = 0;   // (no options file yet: the menu is on Auto)
+    }
+    if (written == ini.written) {
+        return ini.value;
+    }
+    ini.written = written;
+    std::ifstream file(path, std::ios::binary);
+    std::ostringstream text;
+    text << file.rdbuf();
+    return ini.value = MenuLanguageSetting(text.str());
 }
 
 bool SameCode(std::string_view a, std::string_view b) {   // (pt-br is pt-BR, as Longshot's same_code)
@@ -785,11 +831,51 @@ const Lang* ForCode(std::string_view code) {
     return nullptr;
 }
 
-const Lang* Current() {
-    if (const char* menu = MenuLanguage()) {
-        return ForCode(menu);   // (asked each time: a change of the Menu language row shows at once)
+int MenuLanguageSetting(std::string_view ini) {
+    int value = 0;
+    std::size_t at = 0;
+    while (at < ini.size()) {
+        std::size_t end = ini.find('\n', at);
+        if (end == std::string_view::npos) {
+            end = ini.size();
+        }
+        std::string_view line = ini.substr(at, end - at);
+        at = end + 1;
+        constexpr std::string_view kKey = "menu_language=";
+        if (line.substr(0, kKey.size()) != kKey) {
+            continue;
+        }
+        line.remove_prefix(kKey.size());
+        int n = 0;
+        std::size_t digits = 0;
+        while (digits < line.size() && digits < 4 && std::isdigit(static_cast<unsigned char>(line[digits]))) {
+            n = n * 10 + (line[digits] - '0');
+            ++digits;
+        }
+        value = digits > 0 ? n : 0;   // (the last line wins, as Longshot's own reader)
     }
-    static const Lang* const game = ForCode(ReadLanguage());
+    return value;
+}
+
+const char* MenuLanguageCode(int setting) {
+    // Longshot's menu_i18n.h kLangs in order (rc.3, 0c74253d; check again at
+    // each re-pin): the Menu language row is 0 Auto, then kLangs[setting - 1].
+    static constexpr const char* kMenuLangs[] = {"en", "pt-BR", "es-419", "es", "fr", "de", "it",
+                                                 "nl", "pl",    "ru",     "ja", "ko", "zh-Hans", "zh-Hant"};
+    constexpr int kCount = int(sizeof kMenuLangs / sizeof kMenuLangs[0]);
+    if (setting <= 0) {
+        return nullptr;   // (Auto: the game's language)
+    }
+    return setting <= kCount ? kMenuLangs[setting - 1] : "en";   // (a newer Longshot's language: none of ours)
+}
+
+const Lang* Current() {
+    // Longshot's Menu language row: the tabs are drawn in that menu, with the
+    // glyphs it merged for that language (vk_imgui.cpp script_fonts).
+    if (const char* menu = MenuLanguageCode(MenuLanguageNow())) {
+        return ForCode(menu);
+    }
+    static const Lang* const game = ForCode(ReadLanguage());   // (Auto)
     return game;
 }
 

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The Hookshot module's side of coop_look.h: what applying a look does, and
 // the worker that keeps your own Link in it: the tunic in the pack's colours
-// (coop_look_tunic.h), the gear painted in any colour (coop_look_parts.h).
+// (coop_look_tunic.h), the gear painted in any colour (coop_look_parts.h),
+// both drawn through Longshot's texture overrides (patch 0020).
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
@@ -23,27 +25,79 @@
 #include "coop_runtime.h"
 #include "coop_settings.h"
 #include "coop_title.h"
+#include "hos_coop_texture.h"
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 namespace CoopLook {
 namespace {
 
 namespace fs = std::filesystem;
 
-// The game's heap (Hookshot host/hos.h HOS_HEAP_BASE), searched up to where
-// it is mapped: the textures the game loaded are in it.
-constexpr std::uint64_t kHeapBase = 0x1000000000ULL;
-constexpr std::uint64_t kHeapLimit = std::uint64_t{16} << 30;
-constexpr std::uint64_t kHeapStep = std::uint64_t{1} << 20;
 constexpr auto kRound = std::chrono::seconds(1);
 
-class GameMemory final : public CoopLookTunic::Memory {
+// The game's textures and Longshot's overrides of them: patch 0020's exports
+// of the game's executable (hos_coop_texture.h). Nothing of the game is
+// written: the renderer draws the override, the game's memory keeps its own.
+class GameTextures final : public CoopLookTunic::Textures {
 public:
+    GameTextures() {
+#ifdef _WIN32
+        HMODULE exe = GetModuleHandleW(nullptr);
+        const auto look = [exe](const char* name) {
+            return exe != nullptr ? reinterpret_cast<void*>(GetProcAddress(exe, name)) : nullptr;
+        };
+#else
+        const auto look = [](const char* name) { return dlsym(RTLD_DEFAULT, name); };
+#endif
+        list_ = reinterpret_cast<hos_coop_textures_fn>(look("hos_coop_textures"));
+        override_ = reinterpret_cast<hos_coop_texture_override_fn>(look("hos_coop_texture_override"));
+        if (list_ == nullptr || override_ == nullptr) {
+            list_ = nullptr, override_ = nullptr;
+        }
+    }
+    bool Known() const { return list_ != nullptr; }
+
+    std::vector<CoopLookTunic::Live> List(std::uint64_t size_min, std::uint64_t size_max,
+                                          std::uint64_t* generation) const override {
+        std::vector<CoopLookTunic::Live> out;
+        if (list_ == nullptr) {
+            return out;
+        }
+        std::vector<HosCoopTexture> got;
+        for (int tries = 0; tries < 4; ++tries) {   // (more may be made between two calls)
+            const int n = list_(size_min, size_max, got.data(), static_cast<int>(got.size()), generation);
+            if (n <= static_cast<int>(got.size())) {
+                got.resize(static_cast<std::size_t>(std::max(n, 0)));
+                break;
+            }
+            got.resize(static_cast<std::size_t>(n) + 64);
+        }
+        for (const HosCoopTexture& t : got) {
+            out.push_back({t.address, t.size, t.serial});
+        }
+        return out;
+    }
     bool Read(std::uint64_t address, void* out, std::size_t size) const override {
         return CoopRuntime::Read(address, out, size);
     }
-    bool Write(std::uint64_t address, const void* in, std::size_t size) override {
-        return CoopRuntime::Write(address, in, size);   // the bridge marks the pages: the texture is decoded again
+    bool Override(std::uint64_t address, const void* bytes, std::size_t size) override {
+        return override_ != nullptr && override_(address, bytes, size) == 1;
     }
+
+private:
+    hos_coop_textures_fn list_ = nullptr;
+    hos_coop_texture_override_fn override_ = nullptr;
 };
 
 // The puppet pack where Build-Hookshot-Coop.bat puts it (hookshot-build.ps1).
@@ -92,7 +146,7 @@ CoopLookShare::Parts Share(const CoopLook::Look& look) {
     return parts;
 }
 
-GameMemory g_memory;
+std::unique_ptr<GameTextures> g_textures;
 std::unique_ptr<CoopLookTunic::Wardrobe> g_wardrobe;   // the tunic
 std::unique_ptr<CoopLookTunic::Wardrobe> g_gear;       // the gear
 std::thread g_worker;
@@ -169,11 +223,13 @@ void StartModule() {
     Look worn = ReadParts(CoopFiles::ReadText(kit ? *kit / "coop-options.ini" : CoopFiles::CoopIni()), &part_errors);
     worn[Part::tunic] = CoopHook::LoadSettings(ini, errors).color;
 
+    g_textures = std::make_unique<GameTextures>();
+    if (!g_textures->Known()) {
+        LOG_WARNING(Core, "coop: look: this Longshot has no texture overrides (patch 0020): your own Link keeps the "
+                          "game's colours (the others see yours all the same)");
+    }
     CoopLookTunic::Wardrobe::Host host;
-    host.memory = &g_memory;
-    host.range = [] {
-        return std::pair{kHeapBase, CoopLookTunic::MappedEnd(g_memory, kHeapBase, kHeapBase + kHeapLimit, kHeapStep)};
-    };
+    host.textures = g_textures.get();
     host.file = [](const std::string& colour) { return ReadFile(LookDir() / (colour + ".bin")); };
     host.log = [](const std::string& line) { LOG_INFO(Core, "{}", line); };
     CoopLookTunic::Wardrobe::Host gear = host;
@@ -216,6 +272,7 @@ void StopModule() {
     g_worker.join();
     g_wardrobe.reset();   // a later StartModule starts a new worker
     g_gear.reset();
+    g_textures.reset();
 }
 
 }  // namespace CoopLook

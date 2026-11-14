@@ -352,6 +352,14 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             }
             step.kind = Kind::assign;
             step.mark = std::string(w[1]);
+        } else if (cmd == "SYNC") {
+            std::uint32_t games = 0;
+            if (w.size() != 3 || !Ticks(w[2], games) || games < 1 || games > 4) {
+                return fail("want: sync NAME GAMES (one word, then 1 to 4)");
+            }
+            step.kind = Kind::sync;
+            step.mark = std::string(w[1]);
+            step.ticks = games;
         } else if (cmd == "MARK") {
             if (w.size() != 2) {
                 return fail("want: mark NAME (one word)");
@@ -445,6 +453,17 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
             log.push_back("mark " + s.mark);
             ++index_;  // the next step starts when this one did
             continue;
+        }
+        if (s.kind == Kind::sync) {
+            if (!barrier_ || barrier_(s.mark, s.ticks)) {
+                log.push_back("sync " + s.mark + " passed");
+                ++index_;
+                step_start_ = now_s;  // what follows starts together in every game
+                continue;
+            }
+            out_ = Output{};  // let go of every button while we wait
+            Hold(std::nullopt, now_s);
+            return;
         }
         if (s.kind == Kind::warp || s.kind == Kind::give || s.kind == Kind::wear ||
             s.kind == Kind::assign || s.kind == Kind::chat || s.kind == Kind::kill ||
@@ -906,6 +925,26 @@ void Begin(Core::System& system, Script script) {
     }
     Running r;
     r.runner = std::make_unique<Runner>(std::move(script));
+    // sync: one file per game in LICHII_COOP_TEST_SYNC_DIR (the test runner
+    // gives every game of a run the same, empty folder).
+    if (const char* dir = std::getenv("LICHII_COOP_TEST_SYNC_DIR"); dir != nullptr && *dir != '\0') {
+        const std::filesystem::path folder(dir);
+        const std::string me = std::to_string(static_cast<unsigned long long>(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+        r.runner->SetBarrier([folder, me](const std::string& name, std::uint32_t games) {
+            std::error_code ec;
+            std::filesystem::create_directories(folder, ec);
+            const auto mine = folder / (name + "." + me);
+            if (!std::filesystem::exists(mine, ec)) {
+                std::ofstream(mine) << "here\n";
+            }
+            std::uint32_t seen = 0;
+            for (const auto& e : std::filesystem::directory_iterator(folder, ec)) {
+                if (e.path().filename().string().starts_with(name + ".")) ++seen;
+            }
+            return seen >= games;
+        });
+    }
     r.shared = std::make_shared<Shared>();
     r.start = Clock::now();
     r.controller = controller;

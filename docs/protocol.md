@@ -404,7 +404,7 @@ The server's rules today (`server/session.cpp`):
 
 | Type | Name | Channel | Sent by | Body |
 |---|---|---|---|---|
-| 18 | `OBJECT_PRESENT` | 2 | both | `u8` player field, scene (string, up to 64), `u16` count (up to 1024), then per object: object id, `u8` flags (bit 0 awake, bit 1 in a fight, bit 2 targeting our player: from the owner a fight; from another game its copy chases that game's Link, and out of a fight the server hands the object to it after 500 ms, issue 101). No id twice |
+| 18 | `OBJECT_PRESENT` | 2 | both | `u8` player field, scene (string, up to 64), `u16` count (up to 1024), then per object: object id, `u8` flags (bit 0 awake, bit 1 in a fight, bit 2 targeting our player: from the owner a fight; from another game its copy chases that game's Link, and out of a fight the server hands the object to it after 500 ms, issue 101; bit 3 unready: a boss whose intro this game has not played, so the server never hands it that boss, by being near or by a hit, PR #209; an older server ignores the bit). No id twice |
 | 19 | `OBJECT_OWNER` | 2 | server | object id, `u8` owner (0 none, else 1 to 16), `u16` epoch, `u32` group (0 none) |
 | 20 | `HANDOVER_ASK` | 2 | server | object id, `u16` epoch, `u8` to player (1 to 16) |
 | 21 | `HANDOVER_STATE` | 2 | both | `u8` player field, object id, `u16` epoch, then object components |

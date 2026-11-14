@@ -45,7 +45,12 @@ if ($user) { Set-OotCiLogonRights -Sid $user.SID.Value -Remove }
 # 4. Folders, profile, user.
 foreach ($p in $Root, $HookDir) { if (Test-Path $p) { Remove-Item -Recurse -Force $p } }
 if ($user) {
-    Get-CimInstance Win32_UserProfile | Where-Object { $_.SID -eq $user.SID.Value } | Remove-CimInstance
+    try {
+        Get-CimInstance Win32_UserProfile | Where-Object { $_.SID -eq $user.SID.Value } | Remove-CimInstance
+    } catch {
+        "The $User profile is still loaded; reboot and run uninstall.ps1 again to finish."
+        exit 1
+    }
     Remove-LocalUser -Name $User
 }
 "Runner, hook, Deny ACEs, logon rights, profile and user $User removed."

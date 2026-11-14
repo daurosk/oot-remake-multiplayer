@@ -7,15 +7,17 @@
 # What it does:
 # - standard local user oot-ci (Users only, never admin), random password nobody
 #   sees; no interactive, RDP or network logon.
-# - Deny ACEs for oot-ci on every other user's profile and on every top-level
-#   folder of a fixed drive that grants Users/Authenticated Users/Everyone write
-#   (kits, games, toolchains); a no-create Deny on each drive root. The list is
-#   saved so uninstall.ps1 removes exactly those.
+# - deny.ps1: Deny ACEs for oot-ci on every other profile and every non-system
+#   top-level folder of a fixed drive (kits, games, toolchains); a no-create Deny
+#   on each drive root and ProgramData. The list is saved so uninstall.ps1
+#   removes exactly those. Folders made later stay open until deny.ps1 is run
+#   again, and the hook refuses every job until then.
 # - C:\actions-runner owned by Administrators: oot-ci may read and run it but
 #   writes only _work and _diag. Registered with --disableupdate (re-run install
 #   for a new runner release; GitHub refuses runners about 30 days out of date).
-# - Job-started hook (job-started.ps1) in C:\ProgramData\oot-ci, read-only to
-#   oot-ci: refuses any job but a push by daurosk to main, integrate-* or a tag.
+# - Job-started hook (job-started.ps1 + job-check.ps1) in C:\ProgramData\oot-ci,
+#   read-only to oot-ci: refuses any job but a push by daurosk to main,
+#   integrate-* or a tag, and any job while a guarded folder is open to oot-ci.
 # - official runner zip, SHA-256 checked against GitHub's release notes; the
 #   registration token is never printed.
 param(
@@ -62,18 +64,11 @@ New-Item -ItemType Directory -Force $HookDir | Out-Null
 & icacls $HookDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' "${acct}:(OI)(CI)RX" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'icacls failed on the hook folder.' }
 $hook = Join-Path $HookDir 'job-started.ps1'
-Copy-Item (Join-Path $PSScriptRoot 'job-started.ps1') $hook -Force
+foreach ($f in 'job-started.ps1', 'job-check.ps1') { Copy-Item (Join-Path $PSScriptRoot $f) (Join-Path $HookDir $f) -Force }
+Set-Content -Encoding utf8 (Join-Path $HookDir 'runner-dirs.txt') $Root
 
 # 3. Deny ACEs on everything of the owner's that oot-ci could reach.
-$denied = Get-OotCiDenyTargets -Skip @($Root, $HookDir)
-$denied | Set-Content -Encoding utf8 (Join-Path $HookDir 'denied.txt')
-foreach ($d in $denied) {
-    $p, $kind = $d -split '\|'
-    if ($kind -eq 'root') { & icacls $p /deny "${acct}:(AD,WD,WEA,WA)" | Out-Null }
-    else { & icacls $p /deny "${acct}:(OI)(CI)F" | Out-Null }
-    if ($LASTEXITCODE -ne 0) { throw "icacls deny failed on $p" }
-    "denied: $p ($kind)"
-}
+& (Join-Path $PSScriptRoot 'deny.ps1') -Root $Root -HookDir $HookDir -User $User
 
 # 4. Runner folder: admin-owned, oot-ci RX; download and verify the runner.
 function Set-RunnerAcl {

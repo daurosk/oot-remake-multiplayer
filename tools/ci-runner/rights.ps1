@@ -1,38 +1,22 @@
-# Helpers for install.ps1 / uninstall.ps1 (docs/ci-runner.md). Dot-source only.
-
-# Top-level folders Windows and installed programs need; oot-ci keeps the default
-# access there (read and run; ProgramData also gets a no-create Deny on its root).
-$script:OotCiSystemDirs = @('Windows', 'Program Files', 'Program Files (x86)', 'ProgramData', 'Users',
-    '$Recycle.Bin', 'System Volume Information', 'Recovery', 'Documents and Settings', 'Config.Msi')
+# Helpers for install.ps1 / deny.ps1 / uninstall.ps1 (docs/ci-runner.md). Dot-source only.
+. (Join-Path $PSScriptRoot 'job-check.ps1')
 
 # Everything oot-ci must not reach, as "path|tree" (Deny full, inherited) or
-# "path|root" (Deny creating files/folders in that folder itself only):
-# every fixed drive root (root), ProgramData (root), every other top-level folder
-# of a fixed drive (tree), and every user profile and Public (tree).
+# "path|root" (Deny creating files/folders in that folder itself only): every
+# fixed drive root and ProgramData (root), and every guarded folder (tree): all
+# non-system top-level folders and every profile under Users, Public included.
+# The hook (job-started.ps1) refuses jobs while any guarded folder is open.
 function Get-OotCiDenyTargets {
     param([string[]]$Skip = @(), [string]$User = 'oot-ci')
-    $skipFull = $Skip | ForEach-Object { [IO.Path]::GetFullPath($_).TrimEnd('\') }
     $out = New-Object System.Collections.Generic.List[string]
-    foreach ($drive in Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3') {
-        $root = "$($drive.DeviceID)\"
-        $out.Add("$root|root")
-        foreach ($dir in Get-ChildItem $root -Directory -Force -ErrorAction SilentlyContinue) {
-            if ($dir.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
-            if ($OotCiSystemDirs -contains $dir.Name) { continue }
-            if ($skipFull -contains $dir.FullName.TrimEnd('\')) { continue }
-            $out.Add("$($dir.FullName)|tree")
-        }
+    foreach ($d in [IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady }) {
+        $out.Add("$($d.RootDirectory.FullName)|root")
     }
     $out.Add("$env:ProgramData|root")
-    $profiles = Get-CimInstance Win32_UserProfile | Where-Object { -not $_.Special -and $_.LocalPath } |
-        ForEach-Object { $_.LocalPath }
-    foreach ($p in @($profiles) + (Join-Path $env:SystemDrive 'Users\Public')) {
-        if (-not (Test-Path $p)) { continue }
-        if ((Split-Path $p -Leaf) -eq $User) { continue }
-        $out.Add("$p|tree")
-    }
+    foreach ($p in Get-OotCiGuardedFolders -Skip $Skip -User $User) { $out.Add("$p|tree") }
     return $out | Select-Object -Unique
 }
+
 
 # Adds or removes oot-ci's SID on the deny-logon rights (interactive, RDP,
 # network). -Remove also drops "Log on as a service", which config.cmd granted.

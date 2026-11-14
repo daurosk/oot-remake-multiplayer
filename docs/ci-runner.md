@@ -14,8 +14,11 @@ code someone else wrote and sent. Two layers:
    runner runs `C:\ProgramData\oot-ci\job-started.ps1` (from
    `tools/ci-runner/job-started.ps1`). It fails the job unless it is a `push` to
    `daurosk/oot-remake-multiplayer` by `daurosk` (`GITHUB_ACTOR` and
-   `GITHUB_TRIGGERING_ACTOR`), on `main`, an `integrate-*` branch or a tag. The
-   hook and its setting (`ACTIONS_RUNNER_HOOK_JOB_STARTED` in the runner's `.env`
+   `GITHUB_TRIGGERING_ACTOR`), on `main`, an `integrate-*` branch or a tag. It
+   also refuses every job while any guarded folder (below) is open to the runner
+   user. It has no switches: no environment variable changes what it checks
+   (the checks live in `job-check.ps1`, which the tests load on their own). The
+   hook, `job-check.ps1` and its setting (`ACTIONS_RUNNER_HOOK_JOB_STARTED` in the runner's `.env`
    and the machine environment) are owned by Administrators and only readable by
    the runner user, so neither a pull request nor a job can change them. Tests:
    `tools/ci-runner/job_started_test.ps1` (windows job).
@@ -50,19 +53,25 @@ Read outside pull requests for hostile build-time code before merging them.
   top-level folder of every fixed drive except Windows, Program Files,
   ProgramData and Users (so the kits `C:\oot*`, `C:\OoT-Coop-*`, `C:\Games`,
   `C:\msys64`, server folders...). Drive roots and ProgramData get a Deny on
-  creating files or folders in them. The list is saved in
-  `C:\ProgramData\oot-ci\denied.txt`; uninstall removes exactly those. **A folder
-  made on C:\ after the install is open to `oot-ci`** (C:\ lets Authenticated
-  Users modify new folders): keep new kits in the profile, or uninstall and
-  install again to cover it. A subfolder that does not inherit its parent's
-  rights does not get the Deny either.
+  creating files or folders in them (`tools/ci-runner/deny.ps1`). The list is
+  saved in `C:\ProgramData\oot-ci\denied.txt`; uninstall removes exactly those.
+- **New folders fail closed.** C:\ gives Authenticated Users Modify on every new
+  top-level folder, so a kit made after the install (`C:\OoT-Coop-6`) starts
+  open to `oot-ci`. The hook, running as `oot-ci`, tries to list every guarded
+  folder at the start of each job and refuses the job if it can open any of
+  them: "open to the runner user: <path>. Run tools\ci-runner\deny.ps1
+  (elevated)". Run `deny.ps1` in an elevated PowerShell and jobs run again. Not
+  covered: a subfolder inside a denied folder that does not inherit its
+  parent's rights and grants Users itself (none on this PC at install time).
 - No secrets: the job has the read-only `GITHUB_TOKEN` only (`permissions: contents: read`).
 - One runner = one job at a time. Its first step drops `Runner.Worker` to
   BelowNormal priority, and every later step inherits that, so a game test on this
   PC keeps the CPU.
-- Left as is: a job can read the runner's own credentials (it has to, to run),
-  so a job that daurosk pushed could act as this runner; that is why only
-  daurosk's reviewed pushes get here at all.
+- Left as is: a job can read the runner's own credentials
+  (`.credentials_rsaparams`; it has to, to run), so a hostile job that daurosk
+  pushed could copy the key and act as this runner, picking up jobs with
+  read-only tokens. That is why only daurosk's reviewed pushes get here at all.
+  If it ever happens, run uninstall and install again: that registers a new key.
 
 ## Install, switch, remove (owner, elevated PowerShell)
 
@@ -79,7 +88,10 @@ registration token and the generated password to `config.cmd` on its command lin
    (jobs go back to `windows-latest`). Set it off before the PC is off for long:
    with it on and the runner offline, windows jobs wait in the queue.
 5. Remove everything (runner, service, hook, Deny ACEs, logon rights, profile,
-   user): `tools\ci-runner\uninstall.ps1`. Safe to run twice.
+   user): `tools\ci-runner\uninstall.ps1`. Safe to run twice; if the profile is
+   still loaded it says so, and a run after a reboot finishes.
+6. A job failed with "open to the runner user": run
+   `tools\ci-runner\deny.ps1` elevated, then re-run the job.
 
 ## Updating
 

@@ -2186,7 +2186,7 @@ void KeepMapsAlone(EmulatorMemory& memory, bool in_play, const std::optional<std
     }
 }
 
-// minimap-b diagnostics: one line whenever the current dungeon's map or compass goes from 1 to 0, with what happened
+// minimap-b diagnostics: one line whenever any dungeon's map or compass goes from 1 to 0, with what happened
 // in the seconds before (coop/host/map_drop_log.hpp). In a session and alone.
 void WatchMapDrops(EmulatorMemory& memory, bool in_play, const std::optional<std::string>& scene,
                    const std::optional<std::array<float, 3>>& link) {

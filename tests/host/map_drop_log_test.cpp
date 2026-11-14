@@ -102,22 +102,77 @@ TEST_CASE("map drop log: a write of ours older than the window, or of 1, is not 
   CHECK_FALSE(has(lines[0], "(old)"));  // the old write fell out of the window too
 }
 
-TEST_CASE("map drop log: another scene starts a new baseline, outside a dungeon nothing is read") {
+TEST_CASE("map drop log: a drop away from its dungeon is logged too, no new baseline on a scene change") {
   std::uint64_t now = 0;
   MapDropLog log([&now] { return now; });
   Store s;
   log.frame(s, "InsideTheDekuTree", true);
+  log.frame(s, "KokiriForest", true);
   s.values[kDekuMap] = 0;
-  CHECK(log.frame(s, "KokiriForest", true).empty());  // left the dungeon: not read there
-  CHECK(log.frame(s, std::nullopt, false).empty());
-  CHECK(log.frame(s, "InsideTheDekuTree", true).empty());  // back: a new baseline, 0
-  s.values[kDekuMap] = 1;
-  log.frame(s, "InsideTheDekuTree", true);
-  s.values[kDekuMap] = 0;
-  const auto lines = log.frame(s, "InsideTheDekuTree", true);
+  now += 200'000;
+  const auto lines = log.frame(s, "KokiriForest", true);
   REQUIRE(lines.size() == 1);
-  CHECK(has(lines[0], "[-0.0 s scene KokiriForest -> InsideTheDekuTree]"));
-  CHECK(has(lines[0], "DungeonInfo.InsideTheDekuTree.IsGetMap 0 -> 1"));
+  CHECK(has(lines[0], "DungeonInfo.InsideTheDekuTree.IsGetMap 1 -> 0 (outside its dungeon InsideTheDekuTree) in KokiriForest"));
+  CHECK(has(lines[0], "[-0.2 s scene InsideTheDekuTree -> KokiriForest]"));
+  // While no scene is loaded (the title): still read, named so.
+  s.values[kDekuMap] = 1;
+  log.frame(s, std::nullopt, false);
+  s.values[kDekuCompass] = 0;
+  const auto none = log.frame(s, std::nullopt, false);
+  REQUIRE(none.size() == 1);
+  CHECK(has(none[0], "IsGetCompass 1 -> 0 (outside its dungeon InsideTheDekuTree) in (no scene), loading"));
+  // Back in the dungeon: the value it had there is not a new baseline.
+  s.values[kDekuMap] = 0;
+  CHECK(log.frame(s, "InsideTheDekuTree", true).size() == 1);
+}
+
+TEST_CASE("map drop log: three lines a flag, then one summary a minute") {
+  std::uint64_t now = 0;
+  MapDropLog log([&now] { return now; });
+  Store s;
+  log.frame(s, "InsideTheDekuTree", true);
+  auto drop_and_back = [&] {
+    s.values[kDekuMap] = 0;
+    now += 1'000'000;
+    auto out = log.frame(s, "InsideTheDekuTree", true);
+    s.values[kDekuMap] = 1;
+    now += 1'000'000;
+    for (auto& l : log.frame(s, "InsideTheDekuTree", true)) out.push_back(l);
+    return out;
+  };
+  for (int i = 1; i <= MapDropLog::kLinesPerFlag; ++i) {
+    const auto lines = drop_and_back();
+    REQUIRE(lines.size() == 1);
+    CHECK(has(lines[0], "IsGetMap 1 -> 0"));
+    CHECK(has(lines[0], "one summary a minute") == (i == MapDropLog::kLinesPerFlag));
+  }
+  int hidden = 0;
+  std::vector<std::string> summaries;
+  for (int i = 0; i < 40; ++i) {  // 80 s
+    for (auto& l : drop_and_back()) summaries.push_back(l);
+    ++hidden;
+  }
+  REQUIRE(summaries.size() == 1);  // at the minute
+  CHECK(has(summaries[0], "coop: map-drop: DungeonInfo.InsideTheDekuTree.IsGetMap went 1 -> 0 30 more times"));
+  // The compass has its own three.
+  s.values[kDekuCompass] = 0;
+  CHECK(log.frame(s, "InsideTheDekuTree", true).size() == 1);
+  (void)hidden;
+}
+
+TEST_CASE("map drop log: many flags at once (a save load) make one line") {
+  std::uint64_t now = 0;
+  MapDropLog log([&now] { return now; });
+  Store s;
+  constexpr FlagKey kFireCompass{0x0aa068b6u, 0}, kShadowCompass{0x1e2feec5u, 0}, kIceMap{0x322f2a94u, 0};
+  for (FlagKey k : {kFireCompass, kShadowCompass, kIceMap}) s.values[k] = 1;
+  log.frame(s, std::nullopt, false);
+  for (auto& [k, v] : s.values) v = k == kGotBomb ? v : 0;
+  const auto lines = log.frame(s, std::nullopt, false);
+  REQUIRE(lines.size() == 1);
+  CHECK(has(lines[0], "coop: map-drop: 5 map and compass flags 1 -> 0 at once ("));
+  CHECK(has(lines[0], "DungeonInfo.IceCavern.IsGetMap"));
+  CHECK(has(lines[0], "our code wrote it: no"));
 }
 
 TEST_CASE("map drop log: events older than the window fall out") {

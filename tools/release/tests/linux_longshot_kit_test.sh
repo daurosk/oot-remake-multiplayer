@@ -39,6 +39,8 @@ check 'versions: v0.1.0 > v0.1.0-beta2 > v0.1.0-beta1; beta9 < beta10' bash -c '
     [ "$(kit_version_compare v0.1.0-beta9 v0.1.0-beta10)" = -1 ] && [ "$(kit_version_compare ci-1234 v0.1.0)" = -1 ]' _ "$lib"
 printf '# a comment\ntag=v3.0.0-rc.3\nurl=https://x/y=z\n' >"$tmp/pin"
 check 'pin_get reads key=value lines (a value may hold =)' bash -c '. "$1"; [ "$(pin_get "$2" tag)" = v3.0.0-rc.3 ] && [ "$(pin_get "$2" url)" = https://x/y=z ] && ! pin_get "$2" nope' _ "$lib" "$tmp/pin"
+check 'kit_offline: 1 offline, 0 online; behind a proxy (https_proxy, ALL_PROXY) online with no probe' bash -c '. "$1"
+    kit_offline 1 && ! kit_offline 0 && ! https_proxy=http://127.0.0.1:9 kit_offline "" && ! ALL_PROXY=socks5://127.0.0.1:9 kit_offline ""' _ "$lib"
 
 # --- A kit, as make_kit_linux.sh lays it out ----------------------------------------------------
 # The stand-in builder: what --appimage-extract unpacks.
@@ -163,6 +165,16 @@ printf 'release=v0.5.0\nurl=%s\nlinux=OOTRR-test-linux.tar.gz\nlinux_sha256=%s\n
 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-o3.txt" 2>&1; export CODE=$?
 check 'build: an OOTRR whose SHA-256 differs only warns, and is not put in' \
     bash -c '[ $CODE -eq 0 ] && grep -q "SHA-256 differs" "$1" && [ ! -e "$2/game/tools/ootrr/ootrr" ]' _ "$tmp/build-o3.txt" "$D"
+# No internet (OOT_COOP_OFFLINE=1): the OOTRR tarball already downloaded and matching its SHA-256 still goes in;
+# without one there is no download try, one 'offline' line, and the start goes on.
+printf 'release=v0.5.0\nurl=https://example.invalid/ootrr\nlinux=OOTRR-test-linux.tar.gz\nlinux_sha256=%s\n' "$o_sha" >"$kit/data/longshot/OOTRR.txt"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-o4.txt" 2>&1; export CODE=$?
+check 'build offline: the OOTRR tarball already here (its SHA-256 matched) is put in, no download' \
+    bash -c '[ $CODE -eq 0 ] && [ -x "$1/game/tools/ootrr/ootrr" ] && ! grep -q downloading "$2"' _ "$D" "$tmp/build-o4.txt"
+rm -rf "$D/game/tools/ootrr" "$D/builder/OOTRR-test-linux.tar.gz"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-o5.txt" 2>&1; export CODE=$?
+check 'build offline: no OOTRR here -> no download try, one offline line, the game still ready' \
+    bash -c '[ $CODE -eq 0 ] && grep -q "offline: using the tools already here" "$1" && ! grep -q -e downloading -e "not set up" "$1" && grep -q "The game is ready" "$1" && [ ! -e "$2/game/tools/ootrr" ]' _ "$tmp/build-o5.txt" "$D"
 rm -f "$kit/data/longshot/OOTRR.txt"
 
 # A new patch set: refreshed in place, the game built again.

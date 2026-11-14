@@ -69,6 +69,8 @@ jobs:
         run: python tools/autotest/tests/test_save_flags.py -v
       - name: Hookshot autotest driver tests
         run: python tools/autotest/tests/test_hookshot.py -v
+      - name: Test lanes tests
+        run: python tools/autotest/tests/test_lanes.py -v
       - name: Bad-connection relay tests
         run: python tools/netsim/tests/test_netsim.py -v
       # The kit's patch applier for Hookshot (hookshot-kit); skipped until that branch is merged.

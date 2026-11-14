@@ -911,13 +911,15 @@ def main(argv=None):
     pl.add_argument("--shots", help="folder for a shot at each mark")
     pl.add_argument("--commands", help="the game's LICHII_COOP_TEST_COMMANDS file (none: module steps skipped)")
     r = sub.add_parser("run", help="the two-game test (tools/autotest/run.ps1 -Runtime hookshot)")
-    r.add_argument("--game-a", required=True)
-    r.add_argument("--game-b", required=True)
+    r.add_argument("--lane", type=int, choices=[1, 2],
+                   help="test lane (tools/autotest/lanes.py): its pair, port, pipe and run folder unless given; holds its lock")
+    r.add_argument("--game-a", help="(required without --lane)")
+    r.add_argument("--game-b", help="(required without --lane)")
     r.add_argument("--server", help="coop_server to start (none: the games use their coop.ini)")
-    r.add_argument("--port", type=int, default=27560)
+    r.add_argument("--port", type=int, help="default 27560 (a lane: its own)")
     r.add_argument("--password", default="autotest-pass",
                    help="the join password of the server it starts, given to both games (every session has one)")
-    r.add_argument("--out", required=True)
+    r.add_argument("--out", help="run folder (required without --lane; a lane: <its shots>/<name>/<time>)")
     r.add_argument("--name", default="scenario")
     r.add_argument("--script-a", required=True)
     r.add_argument("--script-b")
@@ -931,7 +933,7 @@ def main(argv=None):
     r.add_argument("--scenario-timeout", type=int, default=600)
     r.add_argument("--renderer-wait", type=int, default=600,
                    help="seconds each game may take to start its renderer before the load (0: no wait)")
-    r.add_argument("--pipe", default="coop-auto")
+    r.add_argument("--pipe", help="default coop-auto (a lane: its own)")
     a = p.parse_args(argv)
     if a.what == "check":
         bad = 0
@@ -964,7 +966,25 @@ def main(argv=None):
     for kv in a.env:
         if "=" not in kv:
             p.error("--env NAME=VALUE")
-    return run(a)
+    if not a.lane:
+        if not (a.game_a and a.game_b and a.out):
+            p.error("--game-a, --game-b and --out (or --lane N)")
+        a.port, a.pipe = a.port or 27560, a.pipe or "coop-auto"
+        return run(a)
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # (python -I leaves the script's folder out)
+    import lanes
+    L = lanes.lane(a.lane)
+    a.game_a, a.game_b = a.game_a or L["a"], a.game_b or L["b"]
+    a.port, a.pipe = a.port or L["port"], a.pipe or L["pipe"]
+    a.out = a.out or os.path.join(L["shots"], a.name, time.strftime("%Y%m%d-%H%M%S"))
+    owner = "hookshot.py %s (pid %d)" % (a.name, os.getpid())
+    if not lanes.lock_acquire(a.lane, owner, wait=1800, pid=os.getpid()):
+        return 1
+    try:
+        print("lane %d: %s + %s, port %d, pipe %s, run folder %s" % (a.lane, a.game_a, a.game_b, a.port, a.pipe, a.out))
+        return run(a)
+    finally:
+        lanes.hs.lock_release(lanes.hs.main_root(lanes.REPO), "lane%d" % a.lane, owner)
 
 
 if __name__ == "__main__":

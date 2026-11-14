@@ -1568,6 +1568,7 @@ void Session::drop_presence(ConnectionId id, std::uint8_t number, const ObjectId
   Object& o = it->second;
   o.present.erase(id);
   o.chased_by.erase(id);
+  o.unready.erase(id);  // its next presence says again whether it is ready
   if (o.candidate == id) o.candidate.reset();
   if (o.made) {
     if (o.owner != id) return;

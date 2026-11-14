@@ -5236,14 +5236,16 @@ TEST_CASE("a boss never goes to a game whose boss has not begun its fight (unrea
   h.clear();
   h.run(20 * kSecond);  // clearly nearer, for long: still not moved
   CHECK(h.asks() == 0);
-  h.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);  // its hit still counts...
+  // A stun (DAMAGE 0) is the hit that hands a boss over (gohma-sync); still counts...
+  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}}, kChannelOwnership);
   CHECK(messages_to<Damage>(h, 1).size() == 1);
   CHECK(messages_to<HandoverAsk>(h, 1).empty());  // ...but takes no boss
   CHECK(h.session.stats().boss_to_near == 0);
   CHECK(h.session.stats().boss_to_hitter == 0);
   // Once its intro has played there (no unready bit), the rules apply again.
   h.receive(2, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.run(3 * kSecond);
   h.clear();
-  h.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}}, kChannelOwnership);
   CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
 }

@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "coop_colors.h"
 #include "coop_pause_menu.h"
 #include "hos_coop_menu.h"
 
@@ -68,7 +69,7 @@ TEST_CASE("pause tab: the first page is Host, Join, Local co-op, Settings and Co
     Menu m;
     m.Show(CoopTitleMenu::Options{});
     CHECK(m.page() == Page::kMain);
-    CHECK(Names(m) == std::vector<std::string>{"Host a game", "Join a game", "Local co-op", "Settings", "Commands"});
+    CHECK(Names(m) == std::vector<std::string>{"Host a game", "Join a game", "Local co-op", "Settings", "Customize Link", "Commands"});
     CHECK(Selected(m) == "Host a game");
     m.Press(Input::kUp);   // round the ends
     CHECK(Selected(m) == "Commands");
@@ -516,4 +517,37 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     m.SetInputRows({}, {});
     CHECK(Names(m).size() == 5);
     CHECK_FALSE(Selected(m).empty());
+}
+
+TEST_CASE("pause tab: Customize Link opens the customizer; its changes are asked of the module; Back comes back") {
+    Menu m;
+    CoopTitleMenu::Options o;
+    m.Show(o);
+    CoopLook::Look worn;
+    worn[CoopLook::Part::boots] = 0x112233u;
+    m.SetLook(worn);
+    CHECK(m.Picture().empty());   // the first page has no picture
+    SelectRow(m, "Customize Link");
+    m.Press(Input::kDecide);
+    CHECK(m.page() == Page::kCustomize);
+    View v = m.view();
+    CHECK(v.rows[0].kind == RowKind::kHeading);
+    CHECK(v.rows[0].name == "Tunic");
+    CHECK(Selected(m) == "Kokiri Tunic");
+    CHECK_FALSE(m.Picture().empty());
+    CHECK_FALSE(m.TakeRequest());
+    m.Press(Input::kRight);   // the tunic: red
+    const auto r = m.TakeRequest();
+    REQUIRE(r);
+    CHECK(r->kind == Request::Kind::kLookParts);
+    CHECK(m.look()[CoopLook::Part::tunic] == CoopColors::Parse("red"));
+    CHECK(m.look()[CoopLook::Part::boots] == 0x112233u);   // the rest as it was worn
+    CHECK(m.options().colour == "red");                     // the Settings page's row agrees
+    // The mouse: a click on a part's right half.
+    m.Click(2, 1);   // Goron Tunic
+    CHECK(m.look()[CoopLook::Part::goron_tunic] == CoopColors::Parse("red"));
+    m.Press(Input::kBack);
+    CHECK(m.page() == Page::kMain);
+    CHECK(Selected(m) == "Customize Link");
+    CHECK(m.Picture().empty());
 }

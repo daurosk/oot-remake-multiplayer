@@ -19,6 +19,7 @@
 
 #include "coop_pause_menu.h"
 #include "hos_coop_menu.h"
+#include "hos_coop_menu_picture.h"
 
 namespace CoopPause {
 
@@ -36,6 +37,8 @@ void Tick();
 int Tabs();
 const char* TabName(int tab);
 bool Page(int tab, HosCoopMenuPage* out);
+// hos_coop_menu_picture.h's export (patch 0019): the Customize page's picture of Link.
+bool Picture(int tab, HosCoopMenuPicture* out);
 bool Input(int tab, int event, int arg, int arg2);
 int Wanted();
 

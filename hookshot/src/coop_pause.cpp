@@ -90,6 +90,12 @@ std::vector<std::string> ChooseLook(const std::string& colour) {
 void WearChosenLook() {
     CoopLook::ApplyOnUnpause();
 }
+// The Customize page's look (coop_look_menu.h): every part at once.
+std::vector<std::string> ChooseLookParts(const CoopLook::Look& look) {
+    LOG_INFO(Core, "coop: multiplayer tab: customize: {} part colour(s) chosen", CoopLook::Wire(look).size());
+    CoopLook::SetPending(look);
+    return {"Link wears it when this menu closes."};
+}
 
 
 // What the module's host is doing, in plain words (CoopTitleMenu::PlainStatus). Only reads: what follows from
@@ -401,8 +407,10 @@ void Act(const Request& r) {
         Save();
         const auto note = ChooseLook(r.text);
         g_menu.SetNote(note);
+        g_menu.SetLook(CoopLook::Shown());   // (the Customize page shows the tunic chosen here)
         break;
     }
+    case Request::Kind::kLookParts: g_menu.SetNote(ChooseLookParts(g_menu.look())); break;
     case Request::Kind::kPaste: g_menu.Paste(ClipboardText()); break;
     case Request::Kind::kCopyInvite:
         g_lan_lines.clear();
@@ -430,6 +438,7 @@ void Settle() {
 void ShowTab() {
     g_shown = true;
     g_menu.Show(ReadOptions());
+    g_menu.SetLook(CoopLook::Shown());   // the Customize page opens on the look waiting, else the one worn
     const std::string coop = ReadText(CoopIni());
     const auto last = CoopTitleMenu::IniGet(coop, "last_invite");
     g_menu.SetRejoin(CoopTitleMenu::IniGet(coop, "last_host").value_or(""), last.value_or(""));
@@ -523,6 +532,36 @@ bool Page(int tab, HosCoopMenuPage* out) {
     out->confirm = v.confirm.c_str();
     out->back = v.back.c_str();
     return true;
+}
+
+bool Picture(int tab, HosCoopMenuPicture* out) {
+    if (tab != kMultiplayerTab || out == nullptr || out->size < sizeof(HosCoopMenuPicture)) {
+        return false;
+    }
+    thread_local std::vector<HosCoopMenuShape> shapes;   // (Hookshot copies them before the next call on its thread)
+    std::vector<CoopLookMenu::Shape> picture;
+    {
+        std::lock_guard lock(g_mutex);
+        picture = g_menu.Picture();
+    }
+    shapes.clear();
+    for (const CoopLookMenu::Shape& p : picture) {
+        if (shapes.size() == HOS_COOP_MENU_MAX_SHAPES) {
+            break;
+        }
+        HosCoopMenuShape s{};
+        s.rgba = p.rgba;
+        s.outline = p.outline ? 1 : 0;
+        s.n = static_cast<std::uint8_t>(std::min<std::size_t>(p.points.size(), HOS_COOP_MENU_SHAPE_POINTS));
+        for (std::size_t k = 0; k < s.n; ++k) {
+            s.xy[2 * k] = p.points[k].first;
+            s.xy[2 * k + 1] = p.points[k].second;
+        }
+        shapes.push_back(s);
+    }
+    out->shapes_n = static_cast<std::int32_t>(shapes.size());
+    out->shapes = shapes.data();
+    return !shapes.empty();
 }
 
 bool Input(int tab, int event, int arg, int arg2) {

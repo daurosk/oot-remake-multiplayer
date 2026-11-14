@@ -1395,6 +1395,10 @@ COOP_HOOKSHOT_EXPORT int hos_coop_menu_input(int tab, int event, int arg, int ar
 COOP_HOOKSHOT_EXPORT int hos_coop_menu_wanted(void) {
     return g_on ? CoopPause::Wanted() : HOS_COOP_MENU_WANT_NOTHING;
 }
+// The picture beside the tab's page (hos_coop_menu_picture.h, patch 0019): the Customize page's Link.
+COOP_HOOKSHOT_EXPORT int hos_coop_menu_picture(int tab, HosCoopMenuPicture* out) {
+    return g_on && CoopPause::Picture(tab, out) ? 1 : 0;
+}
 COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) {
     if (!g_on || stick == nullptr) {
         return buttons;

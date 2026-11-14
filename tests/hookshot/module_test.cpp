@@ -530,6 +530,23 @@ TEST_CASE("hookshot: the Multiplayer tab leads Hookshot's menu (patch 0012, hos_
     }
 }
 
+TEST_CASE("hookshot: a module tab may draw a picture beside its page (patch 0019, hos_coop_menu_picture.h)") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0019-coop-menu-picture.patch");
+    REQUIRE_FALSE(patch.empty());
+    CHECK(NewFile(patch, "gpu/vk/hos_coop_menu_picture.h") ==
+          ReadFile(kRepo / "hookshot" / "src" / "hos_coop_menu_picture.h"));
+    // Hookshot looks for the optional export and draws the shapes in the help column.
+    CHECK(patch.find("look(\"hos_coop_menu_picture\")") != std::string::npos);
+    CHECK(patch.find("+        if (coop::menu_picture(coop_tab, &pic)) {") != std::string::npos);
+    // Only the Vulkan back end's files: no lift, no game code.
+    for (std::size_t at = patch.find("diff --git a/"); at != std::string::npos; at = patch.find("diff --git a/", at + 1)) {
+        CHECK(patch.compare(at, 20, "diff --git a/gpu/vk/") == 0);
+    }
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_menu_picture(int tab, HosCoopMenuPicture* out)") !=
+          std::string::npos);
+}
+
 TEST_CASE("hookshot: the sound wrap (patch 0014) is one row in 0005's table, its header hookshot/src's") {
     const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0014-coop-sound-wrap.patch");
     CHECK(NewFile(patch, "host/hos_coop_sound.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_sound.h"));

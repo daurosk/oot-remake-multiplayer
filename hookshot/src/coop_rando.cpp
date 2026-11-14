@@ -408,10 +408,13 @@ void Rando::Check() {
     {
         // Said once per change of the switch, in the tab until the restart and in the chat.
         const std::lock_guard lock(mutex_);
+        // Back as this run started (a guest restarted on the host's seed, then joined): nothing to restart for.
         if (want.on != on_said_) {
             on_said_ = want.on;
-            lines_.push_back(SwitchLine(want.on));
-            if (hooks_.log) hooks_.log("randomizer: " + lines_.back());
+            if (want.on != on_now_) {
+                lines_.push_back(SwitchLine(want.on));
+                if (hooks_.log) hooks_.log("randomizer: " + lines_.back());
+            }
         }
     }
     loader_.NoteChanged(std::string(kFolder) + "/switch", want.on == on_now_ ? std::string() : SwitchLine(want.on));

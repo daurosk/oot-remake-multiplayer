@@ -180,7 +180,7 @@ void StartSharing() {
     p.host_values = [](std::optional<std::vector<coop::protocol::ModSetting>> values) {
         if (!values) {
             g_loader->SetHostValues(std::nullopt);
-        if (g_rando) g_rando->Recheck();  // a host without the randomizer changes no value of ours
+            if (g_rando) g_rando->Recheck();  // a host without the randomizer changes no value of ours
             return;
         }
         std::vector<CoopMods::SharedValue> in;

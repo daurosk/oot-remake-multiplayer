@@ -16,7 +16,7 @@
 # What it does:
 # 1. Hookshot's own build tools: the parts of the Hookshot release named in hookshot\TOOLS.txt (its
 #    Python, llvm-mingw, the Vulkan/FFmpeg headers, wgpu-native and the prebuilt third-party files),
-#    downloaded from Hookshot's GitHub release and checked against the SHA-256 in that release's
+#    downloaded from Longshot's release (git.magicbean.dev) and checked against the SHA-256 in that release's
 #    hookshot-setup.txt (whose own SHA-256 is in TOOLS.txt). About 400 MB, once.
 # 2. Hookshot's source at the commit in hookshot\PIN (GitHub's source archive), with our patches
 #    from hookshot\patches applied (scripts\apply_patch.py: no git needed).

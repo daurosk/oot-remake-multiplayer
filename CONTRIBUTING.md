@@ -1,5 +1,7 @@
 # Contributing
 
+Using an AI coding agent? It reads [AGENTS.md](AGENTS.md): the same rules, written as steps for the agent.
+
 Anyone can contribute: code, testing, desync reports, docs. Fork the repository, make your change on a branch, and open a pull request. Questions and ideas are welcome in [Discussions](https://github.com/daurosk/oot-remake-multiplayer/discussions) or on [Discord](https://discord.gg/GwtRKAqng5).
 
 ## The one hard rule
@@ -48,6 +50,8 @@ By opening a pull request you agree that your contribution is licensed under GPL
 Every pull request is reviewed by a review session before it is merged. This holds for everyone: outside contributors, the maintainer, and the project's own workers. Nothing merges unreviewed, however small.
 
 A review session is one of the maintainer's AI sessions, started only to review that pull request ([docs/workflow.md](docs/workflow.md)). It did not write the change. For a pull request from outside it writes what it found as a comment on the pull request; you answer or push fixes to the same branch, and it looks again. Reviews of the project's own workers are written in the project's notes, outside this repository.
+
+Every pull request from outside is merged with its own commits as authored: `git merge --no-ff` of the pull request's head, so GitHub shows it as merged and the contributor's commits keep their author line all the way to `main`. It is never squashed, rewritten by rebase, cherry-picked under our name or redone by us. A change we need goes on top as a separate commit. Every merged contributor is listed under "Contributors" in the README.
 
 A review checks that:
 

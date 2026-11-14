@@ -35,21 +35,41 @@ function Copy-Shared([string]$From, [string]$To, [bool]$Binary) {
 }
 
 $picked = @()
-$picked += Get-ChildItem (Join-Path $user 'log') -File -ErrorAction SilentlyContinue | ForEach-Object { @($_.FullName, "emulator\log\$($_.Name)") }
-$picked += @((Join-Path $user 'config\coop.ini'), 'emulator\coop.ini')
+$hasEmulator = Test-Path -LiteralPath $user   # (a Longshot-only kit has none: its files are not "missing")
+if ($hasEmulator) {
+    $picked += Get-ChildItem (Join-Path $user 'log') -File -ErrorAction SilentlyContinue | ForEach-Object { @($_.FullName, "emulator\log\$($_.Name)") }
+    $picked += @((Join-Path $user 'config\coop.ini'), 'emulator\coop.ini')
+}
 $picked += Get-ChildItem (Join-Path $kit 'logs') -Filter '*.log' -File -ErrorAction SilentlyContinue | ForEach-Object { @($_.FullName, "server\$($_.Name)") }
 $picked += @((Join-Path $kit 'VERSION.txt'), 'VERSION.txt')
 $picked += @((Join-Path $kit 'coop-options.ini'), 'coop-options.ini')
 # What the puppet pack was built from (file names and hashes only, no game data).
-$picked += @((Join-Path $user 'load\0400486024DEC000\coop-puppet\coop_puppet.json'), 'emulator\coop_puppet.json')
-# The Hookshot game (Hookshot kits): its log, coop.ini and pack manifest beside longshot.exe, and the build's logs.
+if ($hasEmulator) {
+    $picked += @((Join-Path $user 'load\0400486024DEC000\coop-puppet\coop_puppet.json'), 'emulator\coop_puppet.json')
+}
+# The Longshot game: its logs, coop.ini and pack manifest, and the build's logs. A kit-built game has longshot.exe in
+# bin\ and Longshot writes its log and coop.ini into the game folder above it (Get-KitHookshotLogDirs): both looked in.
 . (Join-Path $PSScriptRoot 'kit-paths.ps1')
-$hsExe = Get-KitHookshotExe (Get-KitHookshotGame $kit)
+$hsGame = Get-KitHookshotGame $kit
+$hsExe = Get-KitHookshotExe $hsGame
+$gameLogs = 0
 if ($hsExe) {
-    $hsDir = Split-Path -Parent $hsExe
-    $picked += Get-ChildItem (Join-Path $hsDir '*') -Include 'longshot_log*.txt', 'hookshot_log*.txt' -File -ErrorAction SilentlyContinue | ForEach-Object { @($_.FullName, "hookshot\$($_.Name)") }
-    $picked += @((Join-Path $hsDir 'coop.ini'), 'hookshot\coop.ini')
-    $picked += @((Join-Path $hsDir 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json'), 'hookshot\coop_puppet.json')
+    $hsDirs = @(Get-KitHookshotLogDirs $hsExe)
+    foreach ($hsDir in $hsDirs) {
+        $to = if ($hsDir -ne $hsDirs[0]) { 'hookshot\bin' } else { 'hookshot' }
+        $logs = @(Get-ChildItem (Join-Path $hsDir '*') -Include 'longshot_log*.txt', 'hookshot_log*.txt' -File -ErrorAction SilentlyContinue)
+        $gameLogs += $logs.Count
+        $picked += $logs | ForEach-Object { @($_.FullName, "$to\$($_.Name)") }
+        foreach ($f in 'coop.ini', 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') {
+            $p = Join-Path $hsDir $f
+            if (Test-Path -LiteralPath $p) { $picked += @($p, "$to\$(Split-Path -Leaf $p)") }
+        }
+    }
+    if ($gameLogs -eq 0) {
+        Write-Host "No game log found in $(Protect-LogText ($hsDirs -join ' or ') $mask): start the game once, then run this again."
+    }
+} elseif (-not $hasEmulator) {
+    Write-Host "No game found in $(Protect-LogText $hsGame $mask): the zip has the kit's own logs only."
 }
 $picked += Get-ChildItem (Join-Path $kit 'hookshot') -Filter '*.log' -File -ErrorAction SilentlyContinue | ForEach-Object { @($_.FullName, "hookshot\build\$($_.Name)") }
 if ($WithCrashDumps) {
@@ -108,6 +128,9 @@ if (Test-Path $tar) {
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -Force
 }
 Remove-Item -LiteralPath $stage -Recurse -Force
-Write-Host "Wrote $zip ($($found + 1) files)."
+Write-Host ''
+Write-Host "Wrote $zip"
+Write-Host "  ($($found + 1) files, $gameLogs of them game logs; the folder opens with the zip selected)"
+if (-not $env:CI) { try { Start-Process explorer.exe "/select,`"$zip`"" } catch {} }
 Write-Host 'IP addresses, MAC addresses, passwords, your Windows user name and PC name are masked in it.'
 Write-Host 'Send it privately (a Discord DM to the maintainer). Do not attach it to a public issue.'

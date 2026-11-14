@@ -233,6 +233,15 @@ std::vector<Menu::Line> Menu::Lines() const {
         out.push_back({Toggle("Proximity voice chat", options_.voice), Act::kVoice,
                        "Talk with players near your Link through your microphone; they sound quieter the farther away "
                        "they are. Off: you neither send nor hear voices."});
+        if (options_.voice) {
+            out.push_back({Choice("Voice mode", options_.voice_ptt ? "Push to talk (" + options_.voice_key + ")"
+                                                                    : std::string("Open mic")),
+                           Act::kVoiceMode,
+                           "Open mic: you are heard whenever you speak (silence and quiet noise are not sent). Push "
+                           "to talk: only while you hold " + options_.voice_key +
+                               ". On speakers, not headphones? Push to talk keeps the others' voices from coming "
+                               "back to them through your microphone."});
+        }
         out.push_back({Choice("Chat key", ChatKeyWords(options_.chat_key)), Act::kChatKey,
                        "The key that opens the chat box in the game. Off: no chat box."});
         if (!controller_row_.empty()) {
@@ -628,6 +637,7 @@ void Menu::Decide(Act act) {
         break;
     case Act::kLook:
     case Act::kPlayers:
+    case Act::kVoiceMode:
     case Act::kChatKey:
     case Act::kController:
     case Act::kKeyboard:
@@ -663,6 +673,10 @@ void Menu::Change(Act act, int step) {
     }
     case Act::kVoice:
         options_.voice = step > 0 ? true : step < 0 ? false : !options_.voice;
+        request_ = Request{Request::Kind::kSave, {}};
+        break;
+    case Act::kVoiceMode:   // (two choices: either arrow flips it)
+        options_.voice_ptt = !options_.voice_ptt;
         request_ = Request{Request::Kind::kSave, {}};
         break;
     case Act::kChatKey: {

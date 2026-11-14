@@ -51,6 +51,8 @@
 #include "coop_enemy_shots.h"
 #include "coop_mods_runtime.h"
 #include "coop_hook.h"
+#include "coop_lobby_game.h"
+#include "coop_voice.h"
 #include "coop_hud.h"
 #include "coop_hud_hearts.h"
 #include "coop_link_sound.h"
@@ -741,11 +743,25 @@ CoopDraw::Scene DrawScene() {
             }
         }
     }
+    // The voice icons (docs/voice.md, "Who is talking"): only while voice chat is on here.
+    const bool voice_on = game && CoopVoice::Available() && CoopVoice::Get().mode != coop::voice::Mode::off;
+    const CoopLobby::Seen seen = voice_on ? CoopLobby::Now() : CoopLobby::Seen{};
+    const auto voice_muted = [&](std::uint8_t number) {
+        for (const auto& p : seen.players) {
+            if (p.number == number) {
+                return ((p.host_mutes | (p.self ? 0 : p.own_mutes)) & coop::protocol::lobby_mute::voice) != 0;
+            }
+        }
+        return false;
+    };
     for (const auto& row : game ? rows : std::vector<CoopHook::PlayerRow>{}) {
         if (row.self) {
+            s.own_voice = CoopVoice::IconFor(voice_on, CoopVoice::Get().muted || voice_muted(row.number),
+                                             CoopVoice::Talking(), true);
             continue;
         }
         CoopDraw::HudBlock b;
+        b.voice = CoopVoice::IconFor(voice_on, voice_muted(row.number), CoopVoice::Speaking(row.number), false);
         b.name = row.name.empty() ? "Player " + std::to_string(row.number) : row.name;
         if (row.scene && !row.scene->empty()) {
             b.place = CoopHud::PlaceName(*row.scene);

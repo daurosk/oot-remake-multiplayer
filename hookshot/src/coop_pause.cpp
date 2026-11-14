@@ -308,7 +308,9 @@ void Save() {
     if (!live) {
         CoopFiles::SetCoopEnvironment(g_menu.options());   // co-op has not started: they count for this run
     }
-    CoopVoice::SetEnabled(g_menu.options().voice);   // voice chat on/off counts at once (ptt when on)
+    CoopVoice::SetMode(!g_menu.options().voice     ? coop::voice::Mode::off
+                       : g_menu.options().voice_ptt ? coop::voice::Mode::push_to_talk
+                                                    : coop::voice::Mode::open_mic);   // voice chat and its mode count at once
     CoopHookshot::SetChatKey(g_menu.options().chat_key);   // the chat key too
     CoopHookshot::SetMapOptions(g_menu.options().map_players, g_menu.options().map_names);   // at once too
     LOG_INFO(Core, "coop: multiplayer tab: settings saved{}{}", ok ? "" : " (a file could not be written)",

@@ -42,9 +42,11 @@ Gate::Step Gate::update(std::span<const std::int16_t> frame, bool key_held, bool
       }
       break;
     case Mode::open_mic: {
-      const bool speech = level_db_ > config_.threshold_db &&
-                          level_db_ > floor_db_ + config_.above_floor_db;
-      if (speech) {
+      const float raise = hearing_ ? config_.hearing_raise_db : 0.0f;
+      const bool speech = level_db_ > config_.threshold_db + raise &&
+                          level_db_ > floor_db_ + config_.above_floor_db + raise;
+      attack_ = speech ? attack_ + 1 : 0;
+      if (speech && (open_ || attack_ >= std::max(1, config_.attack_frames))) {
         hold_ = config_.hangover_frames;
         want = true;
       } else if (open_ && hold_ > 0) {
@@ -62,6 +64,7 @@ Gate::Step Gate::update(std::span<const std::int16_t> frame, bool key_held, bool
   if (open_) {
     open_ = false;
     hold_ = 0;
+    attack_ = 0;
     return Step::ended;
   }
   return Step::closed;

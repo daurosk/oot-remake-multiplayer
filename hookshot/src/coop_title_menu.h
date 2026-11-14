@@ -75,8 +75,9 @@ struct Options {
     bool debug_panel = false;      // LICHII_COOP_DEBUG_PANEL
     bool cheats = false;           // LICHII_COOP_CHEATS
     int max_players = 4;           // max_players (the host's: 2 to kMaxPlayers)
-    bool voice = false;            // LICHII_COOP_VOICE (ptt or open: proximity voice chat; unset, the default: off)
-    std::string voice_in_file;     // that line's value as read ("open" written by hand stays open while voice is on)
+    bool voice = false;            // LICHII_COOP_VOICE (open or ptt: proximity voice chat; unset, the default: off)
+    bool voice_ptt = false;        // LICHII_COOP_VOICE=ptt: push to talk; else open mic, the default once voice is on
+    std::string voice_key = "V";   // LICHII_COOP_VOICE_KEY as the Voice mode row names it (read only)
     bool map_players = true;       // LICHII_COOP_MAP (0: no other players on the minimap and the pause map)
     bool map_names = true;         // LICHII_COOP_MAP_NAMES (0: their icons without names)
 
@@ -88,7 +89,7 @@ struct Options {
     // launcher sets them from coop-options.ini (name, "" = not set), so they
     // count for this run when co-op has not started yet.
     std::vector<std::pair<std::string, std::string>> Environment() const;
-    // LICHII_COOP_VOICE's value while voice is on: "open" when the file said so, else "ptt" (V to talk).
+    // LICHII_COOP_VOICE's value while voice is on: "ptt" for push to talk, else "open" (open mic).
     std::string VoiceMode() const;
 };
 

@@ -279,8 +279,19 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     }
     o.debug_panel = On(IniGet(options_ini, "LICHII_COOP_DEBUG_PANEL"));
     o.cheats = On(IniGet(options_ini, "LICHII_COOP_CHEATS"));
-    o.voice_in_file = IniGet(options_ini, "LICHII_COOP_VOICE").value_or("");
-    o.voice = On(o.voice_in_file);
+    {
+        const auto v = IniGet(options_ini, "LICHII_COOP_VOICE");
+        o.voice = On(v);
+        std::string m(Trim(v.value_or("")));
+        std::transform(m.begin(), m.end(), m.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        o.voice_ptt = m == "ptt" || m == "push" || m == "push-to-talk";   // (on, 1, open: open mic)
+        const std::string k(Trim(IniGet(options_ini, "LICHII_COOP_VOICE_KEY").value_or("")));
+        if (k.size() == 1 && std::isalnum(static_cast<unsigned char>(k[0]))) {
+            o.voice_key = std::string(1, static_cast<char>(std::toupper(static_cast<unsigned char>(k[0]))));
+        } else if (!k.empty()) {
+            o.voice_key = "your key";   // (a key code: coop_voice's SettingsFrom reads it)
+        }
+    }
     o.map_players = !Off(IniGet(options_ini, "LICHII_COOP_MAP"));
     o.map_names = !Off(IniGet(options_ini, "LICHII_COOP_MAP_NAMES"));
     if (const auto v = IniGet(options_ini, "max_players"); v && !v->empty() && v->size() <= 2 &&
@@ -305,12 +316,8 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     o = password.empty() ? IniUnset(o, "server_password") : IniSet(o, "server_password", password, true);
     o = debug_panel ? IniSet(o, "LICHII_COOP_DEBUG_PANEL", "1", false) : IniUnset(o, "LICHII_COOP_DEBUG_PANEL");
     o = cheats ? IniSet(o, "LICHII_COOP_CHEATS", "1", false) : IniUnset(o, "LICHII_COOP_CHEATS");
-    // (voip-101: ptt = on, the line gone = off, the default; "open" written by hand stays as it is)
-    if (!voice) {
-        o = IniUnset(o, "LICHII_COOP_VOICE");
-    } else if (!On(IniGet(o, "LICHII_COOP_VOICE"))) {
-        o = IniSet(o, "LICHII_COOP_VOICE", VoiceMode(), false);
-    }
+    // (voice-mode: open = on with open mic, ptt = push to talk, the line gone = off, the default)
+    o = voice ? IniSet(o, "LICHII_COOP_VOICE", VoiceMode(), false) : IniUnset(o, "LICHII_COOP_VOICE");
     o = IniSet(o, "max_players", std::to_string(std::clamp(max_players, kMinPlayers, kMaxPlayers)), true);
     o = map_players ? IniUnset(o, "LICHII_COOP_MAP") : IniSet(o, "LICHII_COOP_MAP", "0", false);
     o = map_names ? IniUnset(o, "LICHII_COOP_MAP_NAMES") : IniSet(o, "LICHII_COOP_MAP_NAMES", "0", false);
@@ -332,11 +339,7 @@ std::vector<std::pair<std::string, std::string>> Options::Environment() const {
     };
 }
 
-std::string Options::VoiceMode() const {
-    std::string s(Trim(voice_in_file));
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return s == "open" ? "open" : "ptt";
-}
+std::string Options::VoiceMode() const { return voice_ptt ? "ptt" : "open"; }
 
 std::string CoopIniFor(std::string_view coop_ini, std::string_view server, std::string_view name,
                        std::string_view password) {

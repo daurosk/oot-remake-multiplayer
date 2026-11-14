@@ -39,10 +39,10 @@ Settings SettingsFrom(const std::function<std::string(const char*)>& env,
     if (const std::string mode = Lower(env("LICHII_COOP_VOICE")); !mode.empty()) {
         if (mode == "off" || mode == "0" || mode == "no" || mode == "false") {
             s.mode = coop::voice::Mode::off;
-        } else if (mode == "ptt" || mode == "push" || mode == "push-to-talk" || mode == "1" ||
-                   mode == "on" || mode == "yes" || mode == "true") {  // "on": the menu's On row
+        } else if (mode == "ptt" || mode == "push" || mode == "push-to-talk") {
             s.mode = coop::voice::Mode::push_to_talk;
-        } else if (mode == "open" || mode == "open-mic") {
+        } else if (mode == "open" || mode == "open-mic" || mode == "1" || mode == "on" || mode == "yes" ||
+                   mode == "true") {  // on: open mic, the default once voice is on (voice-mode)
             s.mode = coop::voice::Mode::open_mic;
         } else {
             errors.push_back("LICHII_COOP_VOICE '" + mode + "' is not off, ptt or open");
@@ -98,9 +98,40 @@ Settings WithEnabled(Settings s, bool on) {
     if (!on) {
         s.mode = coop::voice::Mode::off;
     } else if (s.mode == coop::voice::Mode::off) {
-        s.mode = coop::voice::Mode::push_to_talk;
+        s.mode = coop::voice::Mode::open_mic;
     }
     return s;
+}
+
+std::string KeyName(std::uint32_t vk) {
+    if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) {
+        return std::string(1, static_cast<char>(vk));
+    }
+    return "the push-to-talk key";
+}
+
+std::string TurnedOnTip(const Settings& s) {
+    switch (s.mode) {
+    case coop::voice::Mode::open_mic:
+        return "Voice chat on: open mic (change to push-to-talk in Settings)";
+    case coop::voice::Mode::push_to_talk:
+        return "Voice chat on: hold " + KeyName(s.key) + " to talk (change to open mic in Settings)";
+    default:
+        return {};
+    }
+}
+
+Icon IconFor(bool voice_on, bool muted, bool active, bool self) {
+    if (!voice_on) {
+        return Icon::none;
+    }
+    if (muted) {
+        return Icon::muted;
+    }
+    if (active) {
+        return Icon::talking;
+    }
+    return self ? Icon::idle : Icon::none;
 }
 
 coop::voice::Settings EngineSettings(const Settings& s, bool camera_known) {
@@ -199,6 +230,7 @@ std::string HeardLine(std::uint8_t player, bool heard, std::optional<float> dist
 #include <atomic>
 #include <chrono>
 #include <mutex>
+#include <utility>
 
 #include "common/logging.h"
 #include "coop/host/session.hpp"
@@ -221,6 +253,8 @@ Settings g_settings;
 bool g_settings_read = false;
 bool g_camera_known = false;
 bool g_mic_on = false;
+bool g_tip_given = false;   // the turned-on tip: once a run
+std::string g_notice;       // for the chat (TakeNotice)
 std::atomic<std::uint64_t> g_mic_said{0};
 std::atomic<bool> g_mic_opened{false};
 
@@ -254,6 +288,13 @@ void ReadSettingsOnce() {  // under g_mutex
     g_settings = SettingsFrom(EnvOf, errors);
     for (const auto& e : errors) {
         LOG_WARNING(Core, "coop: voice: {}", e);
+    }
+}
+
+void TipOnce() {  // under g_mutex: voice is on now
+    if (!g_tip_given && g_settings.mode != coop::voice::Mode::off && g_backend.codecs.encoder) {
+        g_tip_given = true;
+        g_notice = TurnedOnTip(g_settings);
     }
 }
 
@@ -309,6 +350,7 @@ void SetBackend(Backend backend) {
     } else {
         LOG_INFO(Core, "coop: voice: on ({}, key {:#x}, range {} m, volume {}%)", ModeName(g_settings.mode),
                  g_settings.key, g_settings.range_m, static_cast<int>(g_settings.volume * 100.0f));
+        TipOnce();
     }
 }
 
@@ -336,6 +378,7 @@ void SetLocked(const Settings& settings) {
     }
     if (mode_changed) {
         LOG_INFO(Core, "coop: voice: now {}", ModeName(g_settings.mode));
+        TipOnce();
     }
 }
 
@@ -353,6 +396,19 @@ void SetEnabled(bool on) {
     std::lock_guard lock(g_mutex);   // one step: a Set from another thread cannot slip in between
     ReadSettingsOnce();
     SetLocked(WithEnabled(g_settings, on));
+}
+
+void SetMode(coop::voice::Mode mode) {
+    std::lock_guard lock(g_mutex);
+    ReadSettingsOnce();
+    Settings next = g_settings;
+    next.mode = mode;
+    SetLocked(next);
+}
+
+std::string TakeNotice() {
+    std::lock_guard lock(g_mutex);
+    return std::exchange(g_notice, {});
 }
 
 void OnEvent(const coop::net::Event& event) {

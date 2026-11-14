@@ -221,3 +221,26 @@ TEST_CASE("voice engine: the volume scales every voice, a player's own volume sc
   const float two = render(e2, 8, 0).peak(0);
   CHECK(two == doctest::Approx(one * 2.0f).epsilon(0.02));
 }
+
+TEST_CASE("voice engine: open mic needs a louder voice while the others play here (the echo guard)") {
+  auto capture_quiet_voice = [](bool hearing) {
+    Engine e(fake_codecs());
+    Settings s;
+    s.gate.mode = Mode::open_mic;
+    e.configure(s);
+    std::vector<proto::VoiceFrame> out;
+    e.capture(std::vector<std::int16_t>(960 * 50, 20), false, out);  // a quiet room, -64 dBFS
+    CHECK(out.empty());
+    if (hearing) {
+      e.set_listener(Listener{});
+      e.set_speaker(2, Vec3{1, 0, 0});
+      for (std::uint16_t i = 0; i < 6; ++i) e.receive(frame_from(2, i, 16384), 0);
+      render(e, 8, 0);
+      CHECK(e.speaking(2, 35'000));
+    }
+    e.capture(std::vector<std::int16_t>(960 * 3, 200), false, out);  // -44 dBFS: their voice from our speakers
+    return out.size();
+  };
+  CHECK(capture_quiet_voice(false) > 0);   // nobody heard: that level is speech
+  CHECK(capture_quiet_voice(true) == 0);   // their voice playing: not sent back
+}

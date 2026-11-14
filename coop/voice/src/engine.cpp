@@ -8,7 +8,7 @@ namespace coop::voice {
 
 namespace {
 
-constexpr std::uint64_t kSpeakingUs = 250'000;
+constexpr std::uint64_t kSpeakingUs = 300'000;
 
 }  // namespace
 
@@ -55,6 +55,10 @@ void Engine::capture(std::span<const std::int16_t> samples, bool key_held,
                      std::vector<protocol::VoiceFrame>& out) {
   const Settings s = settings();
   gate_.configure(s.gate);
+  // Open mic's echo guard: the others' voices played here just now.
+  const std::uint64_t heard = any_heard_us_.load();
+  const std::uint64_t now = render_us_.load();
+  gate_.set_hearing(heard != 0 && now >= heard && now - heard < kSpeakingUs);
   pending_.insert(pending_.end(), samples.begin(), samples.end());
   std::size_t at = 0;
   std::array<std::uint8_t, protocol::kMaxVoiceBytes> packet{};
@@ -182,6 +186,7 @@ bool Engine::fill(Speaker& s, std::uint64_t now_us) {
 void Engine::render(float* const* out, int channels, int frames, std::uint64_t now_us) {
   if (out == nullptr || frames <= 0 || (channels != 2 && channels != 6)) return;
   const Settings set = settings();
+  render_us_.store(now_us);
   Listener listener;
   {
     std::lock_guard lock(listener_mutex_);
@@ -214,7 +219,10 @@ void Engine::render(float* const* out, int channels, int frames, std::uint64_t n
     if (s.position && !set.deafened) now = place(listener, *s.position, set.spatial);
     const float pv = set.player_volume[p] > 0.0f ? set.player_volume[p] : 1.0f;
     const float volume = std::clamp(set.volume, 0.0f, 2.0f) * std::clamp(pv, 0.0f, 2.0f);
-    if (voice && now.audible && volume > 0.0f) s.heard_us.store(now_us == 0 ? 1 : now_us);
+    if (voice && now.audible && volume > 0.0f) {
+      s.heard_us.store(now_us == 0 ? 1 : now_us);
+      any_heard_us_.store(now_us == 0 ? 1 : now_us);
+    }
     const Placement from = s.placed;
     s.placed = now;
     if (!now.audible && !from.audible) continue;

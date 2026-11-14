@@ -751,6 +751,10 @@ public:
             LOG_INFO(Core, "coop: notice: {}", line);
             chat_.Add(std::move(line), true);
         }
+        if (auto line = CoopVoice::TakeNotice(); !line.empty()) {   // voice chat turned on: how it works
+            LOG_INFO(Core, "coop: notice: {}", line);
+            chat_.Add(std::move(line), true);
+        }
         // Chests opened and pickups taken in another game: what is loaded of
         // them goes here too (docs/items.md, "Chests").
         // Issue 146: a map or compass the game took back, put back.

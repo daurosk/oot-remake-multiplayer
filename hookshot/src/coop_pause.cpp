@@ -68,7 +68,7 @@ bool g_answer_copied = false;   // this join's answer code (WAIT_HOST) was put o
 std::string g_answer_note;   // what became of the friend's answer code the host pasted ("" when none)
 std::string g_join_text;     // the code (or address) this join used: remembered once connected
 bool g_join_saved = false;
-std::vector<std::string> g_lan_lines;   // "Same network or VPN"'s lines while they are shown
+std::vector<std::string> g_lan_lines;   // "Same network"'s or "VPN"'s lines while they are shown
 std::uint64_t g_next_session_ms = 0;
 std::atomic<int> g_wanted{HOS_COOP_MENU_WANT_NOTHING};
 
@@ -349,18 +349,21 @@ void CycleInput(bool controller) {
     }
 }
 
-void CopyLan() {
-    // The address and the join password for a friend on the host's home network or VPN (never logged).
+// The address and the join password for a friend on the host's home network (Same network) or on a VPN with the
+// host (VPN): the first address's line on the clipboard (never logged).
+void CopyLan(bool vpn) {
     const HosCoopStatus st = Status();
     if (st.state != HOS_COOP_HOSTING || st.port == 0) {
         g_menu.SetNote({"The server is not running yet."});
         return;
     }
-    const auto addresses = CoopTitleMenu::LanAddresses(CoopFiles::LocalIpv4s());
+    const CoopTitleMenu::LanSplit split = CoopTitleMenu::SplitLan(CoopFiles::LocalCards());
+    const auto& addresses = vpn ? split.vpn : split.home;
     const bool copied = !addresses.empty() &&
                         SetClipboardText(CoopTitleMenu::LanJoinText(addresses.front().address, st.port, st.password));
-    g_lan_lines = CoopTitleMenu::LanLines(addresses, st.port, st.password, copied);
-    LOG_INFO(Core, "coop: multiplayer tab: host: same network or VPN: {} address(es){}", addresses.size(),
+    g_lan_lines = vpn ? CoopTitleMenu::VpnLines(addresses, st.port, st.password, copied)
+                      : CoopTitleMenu::HomeLines(addresses, st.port, st.password, copied);
+    LOG_INFO(Core, "coop: multiplayer tab: host: {}: {} address(es){}", vpn ? "VPN" : "same network", addresses.size(),
              copied ? ", the join line is on the clipboard" : "");
     RefreshSession(true);
 }
@@ -373,7 +376,7 @@ void PasteAnswer() {
         g_menu.SetNote({st.state != HOS_COOP_HOSTING
                             ? "Host a game first: a friend's answer code is pasted while you host."
                             : "There is no invite code this time, so no answer code: friends on the same network or "
-                              "VPN use Same network or VPN."});
+                              "a VPN use the Same network or VPN row."});
         return;
     }
     const auto now = static_cast<std::uint64_t>(
@@ -421,7 +424,8 @@ void Act(const Request& r) {
         break;
     case Request::Kind::kCopyAnswer: Copy(Status().answer, "answer code"); break;
     case Request::Kind::kPasteAnswer: PasteAnswer(); break;
-    case Request::Kind::kCopyLan: CopyLan(); break;
+    case Request::Kind::kCopyLan: CopyLan(false); break;
+    case Request::Kind::kCopyVpn: CopyLan(true); break;
     case Request::Kind::kController: CycleInput(true); break;
     case Request::Kind::kKeyboard: CycleInput(false); break;
     }

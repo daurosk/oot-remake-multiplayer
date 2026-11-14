@@ -22,10 +22,12 @@
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <iphlpapi.h>
 #else
 #include <arpa/inet.h>
 #include <sys/wait.h>
 #include <ifaddrs.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #endif
 
@@ -325,6 +327,67 @@ std::vector<std::string> LocalIpv4s() {
         for (const ifaddrs* i = list; i != nullptr; i = i->ifa_next) {
             if (i->ifa_addr != nullptr && i->ifa_addr->sa_family == AF_INET) {
                 add(reinterpret_cast<const sockaddr_in*>(i->ifa_addr)->sin_addr);
+            }
+        }
+        freeifaddrs(list);
+    }
+#endif
+    return out;
+}
+
+
+std::vector<CoopTitleMenu::LocalCard> LocalCards() {
+    std::vector<CoopTitleMenu::LocalCard> out;
+    const auto text_of = [](const in_addr& a) {
+        char text[INET_ADDRSTRLEN] = {};
+        return inet_ntop(AF_INET, &a, text, sizeof text) != nullptr ? std::string(text) : std::string();
+    };
+#ifdef _WIN32
+    ULONG size = 16 * 1024;
+    std::vector<unsigned char> buf;
+    ULONG r = ERROR_BUFFER_OVERFLOW;
+    for (int tries = 0; tries < 3 && r == ERROR_BUFFER_OVERFLOW; ++tries) {
+        buf.resize(size);
+        r = GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_GATEWAYS | GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
+                                              GAA_FLAG_SKIP_DNS_SERVER,
+                                 nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()), &size);
+    }
+    if (r != NO_ERROR) {
+        for (const std::string& a : LocalIpv4s()) {   // the system did not say: addresses without card names
+            out.push_back({a, {}, false});
+        }
+        return out;
+    }
+    for (auto* ad = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()); ad != nullptr; ad = ad->Next) {
+        if (ad->OperStatus != IfOperStatusUp || ad->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
+            continue;
+        }
+        std::string name = ad->FriendlyName != nullptr ? Narrow(ad->FriendlyName) : std::string();
+        if (ad->Description != nullptr) {
+            name += " | " + Narrow(ad->Description);
+        }
+        const bool gateway = ad->FirstGatewayAddress != nullptr;
+        for (auto* u = ad->FirstUnicastAddress; u != nullptr; u = u->Next) {
+            const sockaddr* sa = u->Address.lpSockaddr;
+            if (sa != nullptr && sa->sa_family == AF_INET) {
+                const std::string a = text_of(reinterpret_cast<const sockaddr_in*>(sa)->sin_addr);
+                if (!a.empty()) {
+                    out.push_back({a, name, gateway});
+                }
+            }
+        }
+    }
+#else
+    ifaddrs* list = nullptr;
+    if (getifaddrs(&list) == 0) {
+        for (const ifaddrs* i = list; i != nullptr; i = i->ifa_next) {
+            if (i->ifa_addr != nullptr && i->ifa_addr->sa_family == AF_INET && (i->ifa_flags & IFF_UP) != 0 &&
+                (i->ifa_flags & IFF_LOOPBACK) == 0) {
+                const std::string a = text_of(reinterpret_cast<const sockaddr_in*>(i->ifa_addr)->sin_addr);
+                if (!a.empty()) {
+                    // Linux names no router per card here: the home row keeps the system's order.
+                    out.push_back({a, i->ifa_name != nullptr ? i->ifa_name : "", false});
+                }
             }
         }
         freeifaddrs(list);

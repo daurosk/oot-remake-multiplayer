@@ -22,7 +22,7 @@ The kit has one file to start: **`Start OoT Co-op.bat`**. Everything else is don
 3. **Double-click `Start OoT Co-op.bat`** in that folder. A window opens and checks the kit first (see [If something goes wrong](#if-something-goes-wrong)).
 4. **The first time, give it your game.** It asks you to drag your game's `.nup` file into the window and press Enter (for a `romfs` folder it then asks for the `exefs` folder). It remembers the file; it never asks again. Then it builds the game: **10 to 45 minutes, once**. The window shows each stage; the PC stays usable. It also makes the puppet pack (the other players' Link and tunic colours) from your game, and puts a **Play OoT Co-op** shortcut on your desktop.
 5. **The game starts.** On the title screen, **Host** and **Join** are under the game's own rows (**Minus** opens them if they are not there).
-   - **Host:** one press. The invite code is copied for you: send it to your friends (Discord, a text). For friends in the same house or on a VPN, the Host screen has **Same network or VPN**.
+   - **Host:** one press. The Host screen's first line says it: *Invite code copied to your clipboard. Send it to your friends, or pick another way to host below.* Send the code (Discord, a text); that is all most hosts need. Below it: **Paste friend's answer (or Ctrl+V)** when a friend's game shows an answer code, **Same network** for friends in the same house, **VPN** for friends on Radmin VPN, Hamachi, ZeroTier, Tailscale or WireGuard with you.
    - **Join:** paste your friend's code (it is filled in already when it is on your clipboard), then OK.
    - **Co-op Settings:** your name, your colour, the number of players when you host, voice chat.
 6. **Next time**, double-click `Start OoT Co-op.bat` or the desktop shortcut: the game starts in seconds.
@@ -71,7 +71,7 @@ The start window says what is wrong and what to do. What it checks:
 - **Not enough space:** the build warns below about 60 GB free. Free some space, or move the kit to a bigger drive.
 - **Note: another co-op kit is on this PC.** An older kit folder: you can delete it once this one works. The new kit takes your game file from it, so it does not ask again.
 - **The game closes at the start or the screen goes black:** check that your card has mesh shaders (above) and that its driver is up to date. Longshot's own open problems are on [Longshot's page](https://git.magicbean.dev/MagicBeanDev/Longshot/issues). To try the game without co-op, set `HOS_COOP=0` before starting `longshot.exe`; if it crashes without co-op too, it is Longshot's problem, not co-op's.
-- **Host or Join says a router blocks the way in**, or friends cannot reach you: the Host screen says what to do (the answer code, UPnP, **Same network or VPN**); [play-online.md](play-online.md) has more.
+- **Host or Join says a router blocks the way in**, or friends cannot reach you: the Host screen says what to do (the answer code, UPnP, **Same network**, **VPN**); [play-online.md](play-online.md) has more.
 
 ## In the game, saves, the emulator kit
 

@@ -8,7 +8,7 @@ One player is the **host**: their PC runs the server, and they play on it too. T
 
 With Host and Join on the title screen (no `.bat` file):
 
-1. **The host** opens **Host** on the title screen, then chooses **Same network or VPN**. The game shows one line, for example `192.168.1.20:27510 abcdefghijklmnopqrst` (this PC's address and port, a space, the session's join password), and has copied it. With a VPN program running, its address comes first (Radmin VPN `26.x.x.x`, Hamachi `25.x.x.x`, Tailscale `100.x.x.x`).
+1. **The host** opens **Host** on the title screen, then chooses **Same network** (friends in the same house) or **VPN** (friends on Radmin VPN, Hamachi, ZeroTier, Tailscale or WireGuard with you). The game shows one line, for example `192.168.1.20:27510 abcdefghijklmnopqrst` (this PC's address and port, a space, the session's join password), and has copied it. **VPN** finds the VPN program's network card by its name and uses its address (Radmin VPN `26.x.x.x`, Hamachi `25.x.x.x`, Tailscale `100.x.x.x`, ZeroTier and WireGuard whatever they give); with no VPN running it says **No VPN found**.
 2. The host pastes that line into a chat with the friends (Ctrl+V). It holds the join password, so keep it among friends.
 3. **The others** open **Join** on the title screen and paste the line where the invite code goes (A on the field, or Ctrl+V), then **OK**. Nothing else to type.
 4. If Windows asks about the firewall on the host's PC, allow the game on private networks.

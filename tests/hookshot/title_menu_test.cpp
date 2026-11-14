@@ -181,9 +181,14 @@ TEST_CASE("title menu: Host and Join in plain words, nothing about ports or pass
     h.players = 1;
     auto s = PlainStatus(h);
     REQUIRE(s.size() >= 3);
-    CHECK(s[0] == "Send this code to your friends:");
+    // First: the invite code is the way to host (it is on the clipboard); the other rows come after.
+    CHECK(s[0] == "Invite code copied to your clipboard. Send it to your friends, or pick another way to host below.");
     CHECK(s[1] == "ABCDE-FGHJK");
-    CHECK(s[2].find("copied") != std::string::npos);
+    CHECK(s[2] == "Waiting for your friends to join...");
+    h.copied = false;
+    CHECK(PlainStatus(h)[0].find("Send it to your friends") != std::string::npos);
+    CHECK(PlainStatus(h)[2].find("Copy the code again") != std::string::npos);
+    h.copied = true;
     h.players = 3;
     CHECK(PlainStatus(h).back() == "2 friend(s) joined.");
     h.invite.clear();
@@ -400,6 +405,64 @@ TEST_CASE("Same network or VPN: the addresses a friend can use, and the line Joi
     const auto none = LanLines({}, 27510, "x", false);
     REQUIRE(none.size() == 2);
     CHECK(none[1].find("VPN program") != std::string::npos);
+}
+
+TEST_CASE("Same network and VPN: two rows, the VPN found by its card's name") {
+    using namespace CoopTitleMenu;
+    CHECK(VpnLabel("Radmin VPN | Famatech Radmin VPN Ethernet Adapter") == "Radmin VPN");
+    CHECK(VpnLabel("Hamachi | LogMeIn Hamachi Virtual Ethernet Adapter") == "Hamachi");
+    CHECK(VpnLabel("ham0") == "Hamachi");
+    CHECK(VpnLabel("ZeroTier One [8056c2e21c000001] | ZeroTier Virtual Port") == "ZeroTier");
+    CHECK(VpnLabel("ztc3qb6hok") == "ZeroTier");
+    CHECK(VpnLabel("Tailscale | Tailscale Tunnel") == "Tailscale");
+    CHECK(VpnLabel("tailscale0") == "Tailscale");
+    CHECK(VpnLabel("wg0") == "WireGuard");
+    CHECK(VpnLabel("Office | WireGuard Tunnel") == "WireGuard");
+    CHECK(VpnLabel("Wi-Fi | Intel(R) Wi-Fi 6 AX201 160MHz").empty());
+    CHECK(VpnLabel("Ethernet | Realtek PCIe GbE Family Controller").empty());
+    CHECK(VpnLabel("eth0").empty());
+    CHECK(VpnLabel("wlan0").empty());
+    CHECK(VpnLabel("").empty());
+
+    // A ZeroTier card on a private range is a VPN, not the home network; the card with the router comes first.
+    const LanSplit split = SplitLan({
+        {"127.0.0.1", "Loopback Pseudo-Interface 1", false},
+        {"192.168.56.1", "Ethernet 2 | VirtualBox Host-Only Ethernet Adapter", false},
+        {"192.168.1.20", "Wi-Fi | Intel(R) Wi-Fi 6", true},
+        {"10.147.17.5", "ZeroTier One [8056c2e21c000001] | ZeroTier Virtual Port", false},
+        {"26.12.34.56", "Radmin VPN | Famatech Radmin VPN Ethernet Adapter", false},
+        {"169.254.7.7", "Ethernet 3", false},
+        {"192.168.1.20", "Wi-Fi | Intel(R) Wi-Fi 6", true},
+    });
+    REQUIRE(split.home.size() == 2);
+    CHECK(split.home[0].address == "192.168.1.20");
+    CHECK(split.home[1].address == "192.168.56.1");
+    REQUIRE(split.vpn.size() == 2);
+    CHECK(split.vpn[0].address == "10.147.17.5");
+    CHECK(split.vpn[0].label == "ZeroTier");
+    CHECK(split.vpn[1].label == "Radmin VPN");
+    // No card names (the system did not say): the address range, as before.
+    const LanSplit bare = SplitLan({{"25.1.2.3", "", false}, {"192.168.0.9", "", false}, {"8.8.8.8", "", false}});
+    REQUIRE(bare.vpn.size() == 1);
+    CHECK(bare.vpn[0].label == "Hamachi");
+    REQUIRE(bare.home.size() == 1);
+    CHECK(bare.home[0].address == "192.168.0.9");
+
+    const auto home = HomeLines(split.home, 27510, "pw", true);
+    CHECK(home[0].find("home network") != std::string::npos);
+    CHECK(home[1] == "192.168.1.20:27510 pw");
+    CHECK(home[2].find("copied") != std::string::npos);
+    CHECK(home[3] == "Or with another address in front: 192.168.56.1");
+    const auto vpn = VpnLines(split.vpn, 27510, "pw", false);
+    CHECK(vpn[0].find("ZeroTier") != std::string::npos);
+    CHECK(vpn[1] == "10.147.17.5:27510 pw");
+    CHECK(vpn[2].find("exactly as it is") != std::string::npos);
+    CHECK(vpn[3] == "Or with another address in front: 26.12.34.56 (Radmin VPN)");
+    const auto no_vpn = VpnLines({}, 27510, "pw", false);
+    CHECK(no_vpn[0] == "No VPN found.");
+    CHECK(HomeLines({}, 27510, "pw", false)[0].find("No home-network address") != std::string::npos);
+    CHECK(HostHeadline(true) ==
+          "Invite code copied to your clipboard. Send it to your friends, or pick another way to host below.");
 }
 
 TEST_CASE("title menu: players on the map are on unless turned off: off writes 0, on takes the line away") {

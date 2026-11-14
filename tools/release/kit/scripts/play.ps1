@@ -208,7 +208,7 @@ if ($Mode -eq 'title') {
         $(if ($hsOnly) { '  It is made from your game file (the one hookshot\game-files.txt names): put that file back, then start again.' } else { '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").' })))
     [void](Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru)
     Write-Host 'Game started. Host or Join in the game''s menu, first tab Multiplayer (controller: Minus and Plus together, or Home;'
-    Write-Host 'keyboard: F1; on the title screen Minus alone). Same house or a VPN: Host, then "Same network or VPN".'
+    Write-Host 'keyboard: F1; on the title screen Minus alone). Same house: Host, then "Same network". On a VPN: Host, then "VPN".'
     if (-not $hsOnly) { Write-Host 'Host-Hookshot.bat and Join-Hookshot.bat still host or join from a window like this one instead.' }
     exit 0
 }

@@ -506,6 +506,130 @@ std::vector<std::string> LanLines(const std::vector<LanAddress>& addresses, std:
     return out;
 }
 
+std::string VpnLabel(std::string_view adapter) {
+    std::string a;
+    for (const char c : adapter) {
+        a.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    const auto has = [&a](std::string_view s) { return a.find(s) != std::string::npos; };
+    const auto starts = [&a](std::string_view s) {
+        return a.size() > s.size() && a.compare(0, s.size(), s) == 0 &&
+               std::isdigit(static_cast<unsigned char>(a[s.size()])) != 0;
+    };
+    if (has("radmin")) {
+        return "Radmin VPN";
+    }
+    if (has("hamachi") || starts("ham")) {
+        return "Hamachi";
+    }
+    if (has("zerotier") || (a.size() > 2 && a.compare(0, 2, "zt") == 0 && a.find(' ') == std::string::npos)) {
+        return "ZeroTier";
+    }
+    if (has("tailscale")) {
+        return "Tailscale";
+    }
+    if (has("wireguard") || starts("wg")) {
+        return "WireGuard";
+    }
+    return {};
+}
+
+namespace {
+// A dotted IPv4 a friend's PC could reach over some network: not 0.x, loopback, link-local or multicast.
+bool Reachable(std::string_view ipv4) {
+    int part[4] = {0, 0, 0, 0};
+    int n = 0;
+    bool digit = false;
+    for (const char c : ipv4) {
+        if (c >= '0' && c <= '9') {
+            part[n] = part[n] * 10 + (c - '0');
+            digit = true;
+            if (part[n] > 255) {
+                return false;
+            }
+        } else if (c == '.' && digit && n < 3) {
+            ++n;
+            digit = false;
+        } else {
+            return false;
+        }
+    }
+    return n == 3 && digit && part[0] != 0 && part[0] != 127 && part[0] < 224 && !(part[0] == 169 && part[1] == 254);
+}
+
+std::vector<std::string> AddressLines(const std::vector<LanAddress>& a, std::uint16_t port, std::string_view password,
+                                      bool copied) {
+    std::vector<std::string> out = {
+        "Friends on your " + a.front().label + " paste this line in Join (address and password):",
+        LanJoinText(a.front().address, port, password),
+        copied ? "It is copied: paste it into your chat with them (Ctrl+V)."
+               : "Type it into your chat with them, exactly as it is."};
+    if (a.size() > 1) {
+        std::string other = "Or with another address in front:";
+        for (std::size_t i = 1; i < a.size() && i < 4; ++i) {
+            other += " " + a[i].address + (a[i].label == a.front().label ? "" : " (" + a[i].label + ")");
+        }
+        out.push_back(other);
+    }
+    out.push_back("If Windows asks about the firewall, allow the game on private networks.");
+    return out;
+}
+}  // namespace
+
+LanSplit SplitLan(const std::vector<LocalCard>& cards) {
+    LanSplit out;
+    std::vector<LanAddress> home_routed;
+    std::vector<LanAddress> home_other;
+    const auto seen = [&](const std::string& address) {
+        const auto same = [&address](const LanAddress& x) { return x.address == address; };
+        return std::any_of(out.vpn.begin(), out.vpn.end(), same) ||
+               std::any_of(home_routed.begin(), home_routed.end(), same) ||
+               std::any_of(home_other.begin(), home_other.end(), same);
+    };
+    for (const LocalCard& c : cards) {
+        if (!Reachable(c.address) || seen(c.address)) {
+            continue;
+        }
+        std::string vpn = VpnLabel(c.adapter);
+        const std::string range = LanLabel(c.address);
+        if (vpn.empty() && c.adapter.empty() && !range.empty() && range != "home network") {
+            vpn = range;   // no card name to go by: the address range says which VPN
+        }
+        if (!vpn.empty()) {
+            out.vpn.push_back(LanAddress{c.address, vpn});
+        } else if (range == "home network") {
+            (c.gateway ? home_routed : home_other).push_back(LanAddress{c.address, range});
+        }
+    }
+    out.home = std::move(home_routed);
+    out.home.insert(out.home.end(), home_other.begin(), home_other.end());
+    return out;
+}
+
+std::vector<std::string> HomeLines(const std::vector<LanAddress>& home, std::uint16_t port, std::string_view password,
+                                   bool copied) {
+    if (home.empty()) {
+        return {"No home-network address was found on this PC.",
+                "Friends somewhere else join with your invite code; on a VPN with you, they use the VPN row."};
+    }
+    return AddressLines(home, port, password, copied);
+}
+
+std::vector<std::string> VpnLines(const std::vector<LanAddress>& vpn, std::uint16_t port, std::string_view password,
+                                  bool copied) {
+    if (vpn.empty()) {
+        return {"No VPN found.",
+                "Using one (Radmin VPN, Hamachi, ZeroTier, Tailscale, WireGuard)? Start it, then press this again."};
+    }
+    return AddressLines(vpn, port, password, copied);
+}
+
+std::string HostHeadline(bool copied) {
+    return copied ? "Invite code copied to your clipboard. Send it to your friends, or pick another way to host below."
+                  : "Your invite code is below. Send it to your friends, or pick another way to host below.";
+}
+
+
 std::vector<std::string> PlainStatus(const HostView& v) {
     std::vector<std::string> out;
     if (v.host && v.problem == HOS_COOP_PROBLEM_BAD_CODE && !v.invite.empty()) {   // the friend's answer code
@@ -536,9 +660,10 @@ std::vector<std::string> PlainStatus(const HostView& v) {
             return {"Starting..."};
         case HOS_COOP_HOSTING:
             if (!v.invite.empty()) {
-                out = {"Send this code to your friends:", v.invite};
-                out.push_back(v.copied ? "It is copied: paste it into your chat with them (Ctrl+V)."
-                                       : "Press \"Copy the code again\", then paste it into your chat with them.");
+                out = {HostHeadline(v.copied), v.invite};
+                if (!v.copied) {
+                    out.push_back("Press \"Copy the code again\" to put it on the clipboard.");
+                }
                 out.push_back(v.players <= 1 ? "Waiting for your friends to join..."
                                              : std::to_string(v.players - 1) + " friend(s) joined.");
             } else if (!v.invite_done) {

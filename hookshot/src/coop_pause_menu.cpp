@@ -160,9 +160,12 @@ std::vector<Menu::Line> Menu::Lines() const {
             out.push_back({Action("Paste friend's answer (or Ctrl+V)", "Paste"), Act::kPasteAnswer,
                            "Only when a friend's game shows an answer code (their way in was blocked): copy the code they "
                            "send you, then press this."});
-            out.push_back({Action("Same network or VPN", "Copy the line"), Act::kCopyLan,
-                           "For friends on your home network or on a VPN with you (Radmin VPN, Hamachi, Tailscale): copies "
-                           "one line with this PC's address. They paste it in Join a game instead of the code."});
+            out.push_back({Action("Same network", "Copy the line"), Act::kCopyLan,
+                           "For friends in the same house, on your home network: copies one line with this PC's address. "
+                           "They paste it in Join a game instead of the code."});
+            out.push_back({Action("VPN", "Copy the line"), Act::kCopyVpn,
+                           "For friends on a VPN with you (Radmin VPN, Hamachi, ZeroTier, Tailscale, WireGuard): copies one "
+                           "line with this PC's VPN address. They paste it in Join a game instead of the code."});
             out.push_back({Action("Stop hosting", confirm_leave_ ? "Press again to confirm" : "Stop"), Act::kLeave,
                            "Ends your game for everyone in it."});
         } else {
@@ -193,7 +196,7 @@ std::vector<Menu::Line> Menu::Lines() const {
                                   typing ? join_ + "_" : join_.empty() ? std::string("Paste") : join_, off),
                            Act::kCode,
                            "Copy the code from your friend's message, then press this: it is pasted. On the same home "
-                           "network or VPN as your friend? Paste the line from Same network or VPN on their Host page "
+                           "network or a VPN with your friend? Paste the line from Same network or VPN on their Host page "
                            "instead (address and password). You can also type it."});
             out.push_back({Action("Join", "Join", off || Trim(join_).empty()), Act::kJoinNow,
                            Trim(join_).empty() ? "Paste your friend's code first." : "Joins your friend's game."});
@@ -564,6 +567,9 @@ void Menu::Decide(Act act) {
         break;
     case Act::kCopyLan:
         request_ = Request{Request::Kind::kCopyLan, {}};
+        break;
+    case Act::kCopyVpn:
+        request_ = Request{Request::Kind::kCopyVpn, {}};
         break;
     case Act::kLeave:
         if (!confirm_leave_) {

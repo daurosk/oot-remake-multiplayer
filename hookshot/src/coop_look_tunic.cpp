@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstring>
 #include <string_view>
+#include <utility>
 
 namespace CoopLookTunic {
 namespace {
@@ -119,6 +120,26 @@ std::optional<Texels> Parse(const std::vector<std::uint8_t>& file, std::string* 
     return out;
 }
 
+std::vector<std::uint8_t> Pack(const Texels& texels) {
+    std::vector<std::uint8_t> out(kMagic, kMagic + sizeof kMagic);
+    auto put = [&](std::uint64_t v, int bytes) {
+        for (int i = 0; i < bytes; ++i) {
+            out.push_back(static_cast<std::uint8_t>(v >> (8 * i)));
+        }
+    };
+    put(kVersion, 4);
+    put(texels.size(), 4);
+    for (const Texture& t : texels) {
+        std::string name = t.name.substr(0, kNameBytes - 1);
+        name.resize(kNameBytes, '\0');
+        out.insert(out.end(), name.begin(), name.end());
+        put(t.offset, 8);
+        put(t.texels.size(), 8);
+        out.insert(out.end(), t.texels.begin(), t.texels.end());
+    }
+    return out;
+}
+
 bool SameLayout(const Texels& a, const Texels& b) {
     return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](const Texture& x, const Texture& y) {
         return x.name == y.name && x.offset == y.offset && x.texels.size() == y.texels.size();
@@ -226,10 +247,15 @@ bool Put(Memory& memory, Place& place, const std::shared_ptr<const Texels>& colo
 
 void Wardrobe::Wear(std::string colour) {
     std::lock_guard lock(mutex_);
-    if (colour != "green") {
+    if (colour != host_.base) {
         busy_ = true;
     }
     wanted_ = std::move(colour);
+}
+
+void Wardrobe::Kick() {
+    std::lock_guard lock(mutex_);
+    kicked_ = true;
 }
 
 bool Wardrobe::Busy() const {
@@ -263,6 +289,9 @@ void Wardrobe::Step(std::uint64_t now_ms) {
             return;
         }
         want = wanted_;
+        if (std::exchange(kicked_, false)) {
+            search_now_ = true;   // the equipment may have changed: textures loaded since
+        }
     }
     if (want != asked_) {
         asked_ = want;
@@ -271,11 +300,11 @@ void Wardrobe::Step(std::uint64_t now_ms) {
     }
     if (target_name_ != want && refused_ != want) {
         if (!green_) {
-            green_ = Load("green");
+            green_ = Load(host_.base);
         }
-        auto target = !green_ ? nullptr : want == "green" ? green_ : Load(want);
+        auto target = !green_ ? nullptr : want == host_.base ? green_ : Load(want);
         if (target && !SameLayout(*green_, *target)) {
-            host_.log("coop: look: coop_look/" + want + ".bin does not fit the pack's green.bin: your own Link keeps "
+            host_.log("coop: look: coop_look/" + want + ".bin does not fit the pack's " + host_.base + ".bin: your own Link keeps "
                       "the colour it has (make the puppet pack again)");
             target = nullptr;
         }
@@ -322,7 +351,7 @@ void Wardrobe::Step(std::uint64_t now_ms) {
                    " of puppets (left alone)";
         if (places_.empty() && !said_nothing_found_) {
             said_nothing_found_ = true;
-            host_.log("coop: look: no tunic texture of your Link in the game's memory yet" + searched);
+            host_.log("coop: look: no " + host_.what + " texture of your Link in the game's memory yet" + searched);
         }
     }
     std::size_t written = 0;
@@ -338,14 +367,14 @@ void Wardrobe::Step(std::uint64_t now_ms) {
     }
     if (written != 0) {
         said_nothing_found_ = false;
-        host_.log("coop: look: your Link's tunic is " + target_name_ + " now (" + std::to_string(written) +
+        host_.log("coop: look: your Link's " + host_.what + " is " + target_name_ + " now ("+ std::to_string(written) +
                   " texture(s) written)" + searched);
     }
-    if (want == "green" && target_ == green_ &&
+    if (want == host_.base && target_ == green_ &&
         std::all_of(places_.begin(), places_.end(), [&](const Place& p) { return p.colour == green_; })) {
         // Everything is the game's own again: nothing to keep.
         std::lock_guard lock(mutex_);
-        if (wanted_ == "green") {
+        if (wanted_ == host_.base) {
             busy_ = false;
             places_.clear();
         }

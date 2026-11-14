@@ -19,6 +19,11 @@ it). Little-endian:
 
 Read by hookshot/src/coop_look_tunic.cpp.
 
+The gear (docs/puppet.md, "The Link customizer"): `coop_look/gear.bin`, the same format, holds the
+game's own texels of every shield, sword, boots, gauntlets and Goron / Zora tunic texture in GEAR.
+The module paints their parts in the colours the player picks (any colour: hookshot/src/
+coop_look_parts.cpp, whose table names the same textures) and writes them over the game's.
+
 Nothing from the game is in this file: everything is made from the user's own romfs.
 """
 import struct
@@ -29,6 +34,47 @@ DIR = "coop_look"
 MAGIC = b"COOPLOOK"
 VERSION = 1
 NAME_BYTES = 64
+
+
+# The gear textures in Tex/ (hookshot/src/coop_look_parts.cpp Gear(): the same names, checked by
+# the tests).
+GEAR = (
+    "Mt_Weapon_Shield_Hylian_Alb",
+    "Mt_Weapon_Shield_Mirror_Alb",
+    "Mt_Body_Weapon_Shield_Deku_Alb",
+    "Mt_Weapon_Sword_Kokiri_Alb",
+    "Mt_Weapon_Sword_Master_Alb",
+    "Mt_Weapon_Sword_Biggoron_Alb.00",
+    "Mt_Weapon_Sword_Biggoron_Alb.01",
+    "Mt_Boots_Player_Adult_Alb",
+    "Mt_Boots_Armor_Adult_HoverBoot_Alb",
+    "Mt_Boots_Armor_Adult_HeavyBoot_Alb",
+    "Mt_Silver_Armor_Adult_Gauntlet_Silver_Alb",
+    "Mt_Gold_Armor_Adult_Gauntlet_Gold_Alb",
+    "Mt_Angin_Armor_Adult_Goron_Alb",
+    "Mt_Vest_Armor_Adult_Goron_Alb",
+    "Mt_Angin_Armor_Adult_Zora_Alb",
+    "Mt_Vest_Armor_Adult_Zora_Alb",
+    "Mt_Angin_Acs_Armor_Adult_Zora_Alb",
+)
+GEAR_FILE = "gear.bin"
+
+
+def gear(read_tex, log=print):
+    """The gear file: the game's own texels of each GEAR texture `read_tex(name)` gives (its BNTX,
+    or None when the romfs has none: left out and said). None when there is none at all."""
+    found, missing = [], []
+    for name in GEAR:
+        bntx = read_tex(name)
+        if bntx is None:
+            missing.append(name)
+            continue
+        found.append((name, bntx))
+    if missing:
+        log(f"look: no {', '.join(missing)} in the romfs: those parts keep the game's colours")
+    if not found:
+        return None
+    return pack(found)
 
 
 def texels(bntx):

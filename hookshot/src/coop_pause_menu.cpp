@@ -151,6 +151,9 @@ std::vector<Menu::Line> Menu::Lines() const {
         out.push_back({Action("Settings"), Act::kOpenSettings,
                        "Your name, Link's look, how many players can join your game, voice chat, the chat key, "
                        "which controller this game reads, and players on the map."});
+        out.push_back({Action("Customize Link"), Act::kOpenCustomize,
+                       "A colour for each part of your tunics, shields, swords, boots and gauntlets, with a picture of "
+                       "the result. Your Link wears it when you close the menu; the other players see your tunic's colour."});
         out.push_back({Action("Commands"), Act::kOpenCommands, "The chat's commands, and the key that opens the chat."});
         break;
     case Page::kHost:
@@ -246,6 +249,8 @@ std::vector<Menu::Line> Menu::Lines() const {
         out.push_back({Toggle("Names on map", options_.map_names), Act::kMapNames,
                        "Each player's name beside their arrow on the maps. Off: the arrows only."});
         break;
+    case Page::kCustomize:   // (its own rows: coop_look_menu.h)
+        break;
     }
     return out;
 }
@@ -324,6 +329,7 @@ void Menu::Open(Page page) {
     case Page::kLocal: act = Act::kOpenLocal; break;
     case Page::kSettings: act = Act::kOpenSettings; break;
     case Page::kCommands: act = Act::kOpenCommands; break;
+    case Page::kCustomize: act = Act::kOpenCustomize; break;
     }
     Go(Page::kMain, act);
     note_.clear();
@@ -427,6 +433,25 @@ void Menu::EndTyping(bool keep) {
 
 bool Menu::Press(Input input) {
     note_.clear();
+    if (page_ == Page::kCustomize) {   // (its own rows: coop_look_menu.h)
+        using L = CoopLookMenu::Input;
+        std::optional<L> in;
+        switch (input) {
+        case Input::kUp: in = L::kUp; break;
+        case Input::kDown: in = L::kDown; break;
+        case Input::kLeft: in = L::kLeft; break;
+        case Input::kRight: in = L::kRight; break;
+        case Input::kDecide: in = L::kDecide; break;
+        case Input::kBack: in = L::kBack; break;
+        case Input::kPaste:
+        case Input::kErase: break;
+        }
+        if (in && !customize_.Press(*in)) {
+            Go(Page::kMain, Act::kOpenCustomize);
+        }
+        TakeCustomize();
+        return true;
+    }
     const auto lines = Lines();
     const Line* line = selected_ < lines.size() && Selectable(lines[selected_]) ? &lines[selected_] : nullptr;
     if (!(input == Input::kDecide && line != nullptr && line->act == Act::kLeave)) {
@@ -506,6 +531,8 @@ bool Menu::Press(Input input) {
         case Page::kCommands:
             Go(Page::kMain, Act::kOpenCommands);
             break;
+        case Page::kCustomize:   // (Press gave it to the page)
+            break;
         }
         return true;
     case Input::kPaste:
@@ -543,6 +570,10 @@ void Menu::Decide(Act act) {
         break;
     case Act::kOpenCommands:
         Go(Page::kCommands);
+        break;
+    case Act::kOpenCustomize:
+        Go(Page::kCustomize);
+        customize_.Open(look_);
         break;
     case Act::kCommand:   // (a line to read: its help says it)
         break;
@@ -649,6 +680,10 @@ void Menu::Change(Act act, int step) {
 }
 
 void Menu::Select(std::size_t row) {
+    if (page_ == Page::kCustomize) {
+        customize_.Select(row);
+        return;
+    }
     const auto lines = Lines();
     if (typing_ || row >= lines.size() || !Selectable(lines[row]) || row == selected_) {
         return;
@@ -658,6 +693,12 @@ void Menu::Select(std::size_t row) {
 }
 
 void Menu::Click(std::size_t row, int side) {
+    if (page_ == Page::kCustomize) {
+        note_.clear();
+        customize_.Click(row, side);
+        TakeCustomize();
+        return;
+    }
     const auto lines = Lines();
     if (row >= lines.size() || !Selectable(lines[row])) {
         return;
@@ -733,6 +774,25 @@ bool Menu::Paste(std::string_view text) {
 
 View Menu::view() const {
     View v;
+    if (page_ == Page::kCustomize) {   // (its own rows: coop_look_menu.h)
+        const CoopLookMenu::View c = customize_.view();
+        for (const CoopLookMenu::Row& r : c.rows) {
+            Row row;
+            row.name = r.name;
+            row.value = r.value;
+            row.kind = static_cast<RowKind>(r.kind);
+            row.left = r.left;
+            row.right = r.right;
+            v.rows.push_back(std::move(row));
+        }
+        v.selected = c.selected;
+        v.help_title = c.help_title;
+        v.help = note_.empty() ? c.help : Joined(note_);
+        v.change = c.change;
+        v.confirm = c.confirm;
+        v.back = c.back;
+        return v;
+    }
     const auto lines = Lines();
     for (const Line& l : lines) {
         v.rows.push_back(l.row);
@@ -765,6 +825,8 @@ View Menu::view() const {
         break;
     case Page::kCommands:
         v.help_title = "Commands";
+        break;
+    case Page::kCustomize:   // (above)
         break;
     }
     if (!note_.empty()) {
@@ -802,6 +864,22 @@ View Menu::view() const {
     }
     v.back = page_ == Page::kMain ? "Close" : "Back";
     return v;
+}
+
+void Menu::SetLook(const CoopLook::Look& look) {
+    look_ = look;
+}
+
+std::vector<CoopLookMenu::Shape> Menu::Picture() const {
+    return page_ == Page::kCustomize ? customize_.view().picture : std::vector<CoopLookMenu::Shape>{};
+}
+
+void Menu::TakeCustomize() {
+    if (auto look = customize_.TakeChange()) {
+        look_ = *look;
+        options_.colour = CoopLook::ColourText(look_[CoopLook::Part::tunic]);   // the Settings page's row agrees
+        request_ = Request{Request::Kind::kLookParts, {}};
+    }
 }
 
 }  // namespace CoopPauseMenu

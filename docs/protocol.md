@@ -252,6 +252,19 @@ Small keys, Gold Skulltula tokens and heart pieces are counts ([items.md](items.
 - A count change does not wait for an answer of its own. A delta not answered when the host changes is sent again to the new host (the sum, if there were several); when the new host is us, it is dropped, since our game holds it and our snapshot carries it. A host's own count change goes out as its total. Our own delta that comes back to us as host (sent before we knew we host) is not added again.
 - Not covered: a delta that reached a host who left before its `FLAG_STATE` went out is lost with that host's game; one answered by a `FLAG_STATE` for the same flag from another player's change is no longer sent again on a host change.
 
+### Looks (`PLAYER_LOOK`)
+
+Protocol 11, type 430 (430 to 434 kept for looks). The colours a player chose for the parts of its Link in the Link customizer ([puppet.md](puppet.md#the-link-customizer); the part numbers are `CoopLook::Part`, `hookshot/src/coop_look.h`). On channel 0, reliable. A game sends it when its look changes and again whenever a player joins or it connects again (`lichii/hook/coop_look_share.cpp`), so a late joiner has it; the server relays it to everyone else with the sender's number and keeps nothing.
+
+| Bytes | Field |
+|---|---|
+| u8 | player: 0 from a client, 1 to 16 relayed |
+| u8 | parts listed, 0 to 64 |
+| per part: u8 | the part's number, 0 to 63 (one a build does not know is passed over by it) |
+| per part: u8 u8 u8 | its colour: red, green, blue |
+
+Only the parts set are listed, each once (a part twice, a number past 63 or a count past 64 is refused); none listed: every part in the game's own colours. An older game skips the type as unknown.
+
 ### Riding (`PLAYER_RIDE`)
 
 Issue 199 (protocol 10): a player riding Epona stays seen by the others, on a copy of the horse ([puppet.md](puppet.md#riding-issue-199)). While its Link's command names a horse, a build sends `PLAYER_RIDE` about 30 times a second on the samples channel: the horse it sits on (`Animal_Epona_Adult`), the horse's place minus its Link's and the horse's turn, both in its Link's own frame (turned back by its rotation), and the horse's AS slot 0. Getting off sends riding off (flags 0, no name) three times. The others put the copy at the rider's puppet plus the offset turned by the puppet's turn, so horse and puppet move together whatever the delay; a ride not heard of for 0.6 s is over (the channel is unreliable). The server relays it to everyone else with the sender's number. A build without it ignores the type; its riders show on foot in their riding pose.
@@ -612,6 +625,7 @@ usual `PLAYER_JOINED`, samples and `PLAYER_LEFT`. Types 460 to 469 are kept; 465
 - Version 11 also (branch `difficulty`): `DIFFICULTY` (480; 480 to 489 kept), sent by the server to every player at join. No earlier layout changed and no bump of its own: it ships with the first version 11 release. A version 11 build without it ignores the type and plays the game as it is.
 - Protocol 11 also (branch `boss-cutscenes`): `BOSS_SCENE` (520), `BOSS_HEART` (521); 520 to 524 kept. No bump of its own: a build without them plays each boss's cutscenes alone (as before) and a server without them does not relay them.
 - Version 11 also (branch `look-live`): types 430 to 434 are kept for a look of several parts (shield, sword, boots, gauntlets). A colour changed in the pause menu needs none: it goes out in `PLAYER_EQUIP` `color` as at the start (docs/puppet.md, "Changing your colour in the game").
+- Version 11 also (branch `customizer-full`): `PLAYER_LOOK` (430), each part's colour from the Link customizer ([Looks](#looks-player_look)). No earlier layout changed and no bump of its own. A build without it ignores the type (that player's parts stay the game's own on its screen).
 - Version 11 also (branch `ocarina-sound-b`): `LINK_SOUND` (500); 500 to 509 kept for Link's sounds. A build without it ignores the type (no sounds from that player).
 
 ## Who gets which stream

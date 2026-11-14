@@ -1349,6 +1349,43 @@ TEST_CASE("a Link sound has its number, channel and layout, and only the game's 
   CHECK(decode(bad, m) == Error::bad_value);
 }
 
+TEST_CASE("a player's look has its number, channel and layout, each part once") {
+  CHECK(static_cast<int>(MessageType::player_look) == 430);
+  CHECK(channel_of(MessageType::player_look) == kChannelSession);
+  CHECK_FALSE(allowed_on_channel(MessageType::player_look, kChannelPlayerSamples));
+  CHECK(may_send(Sender::client, MessageType::player_look));
+  CHECK(may_send(Sender::server, MessageType::player_look));
+  Message n = PlayerLook{0, {{3, 0xE0C030}, {4, 0x20A040}}};
+  CHECK(check_received(n, Sender::client, kChannelSession) == Error::none);
+  CHECK(set_sender(n, 16));
+  CHECK(sender_of(n) == 16);
+  const Bytes b = must_encode(PlayerLook{2, {{3, 0xE0C030}, {4, 0x20A040}}});
+  REQUIRE(b.size() == kHeaderSize + 2 + 2 * 4);
+  CHECK(b[kHeaderSize + 2] == 3);
+  CHECK(b[kHeaderSize + 3] == 0xE0);  // red, green, blue
+  CHECK(b[kHeaderSize + 5] == 0x30);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<PlayerLook>(back) == PlayerLook{2, {{3, 0xE0C030}, {4, 0x20A040}}});
+  // every part number a build may grow to, once each
+  PlayerLook all{0, {}};
+  for (std::uint8_t i = 0; i < kMaxLookParts; ++i) all.parts.push_back({i, 0x010203u * i});
+  REQUIRE(decode(must_encode(all), back) == Error::none);
+  CHECK(std::get<PlayerLook>(back) == all);
+  Bytes out;
+  CHECK(encode(PlayerLook{0, {{3, 1}, {3, 2}}}, out) == Error::bad_value);   // a part twice
+  CHECK(encode(PlayerLook{0, {{64, 1}}}, out) == Error::bad_value);          // past the numbers kept
+  CHECK(encode(PlayerLook{0, {{1, 0x1000000}}}, out) == Error::bad_value);   // not 0xRRGGBB
+  CHECK(encode(PlayerLook{17, {}}, out) == Error::bad_value);
+  Bytes bad = must_encode(PlayerLook{0, {{3, 1}, {4, 2}}});
+  bad[kHeaderSize + 2 + 4] = 3;  // the second part as the first
+  Message m;
+  CHECK(decode(bad, m) == Error::bad_value);
+  Bytes cut = must_encode(PlayerLook{0, {{3, 1}}});
+  cut.pop_back();
+  CHECK(decode(cut, m) != Error::none);
+}
+
 TEST_CASE("bad times of day are refused") {
   Bytes out;
   CHECK(encode(TimeOfDay{0, kSecondsPerDay, 0}, out) == Error::bad_value);

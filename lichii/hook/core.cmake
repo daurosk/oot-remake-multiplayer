@@ -61,6 +61,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_world.cpp"
     "${_coop_hook}/coop_ocarina.cpp"
     "${_coop_hook}/coop_ocarina_sound.cpp"
+    "${_coop_hook}/coop_look_share.cpp"
     "${_coop_hook}/coop_voice.cpp"
     "${_coop_hook}/coop_puppet_sound.cpp"
     "${_coop_hook}/coop_link_sound.cpp"

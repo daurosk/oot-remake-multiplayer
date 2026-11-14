@@ -790,6 +790,16 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                                look_dir=os.path.join(mod_dir, look_live.DIR), look_files=look_files) if tunics else {}
     tunics = [c for c in tunics if c in tunic_files]
     test_tunic = test_tunic if test_tunic in tunic_files else None
+    if tunics:
+        # The gear's own texels, for the Link customizer (look_live.GEAR).
+        def read_tex(name):
+            p = os.path.join(romfs, "Tex", f"{name}.bntx.zs")
+            return dicts.decompress(read(p)) if os.path.isfile(p) else None
+        gear_blob = look_live.gear(read_tex, log)
+        if gear_blob is not None:
+            write(os.path.join(mod_dir, look_live.DIR, look_live.GEAR_FILE), gear_blob)
+            look_files["gear"] = f"{look_live.DIR}/{look_live.GEAR_FILE}"
+            log(f"look: {look_live.DIR}/{look_live.GEAR_FILE} ({len(gear_blob) >> 10} KB of gear textures)")
     jobs = [(v, None) for v in VARIANTS] + [(v, c) for v in VARIANTS for c in tunics]
     for v, color in jobs:
         player = f"Player_{v}"

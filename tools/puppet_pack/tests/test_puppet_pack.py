@@ -772,6 +772,27 @@ class TunicExtraTest(unittest.TestCase):
         with self.assertRaises(tunic.TunicError):
             look_live.pack([("n" * 64, a)])
 
+    def test_gear_file(self):
+        from puppet_pack import look_live
+        have = {"Mt_Weapon_Shield_Hylian_Alb": fake_bntx("Mt_Weapon_Shield_Hylian_Alb", [bc1_block(1, 2)], fmt=0x1A),
+                "Mt_Weapon_Sword_Master_Alb": fake_bntx("Mt_Weapon_Sword_Master_Alb")}
+        said = []
+        blob = look_live.gear(have.get, said.append)
+        self.assertEqual([n for n, _ in look_live.unpack(blob)],
+                         ["Mt_Weapon_Shield_Hylian_Alb", "Mt_Weapon_Sword_Master_Alb"])   # GEAR's order
+        self.assertEqual(len(said), 1)
+        self.assertIn("Mt_Weapon_Shield_Mirror_Alb", said[0])
+        self.assertIsNone(look_live.gear(lambda name: None, said.append))
+
+    def test_gear_names_match_the_module(self):
+        """The module's table (hookshot/src/coop_look_parts.cpp) names the same textures."""
+        import re
+        from puppet_pack import look_live
+        src = os.path.join(os.path.dirname(__file__), "..", "..", "..", "hookshot", "src", "coop_look_parts.cpp")
+        with open(src, encoding="utf-8") as f:
+            names = re.findall(r'\{"(Mt_[A-Za-z0-9_.]+)", Format::', f.read())
+        self.assertEqual(tuple(names), look_live.GEAR)
+
     def test_names(self):
         from puppet_pack import tunic_extra as te
         for n in te.EXTRA:

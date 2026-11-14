@@ -138,6 +138,7 @@ enum class MessageType : std::uint16_t {
   local_leave = 462,
   local_sample = 463,
   local_message = 464,
+  player_look = 430,  // 430 to 434: a look of several parts (docs/protocol.md, "Looks")
   link_sound = 500,  // 500 to 509: the other Links' sounds (docs/protocol.md, "Link sounds")
   boss_scene = 520,  // 520 to 524: boss intro and death cutscenes (docs/protocol.md, "Boss cutscenes")
   boss_heart = 521,
@@ -1020,6 +1021,23 @@ struct OcarinaNote {
 // player's Link with the game's own call. The name is the game's: letters,
 // digits and '_', 1 to kMaxLinkSoundChars.
 inline constexpr std::size_t kMaxLinkSoundChars = 55;
+// PLAYER_LOOK (430): the colours a player chose for the parts of its Link
+// (docs/protocol.md, "Looks"; hookshot/src/coop_look.h numbers the parts),
+// sent when it changes and again when a player joins; relayed to everyone
+// else. Only the set parts are listed, each once, by number (0 to
+// kMaxLookParts - 1: a part a build does not know is passed over by it).
+inline constexpr std::size_t kMaxLookParts = 64;
+struct LookPart {
+  std::uint8_t part = 0;
+  std::uint32_t colour = 0;   // 0xRRGGBB
+  bool operator==(const LookPart&) const = default;
+};
+struct PlayerLook {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 16 relayed
+  std::vector<LookPart> parts;
+  bool operator==(const PlayerLook&) const = default;
+};
+
 struct LinkSound {
   std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 16 relayed
   std::string name;                          // the asset's name
@@ -1697,7 +1715,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              DbnoMode, DbnoStatus, DbnoRevive, Difficulty, VoiceFrame,
                              ModList, ModSettings, LobbyAction, LobbyMutes, LobbyResult,
                              LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage, LinkSound,
-                             BossScene, BossHeart>;
+                             BossScene, BossHeart, PlayerLook>;
 
 MessageType type_of(const Message& message);
 

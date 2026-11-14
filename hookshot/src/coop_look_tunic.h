@@ -49,6 +49,8 @@ inline constexpr std::uint64_t kMaxOffset = 0x10000;
 // version, or with a texture this code cannot place (no room for a header,
 // fewer than kHead bytes).
 std::optional<Texels> Parse(const std::vector<std::uint8_t>& file, std::string* why = nullptr);
+// The file of these texels (Parse reads it back).
+std::vector<std::uint8_t> Pack(const Texels& texels);
 // Two colours of one pack: the same textures, each as long and at the same
 // offset. Only then may one's texels be written over the other's.
 bool SameLayout(const Texels& a, const Texels& b);
@@ -100,6 +102,10 @@ public:
         // pack has none.
         std::function<std::optional<std::vector<std::uint8_t>>(const std::string&)> file;
         std::function<void(const std::string&)> log;
+        // The game's own look's file name ("green" for the tunic) and what the
+        // log calls the textures ("tunic").
+        std::string base = "green";
+        std::string what = "tunic";
     };
     // After a search that found the tunic: the next one (textures loaded
     // since, as after a change of age). After one that found nothing: sooner.
@@ -113,6 +119,9 @@ public:
     // One round of the work, about once a second: `now_ms` on any steady
     // clock. One thread.
     void Step(std::uint64_t now_ms);
+    // Search the memory again at the next Step, not a minute later (the pause
+    // screen closed: the equipment may have changed). Any thread.
+    void Kick();
     // Whether Step has anything to do (a colour other than the game's was
     // asked for at some time). Any thread.
     bool Busy() const;
@@ -126,6 +135,7 @@ private:
     mutable std::mutex mutex_;
     std::string wanted_;                      // guarded
     bool busy_ = false;                       // guarded
+    bool kicked_ = false;                     // guarded
     // Step's thread only:
     std::string asked_;                       // the wanted colour of the last round
     std::shared_ptr<const Texels> green_, target_;

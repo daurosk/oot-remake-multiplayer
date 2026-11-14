@@ -46,6 +46,21 @@ set_target_properties(hookshot_coop PROPERTIES PREFIX "" CXX_VISIBILITY_PRESET h
 # (hos_coop_voice.h, our patch 0009) and the game-free voice library.
 target_sources(hookshot_coop PRIVATE src/coop_voice_hookshot.cpp)
 target_link_libraries(hookshot_coop PRIVATE coop_voice)
+# Linux: the clipboard through the desktop's tools (wl-copy, xclip, xsel); Windows has its own.
+if(NOT WIN32)
+  target_sources(hookshot_coop PRIVATE src/coop_clipboard_posix.cpp)
+  # The game's bridge opens the module by its full path (RTLD_LOCAL); the renderer's menu tabs and
+  # drawing (patches 0001, 0012) and the world hooks (0005) then find it with
+  # dlopen("hookshot_coop.so", RTLD_NOLOAD), and glibc matches a bare name to a loaded library only
+  # by its SONAME. Without one they got nothing: no Multiplayer tab, chat or name tags on Linux.
+  target_link_options(hookshot_coop PRIVATE -Wl,-soname,hookshot_coop.so)
+  # The C++ runtime inside the module (none of its symbols exported), so it loads into the game on any
+  # distribution from the one it was built on (CI: Ubuntu 22.04, glibc 2.35, as Longshot's own) up,
+  # whatever libstdc++ that system has.
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_link_options(hookshot_coop PRIVATE -static-libstdc++ -static-libgcc -Wl,--exclude-libs,ALL -Wl,--no-undefined)
+  endif()
+endif()
 if(MSVC)
   # The emulator's own code builds with these off too (lichii/README.md).
   target_compile_options(hookshot_coop PRIVATE /wd4456 /wd4457 /wd4458 /wd4459 /bigobj)

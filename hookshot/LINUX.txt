@@ -1,0 +1,9 @@
+# The Linux kit (tools/release/make_kit_linux.sh, scripts/build.sh) builds the game with Longshot's own Linux builder
+# for the release in PIN: its AppImage from that release's downloads, checked against this SHA-256 (the release's
+# SHA256SUMS). The kit unpacks it (no FUSE), takes its Python and its source, applies patches/ and compiles the game and
+# its renderer on the player's PC. Change it with PIN (the tags must match).
+tag=v3.0.0-rc.3
+appimage=Longshot-v3.0.0-rc.3-x86_64.AppImage
+url=https://git.magicbean.dev/MagicBeanDev/Longshot/releases/download/v3.0.0-rc.3/Longshot-v3.0.0-rc.3-x86_64.AppImage
+sha256=910799f8361cce6e1c5413434d2205b6cdec63f7bcf4350a151ca26e93cf8256
+size=98609656

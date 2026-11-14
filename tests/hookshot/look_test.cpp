@@ -7,6 +7,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -151,6 +152,63 @@ TEST_CASE("look: the colour is saved in coop-options.ini for a kit, else in coop
     CHECK_FALSE(CoopTitleMenu::IniGet(options, "color").has_value());
     CHECK(CoopLook::WriteSettings(Tunic(0x123456u), coop, nullptr));
     CHECK(coop == "server = 1.2.3.4\ncolor = #123456\n");
+}
+
+TEST_CASE("look: every part has its number, a key and a row, and the numbers never move") {
+    std::set<std::string> keys;
+    for (std::size_t i = 0; i < CoopLook::kParts; ++i) {
+        const auto part = CoopLook::PartOf(static_cast<std::uint8_t>(i));
+        REQUIRE(part);
+        const CoopLook::PartInfo& info = CoopLook::InfoOf(*part);
+        CHECK(info.part == *part);
+        CHECK(keys.insert(info.key).second);
+        CHECK(std::string(info.item).size() > 0);
+        CHECK(std::string(info.name).size() > 0);
+    }
+    CHECK_FALSE(CoopLook::PartOf(static_cast<std::uint8_t>(CoopLook::kParts)));
+    // The numbers are the settings' and the network's: they never change.
+    CHECK(static_cast<int>(Part::tunic) == 0);
+    CHECK(static_cast<int>(Part::hylian_frame) == 3);
+    CHECK(static_cast<int>(Part::master_blade) == 11);
+    CHECK(static_cast<int>(Part::gauntlets) == 16);
+}
+
+TEST_CASE("look: every part is saved under its own key, and read back") {
+    Look look;
+    look[Part::tunic] = CoopColors::Parse("red");
+    look[Part::hylian_frame] = 0xE0C030u;
+    look[Part::master_hilt] = CoopColors::Parse("blue");
+    std::string coop = "server = 1.2.3.4\n";
+    CHECK(CoopLook::WriteSettings(look, coop, nullptr));
+    CHECK(coop == "server = 1.2.3.4\ncolor = red\nlook_hylian_frame = #E0C030\nlook_master_hilt = blue\n");
+    std::vector<std::string> errors;
+    const Look back = CoopLook::ReadParts(coop, &errors);
+    CHECK(errors.empty());
+    CHECK_FALSE(back[Part::tunic]);   // the tunic comes with the co-op settings, not here
+    CHECK(back[Part::hylian_frame] == 0xE0C030u);
+    CHECK(back[Part::master_hilt] == CoopColors::Parse("blue"));
+    CHECK_FALSE(back[Part::boots]);
+    // A part set back to the game's own is commented out; one never set stays out of the file.
+    look[Part::hylian_frame].reset();
+    CHECK(CoopLook::WriteSettings(look, coop, nullptr));
+    CHECK_FALSE(CoopTitleMenu::IniGet(coop, "look_hylian_frame").has_value());
+    CHECK(coop.find("look_boots") == std::string::npos);
+    CHECK(CoopLook::ReadParts("look_boots = sparkly\n", &errors) == Look{});
+    CHECK(errors.size() == 1);
+}
+
+TEST_CASE("look: the wire form lists the set parts by number") {
+    Look look;
+    look[Part::zora_tunic] = 0x102030u;
+    look[Part::boots] = 0xFFFFFFu;
+    const auto wire = CoopLook::Wire(look);
+    REQUIRE(wire.size() == 2);
+    CHECK(wire[0] == std::pair<std::uint8_t, std::uint32_t>{2, 0x102030u});
+    CHECK(wire[1] == std::pair<std::uint8_t, std::uint32_t>{15, 0xFFFFFFu});
+    CHECK(CoopLook::FromWire(wire) == look);
+    // A part a newer build has is passed over.
+    CHECK(CoopLook::FromWire({{2, 0x102030u}, {15, 0xFFFFFFu}, {40, 1u}}) == look);
+    CHECK(CoopLook::Wire(Look{}).empty());
 }
 
 TEST_CASE("look: the module applies a chosen look on the frame after the unpause, once") {

@@ -1725,6 +1725,48 @@ Error decode_body(Reader& r, OcarinaNote& m) {
   return Error::none;
 }
 
+Error check_player_look(const PlayerLook& m) {
+  if (!valid_player_or_self(m.player_number) || m.parts.size() > kMaxLookParts) return Error::bad_value;
+  std::uint64_t seen = 0;
+  for (const LookPart& p : m.parts) {
+    if (p.part >= kMaxLookParts || p.colour > 0xFFFFFFu || (seen >> p.part) & 1u) return Error::bad_value;
+    seen |= std::uint64_t{1} << p.part;
+  }
+  return Error::none;
+}
+
+Error encode_body(const PlayerLook& m, Writer& w) {
+  COOP_TRY(check_player_look(m));
+  w.u8(m.player_number);
+  w.u8(static_cast<std::uint8_t>(m.parts.size()));
+  for (const LookPart& p : m.parts) {
+    w.u8(p.part);
+    w.u8(static_cast<std::uint8_t>(p.colour >> 16));
+    w.u8(static_cast<std::uint8_t>(p.colour >> 8));
+    w.u8(static_cast<std::uint8_t>(p.colour));
+  }
+  return Error::none;
+}
+
+Error decode_body(Reader& r, PlayerLook& m) {
+  m = PlayerLook{};
+  std::uint8_t n = 0;
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(n));
+  if (n > kMaxLookParts) return Error::bad_value;
+  for (std::uint8_t i = 0; i < n; ++i) {
+    LookPart p;
+    std::uint8_t rgb[3] = {};
+    COOP_READ(r.u8(p.part));
+    COOP_READ(r.u8(rgb[0]));
+    COOP_READ(r.u8(rgb[1]));
+    COOP_READ(r.u8(rgb[2]));
+    p.colour = (std::uint32_t{rgb[0]} << 16) | (std::uint32_t{rgb[1]} << 8) | rgb[2];
+    m.parts.push_back(p);
+  }
+  return check_player_look(m);
+}
+
 Error encode_body(const LinkSound& m, Writer& w) {
   if (!valid_player_or_self(m.player_number) || !valid_link_sound_name(m.name)) return Error::bad_value;
   w.u8(m.player_number);
@@ -2814,6 +2856,7 @@ MessageType type_of(const Message& message) {
       MessageType::local_sample,
       MessageType::local_message,
       MessageType::link_sound,
+      MessageType::player_look,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -2906,6 +2949,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::local_joined:
     case MessageType::local_leave:
     case MessageType::local_message:
+    case MessageType::player_look:
     case MessageType::link_sound:
       return channel == kChannelSession;
     case MessageType::flag_set:
@@ -3024,6 +3068,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::dbno_mode:
     case MessageType::dbno_state:
     case MessageType::dbno_revive:
+    case MessageType::player_look:
     case MessageType::link_sound:
       return true;
   }
@@ -3065,7 +3110,7 @@ auto* player_field(M& message) {
                       std::is_same_v<T, DbnoStatus> || std::is_same_v<T, DbnoRevive> ||
                       std::is_same_v<T, VoiceFrame> ||
                       std::is_same_v<T, ModList> || std::is_same_v<T, ModSettings> ||
-                      std::is_same_v<T, LinkSound>) {
+                      std::is_same_v<T, LinkSound> || std::is_same_v<T, PlayerLook>) {
           field = &m.player_number;
         }
       },
@@ -3159,6 +3204,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::flag_origin: return decode_as<FlagOrigin>(body, out);
     case MessageType::ocarina_note: return decode_as<OcarinaNote>(body, out);
     case MessageType::link_sound: return decode_as<LinkSound>(body, out);
+    case MessageType::player_look: return decode_as<PlayerLook>(body, out);
     case MessageType::save_ask: return decode_as<SaveAsk>(body, out);
     case MessageType::save_part: return decode_as<SavePart>(body, out);
     case MessageType::pvp_mode: return decode_as<PvpMode>(body, out);

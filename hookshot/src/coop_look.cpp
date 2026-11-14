@@ -10,6 +10,45 @@
 
 namespace CoopLook {
 
+const std::array<PartInfo, kParts>& Parts() {
+    static const std::array<PartInfo, kParts> kTable{{
+        {Part::tunic, "tunic", "Tunic", "Kokiri Tunic"},
+        {Part::goron_tunic, "goron_tunic", "Tunic", "Goron Tunic"},
+        {Part::zora_tunic, "zora_tunic", "Tunic", "Zora Tunic"},
+        {Part::hylian_frame, "hylian_frame", "Hylian Shield", "Frame"},
+        {Part::hylian_face, "hylian_face", "Hylian Shield", "Face"},
+        {Part::hylian_emblem, "hylian_emblem", "Hylian Shield", "Emblem"},
+        {Part::mirror_rim, "mirror_rim", "Mirror Shield", "Rim"},
+        {Part::mirror_face, "mirror_face", "Mirror Shield", "Mirror"},
+        {Part::deku_shield, "deku_shield", "Deku Shield", "Wood"},
+        {Part::kokiri_blade, "kokiri_blade", "Kokiri Sword", "Blade"},
+        {Part::kokiri_hilt, "kokiri_hilt", "Kokiri Sword", "Hilt"},
+        {Part::master_blade, "master_blade", "Master Sword", "Blade"},
+        {Part::master_hilt, "master_hilt", "Master Sword", "Hilt"},
+        {Part::biggoron_blade, "biggoron_blade", "Biggoron's Sword", "Blade"},
+        {Part::biggoron_hilt, "biggoron_hilt", "Biggoron's Sword", "Hilt"},
+        {Part::boots, "boots", "Boots", "Leather"},
+        {Part::gauntlets, "gauntlets", "Gauntlets", "Metal"},
+    }};
+    return kTable;
+}
+
+const PartInfo& InfoOf(Part part) {
+    for (const PartInfo& info : Parts()) {
+        if (info.part == part) {
+            return info;
+        }
+    }
+    return Parts()[0];   // (every Part is in the table: look_test checks it)
+}
+
+std::optional<Part> PartOf(std::uint8_t number) {
+    if (number >= kParts) {
+        return std::nullopt;
+    }
+    return static_cast<Part>(number);
+}
+
 std::string ColourText(const std::optional<std::uint32_t>& colour) {
     if (!colour) {
         return {};
@@ -60,16 +99,72 @@ std::optional<Look> Choice::Unpause() {
     return worn_;
 }
 
+namespace {
+std::string SettingsKey(const PartInfo& info) {
+    return info.part == Part::tunic ? std::string("color") : "look_" + std::string(info.key);
+}
+}  // namespace
+
 bool WriteSettings(const Look& look, std::string& coop_ini, std::string* options_ini) {
     std::string& text = options_ini != nullptr ? *options_ini : coop_ini;
-    const std::string colour = ColourText(look[Part::tunic]);
-    std::string out = colour.empty() ? CoopTitleMenu::IniUnset(text, "color")
-                                     : CoopTitleMenu::IniSet(text, "color", colour, true);
+    std::string out = text;
+    for (const PartInfo& info : Parts()) {
+        const std::string colour = ColourText(look[info.part]);
+        const std::string key = SettingsKey(info);
+        if (colour.empty()) {
+            // An unset part other than the tunic is left out of a file that never had it.
+            if (info.part == Part::tunic || CoopTitleMenu::IniGet(out, key)) {
+                out = CoopTitleMenu::IniUnset(out, key);
+            }
+        } else {
+            out = CoopTitleMenu::IniSet(out, key, colour, true);
+        }
+    }
     if (out == text) {
         return false;
     }
     text = std::move(out);
     return true;
+}
+
+Look ReadParts(std::string_view text, std::vector<std::string>* errors) {
+    Look look;
+    for (const PartInfo& info : Parts()) {
+        if (info.part == Part::tunic) {
+            continue;
+        }
+        const std::string key = SettingsKey(info);
+        const auto value = CoopTitleMenu::IniGet(text, key);
+        if (!value || value->empty()) {
+            continue;
+        }
+        if (const auto colour = CoopColors::Parse(*value)) {
+            look[info.part] = colour;
+        } else if (errors != nullptr) {
+            errors->push_back(key + " = " + *value + " is not a colour (a name such as red, or #RRGGBB)");
+        }
+    }
+    return look;
+}
+
+std::vector<std::pair<std::uint8_t, std::uint32_t>> Wire(const Look& look) {
+    std::vector<std::pair<std::uint8_t, std::uint32_t>> out;
+    for (std::size_t i = 0; i < kParts; ++i) {
+        if (look.colour[i]) {
+            out.emplace_back(static_cast<std::uint8_t>(i), *look.colour[i] & 0xFFFFFFu);
+        }
+    }
+    return out;
+}
+
+Look FromWire(const std::vector<std::pair<std::uint8_t, std::uint32_t>>& parts) {
+    Look look;
+    for (const auto& [number, colour] : parts) {
+        if (const auto part = PartOf(number)) {
+            look[*part] = colour & 0xFFFFFFu;
+        }
+    }
+    return look;
 }
 
 // ---------------------------------------------------------------------------

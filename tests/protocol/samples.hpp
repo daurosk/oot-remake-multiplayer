@@ -103,6 +103,8 @@ inline std::vector<Message> object_messages() {
   all.push_back(VoiceFrame{0, 7, voice::end, {}});
   all.push_back(LinkSound{2, "Pl_Voice_Attack_00"});
   all.push_back(LinkSound{0, "Ocarina_D"});
+  all.push_back(PlayerLook{0, {}});
+  all.push_back(PlayerLook{3, {{0, 0xC83020}, {4, 0x2050FF}, {63, 0}}});
   all.push_back(DropSpawn{0, kMadeId, "Graveyard", "Obj_Rupee_Green", {1.0f, 2.0f, 3.0f}, 123456789, drop_spawn::owned});
   all.push_back(DropSpawn{2, kMadeId, "spot00", "Obj_Heart", {0.0f, 0.0f, 0.0f}, 0, drop_spawn::again});
   all.push_back(DropTake{0, kMadeId, DropTakeReason::picked_up});

@@ -514,7 +514,7 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     CHECK(Selected(m) == "Chat key");   // (the rows came under it: the same row stays chosen)
     CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
                                                "Proximity voice chat", "Chat key", "Controller",
-                                               "Keyboard and mouse"});
+                                               "Keyboard and mouse", "Show players on map", "Names on map"});
     SelectRow(m, "Controller");
     View v = m.view();
     CHECK(v.rows[static_cast<std::size_t>(v.selected)].value == "all");
@@ -539,6 +539,6 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     CHECK(r->kind == Request::Kind::kKeyboard);
     // gone again (the module found no patch 0015): the selection stays on a row there is
     m.SetInputRows({}, {});
-    CHECK(Names(m).size() == 5);
+    CHECK(Names(m).size() == 7);   // (with the two map rows)
     CHECK_FALSE(Selected(m).empty());
 }

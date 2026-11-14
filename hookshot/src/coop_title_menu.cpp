@@ -284,7 +284,9 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
         o.voice = On(v);
         std::string m(Trim(v.value_or("")));
         std::transform(m.begin(), m.end(), m.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        o.voice_ptt = m != "open" && m != "open-mic";   // (an older file's on, 1, yes: push to talk, as it meant)
+        // push to talk only when the line turns voice on and is not open (an older on, 1, yes: as it meant);
+        // no line or off: voice off, and turning it on in the menu gives open mic
+        o.voice_ptt = o.voice && m != "open" && m != "open-mic";
         const std::string k(Trim(IniGet(options_ini, "LICHII_COOP_VOICE_KEY").value_or("")));
         if (k.size() == 1 && std::isalnum(static_cast<unsigned char>(k[0]))) {
             o.voice_key = std::string(1, static_cast<char>(std::toupper(static_cast<unsigned char>(k[0]))));

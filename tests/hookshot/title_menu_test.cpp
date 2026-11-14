@@ -659,6 +659,21 @@ TEST_CASE("title menu: voice chat is off unless turned on: on writes open, ptt s
     CHECK(Options::Read("", "LICHII_COOP_VOICE_KEY=0x14\r\n").voice_key == "your key");
 }
 
+TEST_CASE("title menu: a fresh kit has voice off, and turning it on gives open mic") {
+    for (const char* file : {"", "# LICHII_COOP_VOICE=open\r\n", "LICHII_COOP_VOICE=off\r\n"}) {
+        CAPTURE(file);
+        Options o = Options::Read("", file);
+        CHECK_FALSE(o.voice);       // no line (or off): voice off
+        CHECK_FALSE(o.voice_ptt);   // and no push to talk waiting
+        o.voice = true;             // the menu's row turned on
+        CHECK(o.VoiceMode() == "open");
+        std::string c, opt = file;
+        o.Write(c, opt);
+        CHECK(IniGet(opt, "LICHII_COOP_VOICE") == "open");
+        CHECK_FALSE(Options::Read("", opt).voice_ptt);
+    }
+}
+
 TEST_CASE("title menu: the host's player count, 2 to 16, read and written") {
     Options o;
     o.max_players = 12;

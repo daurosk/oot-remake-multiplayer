@@ -251,11 +251,26 @@ TEST_CASE("ocarina hand: to the hand while playing, back on the belt after") {
     CHECK_FALSE(hand.Held());
 }
 
-TEST_CASE("ocarina hand: an unknown bind (adult, other layout) is left alone") {
+TEST_CASE("ocarina hand: an adult's Ocarina goes to the adult's own hand bone") {
+    using B = CoopOcarina::HandBind;
+    CHECK(B::HandFor(0x133) == 0x44);
+    CHECK(B::HandFor(0x145) == 0x42);
+    CHECK(B::HandFor(0x44) == 0);
+    B hand;
+    Memory m = Puppet();
+    m.Put(kBind + B::kBindBone, 0x2101450000);  // the adult's Pod_B
+    CHECK(hand.Step(m.Reader(), Writer(m), kLink, true) == "ocarina to the hand");
+    CHECK(m.words[kBind + B::kBindBone] == 0x2100420000);
+    CHECK(hand.Step(m.Reader(), Writer(m), kLink, false) == "ocarina back on the belt");
+    CHECK(m.words[kBind + B::kBindBone] == 0x2101450000);
+    CHECK_FALSE(hand.Held());
+}
+
+TEST_CASE("ocarina hand: an unknown bind (another layout) is left alone") {
     using B = CoopOcarina::HandBind;
     B hand;
     Memory m = Puppet();
-    m.Put(kBind + B::kBindBone, 0x2100990000);  // not the child belt bone
+    m.Put(kBind + B::kBindBone, 0x2100990000);  // neither skeleton's belt bone
     const std::string line = hand.Step(m.Reader(), Writer(m), kLink, true);
     CHECK(line.find("ocarina not moved") == 0);
     CHECK(m.words[kBind + B::kBindBone] == 0x2100990000);

@@ -1725,6 +1725,21 @@ Error decode_body(Reader& r, OcarinaNote& m) {
   return Error::none;
 }
 
+Error encode_body(const LinkSound& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number) || !valid_link_sound_name(m.name)) return Error::bad_value;
+  w.u8(m.player_number);
+  w.str(m.name);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, LinkSound& m) {
+  m = LinkSound{};
+  COOP_READ(r.u8(m.player_number));
+  COOP_TRY(r.str(m.name, kMaxLinkSoundChars));
+  if (!valid_player_or_self(m.player_number) || !valid_link_sound_name(m.name)) return Error::bad_value;
+  return Error::none;
+}
+
 Error decode_body(Reader& r, TimeOfDay& m) {
   m = TimeOfDay{};
   COOP_READ(r.u8(m.player_number));
@@ -2798,6 +2813,7 @@ MessageType type_of(const Message& message) {
       MessageType::local_leave,
       MessageType::local_sample,
       MessageType::local_message,
+      MessageType::link_sound,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -2890,6 +2906,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::local_joined:
     case MessageType::local_leave:
     case MessageType::local_message:
+    case MessageType::link_sound:
       return channel == kChannelSession;
     case MessageType::flag_set:
     case MessageType::flag_state:
@@ -3007,6 +3024,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::dbno_mode:
     case MessageType::dbno_state:
     case MessageType::dbno_revive:
+    case MessageType::link_sound:
       return true;
   }
   return false;
@@ -3046,7 +3064,8 @@ auto* player_field(M& message) {
                       std::is_same_v<T, PlatformCounter> ||
                       std::is_same_v<T, DbnoStatus> || std::is_same_v<T, DbnoRevive> ||
                       std::is_same_v<T, VoiceFrame> ||
-                      std::is_same_v<T, ModList> || std::is_same_v<T, ModSettings>) {
+                      std::is_same_v<T, ModList> || std::is_same_v<T, ModSettings> ||
+                      std::is_same_v<T, LinkSound>) {
           field = &m.player_number;
         }
       },
@@ -3139,6 +3158,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::flag_reset: return decode_as<FlagReset>(body, out);
     case MessageType::flag_origin: return decode_as<FlagOrigin>(body, out);
     case MessageType::ocarina_note: return decode_as<OcarinaNote>(body, out);
+    case MessageType::link_sound: return decode_as<LinkSound>(body, out);
     case MessageType::save_ask: return decode_as<SaveAsk>(body, out);
     case MessageType::save_part: return decode_as<SavePart>(body, out);
     case MessageType::pvp_mode: return decode_as<PvpMode>(body, out);

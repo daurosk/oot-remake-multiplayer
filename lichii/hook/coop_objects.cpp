@@ -88,7 +88,9 @@
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
 #include "coop_objects_sync.h"
+#include "coop_link_sound.h"
 #include "coop_ocarina.h"
+#include "coop_puppet_sound.h"
 #include "coop_spawn.h"
 #include "coop_pickups.h"
 #include "coop_projectiles.h"
@@ -2425,6 +2427,11 @@ private:
                             CoopDifficulty::TheKinds().Mark(*component, CoopDifficulty::Kind::our_link_life);
                         }
                     }
+                    // Our Link's own sound user, whose sounds go to the others (coop_link_sound.h).
+                    const u64 parts = r.Get<u64>(a + CoopPuppetSound::addr::kActorParts).value_or(0);
+                    const u64 xlink = parts ? r.Get<u64>(parts + CoopPuppetSound::addr::kPartsXLink).value_or(0) : 0;
+                    CoopLinkSound::SetOurUser(
+                        xlink ? r.Get<u64>(xlink + CoopPuppetSound::addr::kXLinkSoundUser).value_or(0) : 0);
                 }
                 coop::protocol::Vec3 at{};
                 for (std::size_t i = 0; i < 3; ++i) {

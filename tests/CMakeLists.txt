@@ -72,6 +72,7 @@ add_executable(coop_tests
   lichii/world_test.cpp
   lichii/ocarina_test.cpp
   lichii/ocarina_sound_test.cpp
+  lichii/link_sound_test.cpp
   lichii/pickups_test.cpp
   lichii/testinput_test.cpp
   lichii/time_test.cpp
@@ -119,6 +120,7 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_voice.cpp
   lichii/voice_test.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_puppet_sound.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_link_sound.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_pickups.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_testinput.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_teleport.cpp

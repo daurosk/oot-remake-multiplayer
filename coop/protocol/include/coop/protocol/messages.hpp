@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -137,6 +138,7 @@ enum class MessageType : std::uint16_t {
   local_leave = 462,
   local_sample = 463,
   local_message = 464,
+  link_sound = 500,  // 500 to 509: the other Links' sounds (docs/protocol.md, "Link sounds")
 };
 
 // PLAYER_SAMPLE component ids.
@@ -1010,6 +1012,26 @@ struct OcarinaNote {
   bool operator==(const OcarinaNote&) const = default;
 };
 
+// LINK_SOUND (500, issues 131 and 152): a sound the game itself started on the
+// sender's own Link (its SLink user), by the asset's name ("Pl_Voice_Attack",
+// "Ocarina_D"), relayed to everyone else, who start the same asset on that
+// player's Link with the game's own call. The name is the game's: letters,
+// digits and '_', 1 to kMaxLinkSoundChars.
+inline constexpr std::size_t kMaxLinkSoundChars = 55;
+struct LinkSound {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 16 relayed
+  std::string name;                          // the asset's name
+  bool operator==(const LinkSound&) const = default;
+};
+inline bool valid_link_sound_name(std::string_view name) {
+  if (name.empty() || name.size() > kMaxLinkSoundChars) return false;
+  for (const char ch : name) {
+    const bool ok = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+    if (!ok) return false;
+  }
+  return true;
+}
+
 struct TimeOfDay {
   std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 16 relayed
   std::uint32_t seconds = 0;                 // 0 to kSecondsPerDay - 1
@@ -1634,7 +1656,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              OcarinaNote, PlatformClock, PlatformCounter,
                              DbnoMode, DbnoStatus, DbnoRevive, Difficulty, VoiceFrame,
                              ModList, ModSettings, LobbyAction, LobbyMutes, LobbyResult,
-                             LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage>;
+                             LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage, LinkSound>;
 
 MessageType type_of(const Message& message);
 

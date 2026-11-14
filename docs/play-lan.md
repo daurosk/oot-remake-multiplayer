@@ -13,7 +13,7 @@ With Host and Join on the title screen (no `.bat` file):
 3. **The others** open **Join** on the title screen and paste the line where the invite code goes (A on the field, or Ctrl+V), then **OK**. Nothing else to type.
 4. If Windows asks about the firewall on the host's PC, allow the game on private networks.
 
-The invite code is for friends over the internet: it holds the host's internet address, which often does not work from inside the same house. **Copy the code again** on the Host screen brings the invite code back.
+The invite code is for friends over the internet: it holds the host's internet address, which many routers do not let back into the same house. A joiner on a newer version than 0.10.1 also tries this PC and the home network with it, so the invite code then works in the same house and on the same PC too (with Host.bat's own password, or one of 20 letters or more: a short password is not sent across the home network). On 0.10.1, use the **Same house** address. **Copy the code again** on the Host screen brings the invite code back.
 
 The rest of this page is for `Host.bat` / `Join.bat` (and `Host-Hookshot.bat` / `Join-Hookshot.bat`).
 
@@ -84,7 +84,7 @@ Two games side by side, each with its own controller, or one with a controller a
    | Controller + keyboard and mouse | `LICHII_COOP_PAD=1` | `LICHII_COOP_PAD=none` |
 
    A game with a controller chosen reads only that one, and keeps reading it while the other game's window is in front. With `none` the game reads no controller, only the keyboard and mouse.
-4. **Start them:** `Play-OoT-Coop.bat` in kit 1, **Host** on its title screen; `Play-OoT-Coop.bat` in kit 2, **Join** with `127.0.0.1` (or `Host-Hookshot.bat` in one and `Join-Hookshot.bat` with `127.0.0.1` in the other).
+4. **Start them:** `Play-OoT-Coop.bat` in kit 1, **Host** on its title screen; `Play-OoT-Coop.bat` in kit 2, **Join** with `127.0.0.1` or the invite code (or `Host-Hookshot.bat` in one and `Join-Hookshot.bat` with `127.0.0.1` in the other).
 5. **The keyboard and mouse** go to the window in front (click it to play there). A controller player does not need their window in front. To keep the keyboard out of the controller game altogether, add `LICHII_COOP_KEYBOARD=off` to its kit; `LICHII_COOP_KEYBOARD=always` makes a game read the keys even behind the other window (no mouse).
 
 `hookshot_log.txt` beside each `hookshot.exe` says what it chose: `hid: this game's controller: one pad (1)` and `coop: controller 1, keyboard focus`. The default (no line, or `LICHII_COOP_PAD=auto`) is Hookshot's own way: every controller, in the window in front only (the Insert menu's **Controller in background** also lets them in behind). A game built before patch 0015 says `this Hookshot cannot choose a controller`: run `Build-Hookshot-Coop.bat` again.

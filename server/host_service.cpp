@@ -9,6 +9,7 @@
 #include "coop/protocol/messages.hpp"
 #include "join_helper.hpp"
 #include "nat_net.hpp"
+#include "pcp.hpp"
 #include "punch.hpp"
 #include "relay_link.hpp"
 #include "relay_wire.hpp"
@@ -119,13 +120,31 @@ bool HostService::start(std::string& error) {
     c.external_port = server_->port();
     c.log = config_.log;
     mapping_ = std::make_unique<upnp::Mapping>(c);
-    if (!mapping_->open()) {
+    if (mapping_->open()) {
+      if (const auto ip = upnp::parse_ipv4(mapping_->external_address())) forwarded_ = nat::Addr{*ip, server_->port()};
+    } else {
       mapping_.reset();
-      set_message("the router did not open the port (UPnP is off on it, or it said no)", HostProblem::kUpnp);
+      // Routers without UPnP (or with it off) often take PCP or NAT-PMP.
+      pcp::Config p;
+      p.internal_port = server_->port();
+      p.external_port = server_->port();
+      for (const nat::Addr& at : config_.pcp_routers) p.routers.push_back({at, 0x7F000001u});
+      p.log = [this](const std::string& text) { say("router forward: " + text); };
+      say("router forward: UPnP did not open the port; asking the router with PCP / NAT-PMP");
+      pcp_ = std::make_unique<pcp::Mapping>(p);
+      if (pcp_->open()) {
+        if (pcp_->external().ip) forwarded_ = pcp_->external();
+      } else {
+        pcp_.reset();
+      }
+    }
+    if (!mapping_ && !pcp_) {
+      set_message("the router did not open the port (UPnP, PCP and NAT-PMP are off on it, or it said no)",
+                  HostProblem::kUpnp);
     } else {
       std::lock_guard lock(status_mutex_);
       status_.upnp_open = true;
-      status_.external = mapping_->external_address();
+      if (forwarded_) status_.external = show_ipv4(forwarded_->ip);
     }
   }
 
@@ -185,9 +204,8 @@ void HostService::finish_invite() {
   invite_shown_ = true;
   std::optional<nat::Addr> where;
   const auto seen = rendezvous_->public_address();
-  if (mapping_) {
-    const auto ext = upnp::parse_ipv4(mapping_->external_address());
-    if (ext && (nat::is_public(*ext) || config_.stun_allow_private)) where = nat::Addr{*ext, server_->port()};
+  if (forwarded_) {
+    if (nat::is_public(forwarded_->ip) || config_.stun_allow_private) where = *forwarded_;
     if (where && seen && seen->ip != where->ip) {
       say("invite: note: the router's internet address is not the one the STUN server saw (two routers in a "
           "row); the invite uses the router's");
@@ -214,7 +232,7 @@ void HostService::finish_invite() {
   } else {
     say("invite: the invite code is made (not written here: it holds the join password)");
   }
-  const bool symmetric = rendezvous_->symmetric() && !mapping_;
+  const bool symmetric = rendezvous_->symmetric() && !mapping_ && !pcp_;
   if (symmetric) {
     say("invite: note: your router gives every address its own port (symmetric NAT), so friends may not get "
         "through; upnp = yes or a VPN helps (docs/play-online.md)");
@@ -267,6 +285,7 @@ void HostService::service(std::uint32_t wait_ms) {
   server_->service(link_ && wait_ms > 1 ? 1 : wait_ms);
   if (link_) link_->service();
   if (mapping_) mapping_->renew_if_due();
+  if (pcp_) pcp_->renew_if_due();
   if (rendezvous_) {
     rendezvous_->service(now_ms());
     if (!invite_shown_ && rendezvous_->stun_done()) finish_invite();
@@ -291,6 +310,7 @@ void HostService::stop() {
   stopped_ = true;
   if (link_) link_->stop();
   if (mapping_) mapping_->close();
+  if (pcp_) pcp_->close();
   const Stats& stats = server_->session().stats();
   say("stopping; relayed " + count(stats.relayed) + ", dropped " + count(stats.dropped()) + ", half-open refused " +
       count(stats.half_open_limited) + ", not allowed " + count(stats.not_allowed));

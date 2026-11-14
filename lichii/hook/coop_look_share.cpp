@@ -21,7 +21,12 @@ void Share::Set(Parts parts) {
 
 bool Share::OnEvent(const coop::net::Event& event) {
     switch (event.kind) {
-    case EventKind::welcomed:
+    case EventKind::welcomed: {   // a new room: its numbers are other players than the last room's
+        due_ = ours_.has_value();
+        const bool had = !theirs_.empty();
+        theirs_.clear();
+        return had;
+    }
     case EventKind::reconnected:
     case EventKind::player_joined:
         due_ = ours_.has_value();   // the newcomer (or a server that lost us) has not got it

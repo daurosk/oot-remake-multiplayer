@@ -25,7 +25,6 @@
 #include <iphlpapi.h>
 #else
 #include <arpa/inet.h>
-#include <sys/wait.h>
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netinet/in.h>
@@ -229,39 +228,12 @@ std::optional<std::string> ReadClipboard() {
     }
     CloseClipboard();
 #else
-    // Wayland's wl-paste, else X11's xclip or xsel, each only with its display and when it is there (exit 127 when
-    // not: the next is tried). A tool that is there is believed even when it fails: an empty clipboard makes wl-paste
-    // and xclip exit 1. At most 2 s each (timeout, when there), and no more than 64 KiB read.
-    const char* commands[] = {
-        "[ -n \"$WAYLAND_DISPLAY\" ] && command -v wl-paste >/dev/null 2>&1 || exit 127; "
-        "t=; command -v timeout >/dev/null 2>&1 && t='timeout 2'; $t wl-paste --no-newline 2>/dev/null",
-        "[ -n \"$DISPLAY\" ] && command -v xclip >/dev/null 2>&1 || exit 127; "
-        "t=; command -v timeout >/dev/null 2>&1 && t='timeout 2'; $t xclip -selection clipboard -o 2>/dev/null",
-        "[ -n \"$DISPLAY\" ] && command -v xsel >/dev/null 2>&1 || exit 127; "
-        "t=; command -v timeout >/dev/null 2>&1 && t='timeout 2'; $t xsel --clipboard --output 2>/dev/null"};
-    bool read = false;
-    for (const char* command : commands) {
-        FILE* p = popen(command, "r");
-        if (!p) {
-            continue;
-        }
-        std::string got;
-        char buf[512];
-        std::size_t n = 0;
-        while (got.size() < 65536 && (n = fread(buf, 1, sizeof buf, p)) > 0) {
-            got.append(buf, n);
-        }
-        const int status = pclose(p);   // a reader stopped at 64 KiB ends the tool early: what was read stands
-        if (status != -1 && WIFEXITED(status) && WEXITSTATUS(status) == 127) {
-            continue;
-        }
-        out = std::move(got);
-        read = true;
-        break;
-    }
-    if (!read) {
+    // The one Linux reader (coop_clipboard_posix.cpp): wl-paste, else xclip, else xsel; nothing only when none is there.
+    std::optional<std::string> got = CoopClipboard::Paste();
+    if (!got) {
         return std::nullopt;
     }
+    out = std::move(*got);
 #endif
     return out.size() > 4096 ? out.substr(0, 4096) : out;
 }

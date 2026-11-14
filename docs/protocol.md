@@ -458,6 +458,18 @@ Where a player stands with a dungeon's boss ([dungeons-boss.md](dungeons-boss.md
 
 Types 51 to 54 are kept for boss rooms and not used.
 
+### Boss cutscenes (protocol 11, `BOSS_SCENE`, `BOSS_HEART`)
+
+A boss's intro and death play for everyone in the boss's area, and its one heart container is given to everyone once ([dungeons-boss.md](dungeons-boss.md), "Boss cutscenes"; `lichii/hook/coop_boss_scenes.h` has the rules). On channel 0. Types 520 to 524 are kept for it.
+
+| Type | Name | Channel | Sent by | Body |
+|---|---|---|---|---|
+| 520 | `BOSS_SCENE` | 0 | both | `u8` player field, scene (string, 1 to 64: the sender's), `u8` boss (0 to 15, the index in `coop_boss_scenes.cpp`'s table), `u8` kind (1 intro started, 2 the starter's intro ended, 3 death started, 4 death ended; others refused), 3 x `f32` the sender's Link (finite) |
+| 521 | `BOSS_HEART` | 0 | both | `u8` player field (a claim: the claimer; the server's answer: the winner), `u8` boss (0 to 15), `u8` given (0 a claim, from a game; 1 the server's answer; others refused), `u32` maximum life in quarter hearts (1 to 80) |
+
+- `BOSS_SCENE` is relayed to everyone else with the sender's number, never kept. Each game decides whether it is in the area (and plays the event too) or only shows a chat line.
+- **One heart container per boss.** A game sends a claim when its maximum life rose in a beaten boss's area. The server keeps the first claim of each boss while anyone is in (forgotten when the session empties, as the flags): it answers it with given 1 to everyone, the claimer too; a later claim of that boss (the other side of a race, a game that comes back) is answered to its sender alone with the same winner and value; a given 1 from a game is dropped (`boss_hearts_given`, `boss_hearts_late`, `boss_hearts_refused`). Every game raises its maximum to the answer's value and never lowers it for that, so two answers never give two hearts, and a winner who leaves right after its claim takes nothing from the others (the answer went out at once). A second pickup (the container still on that screen) never reaches the others: while in a beaten boss's area a game's own `MaxLife` may not rise past one container on its maximum when the boss died (or the answer), and the flag watcher puts such a rise back unsent (`FlagWatcher::cap_max`). A claim over 80 is not sent.
+
 ### PvP (protocol 10, `PVP_MODE`, `PVP_HIT`, `PVP_HURT`)
 
 Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hook/coop_pvp.h`). Off unless the host turns it on. Types 241 to 250 are kept for it.
@@ -598,6 +610,7 @@ usual `PLAYER_JOINED`, samples and `PLAYER_LEFT`. Types 460 to 469 are kept; 465
 - Version 11 (branch `native-host-b`, 2026-11-12): up to 16 players. Player numbers are 1 to 16 (`kMaxPlayers`), `WELCOME` lists up to 15 others, 12 more slot colours; a version 10 game refuses a `WELCOME` with 5 or more players, so the version goes up. The server takes `--max-players` (1 to 16, default 4 until the games' side takes 16) and sends `PLAYER_SAMPLE` and `PLAYER_POSE` by where the players are ("Who gets which stream"). No new type.
 - Protocol 11 also (branch `dbno`): `DBNO_MODE` (470), `DBNO_STATE` (471), `DBNO_REVIVE` (472); 470 to 479 kept. No bump of its own: a build without them never downs anyone (it gets no `DBNO_MODE`, so it plays with the game's own death), and a server without them does not relay them.
 - Version 11 also (branch `difficulty`): `DIFFICULTY` (480; 480 to 489 kept), sent by the server to every player at join. No earlier layout changed and no bump of its own: it ships with the first version 11 release. A version 11 build without it ignores the type and plays the game as it is.
+- Protocol 11 also (branch `boss-cutscenes`): `BOSS_SCENE` (520), `BOSS_HEART` (521); 520 to 524 kept. No bump of its own: a build without them plays each boss's cutscenes alone (as before) and a server without them does not relay them.
 - Version 11 also (branch `look-live`): types 430 to 434 are kept for a look of several parts (shield, sword, boots, gauntlets). A colour changed in the pause menu needs none: it goes out in `PLAYER_EQUIP` `color` as at the start (docs/puppet.md, "Changing your colour in the game").
 - Version 11 also (branch `ocarina-sound-b`): `LINK_SOUND` (500); 500 to 509 kept for Link's sounds. A build without it ignores the type (no sounds from that player).
 

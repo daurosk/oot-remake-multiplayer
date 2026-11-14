@@ -1,0 +1,11 @@
+# Boss intro and death cutscenes for the boss's area (branch boss-cutscenes; docs/dungeons-boss.md, "Boss
+# cutscenes"). Needs the event request wrap (patch 0005). Each scenario's header has its proof lines; the
+# expects below are the first ones. hs-boss-cutscenes-gohma and hs-boss-far-gohma need the Deku boss flags
+# cleared in the baselines first (hs-gohma-door's header).
+
+[g1]
+hs-boss-cutscenes-gohma    expect="A:Dm_Deku_BossIn: our game started it"  expect="B:Dm_Deku_BossIn: playing it here too"  expect="B:Dm_Deku_BossOut: playing it here too"  label="boss cutscenes: Gohma intro + death"
+hs-boss-far-gohma          expect="A:Dm_Deku_BossIn: our game started it"  expect="B:Dm_Deku_BossIn: not played here"  label="boss cutscenes: far player gets a chat line"
+
+[g2]
+hs-boss-cutscenes-dodongo  expect="A:Dm_DodongoCave_BossIn: our game started it"  expect="A:Dm_DodongoCave_BossOut: our game started the death"  label="boss cutscenes: King Dodongo intro + death"

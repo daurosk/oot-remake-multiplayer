@@ -144,6 +144,10 @@ inline std::vector<Message> every_message() {
   claim[0] ^= 0x5A;
   all.push_back(RejoinClaim{claim});
   all.push_back(DungeonEvent{1, "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_RoomD_PlatformUp"});
+  all.push_back(BossScene{2, "InsideTheDekuTree", 0, BossSceneKind::intro_start, {6.7f, 47.0f, 67.6f}});
+  all.push_back(BossScene{0, "InsideGanonCastle", 9, BossSceneKind::outro_end, {}});
+  all.push_back(BossHeart{0, 3, false, 16});
+  all.push_back(BossHeart{2, 3, true, kMaxBossHeartLife});
   {
     ModList mods{3, {{"oot-remake-rando", "1.2.0", {}}, {"hd-hud", "", {}}}};
     for (std::size_t i = 0; i < mods.mods[0].hash.size(); ++i) mods.mods[0].hash[i] = static_cast<std::uint8_t>(i * 7);

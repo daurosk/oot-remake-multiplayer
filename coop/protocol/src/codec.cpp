@@ -2267,6 +2267,73 @@ Error decode_body(Reader& r, LocalSample& m) { return decode_envelope(r, m, loca
 Error encode_body(const LocalMessage& m, Writer& w) { return encode_envelope(m, w, local_message_carries); }
 Error decode_body(Reader& r, LocalMessage& m) { return decode_envelope(r, m, local_message_carries); }
 
+// BOSS_SCENE: u8 player, scene, u8 boss (0 to 15), u8 kind (1 to 4), 3 x f32 position.
+Error check_boss_scene(const BossScene& m) {
+  if (!valid_player_or_self(m.player_number) || m.scene.empty() || m.boss > kMaxSceneBoss) {
+    return Error::bad_value;
+  }
+  const auto kind = static_cast<std::uint8_t>(m.kind);
+  if (kind < static_cast<std::uint8_t>(BossSceneKind::intro_start) ||
+      kind > static_cast<std::uint8_t>(BossSceneKind::outro_end) || !all_finite(m.position)) {
+    return Error::bad_value;
+  }
+  return check_string(m.scene, kMaxSceneChars);
+}
+
+Error encode_body(const BossScene& m, Writer& w) {
+  COOP_TRY(check_boss_scene(m));
+  w.u8(m.player_number);
+  w.str(m.scene);
+  w.u8(m.boss);
+  w.u8(static_cast<std::uint8_t>(m.kind));
+  for (float f : m.position) w.f32(f);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, BossScene& m) {
+  m = BossScene{};
+  std::uint8_t kind = 0;
+  COOP_READ(r.u8(m.player_number));
+  COOP_TRY(r.str(m.scene, kMaxSceneChars));
+  COOP_READ(r.u8(m.boss));
+  COOP_READ(r.u8(kind));
+  for (float& f : m.position) COOP_READ(r.f32(f));
+  m.kind = static_cast<BossSceneKind>(kind);
+  return check_boss_scene(m);
+}
+
+// BOSS_HEART: u8 player, u8 boss (0 to 15), u8 given (0, 1), u32 max life (1 to 80).
+Error check_boss_heart(const BossHeart& m) {
+  if (!valid_player_or_self(m.player_number) || m.boss > kMaxSceneBoss || m.max_life < 1 ||
+      m.max_life > kMaxBossHeartLife) {
+    return Error::bad_value;
+  }
+  return Error::none;
+}
+
+Error encode_body(const BossHeart& m, Writer& w) {
+  COOP_TRY(check_boss_heart(m));
+  w.u8(m.player_number);
+  w.u8(m.boss);
+  w.u8(m.given ? 1 : 0);
+  w.u32(static_cast<std::uint32_t>(m.max_life));
+  return Error::none;
+}
+
+Error decode_body(Reader& r, BossHeart& m) {
+  m = BossHeart{};
+  std::uint8_t given = 0;
+  std::uint32_t max_life = 0;
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(m.boss));
+  COOP_READ(r.u8(given));
+  COOP_READ(r.u32(max_life));
+  if (given > 1 || max_life > static_cast<std::uint32_t>(kMaxBossHeartLife)) return Error::bad_value;
+  m.given = given == 1;
+  m.max_life = static_cast<std::int32_t>(max_life);
+  return check_boss_heart(m);
+}
+
 // SIGN_CUT: head, u16 count, then count x (u64 key, u64 value).
 Error check_sign_cut(const SignCut& m) {
   COOP_TRY(check_world(m.player_number, m.scene, m.hash));
@@ -2814,6 +2881,7 @@ MessageType type_of(const Message& message) {
       MessageType::local_sample,
       MessageType::local_message,
       MessageType::link_sound,
+      MessageType::boss_scene,  MessageType::boss_heart,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -2907,6 +2975,8 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::local_leave:
     case MessageType::local_message:
     case MessageType::link_sound:
+    case MessageType::boss_scene:
+    case MessageType::boss_heart:
       return channel == kChannelSession;
     case MessageType::flag_set:
     case MessageType::flag_state:
@@ -3025,6 +3095,8 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::dbno_state:
     case MessageType::dbno_revive:
     case MessageType::link_sound:
+    case MessageType::boss_scene:
+    case MessageType::boss_heart:
       return true;
   }
   return false;
@@ -3065,7 +3137,8 @@ auto* player_field(M& message) {
                       std::is_same_v<T, DbnoStatus> || std::is_same_v<T, DbnoRevive> ||
                       std::is_same_v<T, VoiceFrame> ||
                       std::is_same_v<T, ModList> || std::is_same_v<T, ModSettings> ||
-                      std::is_same_v<T, LinkSound>) {
+                      std::is_same_v<T, LinkSound> ||
+                      std::is_same_v<T, BossScene> || std::is_same_v<T, BossHeart>) {
           field = &m.player_number;
         }
       },
@@ -3203,6 +3276,8 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::local_leave: return decode_as<LocalLeave>(body, out);
     case MessageType::local_sample: return decode_as<LocalSample>(body, out);
     case MessageType::local_message: return decode_as<LocalMessage>(body, out);
+    case MessageType::boss_scene: return decode_as<BossScene>(body, out);
+    case MessageType::boss_heart: return decode_as<BossHeart>(body, out);
     case MessageType::drop_spawn: return decode_as<DropSpawn>(body, out);
     case MessageType::drop_take: return decode_as<DropTake>(body, out);
     case MessageType::drop_ask: return decode_as<DropAsk>(body, out);

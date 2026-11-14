@@ -1557,3 +1557,78 @@ TEST_CASE("flag watcher, host: a busy count delta is added later, summed, and th
   CHECK(w.frame(store).empty());
   CHECK(w.stats().entries_unsent == 0);
 }
+
+// Boss cutscenes (one heart container for all): A (the host here) takes the
+// container, 12 -> 16; B's game then picks up the same container, still on
+// its screen, before it went away there. B's rise past the cap is put back
+// and never sent: the host and A stay at 16, B too.
+TEST_CASE("flag watcher: a second pickup of a boss's heart container never raises the group (cap_max)") {
+  constexpr FlagKey kMaxLife{0xfbe01da1u, 0};
+  FakeStore host_game, player_game;
+  host_game.values[kMaxLife] = entry(kMaxLife, 12, proto::FlagKind::int32);
+  player_game.values[kMaxLife] = entry(kMaxLife, 12, proto::FlagKind::int32);
+  ItemFlagStore host_store(host_game), player_store(player_game);
+  FlagWatcher h(SharedFlags({kMaxLife}), FlagRole::host);
+  FlagWatcher p(SharedFlags({kMaxLife}), FlagRole::player);
+  h.frame(host_store);
+  p.frame(player_store);
+  auto exchange = [&](int frames) {
+    for (int i = 0; i < frames; ++i) {
+      for (const auto& o : p.frame(player_store)) CHECK(h.receive(o.bytes));
+      for (const auto& o : h.frame(host_store)) CHECK(p.receive(o.bytes));
+    }
+  };
+  // Both games cap at "the max when the boss died + one container".
+  h.cap_max(kMaxLife, 16);
+  p.cap_max(kMaxLife, 16);
+  SUBCASE("B's pickup after A's value came") {
+    host_game.values[kMaxLife] = entry(kMaxLife, 16, proto::FlagKind::int32);  // A's pickup
+    exchange(3);
+    CHECK(player_game.get(kMaxLife) == 16u);
+    player_game.values[kMaxLife] = entry(kMaxLife, 20, proto::FlagKind::int32);  // B's late pickup
+    exchange(5);
+  }
+  SUBCASE("B's pickup before A's value came") {
+    host_game.values[kMaxLife] = entry(kMaxLife, 16, proto::FlagKind::int32);
+    player_game.values[kMaxLife] = entry(kMaxLife, 16, proto::FlagKind::int32);  // the race: both +1
+    exchange(1);
+    player_game.values[kMaxLife] = entry(kMaxLife, 20, proto::FlagKind::int32);  // and once more
+    exchange(5);
+  }
+  CHECK(host_game.get(kMaxLife) == 16u);
+  CHECK(player_game.get(kMaxLife) == 16u);
+  CHECK(p.stats().max_caps_kept == 1);
+  // Without the cap (we left the boss's area) a rise of our own goes out again.
+  p.clear_max_cap(kMaxLife);
+  player_game.values[kMaxLife] = entry(kMaxLife, 20, proto::FlagKind::int32);
+  exchange(3);
+  CHECK(host_game.get(kMaxLife) == 20u);
+}
+
+TEST_CASE("flag watcher: a capped rise whose put-back fails is still never sent, and is tried again") {
+  constexpr FlagKey kMaxLife{0xfbe01da1u, 0};
+  FakeStore host_game, player_game;
+  host_game.values[kMaxLife] = entry(kMaxLife, 16, proto::FlagKind::int32);
+  player_game.values[kMaxLife] = entry(kMaxLife, 16, proto::FlagKind::int32);
+  ItemFlagStore host_store(host_game), player_store(player_game);
+  FlagWatcher h(SharedFlags({kMaxLife}), FlagRole::host);
+  FlagWatcher p(SharedFlags({kMaxLife}), FlagRole::player);
+  h.frame(host_store);
+  p.frame(player_store);
+  p.cap_max(kMaxLife, 16);
+  player_game.values[kMaxLife] = entry(kMaxLife, 20, proto::FlagKind::int32);  // a second pickup
+  player_game.unwritable.insert(kMaxLife);                                     // and the game takes no write
+  for (int i = 0; i < 3; ++i) {
+    for (const auto& o : p.frame(player_store)) CHECK(h.receive(o.bytes));
+    for (const auto& o : h.frame(host_store)) CHECK(p.receive(o.bytes));
+  }
+  CHECK(host_game.get(kMaxLife) == 16u);
+  CHECK(p.stats().write_failures >= 3);
+  CHECK(p.stats().max_caps_kept == 0);
+  // The game takes writes again: put back on the next frame, still nothing sent.
+  player_game.unwritable.clear();
+  CHECK(p.frame(player_store).empty());
+  CHECK(player_game.get(kMaxLife) == 16u);
+  CHECK(p.stats().max_caps_kept == 1);
+  CHECK(host_game.get(kMaxLife) == 16u);
+}

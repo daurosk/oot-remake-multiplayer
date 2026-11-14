@@ -13,6 +13,8 @@
 
 #include "coop_colors.h"
 #include "coop_look.h"
+#include "coop_look_paint.h"
+#include "coop_look_parts.h"
 #include "coop_look_tunic.h"
 #include "coop_title_menu.h"
 
@@ -328,4 +330,141 @@ TEST_CASE("look tunic: the wardrobe keeps your Link in the colour worn") {
     w.Step(4000);
     CHECK(Holding(m, at, 1));
     CHECK_FALSE(w.Busy());
+}
+
+// ---------------------------------------------------------------------------
+// The gear (coop_look_parts.h)
+
+namespace {
+
+// BC1 texels of kTexels bytes: blocks of a blue end pair and of a grey one in turn.
+std::vector<std::uint8_t> Shield() {
+    std::vector<std::uint8_t> t;
+    for (std::size_t b = 0; b < kTexels / 8; ++b) {
+        const std::uint16_t c0 = b % 2 == 0 ? 0x3a54 : 0xb5b6;   // (60,72,160) blue / (180,180,180) grey
+        const std::uint16_t c1 = b % 2 == 0 ? 0x1909 : 0x5aeb;
+        const std::uint8_t block[8] = {static_cast<std::uint8_t>(c0), static_cast<std::uint8_t>(c0 >> 8),
+                                       static_cast<std::uint8_t>(c1), static_cast<std::uint8_t>(c1 >> 8),
+                                       0x1b, 0x1b, 0x1b, 0x1b};
+        t.insert(t.end(), block, block + 8);
+    }
+    return t;
+}
+
+const char* const kHylian = "Mt_Weapon_Shield_Hylian_Alb";
+
+}  // namespace
+
+TEST_CASE("look parts: a look file packed is read back the same") {
+    const auto texels = Colour({{"A", TexelsOf(1)}, {"B_Alb", TexelsOf(2)}});
+    const auto back = CoopLookTunic::Parse(CoopLookTunic::Pack(*texels));
+    REQUIRE(back);
+    CHECK(back->size() == 2);
+    CHECK(CoopLookTunic::SameLayout(*back, *texels));
+    CHECK((*back)[1].texels == TexelsOf(2));
+    CHECK(CoopLookTunic::Pack(*texels) == LookFile({{"A", TexelsOf(1)}, {"B_Alb", TexelsOf(2)}}));
+}
+
+TEST_CASE("look parts: every gear part has a texture, every texture once") {
+    std::set<std::string> names;
+    std::set<Part> parts;
+    for (const auto& g : CoopLookParts::Gear()) {
+        CHECK(names.insert(g.name).second);
+        CHECK_FALSE(g.rules.empty());
+        for (const auto& r : g.rules) {
+            CHECK(r.part != Part::tunic);   // the tunic has the pack's colours (coop_look_tunic.h)
+            CHECK(r.tones != 0);
+            parts.insert(r.part);
+        }
+    }
+    CHECK(parts.size() == CoopLook::kParts - 1);
+}
+
+TEST_CASE("look parts: the gear painted in a look; a painting's name says its colours") {
+    Look look;
+    CHECK_FALSE(CoopLookParts::AnyGear(look));
+    CHECK(CoopLookParts::Name(look) == "gear");
+    look[Part::tunic] = 0xFF0000u;
+    CHECK(CoopLookParts::Name(look) == "gear");   // the tunic is not gear
+    look[Part::hylian_face] = 0x20A040u;
+    CHECK(CoopLookParts::AnyGear(look));
+    const std::string name = CoopLookParts::Name(look);
+    CHECK(name.find("20A040") != std::string::npos);
+    look[Part::hylian_face] = 0x20A041u;
+    CHECK(CoopLookParts::Name(look) != name);
+    look[Part::hylian_face] = 0x20A040u;
+
+    const auto gear = Colour({{kHylian, Shield()}, {"Something_Else_Alb", Shield()}});
+    const auto painted = CoopLookParts::Painted(*gear, look);
+    REQUIRE(painted.size() == 2);
+    CHECK(painted[1].texels == Shield());   // not a gear texture: as it is
+    const auto& p = painted[0].texels;
+    CHECK(p != Shield());
+    // the blue blocks are green now, the grey ones as they were
+    CHECK(std::memcmp(p.data() + 8, Shield().data() + 8, 8) == 0);
+    const auto ends = CoopLookPaint::Ends(CoopLookPaint::Format::bc1, std::span<const std::uint8_t>(p.data(), 8));
+    CHECK(CoopLookPaint::ToneOf(ends[0]) == CoopLookPaint::kGreen);
+    // nothing set for this texture's parts: as it is
+    Look boots;
+    boots[Part::boots] = 0x000080u;
+    CHECK(CoopLookParts::Painted(*gear, boots)[0].texels == Shield());
+}
+
+TEST_CASE("look parts: the gear wardrobe paints your shield, and finds one loaded later at the unpause") {
+    FakeMemory m(kBase, 0x10000);
+    PutFile(m, kBase + 0x1000, kHylian, Shield());
+    Look look;
+    look[Part::hylian_frame] = 0xE0C030u;
+    const auto base = LookFile({{kHylian, Shield()}});
+    CoopLookTunic::Wardrobe::Host host;
+    host.memory = &m;
+    host.range = [] { return std::pair<std::uint64_t, std::uint64_t>{kBase, kBase + 0x10000}; };
+    host.file = [&](const std::string& c) -> std::optional<std::vector<std::uint8_t>> {
+        if (c == CoopLookParts::kBase) {
+            return base;
+        }
+        return CoopLookTunic::Pack(CoopLookParts::Painted(*CoopLookTunic::Parse(base), look));
+    };
+    std::vector<std::string> log;
+    host.log = [&](const std::string& l) { log.push_back(l); };
+    host.base = CoopLookParts::kBase;
+    host.what = "gear";
+    CoopLookTunic::Wardrobe w(host);
+    w.Wear(CoopLookParts::Name(look));
+    w.Step(0);
+    const auto want = CoopLookParts::Painted(*CoopLookTunic::Parse(base), look)[0].texels;
+    CHECK(std::memcmp(m.at(kBase + 0x1000 + kOffset), want.data(), want.size()) == 0);
+    CHECK(std::any_of(log.begin(), log.end(), [](const std::string& l) { return l.find("your Link's gear is") != std::string::npos; }));
+    // A second shield's texture loads (the game's own texels): not seen until the next search...
+    PutFile(m, kBase + 0x4000, kHylian, Shield());
+    w.Step(1000);
+    CHECK(std::memcmp(m.at(kBase + 0x4000 + kOffset), Shield().data(), kTexels) == 0);
+    // ...which the unpause brings forward.
+    w.Kick();
+    w.Step(2000);
+    CHECK(std::memcmp(m.at(kBase + 0x4000 + kOffset), want.data(), want.size()) == 0);
+    // Back to the game's own colours.
+    w.Wear(CoopLookParts::kBase);
+    w.Step(3000);
+    CHECK(std::memcmp(m.at(kBase + 0x1000 + kOffset), Shield().data(), kTexels) == 0);
+    CHECK_FALSE(w.Busy());
+}
+
+TEST_CASE("look: an unpause with the look unchanged is told too") {
+    int applied = 0, unpaused = 0;
+    CoopLook::Init(Look{}, [&](const Look&) { ++applied; }, [&] { ++unpaused; });
+    CoopLook::ApplyOnUnpause();
+    CoopLook::Frame();
+    CHECK(applied == 0);
+    CHECK(unpaused == 1);
+    Look l;
+    l[Part::boots] = 1u;
+    CoopLook::SetPending(l);
+    CoopLook::ApplyOnUnpause();
+    CoopLook::Frame();
+    CHECK(applied == 1);
+    CHECK(unpaused == 1);
+    CoopLook::Frame();   // no unpause: nothing
+    CHECK(unpaused == 1);
+    CoopLook::Init(Look{}, nullptr);
 }

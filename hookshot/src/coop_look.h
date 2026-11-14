@@ -130,7 +130,8 @@ using Apply = std::function<void(const Look&)>;
 // At the module's start: the look of the settings (LICHII_COOP_COLOR, else
 // coop-options.ini's or coop.ini's `color`) and what applying one does.
 // The worn look is not applied again: the game started in it.
-void Init(const Look& worn, Apply apply);
+// `unpaused`: called on the frame after any unpause with the look unchanged.
+void Init(const Look& worn, Apply apply, std::function<void()> unpaused = {});
 Look Worn();
 Look Shown();
 void SetPending(const Look& look);

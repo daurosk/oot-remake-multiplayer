@@ -173,13 +173,15 @@ namespace {
 std::mutex g_mutex;
 Choice g_choice;           // guarded
 Apply g_apply;             // guarded
+std::function<void()> g_unpaused;   // guarded
 bool g_to_apply = false;   // guarded: ApplyOnUnpause's, for the next Frame
 }  // namespace
 
-void Init(const Look& worn, Apply apply) {
+void Init(const Look& worn, Apply apply, std::function<void()> unpaused) {
     std::lock_guard lock(g_mutex);
     g_choice = Choice(worn);
     g_apply = std::move(apply);
+    g_unpaused = std::move(unpaused);
     g_to_apply = false;
 }
 
@@ -206,6 +208,7 @@ void ApplyOnUnpause() {
 void Frame() {
     std::optional<Look> look;
     Apply apply;
+    std::function<void()> unpaused;
     {
         std::lock_guard lock(g_mutex);
         if (!std::exchange(g_to_apply, false)) {
@@ -213,9 +216,12 @@ void Frame() {
         }
         look = g_choice.Unpause();
         apply = g_apply;
+        unpaused = g_unpaused;
     }
     if (look && apply) {
         apply(*look);   // outside the lock: it may read and write files
+    } else if (!look && unpaused) {
+        unpaused();
     }
 }
 

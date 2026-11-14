@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_look_parts.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <string_view>
 
@@ -95,6 +96,94 @@ CoopLookTunic::Texels Painted(const CoopLookTunic::Texels& gear, const CoopLook:
         }
     }
     return out;
+}
+
+std::string SlotName(const std::string& name, std::size_t slot) {
+    if (slot < 1 || slot > 9 || name.size() < 4 || name.compare(0, 3, "Mt_") != 0) {
+        return {};
+    }
+    return "C" + std::to_string(slot) + "_" + name.substr(3);
+}
+
+namespace {
+constexpr std::uint32_t kZstdMagic = 0xFD2FB528u;
+constexpr std::uint8_t kRawHeader = 0xE0;   // single segment, an 8-byte content size, no dictionary or checksum
+constexpr std::size_t kRawBlock = 128 * 1024;
+
+void PutLe(std::vector<std::uint8_t>& out, std::uint64_t v, int bytes) {
+    for (int i = 0; i < bytes; ++i) {
+        out.push_back(static_cast<std::uint8_t>(v >> (8 * i)));
+    }
+}
+std::uint64_t GetLe(const std::vector<std::uint8_t>& in, std::size_t at, int bytes) {
+    std::uint64_t v = 0;
+    for (int i = 0; i < bytes; ++i) {
+        v |= std::uint64_t{in[at + static_cast<std::size_t>(i)]} << (8 * i);
+    }
+    return v;
+}
+}  // namespace
+
+std::vector<std::uint8_t> RawZstd(const std::vector<std::uint8_t>& data) {
+    std::vector<std::uint8_t> out;
+    out.reserve(data.size() + data.size() / kRawBlock * 3 + 16);
+    PutLe(out, kZstdMagic, 4);
+    out.push_back(kRawHeader);
+    PutLe(out, data.size(), 8);
+    std::size_t at = 0;
+    do {
+        const std::size_t n = std::min(kRawBlock, data.size() - at);
+        const bool last = at + n >= data.size();
+        PutLe(out, (std::uint64_t{n} << 3) | (last ? 1u : 0u), 3);
+        out.insert(out.end(), data.begin() + static_cast<std::ptrdiff_t>(at),
+                   data.begin() + static_cast<std::ptrdiff_t>(at + n));
+        at += n;
+    } while (at < data.size());
+    return out;
+}
+
+std::optional<std::vector<std::uint8_t>> UnrawZstd(const std::vector<std::uint8_t>& frame) {
+    if (frame.size() < 13 || GetLe(frame, 0, 4) != kZstdMagic || frame[4] != kRawHeader) {
+        return std::nullopt;
+    }
+    const std::uint64_t size = GetLe(frame, 5, 8);
+    if (size > frame.size()) {
+        return std::nullopt;
+    }
+    std::vector<std::uint8_t> out;
+    out.reserve(static_cast<std::size_t>(size));
+    std::size_t at = 13;
+    while (true) {
+        if (at + 3 > frame.size()) {
+            return std::nullopt;
+        }
+        const std::uint64_t h = GetLe(frame, at, 3);
+        at += 3;
+        const std::size_t n = static_cast<std::size_t>(h >> 3);
+        if (((h >> 1) & 3) != 0 || n > frame.size() - at) {
+            return std::nullopt;   // not a raw block, or cut short
+        }
+        out.insert(out.end(), frame.begin() + static_cast<std::ptrdiff_t>(at),
+                   frame.begin() + static_cast<std::ptrdiff_t>(at + n));
+        at += n;
+        if (h & 1) {
+            break;
+        }
+    }
+    if (out.size() != size) {
+        return std::nullopt;
+    }
+    return out;
+}
+
+std::optional<std::vector<std::uint8_t>> Repainted(const std::vector<std::uint8_t>& frame,
+                                                   const CoopLookTunic::Texture& texture) {
+    auto file = UnrawZstd(frame);
+    if (!file || texture.offset > file->size() || texture.texels.size() > file->size() - texture.offset) {
+        return std::nullopt;
+    }
+    std::copy(texture.texels.begin(), texture.texels.end(), file->begin() + static_cast<std::ptrdiff_t>(texture.offset));
+    return RawZstd(*file);
 }
 
 }  // namespace CoopLookParts

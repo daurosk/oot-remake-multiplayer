@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The Hookshot module's side of coop_look.h: what applying a look does, and
 // the worker that keeps your own Link in it: the tunic in the pack's colours
-// (coop_look_tunic.h), the gear painted in any colour (coop_look_parts.h).
+// (coop_look_tunic.h), the gear painted in any colour (coop_look_parts.h),
+// and the other players' puppets' own copies of the gear painted in their
+// looks as texture files the game loads (PaintPuppetCopy, coop_look_share.h).
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
@@ -84,6 +87,84 @@ std::optional<std::vector<std::uint8_t>> GearFile(const std::string& name) {
     return CoopLookTunic::Pack(CoopLookParts::Painted(*gear, look));
 }
 
+// The puppets' gear (coop_look_share.h, docs/puppet.md "Gear colours on the
+// puppets"): one copy of the items painted in a player's look. The one place
+// the puppets' colours are made; it writes the copy's texture files in the
+// pack's romfs/Tex/, which the game reads through its own file system when it
+// makes that copy's pieces (no memory is written). Returns how many files
+// were written; nothing when the pack cannot do it.
+std::optional<std::size_t> PaintPuppetCopy(std::size_t copy, const CoopLook::Look& look) {
+    static std::optional<CoopLookTunic::Texels> gear;   // the worker's: the game's own gear texels, read once
+    if (!gear) {
+        const auto base = ReadFile(LookDir() / (std::string(CoopLookParts::kBase) + ".bin"));
+        if (!base || !(gear = CoopLookTunic::Parse(*base))) {
+            return std::nullopt;
+        }
+    }
+    const fs::path tex = LookDir().parent_path() / "romfs" / "Tex";
+    std::size_t written = 0;
+    for (const CoopLookTunic::Texture& t : CoopLookParts::Painted(*gear, look)) {
+        const std::string name = CoopLookParts::SlotName(t.name, copy);
+        if (name.empty()) {
+            continue;
+        }
+        const fs::path file = tex / (name + ".bntx.zs");
+        const auto frame = ReadFile(file);
+        if (!frame) {
+            continue;   // no copy of this texture in the pack (an item the romfs lacked)
+        }
+        const auto out = CoopLookParts::Repainted(*frame, t);
+        if (!out) {
+            LOG_WARNING(Core, "coop: look: {} is not a copy the module can paint (make the puppet pack again)", file.string());
+            return std::nullopt;
+        }
+        if (*out == *frame) {
+            ++written;   // already in these colours
+            continue;
+        }
+        const fs::path part = file.string() + ".part";
+        {
+            std::ofstream f(part, std::ios::binary | std::ios::trunc);
+            f.write(reinterpret_cast<const char*>(out->data()), static_cast<std::streamsize>(out->size()));
+            if (!f) {
+                return std::nullopt;
+            }
+        }
+        std::error_code ec;
+        fs::rename(part, file, ec);
+        if (ec) {
+            LOG_WARNING(Core, "coop: look: could not write {}: {}", file.string(), ec.message());
+            return std::nullopt;
+        }
+        ++written;
+    }
+    return written;
+}
+
+// Paints every copy a player's puppet is waiting for (CoopLookShare::Jobs).
+void PaintPuppets() {
+    static std::vector<CoopLookShare::Share::Job> failed;   // the worker's: said once, not tried again
+    for (const CoopLookShare::Share::Job& job : CoopLookShare::Jobs()) {
+        if (std::find(failed.begin(), failed.end(), job) != failed.end()) {
+            continue;   // that puppet keeps the game's items (or its last copy)
+        }
+        std::vector<std::pair<std::uint8_t, std::uint32_t>> wire;
+        for (const auto& p : job.parts) {
+            wire.emplace_back(p.part, p.colour);
+        }
+        const auto files = PaintPuppetCopy(job.copy, CoopLook::FromWire(wire));
+        if (!files) {
+            failed.push_back(job);
+            LOG_WARNING(Core, "coop: look: P{}'s gear colours not painted (copy {}): their puppet keeps the game's items",
+                        job.player, job.copy);
+            continue;
+        }
+        CoopLookShare::Done(job);
+        LOG_INFO(Core, "coop: look: P{}'s gear colours painted for their puppet (copy {}, {} texture file(s))",
+                 job.player, job.copy, *files);
+    }
+}
+
 CoopLookShare::Parts Share(const CoopLook::Look& look) {
     CoopLookShare::Parts parts;
     for (const auto& [number, colour] : CoopLook::Wire(look)) {
@@ -129,6 +210,7 @@ void Work() {
         g_kick = false;
         lock.unlock();
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+        PaintPuppets();   // before their puppets wear the copies
         g_wardrobe->Step(static_cast<std::uint64_t>(ms.count()));
         g_gear->Step(static_cast<std::uint64_t>(ms.count()));
         lock.lock();
@@ -182,6 +264,13 @@ void StartModule() {
     gear.what = "gear";
     g_wardrobe = std::make_unique<CoopLookTunic::Wardrobe>(std::move(host));
     g_gear = std::make_unique<CoopLookTunic::Wardrobe>(std::move(gear));
+    // The others' puppets wear their own gear colours only where the pack has
+    // the gear's texels to paint their copies with (an older pack: the game's
+    // items on every puppet, as before).
+    const bool slots = ReadFile(LookDir() / (std::string(CoopLookParts::kBase) + ".bin")).has_value();
+    CoopLookShare::EnableSlots(slots);
+    LOG_INFO(Core, "coop: look: other players' gear colours on their puppets {}",
+             slots ? "on (pack slots)" : "off (the puppet pack has no coop_look/gear.bin; make it again)");
     // The game started in the settings' colour (the pack's own tiles): the
     // wardrobe looks for that colour's texels too.
     g_wardrobe->Wear(TunicName(worn[Part::tunic]));
@@ -216,6 +305,7 @@ void StopModule() {
     g_worker.join();
     g_wardrobe.reset();   // a later StartModule starts a new worker
     g_gear.reset();
+    CoopLookShare::EnableSlots(false);
 }
 
 }  // namespace CoopLook

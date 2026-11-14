@@ -15,7 +15,9 @@
 // and writes them, as for the tunic.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -46,5 +48,25 @@ bool AnyGear(const CoopLook::Look& look);
 // The gear texels painted in `look` (same textures, same sizes); a texture
 // with no part set, or not in the table, as it is.
 CoopLookTunic::Texels Painted(const CoopLookTunic::Texels& gear, const CoopLook::Look& look);
+
+// The puppets' gear (docs/puppet.md, "Gear colours on the puppets"): the
+// pack's item copies name texture files of their own, "Mt_..." as
+// "C<copy>_..." (tools/puppet_pack/look_items.py tex_name), kept as zstd
+// frames of raw blocks. The module writes a copy's files again in a player's
+// look before their puppet wears it; the game loads them through its own file
+// system (Hookshot opens a mod file each time it is read).
+//
+// A gear texture's name in copy `copy` (1 to 9); "" for a name that is not
+// a gear texture's ("Mt_..." is).
+std::string SlotName(const std::string& name, std::size_t copy);
+// A zstd frame of raw blocks holding `data` (look_items.py raw_zstd), and its
+// data again (nothing for any other frame).
+std::vector<std::uint8_t> RawZstd(const std::vector<std::uint8_t>& data);
+std::optional<std::vector<std::uint8_t>> UnrawZstd(const std::vector<std::uint8_t>& frame);
+// A copy's texture file (a raw frame of its BNTX) with `texture`'s texels in
+// place of its own: nothing when the file is not a raw frame or the texels do
+// not fit at their offset.
+std::optional<std::vector<std::uint8_t>> Repainted(const std::vector<std::uint8_t>& frame,
+                                                   const CoopLookTunic::Texture& texture);
 
 }  // namespace CoopLookParts

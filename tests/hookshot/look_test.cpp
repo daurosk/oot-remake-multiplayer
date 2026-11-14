@@ -502,3 +502,50 @@ TEST_CASE("look tunic: the colour chosen before is worn at start, once the game 
     CHECK(Holding(m, at, 7));   // blue, with no pause-menu change and no restart
     CHECK(std::any_of(log.begin(), log.end(), [](const std::string& l) { return l.find("is blue now") != std::string::npos; }));
 }
+
+TEST_CASE("look parts: a puppet copy's texture names, and its file painted again") {
+    CHECK(CoopLookParts::SlotName(kHylian, 2) == "C2_Weapon_Shield_Hylian_Alb");
+    CHECK(CoopLookParts::SlotName("Mt_Weapon_Sword_Biggoron_Alb.00", 1) == "C1_Weapon_Sword_Biggoron_Alb.00");
+    CHECK(CoopLookParts::SlotName("Angin_Tile_A_Alb", 1).empty());
+    CHECK(CoopLookParts::SlotName(kHylian, 0).empty());
+    for (const auto& g : CoopLookParts::Gear()) {
+        CHECK(CoopLookParts::SlotName(g.name, 8).size() == std::strlen(g.name));   // as long (look_items.py)
+    }
+    // Raw zstd frames, as look_items.py raw_zstd writes them.
+    for (const std::size_t n : {std::size_t{0}, std::size_t{5}, std::size_t{128 * 1024}, std::size_t{300000}}) {
+        std::vector<std::uint8_t> data(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            data[i] = static_cast<std::uint8_t>(i * 7);
+        }
+        const auto frame = CoopLookParts::RawZstd(data);
+        CHECK(frame.size() == data.size() + 13 + 3 * std::max<std::size_t>(1, (n + 128 * 1024 - 1) / (128 * 1024)));
+        CHECK(CoopLookParts::UnrawZstd(frame) == data);
+        auto cut = frame;
+        cut.pop_back();
+        CHECK_FALSE(CoopLookParts::UnrawZstd(cut));
+    }
+    const std::vector<std::uint8_t> known = {0x28, 0xB5, 0x2F, 0xFD, 0xE0, 3, 0, 0, 0, 0, 0, 0, 0, 0x19, 0, 0, 'a', 'b', 'c'};
+    CHECK(CoopLookParts::RawZstd({'a', 'b', 'c'}) == known);   // (the bytes look_items.py makes)
+    CHECK_FALSE(CoopLookParts::UnrawZstd({0x28, 0xB5, 0x2F, 0xFD, 0x20, 3, 0, 0, 0}));   // another frame
+
+    // A copy's file: the BNTX with the painted texels at their offset.
+    const auto shield = Shield();
+    std::vector<std::uint8_t> bntx(kOffset + shield.size() + 32, 0x11);
+    std::copy(shield.begin(), shield.end(), bntx.begin() + kOffset);
+    Look red;
+    red[Part::hylian_face] = 0xFF0000u;
+    const auto gear = Colour({{kHylian, shield}});
+    const auto painted = CoopLookParts::Painted(*gear, red)[0];
+    REQUIRE(painted.offset == kOffset);
+    const auto out = CoopLookParts::Repainted(CoopLookParts::RawZstd(bntx), painted);
+    REQUIRE(out);
+    const auto file = CoopLookParts::UnrawZstd(*out);
+    REQUIRE(file);
+    CHECK(file->size() == bntx.size());
+    CHECK(std::equal(file->begin(), file->begin() + kOffset, bntx.begin()));   // the header as it was
+    CHECK(std::equal(painted.texels.begin(), painted.texels.end(), file->begin() + kOffset));
+    CHECK_FALSE(std::equal(shield.begin(), shield.end(), file->begin() + kOffset));   // painted
+    CHECK(std::equal(file->end() - 32, file->end(), bntx.end() - 32));
+    std::vector<std::uint8_t> small(kOffset + 8);
+    CHECK_FALSE(CoopLookParts::Repainted(CoopLookParts::RawZstd(small), painted));   // does not fit
+}

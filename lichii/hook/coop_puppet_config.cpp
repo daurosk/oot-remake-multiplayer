@@ -13,7 +13,8 @@ bool On(const std::string& v) {
 }  // namespace
 
 CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool()>& pack_green,
-                                     std::vector<std::string>* log, const PackTunicsFn& pack_tunics) {
+                                     std::vector<std::string>* log, const PackTunicsFn& pack_tunics,
+                                     const PackLookFn& pack_look) {
     CoopPuppet::PlannerSettings settings;
     // The test puppet has its own switch: the logs alone must not put a
     // second Link in the game (Alex's run of 2026-11-09 with the logs on).
@@ -48,6 +49,16 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
                            (settings.green_puppet
                                 ? "get CoopPuppet_<Age>_Green"
                                 : "get the plain puppet (the pack has no green puppet; make it again)"));
+        }
+    }
+    if (const auto items = env("LICHII_COOP_LOOK_ITEMS"); pack_look && items != "0" && items != "off") {
+        auto look = pack_look();
+        settings.look_items = std::move(look.actors);
+        settings.look_copies = settings.look_items.empty() ? 0 : look.copies;
+        if (log != nullptr && settings.look_copies > 0) {
+            log->push_back("coop: the puppet pack has " + std::to_string(settings.look_items.size()) +
+                           " coloured items in " + std::to_string(settings.look_copies) +
+                           " copies (gear colours on the puppets)");
         }
     }
     if (log != nullptr) {
@@ -136,11 +147,21 @@ std::optional<bool> PackTunicPuppets() {
     return false;
 }
 
+// The first manifest with item copies.
+CoopPuppet::LookItems PackLook() {
+    for (const auto& text : PackManifests()) {
+        if (auto items = CoopPuppet::PackLookItems(text); items.copies > 0) {
+            return items;
+        }
+    }
+    return {};
+}
+
 }  // namespace
 
 void Configure() {
     std::vector<std::string> lines;
-    auto settings = Settings(Env, PackGreenPuppets, &lines, PackTunicPuppets);
+    auto settings = Settings(Env, PackGreenPuppets, &lines, PackTunicPuppets, PackLook);
     for (const auto& line : lines) {
         LOG_INFO(Core, "{}", line);
     }

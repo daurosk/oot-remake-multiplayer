@@ -1023,6 +1023,98 @@ class FullBuildTest(unittest.TestCase):
         with open(p, "wb") as f:
             f.write(data)
 
+    def test_look_items(self):
+        # Gear colours on the puppets (look_items): per slot, a copy of each coloured item with
+        # its own model project and textures, the game's own left as they were.
+        from puppet_pack import look_items, zs
+        plain = zstandard.ZstdCompressor()
+        item = "Weapon_Shield_Hylian"
+        info = f"Component/ModelInfo/{item}.engine__component__ModelInfo.bgyml"
+        ap = {"Components": {"ModelInfoRef": "?" + info, "ShieldRef": "?Component/ShieldParam/X.bgyml"}}
+        members = {f"Actor/{item}.engine__actor__ActorParam.bgyml": byml.dumps(ap),
+                   info: byml.dumps({"FmdbName": item, "ModelProjectName": item}),
+                   "Component/ShieldParam/X.bgyml": byml.dumps({"A": 1})}
+        self.write(f"Pack/Actor/{item}.pack.zs", plain.compress(sarc.write(members)))
+        model = b"FRES" + bytes(12) + b"\x1b\x00Mt_Weapon_Shield_Hylian_Alb\x00" + f"{item}\x00".encode()
+        self.write(f"Model/{item}.{item}.bfres.zs", plain.compress(model))
+        tex = fake_bntx("Mt_Weapon_Shield_Hylian_Alb", [bc1_block(1, 2)], fmt=0x1A)
+        self.write("Tex/Mt_Weapon_Shield_Hylian_Alb.bntx.zs", plain.compress(tex))
+        ai = byml.loads(zs.Dicts.from_romfs(self.romfs).decompress(
+            build.read(os.path.join(self.romfs, "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))
+        ai.append({"__RowId": item, "ActorName": item, "FmdbName": item, "ModelProjectName": item,
+                   "InstanceHeapSize": 124720})
+        self.write("RSDB/ActorInfo.Product.999.rstbl.byml.zs", plain.compress(byml.dumps(ai)))
+        gai = [{"__RowId": r["__RowId"]} for r in ai]
+        self.write("RSDB/GameActorInfo.Product.999.rstbl.byml.zs", plain.compress(byml.dumps(gai)))
+        mod = os.path.join(self.dir, "mod")
+        said = []
+        m = build.build(self.romfs, mod, log=said.append, tunics=("red",), look_slots=2)
+        d = zs.Dicts.from_romfs(self.romfs)
+        out = os.path.join(mod, "romfs")
+        self.assertIsNotNone(m["look_items"], said)
+        self.assertEqual(m["look_items"]["slots"], 2)
+        self.assertEqual(m["look_items"]["actors"], [item])
+        self.assertTrue(any("Weapon_Shield_Mirror" in line for line in said))   # not in this romfs: said
+        rows = {r["__RowId"]: r for r in byml.loads(d.decompress(build.read(
+            os.path.join(out, "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))}
+        t = rstb.Rstb.loads(d.decompress(build.read(os.path.join(
+            out, "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"))))
+        for k in (1, 2):
+            actor = f"{item}_Look{k}"
+            self.assertEqual(rows[actor]["ActorName"], actor)
+            self.assertEqual(rows[actor]["ModelProjectName"], actor)
+            self.assertEqual(rows[actor]["FmdbName"], item)
+            self.assertEqual(rows[actor]["InstanceHeapSize"], 124720)
+            files = sarc.read(d.decompress(build.read(os.path.join(out, f"Pack/Actor/{actor}.pack.zs"))))
+            self.assertNotIn(f"Actor/{item}.engine__actor__ActorParam.bgyml", files)
+            comps = byml.loads(files[f"Actor/{actor}.engine__actor__ActorParam.bgyml"])["Components"]
+            self.assertEqual(comps["ShieldRef"], "?Component/ShieldParam/X.bgyml")
+            mi = byml.loads(files[comps["ModelInfoRef"][1:]])
+            self.assertEqual(mi, {"FmdbName": item, "ModelProjectName": actor})
+            got = d.decompress(build.read(os.path.join(out, f"Model/{actor}.{item}.bfres.zs")))
+            self.assertEqual(len(got), len(model))
+            self.assertIn(f"C{k}_Weapon_Shield_Hylian_Alb\x00".encode(), got)
+            self.assertNotIn(b"Mt_Weapon_Shield_Hylian_Alb\x00", got)
+            name = look_items.tex_name("Mt_Weapon_Shield_Hylian_Alb", k)
+            got = d.decompress(build.read(os.path.join(out, f"Tex/{name}.bntx.zs")))
+            self.assertEqual(got, tex.replace(b"Mt_Weapon_Shield_Hylian_Alb\x00", name.encode() + b"\x00"))
+            for f in (f"Pack/Actor/{actor}.pack", f"Actor/{actor}.engine__actor__ActorParam.bgyml",
+                      f"Model/{actor}.{item}.bfres", f"Tex/{name}.bntx"):
+                self.assertGreater(t.get(f) or 0, 0, f)
+        self.assertEqual(m["look_items"]["copies"], 4)   # two per slot
+        self.assertTrue(os.path.exists(os.path.join(out, f"Pack/Actor/{item}_Look4.pack.zs")))
+        self.assertFalse(os.path.exists(os.path.join(out, f"Pack/Actor/{item}_Look5.pack.zs")))
+        # The copies' textures are raw zstd frames, for the module to write again.
+        raw = build.read(os.path.join(out, "Tex/C3_Weapon_Shield_Hylian_Alb.bntx.zs"))
+        self.assertEqual(look_items.unraw_zstd(raw), d.decompress(raw))
+        # The game's own item is not in the pack.
+        self.assertFalse(os.path.exists(os.path.join(out, f"Pack/Actor/{item}.pack.zs")))
+        self.assertFalse(os.path.exists(os.path.join(out, "Tex/Mt_Weapon_Shield_Hylian_Alb.bntx.zs")))
+        # None asked for: none made.
+        m = build.build(self.romfs, os.path.join(self.dir, "mod0"), log=lambda *_: None, tunics=("red",), look_slots=0)
+        self.assertIsNone(m["look_items"])
+
+    def test_look_item_names(self):
+        from puppet_pack import look_items, look_live
+        for g in look_live.GEAR:
+            for k in (1, 4):
+                self.assertEqual(len(look_items.tex_name(g, k)), len(g))
+        self.assertEqual(look_items.tex_name("Mt_Weapon_Sword_Biggoron_Alb.00", 3), "C3_Weapon_Sword_Biggoron_Alb.00")
+        with self.assertRaises(look_items.TunicError):
+            look_items.tex_name("Angin_Tile_A_Alb", 1)
+        self.assertEqual(look_items.actor_name("Armor_Adult_Zora", 2), "Armor_Adult_Zora_Look2")
+
+    def test_raw_zstd(self):
+        import zstandard as zstd
+        from puppet_pack import look_items
+        for n in (0, 1, 128 * 1024, 128 * 1024 + 5, 300000):
+            data = bytes((i * 7) & 0xFF for i in range(n))
+            frame = look_items.raw_zstd(data)
+            self.assertEqual(look_items.unraw_zstd(frame), data)
+            self.assertEqual(zstd.ZstdDecompressor().decompress(frame), data)   # any zstd reads it
+        with self.assertRaises(look_items.TunicError):
+            look_items.unraw_zstd(zstd.ZstdCompressor().compress(b"abc" * 100))
+
     def test_build(self):
         from puppet_pack import zs
         before = {}

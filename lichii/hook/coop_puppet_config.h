@@ -19,14 +19,19 @@ using EnvFn = std::function<std::string(const char*)>;
 // Whether the puppet pack has tunic puppets (CoopPuppet::PackHasTunicPuppets);
 // std::nullopt when no pack manifest was found (nothing to judge by).
 using PackTunicsFn = std::function<std::optional<bool>()>;
+// The pack's per-slot item copies (CoopPuppet::PackLookItems of its manifest).
+using PackLookFn = std::function<CoopPuppet::LookItems()>;
 
 // The settings the variables ask for. pack_green answers whether the puppet
 // pack has both green puppets; it is asked only when the player's own Link
 // wears another colour. pack_tunics (optional): a pack without tunic puppets
-// turns the tunics off, so every puppet is the plain one the pack has. Each
-// line for the log goes into *log.
+// turns the tunics off, so every puppet is the plain one the pack has.
+// pack_look (optional): the pack's item copies for gear colours on the
+// puppets (LICHII_COOP_LOOK_ITEMS=0: none). Each line for the log goes into
+// *log.
 CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool()>& pack_green,
-                                     std::vector<std::string>* log, const PackTunicsFn& pack_tunics = {});
+                                     std::vector<std::string>* log, const PackTunicsFn& pack_tunics = {},
+                                     const PackLookFn& pack_look = {});
 
 #ifdef LICHII_COOP
 // Settings() from the process's variables and the puppet pack under

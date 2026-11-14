@@ -59,6 +59,20 @@ using Floats = std::map<std::uint64_t, float>;
 // the clock), are left out.
 Floats FloatsOf(const std::map<std::uint64_t, std::uint64_t>& words);
 
+// The wave movers' phase (GroundControlActor_WaveLoop, deku-switches-b, issue 196; read from main, build
+// e0f3ccfaf50065ae): the controller's setup (main+0x2fff730) reads WaveCycle_Linear, WaveRadius_Linear,
+// WaveCycle_Angular and WaveRadius_Angular from the blackboard into a wave block (main+0x11d07b0: cycle at +8,
+// radius at +20, angular cycle at +32, radius at +44, each three floats) and puts the phase angles after them
+// (+56 linear x, y, z, then angular), each from the place it starts at, wrapped into [0, 2 pi). Each frame a phase
+// goes on by 2 pi / its cycle a second, and the floor stands at its start + radius x sin(phase). Both games start
+// from the same place, so the phase is the one value that differs (when each loaded the room). A word that steps at
+// 2 pi / the float kWavePhaseFromCycle bytes before it is that phase: the finder takes it before any other, with
+// its loop 2 pi.
+inline constexpr std::uint64_t kWavePhaseFromCycle = 48;  // phase (+56) - cycle (+8)
+inline constexpr float kTwoPi = 6.28318531f;
+// The cycle (2 pi) when `key` in `floats` steps at `rate` as a wave phase, else nothing.
+std::optional<float> WavePhaseCycle(const Floats& floats, std::uint64_t key, float rate);
+
 // Finds the clock word of one driver from looks at it.
 class ClockFinder {
 public:
@@ -97,6 +111,7 @@ private:
         float rate = 0.0f;
         float top = 0.0f;    // the highest value seen
         float cycle = 0.0f;
+        bool wave = false;   // a wave mover's phase (WavePhaseCycle): its loop is known
     };
     struct Look {
         std::uint64_t at_us = 0;

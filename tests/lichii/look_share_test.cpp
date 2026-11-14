@@ -59,3 +59,17 @@ TEST_CASE("look share: the others' looks are kept by player and forgotten when t
     CHECK(s.OnEvent(Kind(EventKind::player_left, 2)));
     CHECK_FALSE(s.Of(2));
 }
+
+TEST_CASE("look share: a new room forgets the last room's looks, a reconnect keeps them") {
+    CoopLookShare::Share s;
+    CHECK_FALSE(s.OnEvent(Kind(EventKind::welcomed)));   // nothing to forget
+    CHECK(s.OnEvent(Look(2, {{11, 0xFF0000}})));
+    CHECK_FALSE(s.OnEvent(Kind(EventKind::reconnected)));
+    CHECK(s.Of(2));                                     // the same room: player 2 is still that player
+    CHECK(s.OnEvent(Kind(EventKind::welcomed)));         // another room: its player 2 is someone else
+    CHECK_FALSE(s.Of(2));
+    s.Set({{3, 0xE0C030}});
+    s.TakeSend();
+    s.OnEvent(Kind(EventKind::welcomed));
+    CHECK(s.TakeSend());                                // ours goes to the new room
+}

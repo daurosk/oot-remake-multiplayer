@@ -70,7 +70,7 @@ These are fixed or built in, but no two-game test has reached them yet, or reach
 
 ## Hookshot (experimental)
 
-- This release is Longshot only: no emulator in the kit. The emulator kits are the older releases, and they cannot join a 0.10.1 game.
+- This release is Longshot only: no emulator in the kit. Emulator support ends with 0.10.0, the last release with the emulator kit; it cannot join a 0.10.1 game.
 - Co-op also runs on Hookshot, now [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot), a native PC build of the game that each player builds from their own game with the kit's `Build-Hookshot-Coop.bat` ([setup.md, Hookshot](setup.md#play-on-hookshot-experimental)). Hookshot and emulator players can join the same game and see each other as Link in their colours (checked by hand).
 - It needs Vulkan 1.3 with mesh shaders: NVIDIA RTX 20 or newer, AMD RX 6000 or newer; Intel is mostly untested.
 - Checked by hand on two Hookshot games: the other players as Link in their tunic colours, name tags and edge arrows over them, shots in flight, your own Link in your colour; with an emulator player in the same session, each sees the other as Link in their colour.

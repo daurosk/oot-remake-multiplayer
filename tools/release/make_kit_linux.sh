@@ -81,7 +81,11 @@ for w in "${webgpu_only[@]}"; do [[ -f $repo/hookshot/patches/$w ]] || die "hook
 for p in "$repo"/hookshot/patches/*.patch; do
     n=${p##*/}
     if printf '%s\n' "${webgpu_only[@]}" | grep -qxF -- "$n"; then
-        if grep -E '^diff --git ' "$p" | grep -vqE '^diff --git a/gpu/render/'; then die "hookshot/patches/$n (webgpu_only) changes more than gpu/render"; fi
+        # (the file list captured first: grep -q quitting early under pipefail would make a pipe here fail)
+        diffs=$(grep -E '^diff --git ' "$p" || true)
+        [[ -n $diffs ]] || die "hookshot/patches/$n (webgpu_only) changes no file"
+        others=$(grep -vE '^diff --git a/gpu/render/' <<<"$diffs" || true)
+        [[ -z $others ]] || die "hookshot/patches/$n (webgpu_only) changes more than gpu/render"
         continue
     fi
     if grep -qE '^diff --git a/gpu/render/[^ ]*\.cpp ' "$p"; then

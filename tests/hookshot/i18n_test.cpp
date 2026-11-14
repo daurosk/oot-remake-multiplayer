@@ -145,7 +145,7 @@ std::string Sources() {
     namespace fs = std::filesystem;
     const fs::path repo = fs::path(COOP_TEST_SOURCE_DIR) / "..";
     std::string all;
-    for (const fs::path dir : {repo / "hookshot" / "src", repo / "lichii" / "hook", repo / "coop" / "host" / "src",
+    for (const fs::path& dir : {repo / "hookshot" / "src", repo / "lichii" / "hook", repo / "coop" / "host" / "src",
                                repo / "coop" / "host" / "include" / "coop" / "host"}) {
         for (const auto& e : fs::directory_iterator(dir)) {
             const std::string name = e.path().filename().string();

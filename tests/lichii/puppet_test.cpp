@@ -1736,13 +1736,12 @@ TEST_CASE("puppet gear: pieces in hand are put away while the puppet plays the O
     t.gear[1] = "Weapon_Shield_Hylian";
     t.drawn = std::uint8_t{0x10};  // their shield in hand
     d.SetInput(Wants({t}));
-    CHECK(Frame(d, g, 20).size() == 1);  // worn
-    auto calls = holds(30);
+    auto calls = holds(20);  // worn and, its actor there, asked into the hand
     REQUIRE(calls.size() == 1);
     CHECK(calls[0].x[1] == 4u);
     CHECK(calls[0].x[2] == addr::kEquipStateInHand);
     g.guest.Set(kEu + addr::kEquipSlotBits + 4, addr::kEquipBitInHand);
-    CHECK(holds(400).size() == 1);  // asked again until the bit is seen, then taken
+    CHECK(holds(400).size() == 1);  // asked again after the wait, the bit seen: taken
     CHECK(holds(410).empty());
 
     // They play the Ocarina with the shield bit still set: put away.

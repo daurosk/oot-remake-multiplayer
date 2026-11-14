@@ -21,6 +21,9 @@ $acct = "${env:COMPUTERNAME}\$User"
 $list = Join-Path $HookDir 'denied.txt'
 $done = @(); if (Test-Path $list) { $done = @(Get-Content $list) }
 $targets = @(Get-OotCiDenyTargets -Skip @($Root, $HookDir) -User $User)
+# Save the list first, so an icacls failure part way still leaves every ACE
+# that may have been set for uninstall.ps1 to remove.
+@($done + $targets) | Select-Object -Unique | Set-Content -Encoding utf8 $list
 foreach ($d in $targets) {
     $p, $kind = $d -split '\|'
     if ($kind -eq 'root') { & icacls $p /deny "${acct}:(AD,WD,WEA,WA)" | Out-Null }
@@ -28,5 +31,4 @@ foreach ($d in $targets) {
     if ($LASTEXITCODE -ne 0) { throw "icacls deny failed on $p" }
     if ($done -notcontains $d) { "denied: $p ($kind)" }
 }
-@($done + $targets) | Select-Object -Unique | Set-Content -Encoding utf8 $list
 "$($targets.Count) folders closed to $User."

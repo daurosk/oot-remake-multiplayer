@@ -63,6 +63,11 @@ Read outside pull requests for hostile build-time code before merging them.
   (elevated)". Run `deny.ps1` in an elevated PowerShell and jobs run again. Not
   covered: a subfolder inside a denied folder that does not inherit its
   parent's rights and grants Users itself (none on this PC at install time).
+- The Deny ACEs name `oot-ci` only: the owner, and everything the owner runs
+  (the game in `C:\oot-coop`, the kits, the repo, `.worktrees`, `coop-kit`
+  lanes, `repo-backup`, all under the owner's profile), keeps the access it had.
+  The first run walks every file under the denied folders to pass the Deny
+  down, which can take several minutes on the profile and `C:\msys64`.
 - No secrets: the job has the read-only `GITHUB_TOKEN` only (`permissions: contents: read`).
 - One runner = one job at a time. Its first step drops `Runner.Worker` to
   BelowNormal priority, and every later step inherits that, so a game test on this
@@ -102,6 +107,9 @@ notes (`gh api repos/actions/runner/releases/latest --jq .body`, the `win-x64`
 line), and change the defaults in `install.ps1` in a pull request.
 
 Tools it needs and already finds on this PC: Visual Studio 2022 Build Tools
-(MSVC, CMake, Ninja), Git for Windows (bash), Windows PowerShell. The runner's
+(MSVC, CMake, Ninja: `ilammy/msvc-dev-cmd` puts the Build Tools' own Ninja on
+the job's PATH; the owner's WinGet Ninja is in the denied profile), Git for
+Windows (bash: the machine PATH has only `Git\cmd`, so the job's first step adds
+`Git\bin`), Windows PowerShell. The runner's
 `.env` sets `PSExecutionPolicyPreference=RemoteSigned` for its own processes, as
 the user's default policy would refuse to run the hook and `powershell` steps.

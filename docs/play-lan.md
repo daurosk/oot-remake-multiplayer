@@ -4,18 +4,18 @@ For players on the same home network (the same router, wired or Wi-Fi). Every pl
 
 One player is the **host**: their PC runs the server, and they play on it too. The others **join**.
 
-## On Hookshot's title screen
+## In the game: the Multiplayer tab
 
-With Host and Join on the title screen (no `.bat` file):
+Host and Join are in the game's menu, first tab **Multiplayer** ([setup.md](setup.md) step 5 says how to open it; no `.bat` file):
 
-1. **The host** opens **Host** on the title screen, then chooses **Same network or VPN**. The game shows one line, for example `192.168.1.20:27510 abcdefghijklmnopqrst` (this PC's address and port, a space, the session's join password), and has copied it. With a VPN program running, its address comes first (Radmin VPN `26.x.x.x`, Hamachi `25.x.x.x`, Tailscale `100.x.x.x`).
+1. **The host** opens **Host** in the Multiplayer tab, then chooses **Same network or VPN**. The game shows one line, for example `192.168.1.20:27510 abcdefghijklmnopqrst` (this PC's address and port, a space, the session's join password), and has copied it. With a VPN program running, its address comes first (Radmin VPN `26.x.x.x`, Hamachi `25.x.x.x`, Tailscale `100.x.x.x`).
 2. The host pastes that line into a chat with the friends (Ctrl+V). It holds the join password, so keep it among friends.
-3. **The others** open **Join** on the title screen and paste the line where the invite code goes (A on the field, or Ctrl+V), then **OK**. Nothing else to type.
+3. **The others** open **Join** in the Multiplayer tab and paste the line where the invite code goes (A on the field, or Ctrl+V), then **OK**. Nothing else to type.
 4. If Windows asks about the firewall on the host's PC, allow the game on private networks.
 
 The invite code is for friends over the internet: it holds the host's internet address, which often does not work from inside the same house. **Copy the code again** on the Host screen brings the invite code back.
 
-The rest of this page is for `Host.bat` / `Join.bat` (and `Host-Hookshot.bat` / `Join-Hookshot.bat`).
+Host, Join and Firewall below are for the older emulator kits (0.10.0 and before) with `Host.bat` / `Join.bat`; the firewall rule also applies to `start-server.cmd`.
 
 ## Host
 
@@ -72,11 +72,11 @@ netsh advfirewall firewall delete rule name="OoT co-op server UDP 27510"
 
 ## Two players on one PC
 
-Two games side by side, each with its own controller, or one with a controller and one with the keyboard and mouse. Hookshot only (patch 0015); the emulator gives the keyboard and every pad to the window in front.
+Two games side by side, each with its own controller, or one with a controller and one with the keyboard and mouse.
 
-1. **Two kits.** Unzip the kit twice, into two short folders (for example `C:\oot-coop-1` and `C:\oot-coop-2`), and do [setup.md, "Play on Hookshot"](setup.md#play-on-hookshot-experimental) in each. A Hookshot game takes about 10 GB of RAM, so two need about 20 GB free.
+1. **Two kits.** Unzip the kit twice, into two short folders (for example `C:\OoT-Coop-1` and `C:\OoT-Coop-2`), and do [setup.md](setup.md) in each: double-click `Start OoT Co-op.bat` and give it your game. Each kit builds its own game (60 GB free each while it builds). A game takes about 10 GB of RAM, so two need about 20 GB free.
 2. **Plug in the controllers** before you start the games. They are numbered in the order they were connected: the first one plugged in is controller 1. A controller that turns off or is unplugged gets its number back when it returns, and the others keep theirs. Steam Controller / Steam Deck pads with Steam Input on show twice (the real pad and Steam's stand-in): choose the stand-in, and the game gets no motion controls from it.
-3. **Choose each game's controller.** In each kit's `coop-options.ini` add one line, or use the **Multiplayer** tab's **Settings > Controller** row in the game, which shows each controller's name and applies at once:
+3. **Choose each game's controller** with one line in each kit's `coop-options.ini` (beside `Start OoT Co-op.bat`), before you start the games. In 0.10.1 this is the only way: the **Settings > Controller** row in the game comes in 0.11.
 
    | Setup | Kit 1 (`coop-options.ini`) | Kit 2 (`coop-options.ini`) |
    |---|---|---|
@@ -84,10 +84,10 @@ Two games side by side, each with its own controller, or one with a controller a
    | Controller + keyboard and mouse | `LICHII_COOP_PAD=1` | `LICHII_COOP_PAD=none` |
 
    A game with a controller chosen reads only that one, and keeps reading it while the other game's window is in front. With `none` the game reads no controller, only the keyboard and mouse.
-4. **Start them:** `Play-OoT-Coop.bat` in kit 1, **Host** on its title screen; `Play-OoT-Coop.bat` in kit 2, **Join** with `127.0.0.1` (or `Host-Hookshot.bat` in one and `Join-Hookshot.bat` with `127.0.0.1` in the other).
-5. **The keyboard and mouse** go to the window in front (click it to play there). A controller player does not need their window in front. To keep the keyboard out of the controller game altogether, add `LICHII_COOP_KEYBOARD=off` to its kit; `LICHII_COOP_KEYBOARD=always` makes a game read the keys even behind the other window (no mouse).
+4. **Start them:** double-click `Start OoT Co-op.bat` in kit 1 and open **Host** in the game's menu, first tab **Multiplayer** ([setup.md](setup.md) step 5 says how to open it), then **Same network or VPN**: it copies one line (address, port and join password). Then double-click `Start OoT Co-op.bat` in kit 2 and open **Join** in its **Multiplayer** tab: the line is filled in already (it is on this PC's clipboard), then **OK**. If Windows asks about the firewall, allow the game on private networks.
+5. **The keyboard and mouse** go to the window in front (click it to play there). A controller player does not need their window in front. To keep the keyboard out of the controller game altogether, add `LICHII_COOP_KEYBOARD=off` to its kit's `coop-options.ini`; `LICHII_COOP_KEYBOARD=always` makes a game read the keys even behind the other window (no mouse).
 
-`hookshot_log.txt` beside each `hookshot.exe` says what it chose: `hid: this game's controller: one pad (1)` and `coop: controller 1, keyboard focus`. The default (no line, or `LICHII_COOP_PAD=auto`) is Hookshot's own way: every controller, in the window in front only (the Insert menu's **Controller in background** also lets them in behind). A game built before patch 0015 says `this Hookshot cannot choose a controller`: run `Build-Hookshot-Coop.bat` again.
+`longshot_log.txt` beside each kit's `longshot.exe` (in `hookshot\game\bin\`) says what it chose: `hid: this game's controller: one pad (1)` and `coop: controller 1, keyboard focus`. The default (no line, or `LICHII_COOP_PAD=auto`) is the game's own way: every controller, in the window in front only (the game's menu has **Controller in background** to let them in behind too). A log line `this Hookshot cannot choose a controller` means that kit's game is older than the kit: start `Start OoT Co-op.bat` again and let it update the game.
 
 ## Something does not work
 

@@ -370,8 +370,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     if (part == nullptr) {
         return;
     }
-    g_guest.last_part_us = CoopEvery::NowUs();
-    g_guest.said_stuck = false;
+    save::note_part(g_guest, part->transfer_id, CoopEvery::NowUs());   // (a new transfer: gave_up ends)
     if (part->player_number == client.host_number() && !client.is_host()) {
         Say(g_lines.on_part(part->transfer_id, part->count));
     }

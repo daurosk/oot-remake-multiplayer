@@ -240,7 +240,12 @@ struct GuestSession {
   std::uint64_t asked_us = 0;   // when the last ask went out
   int asks = 0;                 // asks sent this session
   bool gave_up = false;         // the last ask got nothing whole: the guest stopped asking (give_up_due)
+  std::uint32_t transfer = 0;   // the transfer id of the last part that came (note_part)
 };
+
+// A part of the host's save came (transfer `transfer_id`) at `now_us`. A new transfer (the host loaded another
+// save, or answered again) starts fresh: gave_up ends, so it can give up (and say so) again if it stalls too.
+void note_part(GuestSession& s, std::uint32_t transfer_id, std::uint64_t now_us);
 
 // A guest asks again kGuestReaskUs after its last ask when nothing at all came (the ask or the whole answer was
 // lost, or the host refused it as too soon), or when a transfer stopped part way and no part came for

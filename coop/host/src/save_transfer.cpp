@@ -270,6 +270,13 @@ bool reask_due(const GuestSession& s, std::uint64_t now_us) {
   return s.asks < kGuestMaxAsks && ask_again(s, now_us);
 }
 
+void note_part(GuestSession& s, std::uint32_t transfer_id, std::uint64_t now_us) {
+  if (s.last_part_us == 0 || transfer_id != s.transfer) s.gave_up = false;
+  s.transfer = transfer_id;
+  s.last_part_us = now_us;
+  s.said_stuck = false;
+}
+
 bool give_up_due(const GuestSession& s, std::uint64_t now_us) {
   return !s.gave_up && s.asks >= kGuestMaxAsks && ask_again(s, now_us);
 }

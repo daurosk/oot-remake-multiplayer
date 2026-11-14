@@ -410,6 +410,39 @@ TEST_CASE("save transfer: a guest gives up once after its last ask, and Loading 
   CHECK(N::kGaveUp == "The host's save did not come: play on, or join again to get it.");
 }
 
+TEST_CASE("save transfer: after giving up, a new transfer from the host can give up again") {
+  using N = save::GuestNotices;
+  const std::uint64_t s = 1'000'000;
+  save::GuestSession g;
+  N n;
+  n.on_in_game(false);
+  g.asked = true;
+  g.asked_us = 10 * s;
+  g.asks = save::kGuestMaxAsks;
+  const auto first = save::split(save::pack(Slot(5)), 3, proto::SaveReason::join, 2);
+  REQUIRE(g.assembler.add(Relayed(first[0], 1), 1) == save::Assembler::Result::partial);
+  save::note_part(g, 3, 12 * s);
+  CHECK(n.on_part(3, first.size()) == N::kLoading);
+  REQUIRE(save::give_up_due(g, 12 * s + save::kGuestReaskUs));
+  CHECK(n.on_gave_up() == N::kGaveUp);
+  g.gave_up = true;
+  // more parts of the same transfer: still given up
+  save::note_part(g, 3, 40 * s);
+  CHECK(g.gave_up);
+  CHECK_FALSE(save::give_up_due(g, 40 * s + save::kGuestReaskUs));
+  // the host loads another save: a new transfer starts, Loading again, and it stalls too
+  const auto second = save::split(save::pack(Slot(6)), 4, proto::SaveReason::host_load, 2);
+  REQUIRE(g.assembler.add(Relayed(second[0], 1), 1) == save::Assembler::Result::partial);
+  save::note_part(g, 4, 50 * s);
+  CHECK_FALSE(g.gave_up);
+  CHECK(n.on_part(4, second.size()) == N::kLoading);
+  CHECK(n.loading());
+  CHECK_FALSE(save::give_up_due(g, 50 * s + save::kGuestReaskUs - 1));
+  REQUIRE(save::give_up_due(g, 50 * s + save::kGuestReaskUs));
+  CHECK(n.on_gave_up() == N::kGaveUp);
+  CHECK_FALSE(n.loading());
+}
+
 TEST_CASE("save transfer: the newest slot is found and read") {
   TempDir dir("coop_tests_save_newest");
   const fs::path game = dir.path / "0400486024DEC000";

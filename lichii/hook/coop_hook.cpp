@@ -633,11 +633,12 @@ public:
                 // of the event session is the emulator's way, and Hookshot's net.
                 auto& requests = CoopLiveEvents::TheGameRequests();
                 const bool by_request = requests.Live();
+                const auto asked = by_request ? requests.Since(start_cursor_) : std::vector<CoopLiveEvents::GameRequest>{};
                 const auto found = start_source_.Frame(
-                    by_request ? CoopLiveEvents::RequestedOf(requests.Since(start_cursor_), names) : std::nullopt,
-                    by_request, running_now,
+                    by_request ? CoopLiveEvents::RequestedOf(asked, names) : std::nullopt,
+                    CoopLiveEvents::RequestedOtherOf(asked, names), by_request, running_now,
                     [&] { return CoopLiveEvents::FindRunningEvent(&ReadGuest, &*memory, base_, names); });
-                LogScanOnly(start_source_, start_scan_only_, "dungeon");
+                LogScanOnly(start_source_, start_scan_only_, "dungeon", &start_refused_);
                 if (found) {
                     live_decider_.Ours(*found, hold_scene_);
                     coop::protocol::DungeonEvent e;
@@ -1769,21 +1770,27 @@ private:
     std::mutex live_mutex_;  // the requester runs on the calc thread (CoopSvc caller)
     CoopLiveEvents::Requester live_requester_;
     CoopLiveEvents::StartSource start_source_;  // our own gimmick event starts
-    std::uint64_t start_cursor_ = 0, start_scan_only_ = 0;
+    std::uint64_t start_cursor_ = 0, start_scan_only_ = 0, start_refused_ = 0;
     // An event start the search found that the game's request had not named, with the wrap there: logged, as the
     // sign that some event does not start through the wrapped request.
-    static void LogScanOnly(const CoopLiveEvents::StartSource& source, std::uint64_t& said, const char* what) {
+    static void LogScanOnly(const CoopLiveEvents::StartSource& source, std::uint64_t& said, const char* what,
+                            std::uint64_t* refused_said = nullptr) {
         if (source.ScanOnly() != said) {
             said = source.ScanOnly();
             LOG_INFO(Core, "coop: {}: an event start found by the search that no request of the game named ({} so far)",
                      what, said);
+        }
+        if (refused_said != nullptr && source.Refused() != *refused_said) {
+            *refused_said = source.Refused();
+            LOG_INFO(Core, "coop: {}: a name the search found while the game ran another event it had asked for: "
+                           "not sent ({} so far; intro-ocarina)", what, *refused_said);
         }
     }
     // Shared story cutscenes (coop_shared_scenes.h).
     bool shared_scenes_ = false;  // LICHII_COOP_SHARED_CUTSCENES, needs live events
     CoopSharedScenes::Joiner shared_joiner_;
     CoopLiveEvents::StartSource story_source_;  // our own story cutscene starts
-    std::uint64_t story_cursor_ = 0, story_scan_only_ = 0;
+    std::uint64_t story_cursor_ = 0, story_scan_only_ = 0, story_refused_ = 0;
     std::vector<coop::protocol::DungeonEvent> story_events_in_;  // under dungeon_events_mutex_  // deku-dungeon-2: our own gimmick event starts
     std::mutex dungeon_events_mutex_;         // DUNGEON_EVENT from the network thread
     std::vector<coop::protocol::DungeonEvent> dungeon_events_in_;
@@ -1866,12 +1873,18 @@ private:
             }();
             auto& requests = CoopLiveEvents::TheGameRequests();
             const bool by_request = requests.Live();
+            const auto asked = by_request ? requests.Since(story_cursor_) : std::vector<CoopLiveEvents::GameRequest>{};
             const auto found = story_source_.Frame(
-                by_request ? CoopLiveEvents::RequestedOf(requests.Since(story_cursor_), names) : std::nullopt,
-                by_request, running,
+                by_request ? CoopLiveEvents::RequestedOf(asked, names) : std::nullopt,
+                CoopLiveEvents::RequestedOtherOf(asked, names), by_request, running,
                 [&] { return CoopLiveEvents::FindRunningEvent(&ReadGuest, &*memory, base_, names); });
-            LogScanOnly(story_source_, story_scan_only_, "cutscene");
-            if (found && shared_joiner_.Ours(*found, here.scene)) {
+            LogScanOnly(story_source_, story_scan_only_, "cutscene", &story_refused_);
+            const auto story_flag = [&](std::uint32_t h) { return coop::host::GameFlags(*memory).get_bool(h); };
+            if (found && !CoopSharedScenes::GateHolds(*found, story_flag)) {
+                // Our game cannot be in that scene now (intro-ocarina): a name left in the session.
+                LOG_INFO(Core, "coop: cutscene: the search found the story cutscene {}, which our story is not at "
+                               "yet: not sent", *found);
+            } else if (found && shared_joiner_.Ours(*found, here.scene)) {
                 proto::DungeonEvent e;
                 e.scene = here.scene;
                 e.name = *found;
@@ -1883,11 +1896,16 @@ private:
                 });
             }
         }
-        const auto name = shared_joiner_.Next(here, [&](const std::string& n) {
-            return memory && coop::host::GameFlags(*memory)
-                                 .get_bool(coop::host::flag_hash("HavePlayedEvent." + n))
-                                 .value_or(false);
-        });
+        const auto name = shared_joiner_.Next(
+            here,
+            [&](const std::string& n) {
+                return memory && coop::host::GameFlags(*memory)
+                                     .get_bool(coop::host::flag_hash("HavePlayedEvent." + n))
+                                     .value_or(false);
+            },
+            [&](std::uint32_t h) {
+                return memory ? coop::host::GameFlags(*memory).get_bool(h) : std::optional<bool>{};
+            });
         for (const auto& line : shared_joiner_.TakeNotes()) {
             LOG_INFO(Core, "coop: cutscene: {}", line);
         }

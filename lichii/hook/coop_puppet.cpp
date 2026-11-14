@@ -1105,7 +1105,11 @@ std::optional<Call> Director::Hold(Slot& slot, const Target& target, Guest& gues
     if (!target.drawn || now_ms < slot.hold_retry_ms || target.show == Show::hide) {
         return std::nullopt;
     }
-    const bool ocarina = target.anim && CoopOcarina::HandBind::Playing(target.anim->name);
+    // The same rule as the hand bind in the live step: their command, else the
+    // puppet's last play.
+    const std::string their = target.anim ? target.anim->name : std::string();
+    const std::string& playing = their.empty() ? slot.anim_name : their;
+    const bool ocarina = CoopOcarina::HandBind::Playing(playing);
     for (std::size_t i = 0; i < kGearSlots.size(); ++i) {
         const int s = kGearSlots[i];
         if (s < 0 || slot.worn[i].empty()) {
@@ -1143,7 +1147,7 @@ std::optional<Call> Director::Hold(Slot& slot, const Target& target, Guest& gues
         }
         if (drawn && ocarina) {
             Say("P" + std::to_string(slot.number) + " " + kGearNames[i] + " '" + slot.worn[i] +
-                "' put away while the Ocarina plays ('" + target.anim->name + "')");
+                "' put away while the Ocarina plays ('" + playing + "')");
         }
         slot.hold_slot = s;
         slot.hold_in_hand = want;

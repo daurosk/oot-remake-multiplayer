@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <ostream>   // (CHECK_MESSAGE prints a string_view: MSVC needs operator<< declared)
 #include <string>
 
 #include "coop/protocol/codec.hpp"

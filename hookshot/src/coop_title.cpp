@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_title.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -12,6 +13,7 @@
 #include <random>
 #include <string>
 #include <system_error>
+#include <vector>
 
 #include <fmt/format.h>
 
@@ -69,6 +71,8 @@ constexpr std::uint64_t kA = 1ull << 0;
 constexpr std::uint64_t kMinus = 1ull << 11;
 
 const HosCoopApi* g_api = nullptr;
+bool g_trace = false;
+std::atomic<bool> g_trace_a{false};   // (an A went in on the title: the next step logs the pending requests)    // LICHII_COOP_TITLE_TRACE=1: the screen's requests logged (research for a native Continue)
 bool g_native = false;   // LICHII_COOP_TITLE_NATIVE=1: the 4th title button (Pa_Button_03) opens the tab too
 
 std::atomic<std::uint64_t> g_screen{0};
@@ -94,6 +98,37 @@ std::uint64_t NowMs() {
 std::uint64_t Read64(std::uint64_t a) {
     std::uint64_t v = 0;
     return CoopRuntime::Read(a, &v, sizeof v) ? v : 0;
+}
+
+// Research only (LICHII_COOP_TITLE_TRACE=1), reads nothing else and writes nothing. The title's Sequence
+// (NormalTitle.module.ainb) waits for a press with SeqExecuteWaitScreenButtonInput: its Enter (f_832e8ad0) finds the
+// screen by name and queues a request (the node + 32) on the screen's request queue (screen + 184, f_81006110: pushed
+// at queue + 48, next at request + 8, 1 ends the list). The screens' update (f_802f1380) takes the list (screen + 232)
+// and calls each request's vtable + 32 with screen + 240 until it says done; the node then reads the button. Logged
+// once each: every request's vtable and its slot + 32, and screen + 240's object and vtable; then which request was
+// pending on the frame A went in.
+void TraceRequests(std::uint64_t screen, bool a_now) {
+    static std::vector<std::uint64_t> seen;
+    static std::uint64_t seen_240 = 0;
+    const std::uint64_t ctl = Read64(screen + 240);
+    if (ctl != 0 && ctl != seen_240) {
+        seen_240 = ctl;
+        const std::uint64_t vt = Read64(ctl);
+        LOG_INFO(Core, "coop: title trace: screen+240 {:#x} vtable {:#x} slots {:#x} {:#x} {:#x} {:#x} {:#x} {:#x}", ctl,
+                 vt, Read64(vt), Read64(vt + 8), Read64(vt + 16), Read64(vt + 24), Read64(vt + 32), Read64(vt + 40));
+    }
+    std::uint64_t r = Read64(screen + 232);
+    for (int i = 0; i < 16 && r > 1; ++i, r = Read64(r + 8)) {
+        const std::uint64_t vt = Read64(r);
+        if (a_now) {
+            LOG_INFO(Core, "coop: title trace: A: request {:#x} vtable {:#x} state +36 {:#x} +184 {:#x}", r, vt,
+                     Read64(r + 32), Read64(r + 184));
+        }
+        if (std::find(seen.begin(), seen.end(), vt) != seen.end() || seen.size() > 64) continue;
+        seen.push_back(vt);
+        LOG_INFO(Core, "coop: title trace: request {:#x} vtable {:#x} slot+32 {:#x} slot+40 {:#x} slot+48 {:#x}", r, vt,
+                 Read64(vt + 32), Read64(vt + 40), Read64(vt + 48));
+    }
 }
 
 bool HasScratch() {
@@ -242,6 +277,7 @@ bool InGame() {
 void Init(const HosCoopApi* api) {
     g_api = api;
     g_native = Env("LICHII_COOP_TITLE_NATIVE") == "1";
+    g_trace = Env("LICHII_COOP_TITLE_TRACE") == "1";
     LOG_INFO(Core, "coop: title: {}{}",
              HasScratch() ? "the Multiplayer rows open the menu's Multiplayer tab"
                           : "this Hookshot has no patch 0004 (build it again): co-op is in the menu's Multiplayer tab",
@@ -340,6 +376,9 @@ void OnTitle(void* ctx, std::uint64_t screen, int event) {
             LOG_INFO(Core, "coop: title: the cursor on Continue for the host's save");
         }
     }
+    if (event == HOS_COOP_TITLE_STEP && g_trace) {
+        TraceRequests(screen, g_trace_a.exchange(false));
+    }
     if (event == HOS_COOP_TITLE_STEP) {
         if (!g_step_seen.exchange(true)) {
             LOG_INFO(Core, "coop: title: the title screen's step runs");
@@ -406,6 +445,9 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
             buttons &= ~kA;
         }
         const std::uint64_t down = buttons & ~g_pad_last;
+        if (g_trace && title && (buttons & ~g_pad_last & kA) != 0) {
+            g_trace_a = true;
+        }
         g_pad_last = buttons;
         if ((down & kA) != 0 && title) {
             // The player's own A on the title (not on our co-op rows): they pick their own file or a new game while

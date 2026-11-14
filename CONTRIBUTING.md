@@ -1,5 +1,7 @@
 # Contributing
 
+Using an AI coding agent? It reads [AGENTS.md](AGENTS.md): the same rules, written as steps for the agent.
+
 Anyone can contribute: code, testing, desync reports, docs. Fork the repository, make your change on a branch, and open a pull request. Questions and ideas are welcome in [Discussions](https://github.com/daurosk/oot-remake-multiplayer/discussions) or on [Discord](https://discord.gg/GwtRKAqng5).
 
 ## The one hard rule

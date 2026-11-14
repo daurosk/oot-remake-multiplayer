@@ -478,6 +478,7 @@ public:
                 // grade too, or every pulled bomb is deleted at once.
                 if (load_mend_.ready()) {
                     MendLiftGrade(*memory);
+                    MendDiveDepth(*memory);  // a shared scale dives as deep
                     // Issue 190: a shared ocarina is equipped too, or D-pad
                     // Left takes nothing out.
                     MendOcarina(*memory);
@@ -1929,6 +1930,22 @@ private:
         if (raise && coop::host::GameFlags::set_enum(memory, lift::kGrade, *raise)) {
             LOG_INFO(Core, "coop: items: lift grade {:#x} -> {:#x} for the held strength item",
                      *grade, *raise);
+        }
+    }
+
+    // Scales (docs/mods.md, randomizer items): raises PlayerStatus.DiveDepth (a Float, through the game's Float setter
+    // 0xba6f80) to what the held Silver or Golden Scale gives. Only ever raised; a flag that cannot be read is left alone.
+    void MendDiveDepth(EmulatorMemory& memory) {
+        namespace dive = coop::host::dive;
+        coop::host::GameFlags flags(memory);
+        const auto depth = flags.get_float(dive::kDepth);
+        if (!depth) {
+            return;
+        }
+        const auto raise = coop::host::dive_depth_raise(flags.get_int(dive::kSilver).value_or(0),
+                                                        flags.get_int(dive::kGold).value_or(0), *depth);
+        if (raise && coop::host::GameFlags::set_float(memory, dive::kDepth, *raise)) {
+            LOG_INFO(Core, "coop: items: dive depth {} -> {} for the held scale", *depth, *raise);
         }
     }
 

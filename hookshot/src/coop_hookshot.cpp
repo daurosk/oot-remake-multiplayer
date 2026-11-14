@@ -22,6 +22,7 @@
 #include <mutex>
 #include <chrono>
 #include <cstdlib>
+#include <bit>
 #include <cstring>
 #include <optional>
 #include <string>
@@ -221,12 +222,14 @@ void RunFlagSetters(void* ctx) {
     }
     CoopHook::EmulatorMemory memory(g_system.ApplicationMemory(), CoopRuntime::MainBase());
     const bool ok = CoopFlagNative::RunSetters(
-        memory, [ctx](std::uint64_t function, std::uint64_t x0, std::uint64_t x1, std::uint64_t x2) {
+        memory, [ctx](std::uint64_t function, std::uint64_t x0, std::uint64_t x1, std::uint64_t x2,
+                      std::optional<std::uint32_t> s0) {
             HosCoopCall k{};
             k.function = function;
             k.x[0] = x0;
             k.x[1] = x1;
             k.x[2] = x2;
+            if (s0) std::memcpy(&k.s0, &*s0, sizeof k.s0);  // a Float setter's value
             std::uint64_t result = 0;
             return g_api->call(ctx, &k, &result) != 0;
         });
@@ -247,6 +250,9 @@ void RunFlagSetters(void* ctx) {
             break;
         case GameFlagType::int32:
             done = GameFlags::set_int(memory, hash, static_cast<std::int32_t>(w.value));
+            break;
+        case GameFlagType::float32:
+            done = GameFlags::set_float(memory, hash, std::bit_cast<float>(w.value));
             break;
         case GameFlagType::enum32:
             done = GameFlags::set_enum(memory, hash, w.value);

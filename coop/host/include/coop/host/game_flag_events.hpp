@@ -30,7 +30,7 @@ namespace coop::host {
 
 // The flag types co-op reads and writes. The values are the game's save type
 // ids (docs/flags.md); key64 is the Bool64bitKey table, which has none.
-enum class GameFlagType : std::uint8_t { boolean = 0, int32 = 2, enum32 = 6, uint32 = 20, key64 = 0xff };
+enum class GameFlagType : std::uint8_t { boolean = 0, int32 = 2, float32 = 4, enum32 = 6, uint32 = 20, key64 = 0xff };
 
 // One write: `id` is the name hash, or the 64-bit key; `value` as the game's
 // setter takes it (0 or 1 for a Bool and a key, the value's bits otherwise).
@@ -53,6 +53,8 @@ constexpr std::uint64_t setter_offset(GameFlagType type) {
   switch (type) {
     case GameFlagType::boolean: return 0x682b20;
     case GameFlagType::int32: return 0x163b70;
+    // (manager, value in s0, hash w1): f_7100ba6f80 in the recomp's main (docs/flags.md, "Float").
+    case GameFlagType::float32: return 0xba6f80;
     case GameFlagType::enum32: return 0x3e0980;
     case GameFlagType::uint32: return 0x57af30;
     case GameFlagType::key64: return 0x3761720;

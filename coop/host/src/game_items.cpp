@@ -37,6 +37,7 @@ constexpr ItemFlag kItems[] = {
   {"PouchData.Armor_Child_Mask_Gerudo.StockNum", 0x0e94a8df, K::int32, R::max, true},
   {"IsGet.Weapon_Range_SlingShot", 0x0ec22ee1, K::boolean, R::any, true},
   {"IsGet.Item_Medal_Fire", 0x103a0dc7, K::boolean, R::any, true},
+  {"IsGet.Item_Bottle", 0x1106b082, K::boolean, R::any, true},  // a bottle was got (OOTRR sets it with one)
   {"IsGet.Armor_Adult_HoverBoot", 0x1109c920, K::boolean, R::any, true},
   {"IsGet.Item_Stone_Forest", 0x110b83ec, K::boolean, R::any, true},
   {"IsGet.Item_Scale_Silver", 0x1208fb3e, K::boolean, R::any, true},
@@ -125,11 +126,11 @@ constexpr ItemFlag kItems[] = {
   {"IsGet.Item_Arrow_Ice", 0x5c8f3099, K::boolean, R::any, true},
   {"PouchData.Item_Medal_Fire.StockNum", 0x5ce254a6, K::int32, R::max, true},
   {"PouchData.Item_Arrow_Fire.StockNum", 0x5e529ab9, K::int32, R::max, true},
-  {"PouchData.Item_FairyBless_MP.StockNum", 0x5e671d92, K::int32, R::per_player, true},
+  {"PouchData.Item_FairyBless_MP.StockNum", 0x5e671d92, K::int32, R::max, true},  // the magic meter (OOTRR: progressive Magic)
   {"IsGet.Item_Melody_ScarecrowSong", 0x5e86fb4d, K::boolean, R::any, true},
   {"DungeonInfo.GerudoFortress.IsGetCompass", 0x5eb80679, K::boolean, R::any, true},
   {"DungeonInfo.ShadowTemple.SmallKeyNum", 0x5edda9e3, K::int32, R::count, true},
-  {"PouchData.Item_FairyBless_MPDouble.StockNum", 0x5f043856, K::int32, R::per_player, true},
+  {"PouchData.Item_FairyBless_MPDouble.StockNum", 0x5f043856, K::int32, R::max, true},  // double magic
   {"IsGet.Armor_Adult_HeavyBoot", 0x5fa190e6, K::boolean, R::any, true},
   {"PouchData.Item_DekuSeed.StockNum", 0x5fadf7fc, K::int32, R::per_player, true},
   {"PouchData.Item_ScrubBusinessSeed.StockNum", 0x600e29eb, K::int32, R::max, true},
@@ -196,7 +197,7 @@ constexpr ItemFlag kItems[] = {
   {"DungeonInfo.InsideJabuJabuBelly.IsGetCompass", 0x9a2218db, K::boolean, R::any, true},
   {"PouchData.Item_BulletBag_Medium.StockNum", 0x9a30a9e5, K::int32, R::max, true},
   {"IsGet.Item_NutBag_Large", 0x9a5db0b6, K::boolean, R::any, true},
-  {"PouchData.Item_FairyBless_DefenseDouble.StockNum", 0x9a826fab, K::int32, R::per_player, true},
+  {"PouchData.Item_FairyBless_DefenseDouble.StockNum", 0x9a826fab, K::int32, R::max, true},  // double defence, as IsDefenseUP
   {"DungeonInfo.InsideGanonCastle.IsGetMap", 0x9bbc0c4a, K::boolean, R::any, true},
   {"DungeonInfo.SpiritTemple.IsGetCompass", 0x9bd1181c, K::boolean, R::any, true},
   {"DungeonInfo.BottomOfTheWell.IsGetCompass", 0x9d6efaac, K::boolean, R::any, true},
@@ -485,10 +486,15 @@ constexpr std::uint32_t kArrows = 0x518ec74b, kArrowsGet = 0x572701ea;
 constexpr std::uint32_t kBombs = 0xdb1bcd4f, kBombsGet = 0x2bb00768;
 constexpr std::uint32_t kNuts = 0xf30d9f54, kNutsGet = 0x00c2ee37;
 constexpr std::uint32_t kSticks = 0xb9494411, kSticksGet = 0xc4e21ac2;
+// Magic now and its maximum (PlayerStatus.MP per player, MPMax shared by max).
+// A meter is 240 a level: OOTRR's MP_UNIT, what its starting Magic Meter and
+// Double Magic write into both (start_items/give.rs).
+constexpr std::uint32_t kMP = 0x76b18200, kMPMax = 0x12d63a97;
 
 #define COOP_CAP(item, member, hash, n) {item, "0xf80f8077." member, hash, K::int32, n}
 #define COOP_AMMO(item, name, hash, n) {item, "PouchData." name ".StockNum", hash, K::int32, n}
 #define COOP_GOT(item, name, hash) {item, "IsGet." name, hash, K::boolean, 1}
+#define COOP_MAGIC(item, n) {item, "PlayerStatus.MPMax", kMPMax, K::int32, n}, {item, "PlayerStatus.MP", kMP, K::int32, n}
 
 // Sorted by item. A capacity's name is the struct hash and the member name:
 // the struct's own name is not known, so its hash is not flag_hash(name).
@@ -517,6 +523,11 @@ constexpr ItemGrant kGrants[] = {
   // Item_StickBag_Large: 30.
   COOP_CAP(0x48e53698, "DekuStick", kCapStick, 30),
   COOP_AMMO(0x48e53698, "Item_DekuStick", kSticks, 30),
+  // Item_FairyBless_MP: the magic meter, full. Without it a shared meter came
+  // empty (MP per player, 0), so no spell or magic arrow worked.
+  COOP_MAGIC(0x5e671d92, 240),
+  // Item_FairyBless_MPDouble: double magic, full.
+  COOP_MAGIC(0x5f043856, 480),
   // Item_BulletBag_Large: 50.
   COOP_CAP(0x7b9673f5, "DekuSeed", kCapSeed, 50),
   COOP_AMMO(0x7b9673f5, "Item_DekuSeed", kSeeds, 50),
@@ -534,6 +545,8 @@ constexpr ItemGrant kGrants[] = {
   // Item_Quiver_Small: 30.
   COOP_CAP(0xa8c3e1fb, "Arrow", kCapArrow, 30),
   COOP_AMMO(0xa8c3e1fb, "Item_Arrow_Normal", kArrows, 30),
+  // Item_Wallet_Large: 1000 (its ExpansionMaxNumActor, GameData Rupee, MaxNum 1000). No fill.
+  COOP_CAP(0xafa4bb52, "Rupee", kCapRupee, 1000),
   // Item_BombBag_Small: 20.
   COOP_CAP(0xb0a1bf51, "Bomb", kCapBomb, 20),
   COOP_AMMO(0xb0a1bf51, "Item_Bomb", kBombs, 20),
@@ -564,6 +577,7 @@ constexpr ItemGrant kGrants[] = {
 #undef COOP_CAP
 #undef COOP_AMMO
 #undef COOP_GOT
+#undef COOP_MAGIC
 
 constexpr bool is_capacity(const ItemGrant& g) { return g.name.starts_with("0xf80f8077."); }
 
@@ -593,6 +607,12 @@ std::optional<std::uint32_t> lift_grade_raise(std::int32_t goron, std::int32_t s
   return kOrder[want];
 }
 
+std::optional<float> dive_depth_raise(std::int32_t silver, std::int32_t gold, float current) {
+  const float want = gold >= 1 ? dive::kGoldDepth : silver >= 1 ? dive::kSilverDepth : 0.0f;
+  if (!(want > current)) return std::nullopt;  // a NaN current is left alone too
+  return want;
+}
+
 std::optional<std::string_view> ocarina_equip_mend(std::int32_t fairy, std::int32_t time,
                                                    std::string_view current) {
   const std::string_view want =
@@ -609,7 +629,7 @@ std::vector<std::uint32_t> ocarina_bools_mend(std::int32_t fairy, std::int32_t t
   std::vector<std::uint32_t> want;
   if (fairy >= 1) want.insert(want.end(), {ocarina::kIsGetFairy, ocarina::kGotFairy});
   if (time >= 1) want.insert(want.end(), {ocarina::kIsGetTime, ocarina::kGotTime});
-  if (fairy >= 1 || time >= 1) want.insert(want.end(), {ocarina::kSlotA, ocarina::kSlotB});
+  if (fairy >= 1 || time >= 1) want.insert(want.end(), {ocarina::kSlotA, ocarina::kSlotB, ocarina::kPrepared});
   std::vector<std::uint32_t> out;
   for (const std::uint32_t hash : want) {
     if (get(hash) == false) out.push_back(hash);  // unreadable (nullopt) is left alone

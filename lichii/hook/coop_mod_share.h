@@ -41,6 +41,9 @@ struct Provider {
     std::function<std::vector<coop::protocol::ModSetting>()> shared;
     // The host's values for a guest's game; nullopt when this game hosts, is alone or left (the present thread).
     std::function<void(std::optional<std::vector<coop::protocol::ModSetting>>)> host_values;
+    // The mods' own chat lines since the last call (the randomizer switched: restart the game), alone or in co-op
+    // (the present thread).
+    std::function<std::vector<std::string>()> notes;
 };
 void SetProvider(Provider provider);
 

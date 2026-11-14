@@ -52,6 +52,8 @@ class GameFlags {
   // A UInt flag (type 20; 0x57a4e0 reads it, 0x57af30 sets it). A hash only in
   // the game's fallback UInt table (M + 0x800, not read) is not found.
   std::optional<std::uint32_t> get_uint(std::uint32_t hash);
+  // A Float flag (PlayerStatus.DiveDepth).
+  std::optional<float> get_float(std::uint32_t hash);
   // An Enum flag (type 6; 0x7e73d0 reads it, 0x3e0980 sets it): the value is
   // the flag_hash of the value's name (PlayerStatus.AssignableItem.Adult:
   // "Bow" is flag_hash("Bow")).
@@ -73,6 +75,7 @@ class GameFlags {
   static bool set_bool(WritableGameMemory& memory, std::uint32_t hash, bool value);
   static bool set_int(WritableGameMemory& memory, std::uint32_t hash, std::int32_t value);
   static bool set_uint(WritableGameMemory& memory, std::uint32_t hash, std::uint32_t value);
+  static bool set_float(WritableGameMemory& memory, std::uint32_t hash, float value);
   static bool set_enum(WritableGameMemory& memory, std::uint32_t hash, std::uint32_t value);
   static bool set_key64(WritableGameMemory& memory, std::uint64_t key, bool value);
 

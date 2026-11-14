@@ -4,6 +4,7 @@
 // lines, and the host's seed in co-op.
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -15,6 +16,7 @@
 #include "coop_mod_library.h"
 #include "coop_mods.h"
 #include "coop_rando.h"
+#include "hos_coop_mods.h"
 
 namespace fs = std::filesystem;
 using namespace CoopRando;
@@ -260,4 +262,141 @@ TEST_CASE("rando: a guest builds the host's seed, and its own seed is not made")
     rando.Wait();
     CHECK(w.runs.size() == 2);
     CHECK(On(loader, "randomizer-HOST7-keysanity"));
+}
+
+TEST_CASE("rando: off by default - a fresh mods folder builds nothing and switches no seed on") {
+    World w;
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    loader.Start();
+    Rando rando(loader, w.Hooks());
+    rando.Start();
+    w.Settings(loader);  // OOTRR and the game are there: still nothing without the switch
+    rando.Wait();
+    CHECK(loader.Value(kId, "on") == "0");
+    CHECK(loader.Value(kId, "seed").empty());  // no seed is made either
+    CHECK(w.runs.empty());
+    CHECK(rando.TakeLines().empty());
+    for (const auto& r : loader.Rows()) CHECK_FALSE((r.name.rfind(kSeedPrefix, 0) == 0 && r.on));
+}
+
+TEST_CASE("rando: off by default - a seed left from an older kit is switched off") {
+    World w;
+    Put(w.mods / "randomizer-OLD1" / kSeedFile, "OLD1\n");
+    Put(w.mods / "randomizer-OLD1" / "romfs" / "System" / "a.bin", "seeded");
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    loader.Start();
+    REQUIRE(On(loader, "randomizer-OLD1"));  // a folder dropped in is on, as every mod
+    Rando rando(loader, w.Hooks());
+    rando.Start();
+    rando.Wait();
+    CHECK_FALSE(On(loader, "randomizer-OLD1"));
+    CHECK(w.runs.empty());
+}
+
+TEST_CASE("rando: switching it on or off says to restart, in the chat and in the tab") {
+    World w;
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    loader.Start();
+    Rando rando(loader, w.Hooks());
+    rando.Start();
+    w.Settings(loader);
+    REQUIRE(loader.Set(kFolder, "on", "1"));
+    rando.Wait();
+    CHECK(rando.TakeLines() == std::vector<std::string>{SwitchLine(true)});
+    CHECK(SwitchLine(true) == "Randomizer on: restart the game and start a new save to play it");
+    const auto why = loader.RestartNeeded().why;
+    CHECK(std::find(why.begin(), why.end(), SwitchLine(true)) != why.end());
+    REQUIRE(loader.Set(kFolder, "preset", "easy"));  // another setting: said once only
+    rando.Wait();
+    CHECK(rando.TakeLines().empty());
+    REQUIRE(loader.Set(kFolder, "on", "0"));
+    rando.Wait();
+    CHECK(rando.TakeLines().empty());  // back as this run started (off): nothing to restart for
+    // and the tab's line goes.
+    const auto after = loader.RestartNeeded().why;
+    CHECK(std::find(after.begin(), after.end(), SwitchLine(false)) == after.end());
+    CHECK(std::find(after.begin(), after.end(), SwitchLine(true)) == after.end());
+}
+
+TEST_CASE("rando: a host's switch reaching a guest says to restart") {
+    World w;
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    loader.Start();
+    Rando rando(loader, w.Hooks());
+    rando.Start();
+    w.Settings(loader);
+    loader.SetHostValues(std::vector<CoopMods::SharedValue>{{kId, "on", "1"}, {kId, "seed", "HOST8"}});
+    rando.Wait();
+    CHECK(rando.TakeLines() == std::vector<std::string>{SwitchLine(true)});
+    CHECK(On(loader, "randomizer-HOST8"));
+}
+
+TEST_CASE("rando: a guest of a host without the randomizer plays without it") {
+    World w;
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    loader.Start();
+    Rando rando(loader, w.Hooks());
+    rando.Start();
+    w.Settings(loader);
+    REQUIRE(loader.Set(kFolder, "seed", "MINE1"));
+    REQUIRE(loader.Set(kFolder, "on", "1"));
+    rando.Wait();
+    REQUIRE(On(loader, "randomizer-MINE1"));
+    (void)rando.TakeLines();
+    // The host sends no randomizer values (its mod is off, or an older game): no setting call comes, the glue asks.
+    loader.SetHostValues(std::vector<CoopMods::SharedValue>{});
+    rando.Recheck();
+    rando.Wait();
+    CHECK_FALSE(On(loader, "randomizer-MINE1"));
+    CHECK(rando.TakeLines().empty());  // this run never played the seed (built in it): nothing to restart for
+    CHECK(loader.Value(kId, "on") == "1");  // our own switch is kept for a game alone
+    loader.SetHostValues(std::nullopt);  // left: alone again, our seed again
+    rando.Recheck();
+    rando.Wait();
+    CHECK(On(loader, "randomizer-MINE1"));
+}
+
+TEST_CASE("rando: a guest restarted on the host's seed is not told to restart again") {
+    World w;
+    {   // Run 1: joins a host with the randomizer on; the seed is built and the guest is told to restart.
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        loader.Start();
+        Rando rando(loader, w.Hooks());
+        rando.Start();
+        w.Settings(loader);
+        loader.SetHostValues(std::vector<CoopMods::SharedValue>{{kId, "on", "1"}, {kId, "seed", "HOST9"}});
+        rando.Wait();
+        CHECK(rando.TakeLines() == std::vector<std::string>{SwitchLine(true)});
+        REQUIRE(On(loader, "randomizer-HOST9"));
+    }
+    // Run 2: the game started with that seed (Hookshot indexed it).
+    {
+        char line[400];
+        hos_coop_mods_applied_head(line, sizeof line, 2);
+        std::string text = line;
+        hos_coop_mods_applied_row(line, sizeof line, "randomizer-HOST9", 1);
+        text += line;
+        Put(w.mods / HOS_COOP_MODS_APPLIED_FILE, text);
+    }
+    CoopMods::Loader loader(w.mods, {nullptr, 2, nullptr});
+    loader.Start();
+    Rando rando(loader, w.Hooks());
+    rando.Start();  // before the join: the host's values were kept as the guest's own
+    rando.Wait();
+    CHECK(loader.Value(kId, "on") == "1");
+    CHECK(rando.TakeLines().empty());
+    CHECK(On(loader, "randomizer-HOST9"));
+    loader.SetHostValues(std::vector<CoopMods::SharedValue>{{kId, "on", "1"}, {kId, "seed", "HOST9"}});
+    rando.Recheck();
+    rando.Wait();
+    CHECK(rando.TakeLines().empty());
+    CHECK(On(loader, "randomizer-HOST9"));
+    CHECK(w.runs.size() == 2);  // built once, in run 1
+    const auto why = loader.RestartNeeded().why;
+    CHECK(std::find(why.begin(), why.end(), SwitchLine(true)) == why.end());
+    // Switched off in this run, which plays the seed: that one says to restart.
+    loader.SetHostValues(std::nullopt);
+    REQUIRE(loader.Set(kFolder, "on", "0"));
+    rando.Wait();
+    CHECK(rando.TakeLines() == std::vector<std::string>{SwitchLine(false)});
 }

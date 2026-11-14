@@ -1,8 +1,11 @@
 #include <doctest/doctest.h>
 
+#include <limits>
 #include <map>
 #include <set>
+#include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "coop/host/flag_watcher.hpp"
@@ -155,7 +158,7 @@ std::uint32_t bits(std::int32_t v) { return static_cast<std::uint32_t>(v); }
 
 TEST_CASE("game items: every name hashes to its hash, sorted, each once") {
   const auto items = item_flags();
-  CHECK(items.size() == 302);
+  CHECK(items.size() == 303);  // IsGet.Item_Bottle added for the randomizer
   std::uint32_t last = 0;
   for (const auto& item : items) {
     CAPTURE(item.name);
@@ -215,12 +218,12 @@ TEST_CASE("game items: the shared list") {
   CHECK_FALSE(shared.contains(FlagKey{kBottleAItem, 0}));
   CHECK(shared.contains(FlagKey{kForestKeys, 0}));  // counts travel as deltas
   CHECK(shared.contains(FlagKey{kMaxLife, 0}));
-  CHECK(shared.size() == 302 - 18);  // 18 per player (the Deku Shield is shared, issue 130)
+  CHECK(shared.size() == 303 - 15);  // 15 per player (the Deku Shield and the FairyBless items are shared)
   const auto all = item_shared_flags(true);
   CHECK(all.contains(FlagKey{kForestKeys, 0}));
   CHECK(all.contains(FlagKey{kMaxLife, 0}));
   CHECK_FALSE(all.contains(FlagKey{kRupees, 0}));
-  CHECK(all.size() == 302 - 18);  // the Deku Shield is shared again (issue 130)
+  CHECK(all.size() == 303 - 15);  // the Deku Shield is shared again (issue 130)
 }
 
 TEST_CASE("game items: merge rules") {
@@ -658,12 +661,17 @@ TEST_CASE("item grants: the table is sorted and names its flags") {
       CHECK(g.kind == K::int32);  // a capacity: the struct's name is not known
       CHECK(find_item(g.hash) == nullptr);
     } else {
-      // Ammo counts are per-player items, IsGet flags are shared items.
+      // Ammo counts and MP are per-player items, IsGet flags are shared
+      // items; MPMax (a meter's grant) is shared by max.
       CHECK(protocol::flag_hash(g.name) == g.hash);
       const auto* granted = find_item(g.hash);
       REQUIRE(granted != nullptr);
       CHECK(granted->kind == g.kind);
-      CHECK(granted->rule == (g.kind == K::int32 ? ItemRule::per_player : ItemRule::any));
+      if (g.name == "PlayerStatus.MPMax") {
+        CHECK(granted->rule == ItemRule::max);
+      } else {
+        CHECK(granted->rule == (g.kind == K::int32 ? ItemRule::per_player : ItemRule::any));
+      }
     }
     CHECK(!coop::host::item_grants(g.item).empty());
   }
@@ -1098,11 +1106,124 @@ TEST_CASE("ocarina_bools_mend: a shared ocarina gets the Bools a real get sets (
   };
   CHECK(ocarina_bools_mend(0, 0, get).empty());  // none held: nothing
   auto want = ocarina_bools_mend(1, 0, get);     // the Fairy Ocarina from another player
-  CHECK(want == std::vector<std::uint32_t>{oc::kIsGetFairy, oc::kGotFairy, oc::kSlotA, oc::kSlotB});
+  CHECK(want == std::vector<std::uint32_t>{oc::kIsGetFairy, oc::kGotFairy, oc::kSlotA, oc::kSlotB, oc::kPrepared});
   flags[oc::kIsGetFairy] = true;                 // already set: left out
   flags[oc::kSlotB] = std::nullopt;              // unreadable: left alone
   want = ocarina_bools_mend(1, 0, get);
-  CHECK(want == std::vector<std::uint32_t>{oc::kGotFairy, oc::kSlotA});
+  CHECK(want == std::vector<std::uint32_t>{oc::kGotFairy, oc::kSlotA, oc::kPrepared});
   want = ocarina_bools_mend(0, 1, get);          // the Ocarina of Time
-  CHECK(want == std::vector<std::uint32_t>{oc::kIsGetTime, oc::kGotTime, oc::kSlotA});
+  CHECK(want == std::vector<std::uint32_t>{oc::kIsGetTime, oc::kGotTime, oc::kSlotA, oc::kPrepared});
+  // Playable at once (playtest 11: a shared ocarina played only after a reload).
+  CHECK(oc::kPrepared == protocol::flag_hash("HavePreparedToPlayOcarina"));
+}
+
+// The randomizer (docs/mods.md, "Items in a randomized seed"): an item from a
+// randomized check is shared like any other, and the one who gets it from
+// another player must be able to use it. One case per dependency.
+namespace {
+const coop::host::ItemFlag* item_named(std::string_view name) {
+  return find_item(protocol::flag_hash(name));
+}
+std::uint32_t pouch(std::string_view item) {
+  return protocol::flag_hash("PouchData." + std::string(item) + ".StockNum");
+}
+}  // namespace
+
+TEST_CASE("rando items: progressive tiers and their dependencies are shared by max") {
+  for (const char* name :
+       {"Item_Hookshot", "Item_Longshot", "Armor_Child_Gauntlet_Goron", "Armor_Adult_Gauntlet_Silver",
+        "Armor_Adult_Gauntlet_Gold", "Item_Scale_Silver", "Item_Scale_Gold", "Item_Wallet_Small",
+        "Item_Wallet_Medium", "Item_Wallet_Large", "Item_BombBag_Small", "Item_BombBag_Medium",
+        "Item_BombBag_Large", "Item_Quiver_Small", "Item_Quiver_Medium", "Item_Quiver_Large",
+        "Weapon_Range_Bow", "Weapon_Range_SlingShot", "Item_Arrow_Fire", "Item_Arrow_Ice", "Item_Arrow_Light",
+        "Item_DinFire", "Item_FaroreWind", "Item_NayruLove", "Item_Ocarina_Fairy", "Item_Ocarina_Time",
+        "Item_FairyBless_MP", "Item_FairyBless_MPDouble"}) {
+    CAPTURE(name);
+    const auto* item = find_item(pouch(name));
+    REQUIRE(item != nullptr);
+    CHECK(item->rule == ItemRule::max);  // a higher tier is never taken back by a lower one
+  }
+  // What a meter fills and what the ammo is stay per player; the maximum is shared.
+  CHECK(item_named("PlayerStatus.MP")->rule == ItemRule::per_player);
+  CHECK(item_named("PlayerStatus.MPMax")->rule == ItemRule::max);
+  CHECK(find_item(pouch("Item_Bomb"))->rule == ItemRule::per_player);
+}
+
+TEST_CASE("rando items: a shared magic meter comes full, so spells and magic arrows work") {
+  MapStore game = game_with_grant_flags();
+  ItemFlagStore store(game);
+  const std::uint32_t mp = protocol::flag_hash("PlayerStatus.MP"),
+                      mp_max = protocol::flag_hash("PlayerStatus.MPMax");
+  CHECK(store.write(owned(pouch("Item_FairyBless_MP"))));
+  CHECK(game.value(mp_max) == 240);
+  CHECK(game.value(mp) == 240);
+  // Magic used, then double magic shared: a new item, filled to the new size.
+  game.hold(mp, K::int32, 30);
+  CHECK(store.write(owned(pouch("Item_FairyBless_MPDouble"))));
+  CHECK(game.value(mp_max) == 480);
+  CHECK(game.value(mp) == 480);
+  // The meter again (an echo): the magic used stays used.
+  game.hold(mp, K::int32, 10);
+  CHECK(store.write(owned(pouch("Item_FairyBless_MP"))));
+  CHECK(game.value(mp) == 10);
+}
+
+TEST_CASE("rando items: a shared bomb bag comes with bombs and room for them") {
+  MapStore game = game_with_grant_flags();
+  ItemFlagStore store(game);
+  CHECK(store.write(owned(pouch("Item_BombBag_Small"))));
+  CHECK(game.value(pouch("Item_Bomb")) == 20);
+  CHECK(game.value(0xe753508b) == 20);  // the bomb capacity
+  CHECK(game.value(protocol::flag_hash("IsGet.Item_Bomb")) == 1);
+}
+
+TEST_CASE("rando items: a shared bow comes with arrows, so magic arrows can be shot") {
+  MapStore game = game_with_grant_flags();
+  ItemFlagStore store(game);
+  CHECK(store.write(owned(pouch("Item_Arrow_Fire"))));  // fire arrows first: nothing to shoot yet
+  CHECK(game.value(pouch("Item_Arrow_Normal")) == 0);
+  CHECK(store.write(owned(pouch("Weapon_Range_Bow"))));
+  CHECK(game.value(pouch("Item_Arrow_Normal")) == 30);
+  CHECK(game.value(0x418db791) == 30);  // the arrow capacity
+}
+
+TEST_CASE("rando items: a shared bracelet lets bomb flowers and bombs be lifted") {
+  namespace lift = coop::host::lift;
+  // OOTRR's starting Strength and the game's get set the grade; a shared one
+  // is raised by the hook (MendLiftGrade) from these.
+  CHECK(coop::host::lift_grade_raise(1, 0, 0, lift::kNone) == lift::kLow);
+  CHECK(coop::host::lift_grade_raise(1, 1, 0, lift::kLow) == lift::kMiddle);
+  CHECK(coop::host::lift_grade_raise(1, 1, 1, lift::kMiddle) == lift::kHigh);
+  CHECK(!coop::host::lift_grade_raise(1, 0, 0, lift::kHigh));  // never lowered
+  CHECK(lift::kGoron == pouch("Armor_Child_Gauntlet_Goron"));
+}
+
+TEST_CASE("rando items: a shared scale dives as deep as OOTRR's (DiveDepth 6 / 9)") {
+  namespace dive = coop::host::dive;
+  using coop::host::dive_depth_raise;
+  CHECK(dive::kDepth == protocol::flag_hash("PlayerStatus.DiveDepth"));
+  CHECK(dive::kSilver == pouch("Item_Scale_Silver"));
+  CHECK(dive::kGold == pouch("Item_Scale_Gold"));
+  CHECK(!dive_depth_raise(0, 0, 3.0f));             // no scale: the game's own 3.0
+  CHECK(dive_depth_raise(1, 0, 3.0f) == 6.0f);      // the Silver Scale from another player
+  CHECK(dive_depth_raise(1, 1, 6.0f) == 9.0f);      // then the Golden one
+  CHECK(dive_depth_raise(0, 1, 3.0f) == 9.0f);      // the Golden alone (progressive: both held, max rule)
+  CHECK(!dive_depth_raise(1, 0, 6.0f));             // already there: nothing written
+  CHECK(!dive_depth_raise(1, 0, 12.0f));            // never lowered
+  CHECK(!dive_depth_raise(1, 0, std::numeric_limits<float>::quiet_NaN()));
+}
+
+TEST_CASE("rando items: every wallet tier gives its room for rupees, as the game's own tables say") {
+  // GameParameter/ExpansionMaxNumActor/Item_Wallet_*.bgyml: GameData Rupee, MaxNum 500 / 1000; the
+  // small wallet's 200 is read from a save. No rupees come with a wallet.
+  constexpr std::uint32_t kRupeeCap = 0xe0010a50;
+  for (const auto& [item, cap] : {std::pair{"Item_Wallet_Small", 200}, std::pair{"Item_Wallet_Medium", 500},
+                                  std::pair{"Item_Wallet_Large", 1000}}) {
+    CAPTURE(item);
+    MapStore game = game_with_grant_flags();
+    ItemFlagStore store(game);
+    CHECK(store.write(owned(pouch(item))));
+    CHECK(game.value(kRupeeCap) == cap);
+    CHECK(game.value(kRupees) == 0);
+  }
 }

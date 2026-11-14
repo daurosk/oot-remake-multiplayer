@@ -63,6 +63,8 @@ Bits 0–19 count slots taken, bits 20–27 count slots finished (they go back t
 | 0x163b70 | Int set: queues | Checked |
 | 0x57a4e0 | UInt get: the Int getter with every table offset 0x6c0 further on; a hash not found falls back to a second table (slots M + 0x800, count M + 0x80c), not read | Checked (issue 125) |
 | 0x57af30 | UInt set: queues at +0x7b0 / +0x7b8 / +0x7c0 like the Int setter, but also stores u32 1 at slot + 8 (0x57b018); the fallback table goes to 0x376be00 on M + 0x7e8 | Checked (issue 125) |
+| 0x607f70 | Float get (`f_7100607f70` in the recomp's main): the Int layout 0xc0 further on (type 4, M + 0x190), entries of 0x28, value at +0x1c | Read from the recomp source (branch `rando-items`) |
+| 0xba6f80 | Float set (`f_7100ba6f80`): (M, value in s0, hash in w1), queues {f32 value, u32 hash} in 12-byte slots at +0x1b0 / +0x1b8 / +0x1c0. Found by scanning the recomp source for a setter with the Int setter's shape at the Float offsets; the same scan finds the known Int (0x163b70) and Enum (0x3e0980) setters and nothing else | Read from the recomp source, not run in a game yet |
 | 0x838960, 0x3761680 | 64-bit key get (M, out, key) | Checked |
 | 0x3761720 | 64-bit key set (M, value, key): finds the record, then 0xf071c0 queues it | Checked |
 | 0xb99980 | Applies the queues (M). Called from 0x3b500a0, in the GameData module | Checked for Bool and 64-bit keys |
@@ -189,6 +191,6 @@ On the emulator the flag watcher reads every shared flag every frame and compare
 
 ## Not done
 
-1. Float, Enum and the other types (UInt is read, above): their tables follow the same pattern (M + 0x10 + 0x60 × t) but were not read.
+1. The other types (UInt, Enum and Float are read, above): their tables follow the same pattern (M + 0x10 + 0x60 × t) but were not read.
 2. The queue sizes (read at run time, never logged).
 3. BoolArray writes, Struct (+0xc20) and BoolExp (+0xc48).

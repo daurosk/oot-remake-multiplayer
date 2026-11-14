@@ -178,6 +178,7 @@ TEST_CASE("flag calls: the setters' addresses and argument order are the game's"
   // (manager, value, hash or key) for each: docs/flags.md, "Functions".
   CHECK(setter_offset(GameFlagType::boolean) == 0x682b20);
   CHECK(setter_offset(GameFlagType::int32) == 0x163b70);
+  CHECK(setter_offset(GameFlagType::float32) == 0xba6f80);  // f_7100ba6f80: value in s0, hash in w1
   CHECK(setter_offset(GameFlagType::uint32) == 0x57af30);
   CHECK(setter_offset(GameFlagType::enum32) == 0x3e0980);
   CHECK(setter_offset(GameFlagType::key64) == 0x3761720);

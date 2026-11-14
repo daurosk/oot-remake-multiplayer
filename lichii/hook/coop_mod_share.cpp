@@ -242,8 +242,17 @@ void Frame(coop::host::Session* session) {
 
 std::vector<std::string> TakeLines() {
     Glue& g = TheGlue();
-    std::lock_guard lock(g.mutex);
-    return std::exchange(g.lines, {});
+    std::function<std::vector<std::string>()> notes;
+    std::vector<std::string> out;
+    {
+        std::lock_guard lock(g.mutex);
+        out = std::exchange(g.lines, {});
+        notes = g.provider.notes;
+    }
+    if (notes) {
+        for (std::string& line : notes()) out.push_back(std::move(line));  // outside our lock: the mods lock their own
+    }
+    return out;
 }
 
 View Now() {

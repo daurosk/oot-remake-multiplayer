@@ -96,6 +96,10 @@ std::optional<std::filesystem::path> FindOotrr(const std::string& setting, const
                                                const std::filesystem::path& mods_root);
 std::optional<std::filesystem::path> FindGameFolder(const std::string& setting);
 
+// What the tab and the chat say when the randomizer is switched (by the player, or the host's switch reaching a guest).
+// A seed plays only after a restart, and only from a new save (a save from before has the items of the plain game).
+std::string SwitchLine(bool on);
+
 // In the game: watches the randomizer's settings and builds a seed in the background when they change.
 class Rando {
 public:
@@ -117,6 +121,11 @@ public:
     // Whether a build runs now, and the last line said (for the tab).
     bool Building() const;
     std::string Status() const;
+    // Looks at the settings again: after the host's values came or went (a host without the randomizer changes no
+    // value of ours, so no setting call comes).
+    void Recheck() { Check(); }
+    // The chat lines since the last call (SwitchLine when the switch changed).
+    std::vector<std::string> TakeLines();
     // Waits until no build runs (tests, exit).
     void Wait();
 
@@ -136,6 +145,9 @@ private:
     bool again_ = false;       // the settings changed while it ran (mutex_)
     std::string last_failed_;  // the folder whose build failed last (mutex_)
     std::string status_;
+    bool on_now_ = false;      // the switch as the game started (mutex_)
+    bool on_said_ = false;     // the switch as last said (mutex_)
+    std::vector<std::string> lines_;  // mutex_
 };
 
 }  // namespace CoopRando

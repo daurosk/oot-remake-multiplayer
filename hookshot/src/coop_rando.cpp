@@ -294,6 +294,11 @@ int RunProgram(const std::wstring& command_line, const fs::path& log_file, std::
 #endif
 }
 
+std::string SwitchLine(bool on) {
+    return on ? "Randomizer on: restart the game and start a new save to play it"
+              : "Randomizer off: restart the game to play without it";
+}
+
 // ---- Rando ----
 
 Rando::Rando(CoopMods::Loader& loader, Hooks hooks) : loader_(loader), hooks_(std::move(hooks)) {}
@@ -319,10 +324,24 @@ void Rando::Start() {
         }
         loader_.Refresh();
     }
+    {
+        // Whether this run of the game plays a seed: one of ours was indexed at its start.
+        bool on_now = false;
+        for (const CoopMods::Row& r : loader_.Rows()) {
+            if (IsSeedFolder(r.name) && r.on_now) on_now = true;
+        }
+        const std::lock_guard lock(mutex_);
+        on_now_ = on_said_ = on_now;
+    }
     loader_.OnSetting([this](const std::string& id, const std::string&, const std::string&) {
         if (id == kId) Check();
     });
     Check();
+}
+
+std::vector<std::string> Rando::TakeLines() {
+    const std::lock_guard lock(mutex_);
+    return std::exchange(lines_, {});
 }
 
 bool Rando::Building() const {
@@ -358,6 +377,15 @@ Want Rando::Wanted(bool* seed_locked) const {
         }
         if (s.setting.key == "preset") want.preset = s.value;
     }
+    // A guest plays the host's world: a host whose randomizer is off or missing sends no switch, so ours is off too
+    // (our own value is kept for a game alone).
+    if (want.on && loader_.HostValuesSet()) {
+        bool host_sets = false;
+        for (const CoopMods::SettingRow& s : loader_.Settings(kFolder)) {
+            if (s.setting.key == "on") host_sets = s.locked;
+        }
+        if (!host_sets) want.on = false;
+    }
     return want;
 }
 
@@ -377,6 +405,19 @@ void Rando::Switch(const Plan& plan) {
 void Rando::Check() {
     bool seed_locked = false;
     const Want want = Wanted(&seed_locked);
+    {
+        // Said once per change of the switch, in the tab until the restart and in the chat.
+        const std::lock_guard lock(mutex_);
+        // Back as this run started (a guest restarted on the host's seed, then joined): nothing to restart for.
+        if (want.on != on_said_) {
+            on_said_ = want.on;
+            if (want.on != on_now_) {
+                lines_.push_back(SwitchLine(want.on));
+                if (hooks_.log) hooks_.log("randomizer: " + lines_.back());
+            }
+        }
+    }
+    loader_.NoteChanged(std::string(kFolder) + "/switch", want.on == on_now_ ? std::string() : SwitchLine(want.on));
     if (want.on && want.seed.empty() && !seed_locked) {
         // Our own seed (we host or play alone): made once, kept as our setting, sent to the guests.
         const std::string seed = NewSeed(hooks_.entropy ? hooks_.entropy() : 0x9E3779B97F4A7C15ull);

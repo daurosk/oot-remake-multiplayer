@@ -507,7 +507,16 @@ Restart Loader::RestartNeeded() const {
 
 void Loader::NoteChanged(std::string_view name, std::string reason) {
     const std::lock_guard lock(mutex_);
-    changed_[std::string(name)] = std::move(reason);
+    if (reason.empty()) {
+        changed_.erase(std::string(name));  // back as it was at the start
+    } else {
+        changed_[std::string(name)] = std::move(reason);
+    }
+}
+
+bool Loader::HostValuesSet() const {
+    const std::lock_guard lock(mutex_);
+    return host_values_.has_value();
 }
 
 std::vector<Mod> Loader::CodeToLoad() const {

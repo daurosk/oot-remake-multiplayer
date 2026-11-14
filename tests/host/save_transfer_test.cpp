@@ -371,6 +371,45 @@ TEST_CASE("save transfer: a guest asks again when nothing at all came, or the tr
   CHECK_FALSE(save::reask_due(many, 100 * s));
 }
 
+TEST_CASE("save transfer: a guest gives up once after its last ask, and Loading ends") {
+  using N = save::GuestNotices;
+  const std::uint64_t s = 1'000'000;
+  save::GuestSession g;
+  g.asked = true;
+  g.asked_us = 10 * s;
+  g.asks = save::kGuestMaxAsks - 1;
+  CHECK_FALSE(save::give_up_due(g, 100 * s));   // asks left: it asks again instead
+  CHECK(save::reask_due(g, 100 * s));
+  // the last ask: a transfer starts, then stops part way
+  N n;
+  n.on_in_game(false);
+  g.asks = save::kGuestMaxAsks;
+  const auto parts = save::split(save::pack(Slot(5)), 3, proto::SaveReason::join, 2);
+  REQUIRE(parts.size() > 2);
+  REQUIRE(g.assembler.add(Relayed(parts[0], 1), 1) == save::Assembler::Result::partial);
+  g.last_part_us = 12 * s;
+  CHECK(n.on_part(parts[0].transfer_id, parts.size()) == N::kLoading);
+  CHECK_FALSE(save::give_up_due(g, 12 * s + save::kGuestReaskUs - 1));   // still coming
+  CHECK_FALSE(save::reask_due(g, 12 * s + save::kGuestReaskUs));         // no asks left
+  REQUIRE(save::give_up_due(g, 12 * s + save::kGuestReaskUs));
+  CHECK(n.on_gave_up() == N::kGaveUp);
+  g.gave_up = true;
+  CHECK_FALSE(n.loading());
+  CHECK_FALSE(save::give_up_due(g, 100 * s));   // said once
+  // the player loads their own save later: not "too early"
+  CHECK(n.on_in_game(true).empty());
+  // nothing at all came after the last ask: gives up too; never once the save is in
+  save::GuestSession quiet;
+  quiet.asked = true;
+  quiet.asked_us = 10 * s;
+  quiet.asks = save::kGuestMaxAsks;
+  CHECK(save::give_up_due(quiet, 10 * s + save::kGuestReaskUs));
+  save::GuestSession ready = quiet;
+  ready.ready = true;
+  CHECK_FALSE(save::give_up_due(ready, 100 * s));
+  CHECK(N::kGaveUp == "The host's save did not come: play on, or join again to get it.");
+}
+
 TEST_CASE("save transfer: the newest slot is found and read") {
   TempDir dir("coop_tests_save_newest");
   const fs::path game = dir.path / "0400486024DEC000";

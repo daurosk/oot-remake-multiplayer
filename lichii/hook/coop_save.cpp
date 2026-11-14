@@ -61,8 +61,9 @@ bool g_decided = false;   // the run-time choice is made (for this session: save
 // on its own folder, so the title never offers an empty or half-written co-op folder (that crashed the game).
 fs::path g_pending;
 bool g_title_up = false;   // the title's menu is up (NoteTitle, Hookshot's title module)
-// The player picked a file on the title (CancelPendingSwitch): the switch waits; it goes for good once Link is in
-// the game (their file), and comes back when they return to the title without one (ResumePendingSwitch).
+// The player picked a file on the title (CancelPendingSwitch): the switch waits while their file loads. It comes
+// back when they return to the title without one (ResumePendingSwitch), and once Link is in the game (their file)
+// the hold ends: a save that comes in during play is kept and switched to back on the title (PendingFrame).
 bool g_suspended = false;
 const void* g_decided_client = nullptr;   // the session's client it was made for
 bool g_live = false;   // decided and the session not over (SessionLive)
@@ -453,6 +454,12 @@ void OnFrame(coop::net::Client& client, bool host_reset) {
                                              save::kGuestReaskUs / 1'000'000, g_guest.asks, save::kGuestMaxAsks)
                                : std::string());
             }
+        } else if (want && save::give_up_due(g_guest, now)) {
+            // The last ask got nothing whole either: stop waiting, so a later own load is not "too early".
+            g_guest.gave_up = true;
+            Say(g_lines.on_gave_up());
+            LOG_WARNING(Core, "coop: save: the host's save did not come after {} asks; playing on without it",
+                        g_guest.asks);
         }
         return;
     }

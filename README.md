@@ -86,6 +86,14 @@ Anyone can contribute: fork, branch, pull request. Every pull request is reviewe
 
 Thanks to zizerak and Hot Onion for development tips (Hot Onion's tip, sharing each moving platform's clock with the server's time, is how the platforms are kept in step), and to everyone who play-tested.
 
+## Contributors
+
+People who contributed code:
+
+- bmitch87 (Linux Longshot: GCC module build and clean-PC kit test, PR #221).
+
+Every contributor whose pull request is merged is added here. GitHub's list: [contributors](https://github.com/daurosk/oot-remake-multiplayer/graphs/contributors).
+
 ## Licence
 
 GPL-3.0, see [LICENSE](LICENSE). This keeps the project compatible with Lichii and Eden, which are GPL-3.0.

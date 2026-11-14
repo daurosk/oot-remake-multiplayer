@@ -97,6 +97,7 @@ A new test file goes in the `add_executable(coop_tests ...)` list in `tests/CMak
    - **Not yet proven:** everything else.
 7. Before you push: build, unit tests and `tools/check_content.py` pass. Never use `--no-verify`, never force-push someone else's branch, never commit build output.
 8. Every PR is reviewed before it is merged. Answer review comments by pushing to the same branch.
+9. Your commits reach `main` as you wrote them, with your name on them: an outside PR is merged with `git merge --no-ff` of its head (GitHub shows it merged), never squashed, rebased, cherry-picked under another name or redone by the maintainer. A change the maintainer needs goes on top as a separate commit. That is how you show up in the repository's contributors list and in the README.
 
 ## Style
 

@@ -51,6 +51,8 @@ Every pull request is reviewed by a review session before it is merged. This hol
 
 A review session is one of the maintainer's AI sessions, started only to review that pull request ([docs/workflow.md](docs/workflow.md)). It did not write the change. For a pull request from outside it writes what it found as a comment on the pull request; you answer or push fixes to the same branch, and it looks again. Reviews of the project's own workers are written in the project's notes, outside this repository.
 
+Every pull request from outside is merged with its own commits as authored: `git merge --no-ff` of the pull request's head, so GitHub shows it as merged and the contributor's commits keep their author line all the way to `main`. It is never squashed, rewritten by rebase, cherry-picked under our name or redone by us. A change we need goes on top as a separate commit. Every merged contributor is listed under "Contributors" in the README.
+
 A review checks that:
 
 - the change builds, and the unit tests and `tools/check_content.py` pass (CI runs them too);

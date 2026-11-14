@@ -6,7 +6,7 @@
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-npc-walk
 # Grading lines (B's are the copies):
 #   expect="B:npc-anim: Npc_\S+ copied from P1 at \S+ \S+ \S+ plays '(Walk|Run)"
-#   expect="B:npc-anim: in 5 s \d+ owner animations played"
+#   expect="B:npc-anim: in 5 s [1-9]\d* owner animations played"   (0 = only frames set)
 #   and by eye: a walker's pose differs between B's w1..w8 shots.
 #   The debug lines "copy X shows 'Walk' frame f; its owner 'Walk' frame g" say how far apart they are.
 #! switches LICHII_COOP_DEBUG_NPC=1

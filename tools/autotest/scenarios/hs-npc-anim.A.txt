@@ -15,14 +15,14 @@
 #   expect="A:(?s)test mark a-near.*npc-anim: our Link is in an event: \d+ NPCs near it claimed"
 #   expect="A:(?s)test mark a-near.*npc-anim: \d+ of the \d+ claimed NPCs are ours now"
 #   expect="A:(?s)test mark closed.*npc-anim: the event's NPCs are free again"
-#   expect="B:(?s)test mark b-a-talks.*npc-anim: Npc_Hylia_Dampe_001 copied from P1 at \S+ \S+ \S+ plays '(?!Walk_Slowly|Act_Care)"
+#   expect="B:(?s)test mark b-a-talks.*npc-anim: Npc_Hylia_Dampe_001 copied from P1 at \S+ \S+ \S+ plays 'Talk"
 #                                                                               his TALK animation copied to B
 #   and by eye: no "Npc_Hylia_Dampe_001 copied from P1" in B between "b-owns" and "b-a-talks" (B owned him;
 #   one there = A still owned him: INCONCLUSIVE). Shots talk / talk-2: Dampe faces A in both windows.
 # Longshot lane run 2026-11-13 16:50 (shots-lane2/hs-npc-anim/20261113-165003): A's talk opened (shot talk-2-A),
 # A took Dampe from B (epoch 2), B logged 'copied from P1 ... plays 'Talk''. The event starts in the 60 ticks before
 # 'mark talk', so the A lines are graded from 'a-near'.
-# INCONCLUSIVE: no "our Link is in an event" after A's "mark talk" (no talk started: look at a-near's shot).
+# INCONCLUSIVE: no "our Link is in an event" after A's "mark a-near" (no talk started: look at a-near's shot).
 mark start
 wait 120
 place -35.70 98.10 8.50  # stay at the load spot, about 25 m away, while B takes him

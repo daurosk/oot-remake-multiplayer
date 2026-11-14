@@ -608,8 +608,17 @@ TEST_CASE("host reader: what the player wears") {
       m.put(text, room.data(), room.size());
       m.put(text, name.c_str(), name.size() + 1);
     };
-    SUBCASE("no link read: hand not known") {
+    SUBCASE("no flag and no link read: hand not known") {
       CHECK_FALSE(reader.read_equipment()->hand);
+    }
+    SUBCASE("an empty flag with the link unreadable is not known, not taken off") {
+      put_strings(m, {{addr::kEquipHandArmor, ""}, {addr::kEquipWeapon, "Weapon_Sword_Kokiri"}});
+      CHECK_FALSE(reader.read_equipment()->hand);
+    }
+    SUBCASE("an empty flag and an empty link: no hand piece") {
+      put_strings(m, {{addr::kEquipHandArmor, ""}});
+      m.put_u32(kUser + 0x20 + 0x18 * link + 0x10, 0xffffffffu);
+      CHECK(reader.read_equipment()->hand == "");
     }
     SUBCASE("the bracelet, while EquipHandArmor is empty") {
       put_strings(m, {{addr::kEquipHandArmor, ""}});

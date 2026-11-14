@@ -937,8 +937,8 @@ TEST_CASE("puppet gear: the child's Goron's Bracelet is worn as Accessory2, as t
 
 TEST_CASE("puppet gear: each hand item is worn in the same hand slot as on its player") {
     using namespace CoopPuppet;
-    // The game's two enums (rodata): the 8 hand slots (0x3ef2033) and the 18
-    // slot kinds of the equip call (0x3ef94a8). A piece sent from hand slot
+    // The game's two enums (rodata): the 8 hand slots (0x3ef2000) and the 18
+    // slot kinds of the equip call (0x3ef9490). A piece sent from hand slot
     // n is worn with the kind of the same name, so it lands in slot n on the
     // puppet whichever item it is.
     const char* const slot_names[8] = {"Weapon", "SubWeapon", "ThirdWeapon", "Bow",
@@ -953,9 +953,11 @@ TEST_CASE("puppet gear: each hand item is worn in the same hand slot as on its p
             CHECK(std::string(kind_names[kGearKinds[i]]) == slot_names[kGearSlots[i]]);
         }
     }
-    // Item by item, as PlayerReader sends them (the slot each was seen in on
-    // the player, or the slot of its kind): the piece that carries it and the
-    // kind it is worn with.
+    // Item by item: the piece that carries it and the kind it is worn with.
+    // Only the rows marked (run) are slots seen on a player. The hookshot,
+    // longshot, boomerang and hammer have not been seen in a slot: their
+    // rows put them in slots of our choosing, and only show that any slot
+    // routes the same way (GearOf and kGearKinds do not look at the name).
     struct Item {
         const char* name;
         std::optional<std::string> coop::protocol::Equipment::*field;
@@ -969,11 +971,11 @@ TEST_CASE("puppet gear: each hand item is worn in the same hand slot as on its p
         {"Weapon_DekuStick", &E::sub_weapon, kGearSubWeapon, 1},  // slot 1 (run)
         {"Weapon_DekuStick", &E::weapon_slot, 0, 0},  // or in the sword hand
         {"Weapon_Range_SlingShot", &E::held, kGearHeld, 5},  // slot 3 (run)
-        {"Weapon_Range_Bow", &E::held, kGearHeld, 5},  // a BowParam, like the slingshot
-        {"Weapon_Range_Hookshot", &E::tool, kGearTool, 11},  // slot not seen in a run yet
-        {"Weapon_Range_Longshot", &E::third_weapon, kGearThirdWeapon, 2},
-        {"Weapon_Boomerang", &E::tool, kGearTool, 11},
-        {"Weapon_Hammer", &E::sub_tool, kGearSubTool, 12},
+        {"Weapon_Range_Bow", &E::held, kGearHeld, 5},  // a BowParam like the slingshot: not run
+        {"Weapon_Range_Hookshot", &E::tool, kGearTool, 11},  // slot chosen here
+        {"Weapon_Range_Longshot", &E::third_weapon, kGearThirdWeapon, 2},  // chosen here
+        {"Weapon_Boomerang", &E::tool, kGearTool, 11},  // chosen here
+        {"Weapon_Hammer", &E::sub_tool, kGearSubTool, 12},  // chosen here
         {"Armor_Child_Mask_Keaton", &E::head, 2, 7},  // a mask is head armor
     };
     for (const Item& it : items) {
@@ -990,10 +992,10 @@ TEST_CASE("puppet gear: each hand item is worn in the same hand slot as on its p
             }
         }
     }
-    // Deku Nuts, bombs, bombchus and the Lens of Truth are in no hand slot:
-    // nuts, bombs and bombchus are thrown objects (the objects sync shows
-    // them), the Lens is magic with no actor. Nothing is sent, nothing worn.
-    CHECK(GearOf(E{}) == Gear{});
+    // Not covered here: Deku Nuts, bombs, bombchus and the Lens of Truth.
+    // They are in no hand slot (thrown objects, which the objects sync
+    // shows, and magic with no actor), so there is nothing to send and no
+    // puppet test for them.
 }
 
 TEST_CASE("puppet gear: a refused take-off and a sword taken off make the puppet again") {

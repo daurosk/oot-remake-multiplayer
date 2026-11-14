@@ -632,6 +632,10 @@ struct Host {
   bool operator==(const Host&) const = default;
 };
 
+// The child's Goron's Bracelet, sent as `hand`: the game wears it as an
+// accessory (kind 14), not as hand armor (docs/puppet.md).
+inline constexpr std::string_view kChildBraceletPrefix = "Armor_Child_Gauntlet_";
+
 // What a player wears and holds (docs/puppet.md, "Equipment"). Each name is
 // the game's actor name of that piece, for example "Weapon_Sword_Kokiri" or
 // "Armor_Adult_Goron"; an empty name is nothing in that slot. A field that is

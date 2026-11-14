@@ -159,10 +159,10 @@ inline constexpr std::uint64_t kSetMatrix = 0x4c6580;
 // for it; the slingshot is a bow to the game).
 //
 // The rest (branch held-items-2) follows the game's own two enums, read from
-// rodata. The 18 slot kinds the equip call takes (0x3ef94a8): 0 Weapon,
+// rodata. The 18 slot kinds the equip call takes (0x3ef9490): 0 Weapon,
 // 1 SubWeapon, 2 ThirdWeapon, 3 Sheath, 4 Quiver, 5 Bow, 6 Shield,
 // 7 ArmorHead, 8 ArmorUpper, 9 ArmorLower, 10 ArmorHand, 11 Tool, 12 SubTool,
-// 13 to 16 Accessory1 to 4, 17 Extra. The 8 hand slots (0x3ef2033): 0 Weapon,
+// 13 to 16 Accessory1 to 4, 17 Extra. The 8 hand slots (0x3ef2000): 0 Weapon,
 // 1 SubWeapon, 2 ThirdWeapon, 3 Bow, 4 Shield, 5 Tool, 6 SubTool, 7 Helmet.
 // So the pieces after the held item are: the gauntlets (kind 10, no hand
 // slot), and whatever sits in hand slots 1, 2, 5 and 6 (kinds 1, 2, 11, 12:
@@ -204,10 +204,11 @@ inline constexpr std::array<const char*, kGearCount> kGearNames{
 // Player_Child's EquipmentUserParam binds to the bone Ph_Bangle). Worn with
 // kind 10 it would go to the hand armor link, not where the player has it.
 inline constexpr std::uint32_t kBraceletKind = 14;  // Accessory2
-inline constexpr std::string_view kBraceletPrefix = "Armor_Child_Gauntlet_";
 // The kind piece `i` named `name` is worn with.
 constexpr std::uint32_t GearKind(std::size_t i, std::string_view name) {
-    return i == kGearHand && name.starts_with(kBraceletPrefix) ? kBraceletKind : kGearKinds[i];
+    return i == kGearHand && name.starts_with(coop::protocol::kChildBraceletPrefix)
+               ? kBraceletKind
+               : kGearKinds[i];
 }
 // Armor (mask, tunic, boots, gauntlets): taken off with addr::kUnequipArmor.
 // The bracelet is no armor: it is taken off as the belt pieces are.

@@ -208,10 +208,15 @@ std::optional<protocol::Equipment> PlayerReader::read_equipment() {
   e.hand = flags.get_string64(addr::kEquipHandArmor);
   // The child's Goron's Bracelet is no EquipHandArmor: the game wears it
   // as an accessory (addresses.hpp, kArmorLinkBracelet). Sent as `hand`;
-  // the puppet wears a bracelet with the same accessory kind.
+  // the puppet wears a bracelet with the same accessory kind. An empty flag
+  // with that link unreadable is not known (not a bracelet taken off).
   if (!e.hand || e.hand->empty()) {
     const auto bracelet = read_armor_link_name(addr::kArmorLinkBracelet);
-    if (bracelet && bracelet->starts_with(addr::kBraceletPrefix)) e.hand = bracelet;
+    if (!bracelet) {
+      e.hand.reset();
+    } else if (bracelet->starts_with(protocol::kChildBraceletPrefix)) {
+      e.hand = bracelet;
+    }
   }
   e.ocarina = flags.get_string64(addr::kEquipOcarina);
   e.arrow = flags.get_string64(addr::kEquipArrow);

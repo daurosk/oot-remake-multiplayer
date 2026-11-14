@@ -144,8 +144,8 @@ inline constexpr std::uint32_t kEquipSlotSword = 0;
 inline constexpr std::uint32_t kEquipSlotHeldItem = 3;
 inline constexpr std::uint32_t kEquipSlotShield = 4;
 // [dump] The game's own names for the eight slots, an enum's names in rodata
-// at 0x3ef2033: Weapon, SubWeapon, ThirdWeapon, Bow, Shield, Tool, SubTool,
-// Helmet. (The 18 slot kinds of the equip call are another enum, 0x3ef94a8.)
+// at 0x3ef2000: Weapon, SubWeapon, ThirdWeapon, Bow, Shield, Tool, SubTool,
+// Helmet. (The 18 slot kinds of the equip call are another enum, 0x3ef9490.)
 inline constexpr std::uint32_t kEquipSlotSubWeapon = 1;
 inline constexpr std::uint32_t kEquipSlotThirdWeapon = 2;
 inline constexpr std::uint32_t kEquipSlotTool = 5;
@@ -161,7 +161,6 @@ inline constexpr std::uint32_t kEquipSlotSubTool = 6;
 inline constexpr std::uint64_t kArmorLinks = 0xe0;
 inline constexpr std::uint32_t kArmorLinkCount = 13;
 inline constexpr std::uint32_t kArmorLinkBracelet = 9;
-inline constexpr std::string_view kBraceletPrefix = "Armor_Child_Gauntlet_";
 // [dump] 0x2df7b20 (the equip call) tests slot 3's link (+0x70, +0x78) for
 // slot kind 5, the bow kind: slot 3 is the bow slot. Autotest logs
 // (2026-11-09): a child with the slingshot has `Weapon_Range_SlingShot`

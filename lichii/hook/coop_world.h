@@ -359,13 +359,13 @@ RestScan RestWords(const std::function<std::optional<std::uint64_t>(std::uint64_
 // the block and its pusher snap back. FindBlockNode finds the node by
 // following heap pointers from the actor's components (at most kNodeDepth
 // steps, kNodeLooks objects, each object's first kNodeBytes), and takes it
-// only when both vtables and the actor chain match. NodeRestWords then gives
-// the writes that put the new place in +0xfc and +0x108 when both hold the
-// old one (each axis within kRestMatchM); only one of them: the node is
-// mid-push here, nothing is written and `busy` is set. The base and goal are
-// left alone (the grid and the answer do not move). Open (no run yet): if
-// the node's start runs at every push, and not once when the block's AI
-// starts, these are fresh anyway and the write changes nothing (harmless).
+// only when both vtables and the actor chain match. NodeRestWords then tells
+// (non-empty `writes`, never written: deku-visuals-b) whether +0xfc and
+// +0x108 both still hold the old place (each axis within kRestMatchM); only
+// one of them: the node is mid-push here and `busy` is set. When both do,
+// the glue runs the node's own start (kStartFn) again instead of writing:
+// it runs only when the node is entered, not at each push (checked on
+// Longshot v3.0.0-rc.3, docs/world.md).
 namespace BlockNode {
 inline constexpr std::uint64_t kVtable = 0x49ae6f8;
 inline constexpr std::uint64_t kVtable2 = 0x49ae8b8;
@@ -375,6 +375,13 @@ inline constexpr std::uint64_t kBase = 0x40;
 inline constexpr std::uint64_t kGoal = 0x4c;
 inline constexpr std::uint64_t kTarget = 0xfc;
 inline constexpr std::uint64_t kStart = 0x108;
+// deku-visuals-b: the node's own start, (node, enter args): it sets +0x40,
+// +0x4c and the push's start and target from the block's place and links.
+// Its two callers are the node classes' enter methods (main+0x26db2a0,
+// main+0x2872580, through their vtables), so the game runs it when the
+// node is entered, not at each push (read from Longshot v3.0.0-rc.3's
+// lifted f_82771790, main at 0x80020000 there).
+inline constexpr std::uint64_t kStartFn = 0x2751790;
 inline constexpr int kNodeDepth = 3;
 inline constexpr std::size_t kNodeLooks = 2048;
 inline constexpr std::size_t kNodeBytes = 0x200;
@@ -452,7 +459,9 @@ public:
     // jumped to a place between its old rest and where the first left it):
     // after a followed push, a jump of our block this far in one walk, to
     // nearer its rest from before that push than to where it was left, is
-    // our game's push starting from the stale place (BlockFix::snap).
+    // our game's push starting from the stale place (BlockFix::snap, a log
+    // line). A real push slides a few cm a walk; if the walks are ever made
+    // much slower, a fast push back toward the old cell could pass this.
     static constexpr float kSnapM = 0.5f;
     static constexpr std::uint64_t kSnapWatchUs = 120'000'000;  // watched this long after the hand-over
 
@@ -501,10 +510,10 @@ public:
             std::uint64_t anchor = 0;
             // deku-visuals-b: a push here started from `from`, the place it
             // rested before another game moved it (the stale push start):
-            // logged only (the owner's native rule: no memory writes; a fix
-            // runs the game's own push-node start once its address is
-            // checked, docs/world.md); no anchor, no wide search.
+            // logged only: the fix is the node start at the hand-over
+            // (BlockNode::kStartFn); no anchor, no wide search.
             bool snap = false;
+            int tries = 0;  // the glue's: walks its push node was not found or busy
         };
         std::vector<BlockFix> blocks;
         std::vector<std::string> notes;  // log lines

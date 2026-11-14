@@ -208,6 +208,9 @@ constexpr u64 kMalloc = 0x14c6c90;
 // The mover's block from the game's malloc: the play request, then one
 // fixed cell per animation name (a slot may keep the name's pointer).
 constexpr u64 kBlockRequest = 0x0;
+// deku-visuals-b: the enter arguments of a push block's node start (0x10
+// bytes, zeroed: the start reads only the float at +8).
+constexpr u64 kBlockNodeArgs = 0x30;
 constexpr u64 kBlockNames = 0x40;
 constexpr u64 kNameCell = 0x50;
 constexpr u64 kNameCells = 400;
@@ -560,6 +563,23 @@ public:
         want_ms_ = SteadyMs();
     }
 
+    // deku-visuals-b (issue 147): run the game's own push-node start on a
+    // block another game moved (CoopWorld::BlockNode::kStart_fn), on the
+    // next game frame, after that frame's pose writes. `node` is checked by
+    // its vtable again then.
+    void StartBlockNode(u64 node, u64 actor) {
+        std::lock_guard lock(mutex_);
+        if (node_starts_.size() < 16) {
+            node_starts_.emplace_back(node, actor);
+        }
+    }
+
+    // Node starts made since the last ask.
+    std::size_t TakeNodeStarts() {
+        std::lock_guard lock(mutex_);
+        return std::exchange(node_started_, 0);
+    }
+
     // Calls made since the last ask (for the 5 s log line).
     std::array<std::size_t, 4> TakeCounts() {
         std::lock_guard lock(mutex_);
@@ -630,7 +650,8 @@ public:
                     ++release_clear_;
                 }
             }
-            if (block_ == 0 && main_ != 0 && !allocating_ && !plays_.empty() && !alloc_tried_) {
+            if (block_ == 0 && main_ != 0 && !allocating_ && (!plays_.empty() || !node_starts_.empty()) &&
+                !alloc_tried_) {
                 allocating_ = true;
                 alloc_tried_ = true;
                 CoopPuppet::Call c;
@@ -640,6 +661,10 @@ public:
             }
             work_plays_ = plays_;
             next_play_ = 0;
+            if (block_ != 0) {
+                work_node_starts_ = std::exchange(node_starts_, {});
+            }
+            next_node_start_ = 0;
             Unalias(guest);
             work_wakes_ = std::exchange(wakes_, {});
             next_wake_ = 0;
@@ -861,6 +886,29 @@ public:
             c.function = main_ + kSetMatrix;
             c.x[0] = p.actor;
             c.x[1] = 0;
+            return c;
+        }
+        // deku-visuals-b (issue 147): a block another game moved runs its
+        // own push node's start again, after this frame's pose writes (its
+        // base anchor is at the new rest by then). The start sets the push's
+        // start and target from the block's place, as when the node is
+        // entered, so this player's next push starts where the block is.
+        while (next_node_start_ < work_node_starts_.size()) {
+            const auto [node, actor] = work_node_starts_[next_node_start_++];
+            u64 table = 0;
+            if (block_ == 0 || !Alive(guest, actor) || !guest.Read(node, &table, 8) ||
+                table != main_ + CoopWorld::BlockNode::kVtable) {
+                continue;
+            }
+            const std::array<std::uint8_t, 0x10> args{};
+            if (!guest.Write(block_ + kBlockNodeArgs, args.data(), args.size())) {
+                continue;
+            }
+            ++node_started_;
+            CoopPuppet::Call c;
+            c.function = main_ + CoopWorld::BlockNode::kStartFn;
+            c.x[0] = node;
+            c.x[1] = block_ + kBlockNodeArgs;
             return c;
         }
         return std::nullopt;
@@ -1125,6 +1173,10 @@ private:
     u64 block_ = 0;
     bool allocating_ = false;
     bool alloc_tried_ = false;
+    std::vector<std::pair<u64, u64>> node_starts_;       // deku-visuals-b: node, block actor
+    std::vector<std::pair<u64, u64>> work_node_starts_;
+    std::size_t next_node_start_ = 0;
+    std::size_t node_started_ = 0;
     std::vector<Pose> work_;
     // Issue 157: the animation each copy's own AI last chose that we put
     // back (name, steady ms), and the ones to give back once it is ours.
@@ -1574,41 +1626,56 @@ public:
             sign_words_.clear();
             // Issue 147: a block another game moved rests here now; its own
             // memory's old rest place gets the new one.
-            for (const auto& fix : block_fixes_) {
+            // deku-visuals-b: fixes whose node was not found or was busy come again.
+            for (auto& again : std::exchange(block_retry_, {})) {
+                block_fixes_.push_back(std::move(again));
+            }
+            for (auto& fix : block_fixes_) {
                 if (fix.snap) {
-                    continue;  // deku-visuals-b: logged by WorldSync; no write (native rule)
+                    continue;  // deku-visuals-b: logged by WorldSync only
                 }
-                // world-objects-2: the block's push node (known fields,
-                // found by its vtables and owner): on unless
-                // LICHII_COOP_BLOCK_NODE=0.
+                // world-objects-2, deku-visuals-b: the block's push node
+                // (found by its vtables and owner; read only) runs its own
+                // start again (the Mover's call), so its next push starts
+                // where the block rests now. On unless LICHII_COOP_BLOCK_NODE=0.
                 static const bool node_on = EnvOn("LICHII_COOP_BLOCK_NODE");
+                const bool first = fix.tries == 0;
                 if (node_on) {
                     const auto node = CoopWorld::FindBlockNode(
                         [&r](u64 address) { return r.Get<u64>(address); }, fix.address, main_);
-                    if (!node) {
-                        LOG_INFO(Core, "coop: world: {:016x} {} push node not found: its next push may "
-                                       "start from the old place",
-                                 fix.hash, fix.name);
-                    } else {
-                        const auto words = CoopWorld::NodeRestWords(
-                            [&r](u64 address) { return r.Get<u64>(address); }, *node, fix.from, fix.to);
-                        if (words.busy) {
-                            LOG_INFO(Core, "coop: world: {:016x} {} push node {:x} busy (mid-push here): "
-                                           "not written",
+                    // Stale: both its start and target still hold the old
+                    // rest (read only). Mid-push here (one of them): tried
+                    // again on the next walks, as when it is not found.
+                    const auto stale = node ? CoopWorld::NodeRestWords(
+                                                  [&r](u64 address) { return r.Get<u64>(address); },
+                                                  *node, fix.from, fix.to)
+                                            : CoopWorld::RestScan{};
+                    if (node && !stale.busy) {
+                        if (!stale.writes.empty()) {
+                            TheMover().StartBlockNode(*node, fix.address);
+                            LOG_INFO(Core, "coop: world: {:016x} {} push node {:x}: its own start "
+                                           "(main+{:#x}) runs again, from where it rests now",
+                                     fix.hash, fix.name, *node, CoopWorld::BlockNode::kStartFn);
+                        } else {
+                            LOG_INFO(Core, "coop: world: {:016x} {} push node {:x} already starts from "
+                                           "where it rests: left alone",
                                      fix.hash, fix.name, *node);
-                            continue;  // RestWords below too: one block, one decision
                         }
-                        for (const auto& w : words.writes) {
-                            memory_->Write32(w.address, w.value);
+                    } else if (++fix.tries < kBlockNodeTries) {
+                        if (first) {
+                            LOG_INFO(Core, "coop: world: {:016x} {} push node {}: tried again for {} walks",
+                                     fix.hash, fix.name, node ? "busy (mid-push here)" : "not found",
+                                     kBlockNodeTries);
                         }
-                        std::string at;
-                        for (const auto& w : words.where) {
-                            at += " " + w;
-                        }
-                        LOG_INFO(Core, "coop: world: {:016x} {} push node {:x}: {} of its places moved to "
-                                       "the new rest{}{}",
-                                 fix.hash, fix.name, *node, words.where.size(), at.empty() ? "" : ":", at);
+                        block_retry_.push_back(fix);
+                    } else {
+                        LOG_INFO(Core, "coop: world: {:016x} {} push node {}: its next push may start "
+                                       "from the old place",
+                                 fix.hash, fix.name, node ? "still busy" : "not found");
                     }
+                }
+                if (!first) {
+                    continue;  // the wide search below ran on the fix's first walk
                 }
                 const auto scan = CoopWorld::RestWords(
                     [&r](u64 address) { return r.Get<u64>(address); }, fix.address, fix.from,
@@ -1892,6 +1959,8 @@ public:
     u64 our_link_ = 0;                        // our Link's actor, from the last walk
     std::vector<CoopWorld::WorldSync::Out::Word> sign_words_;  // SIGN_CUT words to write
     std::vector<CoopWorld::WorldSync::Out::BlockFix> block_fixes_;  // issue 147: blocks to fix
+    std::vector<CoopWorld::WorldSync::Out::BlockFix> block_retry_;  // node not found or busy: next walk
+    static constexpr int kBlockNodeTries = 20;
     std::optional<coop::protocol::Vec3> player_;  // our Link in the last walk
     // Issue 144: shared changes to actors near our Link wait while it is in an
     // event (coop_guard.h). Where each actor of the last walk was, kills and

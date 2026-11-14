@@ -998,8 +998,8 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
         Distance(o.position, *o.stale_from) < Distance(o.position, o.agreed)) {
         // deku-visuals-b: our game's push started from where the block
         // rested before the other's push (its push node kept the old start,
-        // issue 147). This walk's jump is not sent; the glue gets the fix to
-        // log (no memory write: the owner's native rule).
+        // issue 147: its own start did not run again here). Told only: the
+        // push is ours and is sent as usual.
         Out::BlockFix fix;
         fix.address = o.address;
         fix.hash = o.hash;
@@ -1009,13 +1009,9 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
         fix.snap = true;
         out.blocks.push_back(std::move(fix));
         out.notes.push_back(Line("world: %016llx %s jumped back toward its old rest (a push from the "
-                                 "stale place, issue 147): this jump not sent%s",
+                                 "stale place, issue 147)%s",
                                  o.hash, o.name, ""));
         o.stale_from.reset();
-        o.rest = o.agreed;
-        o.rest_rotation = o.rotation;
-        o.last_walk.reset();
-        return;
     }
     if (now_us < o.quiet_until) {
         o.rest = o.position;  // settling after another game's move: no claim

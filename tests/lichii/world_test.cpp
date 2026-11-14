@@ -2439,8 +2439,8 @@ TEST_CASE("world: a block another player pushed asks for its old rest place to b
 
 // deku-visuals-b (0.10.1 playtest): the second player's push of a block the
 // first had moved jumped to a place between the two; that jump (our game's
-// push from the stale start) is told and not sent.
-TEST_CASE("world: a push from the old rest after a followed push is told and not sent") {
+// push from the stale start) is told. It is still our push and is sent.
+TEST_CASE("world: a push from the old rest after a followed push is told") {
     WorldSync w;
     Walk(w, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});
     w.Receive(MoveOf(0x50, 2000 * kMs, 1.0f));
@@ -2455,7 +2455,7 @@ TEST_CASE("world: a push from the old rest after a followed push is told and not
     Walk(w, 5000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {3.0f, 2.0f, 3.0f})}, proto::Vec3{3.0f, 2.0f, 4.0f});
     // Our player pushes; the game starts the push from 1.0 (the stale start).
     out = Walk(w, 5100 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.4f, 2.0f, 3.0f})}, proto::Vec3{1.4f, 2.0f, 4.0f});
-    CHECK(Sent<proto::WorldMove>(out).empty());
+    CHECK(Sent<proto::WorldMove>(out).size() == 1);
     REQUIRE(out.blocks.size() == 1);
     CHECK(out.blocks[0].snap);
     CHECK(out.blocks[0].from[0] == doctest::Approx(1.0f));
@@ -2463,10 +2463,9 @@ TEST_CASE("world: a push from the old rest after a followed push is told and not
     bool said = false;
     for (const auto& n : out.notes) said |= n.find("jumped back toward its old rest") != std::string::npos;
     CHECK(said);
-    // Told once; a push from there on is ours and sent as before.
+    // Told once.
     out = Walk(w, 5200 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.6f, 2.0f, 3.0f})}, proto::Vec3{1.6f, 2.0f, 4.0f});
     CHECK(out.blocks.empty());
-    CHECK(Sent<proto::WorldMove>(out).size() == 1);
 }
 
 TEST_CASE("world: a plain push after a followed push is no snap") {

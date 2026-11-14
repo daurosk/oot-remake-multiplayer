@@ -8,7 +8,8 @@
 # As tools/release/kit/linux/update.sh, for the zip: it reads the kit's version from VERSION.txt,
 # asks GitHub for the releases of daurosk/oot-remake-multiplayer and takes the newest with a Linux
 # zip (oot-coop-<version>-linux.zip and its .sha256). If that is newer, it downloads it,
-# checks the SHA-256, unpacks it to a temp folder and copies the kit's own files (MANIFEST.txt)
+# checks the SHA-256 (and the release signature when the GitHub CLI is logged in; verify_signature = no in
+# data/coop-options.ini skips that, not the SHA-256), unpacks it to a temp folder and copies the kit's own files (MANIFEST.txt)
 # over this kit. Every file it replaces is first copied to backup-<old version>/; if anything fails,
 # those are put back. VERSION.txt is written last; update-in-progress.txt marks an update that has
 # started, so a stopped one is done again by the next start.
@@ -94,6 +95,27 @@ echo "Downloading co-op $tag ..."
 fetch "$zip_url" "$work/kit.zip" && KIT_QUIET_FETCH=1 fetch "$sha_url" "$work/kit.sha256" || { echo 'The download failed.'; exit 1; }
 want=$(grep -oE '[0-9a-fA-F]{64}' "$work/kit.sha256" | head -n1 | tr 'A-F' 'a-f')
 [[ -n $want && $want == "$(sha256_of "$work/kit.zip")" ]] || { echo 'The download is damaged (its SHA-256 does not match); nothing was changed.'; exit 1; }
+# The release signature, when gh can check it (as update.ps1 and the old Linux kit's update.sh do).
+verify=auto
+grep -qE '^[[:space:]]*verify_signature[[:space:]]*=[[:space:]]*no[[:space:]]*$' "$DATA/coop-options.ini" 2>/dev/null && verify=no
+if [[ $verify == no ]]; then
+    echo 'Signature check skipped (verify_signature = no).'
+elif [[ $zip_url != https://* ]] || ! command -v gh >/dev/null; then
+    :  # a local test download, or no GitHub CLI: the SHA-256 is the check
+elif [[ -z ${OOT_COOP_VERIFY_NO_AUTH_CHECK-} ]] && ! gh auth status >/dev/null 2>&1; then
+    echo "Signature not checked: the GitHub CLI is not logged in ('gh auth login'). The SHA-256 is checked."
+else
+    cp "$work/kit.zip" "$work/${zip_url##*/}"
+    if gh attestation verify "$work/${zip_url##*/}" --repo "$REPO" --signer-workflow "$REPO/.github/workflows/release-attest.yml" >"$work/verify.txt" 2>&1; then
+        echo 'Signature: OK (signed by our release workflow).'
+    else
+        tail -n 2 "$work/verify.txt"
+        echo "The download's release signature does not check. Nothing changed."
+        echo 'A release only minutes old may not be signed yet: try again later. To update on the SHA-256 alone,'
+        echo "put 'verify_signature = no' in data/coop-options.ini."
+        exit 1
+    fi
+fi
 unzip_to "$work/kit.zip" "$work/new" >/dev/null || { echo 'The download is damaged (it does not unpack); nothing was changed.'; exit 1; }
 new=$(find "$work/new" -mindepth 1 -maxdepth 1 -type d | head -n1)
 [[ -n $new && -f $new/MANIFEST.txt && -f $new/VERSION.txt && -f $new/start-oot-coop.sh ]] ||

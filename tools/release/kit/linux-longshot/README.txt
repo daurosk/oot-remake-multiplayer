@@ -1,4 +1,5 @@
 OoT co-op for Linux and Steam Deck - play Ocarina of Time together, each player on their own PC with their own copy of the game.
+EXPERIMENTAL: not yet tested on a real Linux PC or Steam Deck. Please tell us what happens (bash scripts/collect-logs.sh).
 1. Unzip this folder to a place of your own, such as ~/OoT-Coop (not a temporary folder).
 2. Open a terminal in that folder and type:  bash start-oot-coop.sh
    The first time it asks for your game file (drag your .nup into the terminal and press Enter) and builds the game

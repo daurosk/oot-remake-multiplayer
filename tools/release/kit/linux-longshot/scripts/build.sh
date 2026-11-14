@@ -105,6 +105,7 @@ eval "$tools_env"
 # Longshot's own variables for its build, and nothing of a launcher or test run: LONGSHOT_TOOLS
 # unset keeps the game in one folder (no bin/), LONGSHOT_VK_PREBUILT unset compiles the patched
 # renderer. Its lift key hashes every A64_/OOT_/RX_ variable: co-op's OOT_COOP_* ones go.
+language=${OOT_COOP_LANGUAGE:-en-US}   # (read before the OOT_COOP_* variables go below)
 unset LONGSHOT_TOOLS LONGSHOT_VK_PREBUILT LONGSHOT_BUILDER_EXE LONGSHOT_NGX_SDK LONGSHOT_FFX_SDK
 while IFS='=' read -r v _; do [[ $v == OOT_COOP_* ]] && unset "$v"; done < <(env)
 export PYTHONIOENCODING=utf-8
@@ -202,7 +203,7 @@ else
         warn "only $((free_kb / 1024 / 1024)) GB free here; the first build wants about 60 GB."
     fi
     step 'Building the game (15 to 60 minutes, once; the PC stays usable)'
-    build_args=("${game_args[@]}" --out "$GAME" --work "$WORK" --language "${OOT_COOP_LANGUAGE:-en-US}" --log "$LOGS/build.log")
+    build_args=("${game_args[@]}" --out "$GAME" --work "$WORK" --language "$language" --log "$LOGS/build.log")
     [[ -n $jobs ]] && build_args+=(--jobs "$jobs")
     mkdir -p "$GAME"
     make_game "${build_args[@]}" || fail "The build stopped. Its log: $LOGS/build.log"

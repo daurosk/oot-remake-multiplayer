@@ -96,7 +96,7 @@ FNR == 1 { if (outfile != "") close(outfile); outfile = FILENAME ".masked" }
     print t > outfile
 }'
 find "$stage" -type f ! -path '*/crash_dumps/*' | while IFS= read -r f; do
-    awk -v user="$(id -un 2>/dev/null)" -v pc="$host" "$mask_awk" "$f" && mv -f "$f.masked" "$f"
+    { awk -v user="$(id -un 2>/dev/null)" -v pc="$host" "$mask_awk" "$f" && mv -f "$f.masked" "$f"; } || rm -f "$f" "$f.masked"   # never an unmasked file in the tarball
 done
 tar -czf "$out" -C "$stage" .
 rm -rf "$stage"

@@ -1,8 +1,11 @@
 # Co-op on Linux and Steam Deck (Longshot)
 
 The Linux kit is the same co-op as the Windows kit, on [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot)'s
-Linux build: the game is compiled on your PC from your own copy of it, with co-op built in. Linux and Windows players
-play together (same server, same version). There is no emulator.
+Linux build: the game is compiled on your PC from your own copy of it, with co-op built in. There is no emulator.
+
+**Experimental, untested:** this kit has not yet been run on a real Linux PC or a Steam Deck. CI builds it and
+checks that the module loads, but no one has built the game with it or played on it yet, and Linux and Windows players
+playing together (same server, same version) is not yet proven. Please report what happens (`bash scripts/collect-logs.sh`).
 
 ## What you need
 

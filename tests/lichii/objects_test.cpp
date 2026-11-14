@@ -2485,21 +2485,26 @@ TEST_CASE("objects: a breakable taken elsewhere plays its own break, and is dele
     web.life = proto::ObjectLife{1, 1};
     Tick(sync, 0, {web});
     sync.Take(web.hash);
+    // deku-visuals-b: a web first gets its own Burn played; this one never
+    // shows it (no animation here), so after kWebBurnTryUs it breaks as before.
     auto step = Tick(sync, 10 * kMs, {web});
+    CHECK(step.writes.empty());
+    step = Tick(sync, 1100 * kMs, {web});
     REQUIRE(step.writes.size() == 1);
     CHECK(step.writes[0].address == 0x700);
     CHECK(step.writes[0].life == 0);
     CHECK(step.writes[0].hurt == 0);
     CHECK(sync.Removes().empty());
     // Its break plays: not deleted, not written again.
-    step = Tick(sync, 800 * kMs, {web});
+    step = Tick(sync, 1900 * kMs, {web});
     CHECK(step.writes.empty());
     CHECK(sync.Removes().empty());
     // Still standing 1.5 s on: deleted after all.
-    Tick(sync, 1600 * kMs, {web});
+    Tick(sync, 2700 * kMs, {web});
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x700});
 
-    // One with no life (the floor web you fall through) goes at once, as before.
+    // One with no life (the floor web you fall through) goes once its burn
+    // had its try (deku-visuals-b; before: at once).
     Sync other;
     Seen floor = web;
     floor.name = "Obj_InsideTheDekuTree_SpiderWeb_A_01";
@@ -2508,6 +2513,9 @@ TEST_CASE("objects: a breakable taken elsewhere plays its own break, and is dele
     Tick(other, 0, {floor});
     other.Take(floor.hash);
     step = Tick(other, 10 * kMs, {floor});
+    CHECK(step.writes.empty());
+    CHECK(other.Removes().empty());
+    step = Tick(other, 1100 * kMs, {floor});
     CHECK(step.writes.empty());
     CHECK(other.Removes() == std::vector<std::uint64_t>{0x700});
 }

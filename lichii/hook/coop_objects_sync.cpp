@@ -1201,7 +1201,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     // issue 177: the bridge and webs vanished): the fall
                     // comes here as the shifter's moves, the web's own break
                     // on life 0; removed only after they had time to play.
-                    if (CoopWorld::IsFallTaken(s.name) && !web_burns_.contains(s.address) &&
+                    const auto burnt = web_burns_.find(s.address);
+                    const bool burnt_here = burnt != web_burns_.end() && burnt->second.seen_us != 0;
+                    if (CoopWorld::IsFallTaken(s.name) && !burnt_here &&
                         now_us - t->second.since_us < kTakeFallUs) {
                         continue;
                     }

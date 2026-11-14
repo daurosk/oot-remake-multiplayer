@@ -384,7 +384,7 @@ TEST_CASE("host menu: Paste friend's answer says plainly what was wrong with the
     const auto locked = ReadPastedAnswer(std::nullopt, invite, "join-pw", now);
     CHECK_FALSE(locked.ok);
     CHECK(locked.line.find("could not be read") != std::string::npos);
-    for (const std::string empty : {std::string(), std::string(" \r\n"), std::string("\xE2\x80\x8B")}) {
+    for (const std::string& empty : {std::string(), std::string(" \r\n"), std::string("\xE2\x80\x8B")}) {
         const auto e = ReadPastedAnswer(empty, invite, "join-pw", now);
         CHECK_FALSE(e.ok);
         CHECK(e.line.find("clipboard is empty") != std::string::npos);
@@ -397,6 +397,8 @@ TEST_CASE("host menu: Paste friend's answer says plainly what was wrong with the
     const auto other_invite =
         ReadPastedAnswer(nat::make_invite(nat::Invite{nat::Addr{0xCB007106u, 27510}, "x"}).value(), invite, "join-pw", now);
     CHECK(other_invite.line.find("invite code, not an answer code") != std::string::npos);
+    const auto cjk = ReadPastedAnswer("\xE3\x81\x93\xE3\x82\x93 \xF0\x9F\x98\x80", invite, "join-pw", now);   // not empty
+    CHECK(cjk.line.find("No answer code found") != std::string::npos);
     const auto words = ReadPastedAnswer("send me the code pls", invite, "join-pw", now);
     CHECK(words.line.find("No answer code found") != std::string::npos);
     const auto stale = ReadPastedAnswer(answer, invite, "join-pw", now + 3600);

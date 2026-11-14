@@ -510,18 +510,41 @@ RejoinId RejoinIds(const std::string& client_id, const std::string& password, co
 
 namespace CoopHostMenu {
 
+namespace {
+// Only spaces, line breaks, and the invisible or no-break spaces a chat copy can hold (UTF-8): U+00A0, U+200B to
+// U+200D, U+2060, U+FEFF. Any other character (CJK, an emoji) is something copied, not an empty clipboard.
+bool PastedNothing(std::string_view s) {
+    for (std::size_t i = 0; i < s.size();) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\v' || c == '\f') {
+            ++i;
+        } else if (s.substr(i, 2) == "\xC2\xA0") {
+            i += 2;
+        } else if (s.substr(i, 3) == "\xE2\x80\x8B" || s.substr(i, 3) == "\xE2\x80\x8C" ||
+                   s.substr(i, 3) == "\xE2\x80\x8D" || s.substr(i, 3) == "\xE2\x81\xA0" ||
+                   s.substr(i, 3) == "\xEF\xBB\xBF") {
+            i += 3;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+}  // namespace
+
 PastedAnswer ReadPastedAnswer(const std::optional<std::string>& clipboard, std::string_view own_invite,
                               std::string_view password, std::uint64_t unix_now) {
     PastedAnswer out;
     if (!clipboard) {
+#ifdef _WIN32
         out.line = "The clipboard could not be read (another program had it open): press this again.";
+#else
+        out.line = "The clipboard could not be read: install wl-clipboard (Wayland) or xclip (X11), then press this again.";
+#endif
         return out;
     }
     out.text = *clipboard;
-    const bool empty = std::none_of(out.text.begin(), out.text.end(), [](char c) {
-        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
-    });
-    if (empty) {
+    if (PastedNothing(out.text)) {
         out.line = "Your clipboard is empty: copy your friend's answer code first, then press this again.";
         return out;
     }

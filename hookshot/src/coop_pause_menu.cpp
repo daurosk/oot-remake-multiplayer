@@ -157,7 +157,7 @@ std::vector<Menu::Line> Menu::Lines() const {
         if (host) {
             out.push_back({Action("Copy the code again", "Copy", session_.code.empty()), Act::kCopyInvite,
                            "Puts your code on the clipboard again, to paste into your chat with your friends."});
-            out.push_back({Action("Paste friend's answer", "Paste"), Act::kPasteAnswer,
+            out.push_back({Action("Paste friend's answer (or Ctrl+V)", "Paste"), Act::kPasteAnswer,
                            "Only when a friend's game shows an answer code (their way in was blocked): copy the code they "
                            "send you, then press this."});
             out.push_back({Action("Same network or VPN", "Copy the line"), Act::kCopyLan,
@@ -513,8 +513,15 @@ bool Menu::Press(Input input) {
                 return l.act == Act::kCode && !l.row.fixed;
             })) {
             request_ = Request{Request::Kind::kPaste, {}};
+            return true;
         }
-        return true;
+        if (page_ == Page::kHost && std::any_of(lines.begin(), lines.end(), [](const Line& l) {
+                return l.act == Act::kPasteAnswer;
+            })) {   // Ctrl+V on the Host page: the same as Paste friend's answer
+            request_ = Request{Request::Kind::kPasteAnswer, {}};
+            return true;
+        }
+        return false;
     case Input::kErase:
         return true;
     }

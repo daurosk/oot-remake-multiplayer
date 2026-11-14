@@ -96,8 +96,13 @@ TEST_CASE("pause tab: Host hosts in one press, then the page shows the code, the
     m.SetSession(starting);
     CHECK(m.view().gold == "Starting your game...");
     m.SetSession(Hosting(1));
-    CHECK(Names(m) == std::vector<std::string>{"Copy the code again", "Paste friend's answer", "Same network or VPN",
-                                               "Stop hosting"});
+    CHECK(Names(m) == std::vector<std::string>{"Copy the code again", "Paste friend's answer (or Ctrl+V)",
+                                               "Same network or VPN", "Stop hosting"});
+    // Ctrl+V (or Shift+Insert) on the Host page is Paste friend's answer, wherever the cursor is.
+    CHECK(m.Press(Input::kPaste));
+    const auto paste = m.TakeRequest();
+    REQUIRE(paste.has_value());
+    CHECK(paste->kind == Request::Kind::kPasteAnswer);
     View v = m.view();
     CHECK(v.hint == "ABCDE-FGHJK");
     CHECK(v.gold == "Hosting: waiting for friends");

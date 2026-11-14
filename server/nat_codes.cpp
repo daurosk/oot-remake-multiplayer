@@ -223,7 +223,9 @@ std::vector<std::string> find_codes(std::string_view text) {
       if (end > start && !words[end].joined) break;
       letters += words[end].letters;
       if (letters.size() > kMax) break;
-      if (letters.size() >= kMin && read_raw(letters).error == CodeError::kOk) {
+      // Only lengths to_letters makes (cheap) go on to the checksum (a SHA-256).
+      if (letters.size() >= kMin && letters_for(letters.size() * 5 / 8) == letters.size() &&
+          read_raw(letters).error == CodeError::kOk) {
         found = end + 1;
         break;
       }

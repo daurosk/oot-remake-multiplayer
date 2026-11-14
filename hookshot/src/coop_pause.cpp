@@ -586,7 +586,24 @@ bool Key(std::uint32_t vk, bool repeat) {
         return true;
     }
     std::lock_guard lock(g_mutex);
-    if (!g_shown || !g_menu.typing()) {
+    if (!g_shown) {
+        return false;
+    }
+#ifdef _WIN32
+    const bool ctrl_down = (GetKeyState(VK_CONTROL) & 0x8000) != 0, shift_down = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+#else
+    const bool ctrl_down = false, shift_down = false;
+#endif
+    // Ctrl+V and Shift+Insert paste, typing or not: on the Host page that is Paste friend's answer (players press
+    // Ctrl+V there), on Join the code. A plain Insert stays Hookshot's.
+    if (!repeat && ((vk == 'V' && ctrl_down) || (vk == 0x2D && shift_down && !ctrl_down))) {
+        const bool taken = g_menu.Press(Input::kPaste);
+        Settle();
+        if (taken || g_menu.typing()) {
+            return true;
+        }
+    }
+    if (!g_menu.typing()) {
         return false;
     }
     if (vk == 0x70 || vk == 0x2D) {   // F1, Insert: Hookshot's (the menu closes, the typing with it)

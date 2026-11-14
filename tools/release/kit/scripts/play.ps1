@@ -5,7 +5,7 @@
 #        Host.bat (play.ps1 host)  starts this kit's server too and plays on it (127.0.0.1)
 #        Join.bat (play.ps1 join)  asks for the host's address each time
 #        Host-Hookshot.bat, Join-Hookshot.bat (play.ps1 host|join -Hookshot)  the same with the
-#                                  Hookshot game Build-Hookshot-Coop.bat built (coop.ini beside its longshot.exe)
+#                                  Longshot game Build-Hookshot-Coop.bat built (coop.ini beside its longshot.exe)
 # On every start it looks for a newer co-op release and, as auto_update in coop-options.ini
 # says, updates the kit (emulator included) and starts the new kit's play.ps1 with -NoUpdate.
 # Every later play.ps1 must accept -NoUpdate.
@@ -194,7 +194,7 @@ if ($Hookshot) {
     $ini = Join-Path $emu 'coop.ini'
 }
 if ($Mode -eq 'title') {
-    if (-not $Hookshot) { Write-Host 'play.ps1 title is for Hookshot (Play-OoT-Coop.bat).'; exit 1 }
+    if (-not $Hookshot) { Write-Host 'play.ps1 title is for the Longshot game (Play-OoT-Coop.bat).'; exit 1 }
     $running = Get-Process longshot, hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
     if ($running) { Write-Host 'The co-op game is already running. Host and Join are in its menu, first tab Multiplayer (controller: Minus and Plus together, or Home; keyboard: F1).'; exit 1 }
     # No session from this start: no server and no join password in coop.ini (the name, the colour and the

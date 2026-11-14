@@ -634,9 +634,9 @@ function Get-KitHookshotNeedText([string]$Need, [string]$Game = '', [bool]$HsOnl
         # (the tester behind this was an emulator player joining a Hookshot host with Join-Hookshot.bat)
         'game' { 'Playing on the emulator? Use Join.bat (or Host.bat): emulator and Hookshot players can be in the same game.' + "`n" + 'Hookshot isn''t set up yet. The kit builds the co-op Hookshot game on this PC from your own game, once (about 20 to 40 minutes; the PC stays usable).' }
         'moved' { "The co-op Hookshot game this kit built is not in $Game any more (moved or deleted). Moved it? Answer n, then run Build-Hookshot-Coop.bat -Out ""<its new folder>"" (seconds). Otherwise it is built again (about 20 to 40 minutes)." }
-        'pin' { 'Your Hookshot game was built for another Hookshot version than this kit uses: it is built again (about 15 minutes; the PC stays usable).' }
-        'patches' { 'This update changes the Hookshot game a little: updating it (a few minutes).' }
-        'module' { 'Putting the updated co-op and the puppet pack into the Hookshot game (seconds to a minute).' }
+        'pin' { 'Your co-op game was built for another game version than this kit uses: it is built again (about 15 minutes; the PC stays usable).' }
+        'patches' { 'This update changes the co-op game a little: updating it (a few minutes).' }
+        'module' { 'Putting the updated co-op and the puppet pack into the co-op game (seconds to a minute).' }
         'quarantine' { Get-KitHookshotQuarantineText }
         default { '' }
     }
@@ -660,7 +660,7 @@ function Get-KitHookshotQuarantineText {
         'Antivirus most likely took it away as a false alarm. To get it back (SETUP.md, "Antivirus took hookshot_coop.dll"):',
         '  1. Windows Security > Virus & threat protection > Protection history: the hookshot_coop.dll entry > Actions > Restore.',
         '  2. Add an exclusion so it stays: Virus & threat protection settings > Exclusions > Add or remove exclusions >',
-        '     Add an exclusion > Folder: this kit''s folder (and the Hookshot game''s folder if it is elsewhere).',
+        '     Add an exclusion > Folder: this kit''s folder (and the co-op game''s folder if it is elsewhere).',
         '  Another antivirus: restore it from its quarantine and allow the kit folder the same way, or unzip the kit again.',
         'Then start this again.'
     ) -join "`n"

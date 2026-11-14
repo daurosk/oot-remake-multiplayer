@@ -1,0 +1,9 @@
+# deku-test (2026-11-14): the Deku Tree puzzle and Gohma scenarios after their save prep (see hs-deku-platforms.A.txt's
+# 'deku-test' lines: save_flags.py set + drop-keys on the pair's baseline first). One group, the 0.11 pair:
+#   python -I tools/autotest/groups.py run tools/autotest/groups/hookshot-deku.txt --kit-root <a root whose hookshot-A1/-B1 are the pair>
+[g1]
+hs-deku-platforms  expect='B:our game started the event InsideTheDekuTree_Gimmick_RoomD_PlatformUp: sent to the others'  expect='A:player 2 started the event InsideTheDekuTree_Gimmick_RoomD_PlatformUp in this scene'  label="deku-switches 1 + intro-ocarina: gimmick events still play"
+hs-deku-torch  expect='B:our game started the event InsideTheDekuTree_Gimmick_CandleAndSpiderWeb: sent to the others'  expect='A:player 2 started the event InsideTheDekuTree_Gimmick_CandleAndSpiderWeb in this scene'  label="deku-switches 2 torch/web (deku-visuals web)"
+hs-ladder  expect='A:get_bool\(0xb3a4fe84\) = 1 \(was 0\)'  expect='B:starting the event InsideTheDekuTree_Gimmick_FallingLadder here'  label="deku-switches 3 ladder"
+hs-deku-water-floor  expect='A:RoomG_WaterLevel.*0 -> 1'  expect='B:Obj_Deku_MoveFloor_A_01 moved by another player'  label="deku-switches 4 water floor"
+hs-boss-cutscenes-gohma  expect="A:Dm_Deku_BossIn: our game started it"  expect="B:Dm_Deku_BossIn: playing it here too"  expect="B:Dm_Deku_BossOut: playing it here too"  label="boss-cutscenes: Gohma intro + death"

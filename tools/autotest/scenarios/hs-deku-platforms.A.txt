@@ -31,6 +31,20 @@
 #    lifts are out of step (the words for a later lift-state share).
 #  - If A shows "FindRunningEvent" found nothing (B has no "our game started" line): the name is not
 #    in the event or session blocks; send B's log tail.
+# deku-test (2026-11-14, Longshot rc.3): clearing HavePlayedEvent alone does not start anything. The rooms'
+# logic (romfs Logic/InsideTheDekuTree_Level_Room_*.logic.module.ainb) reads room flags when the room loads:
+#   compass room D: the event's asker (EventRequestActor_641b) is deleted while RoomD_StepSwitch_On_01 (0x6fb4f455)
+#     is 1 (then the plate lifts the platforms with no event); slingshot room C: RoomC_Cleared (0x77279a83) boots the
+#     eye switch up and deletes its asker; torch room E: RoomE_KillSpiderWave (0x46e8fcf9) burns the web at load and
+#     the burned web is a Bool64bitKey (its placement Hash 0x0181f8a8ef2fd1d3, its parts 0x45c7d8b5c0c68917);
+#     water room G: WaterLevel (0x8d2b85ef) 1 deletes the dive switch's asker; Gohma's prefab (room L) deletes Gohma
+#     while the quest Get_StoneOfForest (enum 0x7d776b61) is DefeatBoss or later (the saves: Complete).
+# BEFORE the run (games closed), both games of the pair, every slot (one prep for all hs-deku-*, hs-ladder and
+# hs-boss-cutscenes-gohma; keep a copy of <pair>\autotest-save first and put it back afterwards):
+#   save_flags.py set <pair>\autotest-save\slot_0*\progress.sav bool:0x50cbaf1b=0 bool:0x429126ef=0 bool:0xb3a4fe84=0
+#     bool:0xfcbd74e3=0 bool:0x8d2b85ef=0 bool:0x392a228a=0 bool:0x6fb4f455=0 bool:0x77279a83=0 bool:0x46e8fcf9=0
+#     enum:0x7d776b61=0xb5df43cb      (GoToBossRoom)
+#   save_flags.py drop-keys <pair>\autotest-save\slot_0*\progress.sav 0x0181f8a8ef2fd1d3 0x45c7d8b5c0c68917
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_GIMMICK_PROBE=1
@@ -49,10 +63,10 @@ press A
 wait 2400
 mark after
 wait 240
-place -28.0 115.2 6.5
+place -17.5 120.2 -2.0     # deku-test: the plate's floor (3F), 3 m off it, not by the lifts on 2F
 wait 240
 mark placed
-toward -29.9 3.2 6      # face the lifts
+toward -29.9 3.2 6      # face the lifts (below)
 press ZL 10
 wait 600
 mark ready

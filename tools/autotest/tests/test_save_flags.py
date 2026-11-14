@@ -32,6 +32,15 @@ def autotest_like():
     })
 
 
+def with_keys(keys):
+    """autotest_like() with a Bool64bitKey set after the pool (the end record's pair points at it)."""
+    data = autotest_like()
+    off = len(data)
+    pool = struct.unpack_from("<I", data, 8)[0]
+    struct.pack_into("<I", data, pool - 4, off)  # the end record's pair: (file hash, set offset)
+    return bytes(data) + b"".join(struct.pack("<Q", k) for k in keys) + b"\0" * 8
+
+
 class SaveFlagsTest(unittest.TestCase):
     def test_bombs_sets_what_a_real_bag_sets(self):
         data = autotest_like()
@@ -121,6 +130,27 @@ class SaveFlagsTest(unittest.TestCase):
         struct.pack_into("<I", early_end, 8, 0x20 + 8 * 0x20 + 8)  # pool cuts the end pair
         with self.assertRaises(sf.SaveError):
             sf.index(early_end)
+
+
+    def test_key_set_is_read_and_a_key_dropped(self):
+        data = with_keys([0x181f8a8ef2fd1d3, 0x45c7d8b5c0c68917, 0xbce05898ce61f1c0])
+        off, keys = sf.key_set(data)
+        self.assertEqual(keys, [0x181f8a8ef2fd1d3, 0x45c7d8b5c0c68917, 0xbce05898ce61f1c0])
+        new, gone = sf.drop_keys(data, {0x45c7d8b5c0c68917, 0x1234})
+        self.assertEqual(gone, [0x45c7d8b5c0c68917])
+        self.assertEqual(len(new), len(data) - 8)  # the set is shorter, and so is the file
+        self.assertEqual(sf.key_set(new), (off, [0x181f8a8ef2fd1d3, 0xbce05898ce61f1c0]))
+        self.assertEqual(new[:off], data[:off])
+        sf.index(new)
+
+    def test_no_key_set_and_bad_sets(self):
+        self.assertEqual(sf.key_set(autotest_like()), (0, []))
+        with self.assertRaises(sf.SaveError):
+            sf.key_set(with_keys([5, 3]))  # not ascending
+        with self.assertRaises(sf.SaveError):
+            sf.key_set(with_keys([3]) + b"x")  # bytes after the set
+        with self.assertRaises(sf.SaveError):
+            sf.key_set(with_keys([3])[:-8])  # no closing zero
 
 
 class CommandLineTest(unittest.TestCase):
@@ -227,6 +257,19 @@ class CommandLineTest(unittest.TestCase):
         with self.assertRaises(sf.SaveError):
             sf.write_save(self.slots[0], old, bytes(new))
         self.assertFalse(os.path.exists(sf.backup_dir(self.slots[0])))
+
+    def test_drop_keys_keeps_a_backup(self):
+        with open(self.slots[0], "wb") as f:
+            f.write(with_keys([3, 0x181f8a8ef2fd1d3]))
+        old = sf.read_file(self.slots[0])
+        self.assertEqual(sf.main(["keys", self.slots[0]]), 0)
+        self.assertEqual(sf.main(["drop-keys", self.slots[0], "0x0181f8a8ef2fd1d3"]), 0)
+        self.assertEqual(sf.key_set(sf.read_file(self.slots[0]))[1], [3])
+        kept = sf.backup_dir(self.slots[0])
+        self.assertEqual(sf.read_file(os.path.join(kept, os.listdir(kept)[0])), old)
+        # Nothing set: nothing written, no second backup.
+        self.assertEqual(sf.main(["drop-keys", self.slots[0], "0x0181f8a8ef2fd1d3"]), 0)
+        self.assertEqual(len(os.listdir(kept)), 1)
 
 
 if __name__ == "__main__":

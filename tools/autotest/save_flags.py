@@ -21,6 +21,17 @@ in the table are changed; nothing is added or moved.
   save_flags.py no-ocarina SAVE [SAVE ...]
                                           takes both ocarinas away, as for a player
                                           who never met Saria (issue 190)
+  save_flags.py keys SAVE                 the Bool64bitKey set: the 64-bit keys that are true
+  save_flags.py drop-keys SAVE 0x0181f8a8ef2fd1d3 [...]
+                                          makes those keys false (takes them out of the set)
+
+The Bool64bitKey flags (a placement's own state: a web burned, a Gold Skulltula
+or a heart taken; the key is the placement's Hash from the scene's Banc, or that
+Hash +-2) are not in the table. They are a set after the pool: the end record's
+second pair is the file's hash and the set's offset, then the true keys follow
+ascending as u64, closed by a u64 zero, and the file ends there (a shorter set
+makes a shorter file; integration docs/save-format.md, "64-bit keys").
+drop-keys is the one change that moves bytes: the set is rewritten without the keys.
 
 SAVE may be a pattern (slot_0*/progress.sav); it is expanded here, as the
 Windows shells do not. Only saves in a kit's baseline are touched: a path
@@ -278,6 +289,50 @@ NO_OCARINA = [
 EQUIP_OCARINA = 0xb72cd3fc  # String64 PlayerStatus.EquipOcarina, "Item_Ocarina_Fairy" once got
 
 
+def key_set(data):
+    """(offset, [keys]) of the Bool64bitKey set; (0, []) when the save has none."""
+    pool = struct.unpack_from("<I", data, 8)[0]
+    at = TABLE
+    off = None
+    while at + 16 <= pool:
+        first, second = struct.unpack_from("<II", data, at)
+        if first == 0 and second == END:
+            off = struct.unpack_from("<I", data, at + 12)[0]
+            break
+        at += 8
+    if off is None:
+        raise SaveError("no end record")
+    if off == 0:
+        return 0, []
+    if not pool <= off <= len(data) - 8:
+        raise SaveError(f"the key set's offset {off:#x} is outside the file")
+    keys = []
+    while True:
+        at = off + 8 * len(keys)
+        if at + 8 > len(data):
+            raise SaveError("the key set has no closing zero")
+        (k,) = struct.unpack_from("<Q", data, at)
+        if k == 0:
+            break
+        keys.append(k)
+    if keys != sorted(set(keys)):
+        raise SaveError("the key set is not ascending")
+    if off + 8 * (len(keys) + 1) != len(data):
+        raise SaveError("bytes after the key set")
+    return off, keys
+
+
+def drop_keys(data, drop):
+    """(the save without the keys in `drop`, [the keys taken out])."""
+    off, keys = key_set(data)
+    gone = [k for k in keys if k in drop]
+    kept = [k for k in keys if k not in drop]
+    if not off:
+        return bytes(data), []
+    new = bytes(data[:off]) + b"".join(struct.pack("<Q", k) for k in kept) + b"\0" * 8
+    return new, gone
+
+
 def no_ocarina(data):
     """Takes the ocarinas out of a bytearray save. Returns [(hash, old, new)];
     the equipped name is reported as its first 4 bytes before and after."""
@@ -313,6 +368,11 @@ def main(argv=None):
     b.add_argument("saves", nargs="+")
     o = sub.add_parser("no-ocarina")
     o.add_argument("saves", nargs="+")
+    k = sub.add_parser("keys")
+    k.add_argument("save")
+    dk = sub.add_parser("drop-keys")
+    dk.add_argument("save")
+    dk.add_argument("keys", nargs="+")
     a = p.parse_args(argv)
     try:
         if a.cmd == "list":
@@ -331,6 +391,23 @@ def main(argv=None):
                     kind, h, _ = parse_flag(f)
                     v = get(data, kind, h)
                     print(f"{path}: {f} = {'not in this save' if v is None else v}")
+            return 0
+        if a.cmd == "keys":
+            for path in expand([a.save]):
+                off, keys = key_set(read_file(path))
+                print(f"{path}: {len(keys)} keys at {off:#x}: " + " ".join(f"{k:#018x}" for k in keys))
+            return 0
+        if a.cmd == "drop-keys":
+            drop = {int(x, 0) for x in a.keys}
+            for path in expand([a.save]):
+                old = read_file(path)
+                new, gone = drop_keys(old, drop)
+                if not gone:
+                    print(f"{path}: none of those keys is set")
+                    continue
+                backup = write_save(path, old, new)
+                print(f"{path}: dropped " + " ".join(f"{k:#018x}" for k in gone))
+                print(f"{path}: old file kept as {backup}")
             return 0
         changes = []
         if a.cmd == "set":

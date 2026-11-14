@@ -14,7 +14,7 @@ press A
 wait 2400
 mark after
 wait 1100
-place -17.5 120.2 -4.9
+place -17.5 121.2 -4.9   # deku-test: 1.5 m over the plate: B lands on it (a landing presses it)
 wait 60
 mark pressed
 wait 240

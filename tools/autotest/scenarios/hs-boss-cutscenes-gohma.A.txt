@@ -17,6 +17,20 @@
 #  5. A after a-kill: "Dm_Deku_BossOut: our game started the death"; B: "Dm_Deku_BossOut: playing it here too".
 #     Screens at a-death / b-death: the death on both.
 #  6. Neither log: "moving in" from the older rules ("another player is in the boss room").
+# deku-test (2026-11-14, Longshot rc.3): clearing HavePlayedEvent alone does not start anything. The rooms'
+# logic (romfs Logic/InsideTheDekuTree_Level_Room_*.logic.module.ainb) reads room flags when the room loads:
+#   compass room D: the event's asker (EventRequestActor_641b) is deleted while RoomD_StepSwitch_On_01 (0x6fb4f455)
+#     is 1 (then the plate lifts the platforms with no event); slingshot room C: RoomC_Cleared (0x77279a83) boots the
+#     eye switch up and deletes its asker; torch room E: RoomE_KillSpiderWave (0x46e8fcf9) burns the web at load and
+#     the burned web is a Bool64bitKey (its placement Hash 0x0181f8a8ef2fd1d3, its parts 0x45c7d8b5c0c68917);
+#     water room G: WaterLevel (0x8d2b85ef) 1 deletes the dive switch's asker; Gohma's prefab (room L) deletes Gohma
+#     while the quest Get_StoneOfForest (enum 0x7d776b61) is DefeatBoss or later (the saves: Complete).
+# BEFORE the run (games closed), both games of the pair, every slot (one prep for all hs-deku-*, hs-ladder and
+# hs-boss-cutscenes-gohma; keep a copy of <pair>\autotest-save first and put it back afterwards):
+#   save_flags.py set <pair>\autotest-save\slot_0*\progress.sav bool:0x50cbaf1b=0 bool:0x429126ef=0 bool:0xb3a4fe84=0
+#     bool:0xfcbd74e3=0 bool:0x8d2b85ef=0 bool:0x392a228a=0 bool:0x6fb4f455=0 bool:0x77279a83=0 bool:0x46e8fcf9=0
+#     enum:0x7d776b61=0xb5df43cb      (GoToBossRoom)
+#   save_flags.py drop-keys <pair>\autotest-save\slot_0*\progress.sav 0x0181f8a8ef2fd1d3 0x45c7d8b5c0c68917
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1

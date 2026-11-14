@@ -49,6 +49,9 @@ target_link_libraries(hookshot_coop PRIVATE coop_voice)
 if(WIN32)
   # GetAdaptersAddresses: the Host dialog's Same network and VPN rows name each network card.
   target_link_libraries(hookshot_coop PRIVATE iphlpapi)
+else()
+  # dlsym: Ctrl+V reads the modifier keys from the game's own SDL (coop_pause.cpp Modifiers).
+  target_link_libraries(hookshot_coop PRIVATE ${CMAKE_DL_LIBS})
 endif()
 if(MSVC)
   # The emulator's own code builds with these off too (lichii/README.md).

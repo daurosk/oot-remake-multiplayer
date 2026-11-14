@@ -6,6 +6,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -33,6 +34,8 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#else
+#include <dlfcn.h>
 #endif
 
 namespace CoopPause {
@@ -376,7 +379,7 @@ void PasteAnswer() {
         g_menu.SetNote({st.state != HOS_COOP_HOSTING
                             ? "Host a game first: a friend's answer code is pasted while you host."
                             : "There is no invite code this time, so no answer code: friends on the same network or "
-                              "a VPN use the Same network or VPN row."});
+                              "a VPN use the Same network or the VPN row."});
         return;
     }
     const auto now = static_cast<std::uint64_t>(
@@ -585,6 +588,22 @@ int Wanted() {
     return g_wanted.exchange(HOS_COOP_MENU_WANT_NOTHING);
 }
 
+// Ctrl and Shift held now. Windows: GetKeyState. Linux: the game's own SDL (SDL2 or SDL3, found in the process when
+// it is there: no link to it), whose KMOD_CTRL / KMOD_SHIFT bits are the same in both; without SDL, neither.
+static std::pair<bool, bool> Modifiers() {
+#ifdef _WIN32
+    return {(GetKeyState(VK_CONTROL) & 0x8000) != 0, (GetKeyState(VK_SHIFT) & 0x8000) != 0};
+#else
+    using GetModState = unsigned int (*)();
+    static const GetModState get = reinterpret_cast<GetModState>(dlsym(RTLD_DEFAULT, "SDL_GetModState"));
+    if (get == nullptr) {
+        return {false, false};
+    }
+    const unsigned int mod = get() & 0xFFFFu;
+    return {(mod & 0x00C0u) != 0, (mod & 0x0003u) != 0};
+#endif
+}
+
 bool Key(std::uint32_t vk, bool repeat) {
     if (CoopModsTab::Key(vk, repeat)) {  // the Mods tab's text field, while it is typed into
         return true;
@@ -593,11 +612,7 @@ bool Key(std::uint32_t vk, bool repeat) {
     if (!g_shown) {
         return false;
     }
-#ifdef _WIN32
-    const bool ctrl_down = (GetKeyState(VK_CONTROL) & 0x8000) != 0, shift_down = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-#else
-    const bool ctrl_down = false, shift_down = false;
-#endif
+    const auto [ctrl_down, shift_down] = Modifiers();
     // Ctrl+V and Shift+Insert paste, typing or not: on the Host page that is Paste friend's answer (players press
     // Ctrl+V there), on Join the code. A plain Insert stays Hookshot's.
     if (!repeat && ((vk == 'V' && ctrl_down) || (vk == 0x2D && shift_down && !ctrl_down))) {
@@ -613,12 +628,7 @@ bool Key(std::uint32_t vk, bool repeat) {
     if (vk == 0x70 || vk == 0x2D) {   // F1, Insert: Hookshot's (the menu closes, the typing with it)
         return false;
     }
-    const bool ctrl =
-#ifdef _WIN32
-        (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-#else
-        false;
-#endif
+    const bool ctrl = ctrl_down;
     switch (vk) {
     case 0x26: g_menu.Press(Input::kUp); break;
     case 0x28: g_menu.Press(Input::kDown); break;

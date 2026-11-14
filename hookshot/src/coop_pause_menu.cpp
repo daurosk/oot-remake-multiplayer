@@ -196,8 +196,8 @@ std::vector<Menu::Line> Menu::Lines() const {
                                   typing ? join_ + "_" : join_.empty() ? std::string("Paste") : join_, off),
                            Act::kCode,
                            "Copy the code from your friend's message, then press this: it is pasted. On the same home "
-                           "network or a VPN with your friend? Paste the line from Same network or VPN on their Host page "
-                           "instead (address and password). You can also type it."});
+                           "network or a VPN with your friend? Paste the line from Same network or from VPN on their "
+                           "Host page instead (address and password). You can also type it."});
             out.push_back({Action("Join", "Join", off || Trim(join_).empty()), Act::kJoinNow,
                            Trim(join_).empty() ? "Paste your friend's code first." : "Joins your friend's game."});
         }

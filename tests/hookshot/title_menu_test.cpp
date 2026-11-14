@@ -396,7 +396,7 @@ TEST_CASE("Same network or VPN: the addresses a friend can use, and the line Joi
     CHECK(std::get<JoinAddress>(t).server == "26.12.34.56:27510");
     CHECK(std::get<JoinAddress>(t).password == "abcdefghijklmnopqrst");
     const auto lines = LanLines(a, 27510, "abcdefghijklmnopqrst", true);
-    REQUIRE(lines.size() == 5);
+    REQUIRE(lines.size() >= 4);   // (and the firewall line on Windows)
     CHECK(lines[0].find("Radmin VPN") != std::string::npos);
     CHECK(lines[1] == line);
     CHECK(lines[2].find("copied") != std::string::npos);
@@ -447,17 +447,28 @@ TEST_CASE("Same network and VPN: two rows, the VPN found by its card's name") {
     CHECK(bare.vpn[0].label == "Hamachi");
     REQUIRE(bare.home.size() == 1);
     CHECK(bare.home[0].address == "192.168.0.9");
+    // A card name it does not know (renamed, another language): the VPN range still decides. Linux's container and
+    // VM bridges are left out.
+    const LanSplit named = SplitLan({{"26.1.2.3", "Mein Netzwerk | Unbekannter Adapter", false},
+                                     {"172.17.0.1", "docker0", false},
+                                     {"192.168.122.1", "virbr0", false},
+                                     {"192.168.1.30", "enp3s0", false}});
+    REQUIRE(named.vpn.size() == 1);
+    CHECK(named.vpn[0].label == "Radmin VPN");
+    REQUIRE(named.home.size() == 1);
+    CHECK(named.home[0].address == "192.168.1.30");
 
     const auto home = HomeLines(split.home, 27510, "pw", true);
     CHECK(home[0].find("home network") != std::string::npos);
     CHECK(home[1] == "192.168.1.20:27510 pw");
     CHECK(home[2].find("copied") != std::string::npos);
-    CHECK(home[3] == "Or with another address in front: 192.168.56.1");
+    CHECK(home[3] == "If that does not work, try another of this PC's addresses in its place: 192.168.56.1");
     const auto vpn = VpnLines(split.vpn, 27510, "pw", false);
     CHECK(vpn[0].find("ZeroTier") != std::string::npos);
     CHECK(vpn[1] == "10.147.17.5:27510 pw");
     CHECK(vpn[2].find("exactly as it is") != std::string::npos);
-    CHECK(vpn[3] == "Or with another address in front: 26.12.34.56 (Radmin VPN)");
+    CHECK(vpn[3] ==
+          "If that does not work, try another of this PC's addresses in its place: 26.12.34.56 (Radmin VPN)");
     const auto no_vpn = VpnLines({}, 27510, "pw", false);
     CHECK(no_vpn[0] == "No VPN found.");
     CHECK(HomeLines({}, 27510, "pw", false)[0].find("No home-network address") != std::string::npos);

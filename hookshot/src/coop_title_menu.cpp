@@ -496,13 +496,15 @@ std::vector<std::string> LanLines(const std::vector<LanAddress>& addresses, std:
         copied ? "It is copied: paste it into your chat with them (Ctrl+V)."
                : "Type it into your chat with them, exactly as it is."};
     if (addresses.size() > 1) {
-        std::string other = "Or with another address in front:";
+        std::string other = "If that does not work, try another of this PC's addresses in its place:";
         for (std::size_t i = 1; i < addresses.size() && i < 4; ++i) {
             other += " " + addresses[i].address + " (" + addresses[i].label + ")";
         }
         out.push_back(other);
     }
+#ifdef _WIN32
     out.push_back("If Windows asks about the firewall, allow the game on private networks.");
+#endif
     return out;
 }
 
@@ -557,6 +559,14 @@ bool Reachable(std::string_view ipv4) {
     return n == 3 && digit && part[0] != 0 && part[0] != 127 && part[0] < 224 && !(part[0] == 169 && part[1] == 254);
 }
 
+// Linux's bridges for containers and virtual machines on this PC only (Docker, libvirt, LXC, Podman): no friend
+// reaches them.
+bool VirtualBridge(std::string_view adapter) {
+    const auto starts = [&adapter](std::string_view s) { return adapter.substr(0, s.size()) == s; };
+    return starts("docker") || starts("virbr") || starts("br-") || starts("veth") || starts("lxcbr") ||
+           starts("podman") || starts("cni");
+}
+
 std::vector<std::string> AddressLines(const std::vector<LanAddress>& a, std::uint16_t port, std::string_view password,
                                       bool copied) {
     std::vector<std::string> out = {
@@ -565,13 +575,15 @@ std::vector<std::string> AddressLines(const std::vector<LanAddress>& a, std::uin
         copied ? "It is copied: paste it into your chat with them (Ctrl+V)."
                : "Type it into your chat with them, exactly as it is."};
     if (a.size() > 1) {
-        std::string other = "Or with another address in front:";
+        std::string other = "If that does not work, try another of this PC's addresses in its place:";
         for (std::size_t i = 1; i < a.size() && i < 4; ++i) {
             other += " " + a[i].address + (a[i].label == a.front().label ? "" : " (" + a[i].label + ")");
         }
         out.push_back(other);
     }
+#ifdef _WIN32
     out.push_back("If Windows asks about the firewall, allow the game on private networks.");
+#endif
     return out;
 }
 }  // namespace
@@ -587,13 +599,13 @@ LanSplit SplitLan(const std::vector<LocalCard>& cards) {
                std::any_of(home_other.begin(), home_other.end(), same);
     };
     for (const LocalCard& c : cards) {
-        if (!Reachable(c.address) || seen(c.address)) {
+        if (!Reachable(c.address) || seen(c.address) || VirtualBridge(c.adapter)) {
             continue;
         }
         std::string vpn = VpnLabel(c.adapter);
         const std::string range = LanLabel(c.address);
-        if (vpn.empty() && c.adapter.empty() && !range.empty() && range != "home network") {
-            vpn = range;   // no card name to go by: the address range says which VPN
+        if (vpn.empty() && !range.empty() && range != "home network") {
+            vpn = range;   // no name it knows (none, renamed, another language): the address range says which VPN
         }
         if (!vpn.empty()) {
             out.vpn.push_back(LanAddress{c.address, vpn});
@@ -694,7 +706,7 @@ std::vector<std::string> PlainStatus(const HostView& v) {
     case HOS_COOP_FAILED:
         return {"Your friend could not be reached.",
                 "Check that they are hosting right now and that the code is their newest one.",
-                "Same home network or VPN as them? Ask for the line from \"Same network or VPN\" on their Host page."};
+                "Same home network or VPN as them? Ask for the line from \"Same network\" or \"VPN\" on their Host page."};
     default:
         return {};
     }

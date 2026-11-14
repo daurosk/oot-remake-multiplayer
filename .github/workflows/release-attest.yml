@@ -49,10 +49,16 @@ jobs:
           mkdir kit
           cd kit
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --pattern "oot-coop-$TAG.zip" --pattern "oot-coop-$TAG.zip.sha256" --pattern "Update.bat"
+            --pattern "oot-coop-$TAG.zip" --pattern "oot-coop-$TAG.zip.sha256" --pattern "Update.bat" \
+            --pattern "oot-coop-$TAG-windows.zip" --pattern "oot-coop-$TAG-windows.zip.sha256"
           ls -l
-          test -f "oot-coop-$TAG.zip" || { echo "::error::release $TAG has no oot-coop-$TAG.zip"; exit 1; }
+          # oot-coop-<tag>.zip is the name kits up to v0.10.1 update from (from v0.11.0 on the same file as -windows.zip).
+          test -f "oot-coop-$TAG.zip" || { echo "::error::release $TAG has no oot-coop-$TAG.zip (kits up to v0.10.1 would not see it)"; exit 1; }
           sha256sum -c "oot-coop-$TAG.zip.sha256"
+          if [ -f "oot-coop-$TAG-windows.zip" ]; then
+            sha256sum -c "oot-coop-$TAG-windows.zip.sha256"
+            cmp -s "oot-coop-$TAG.zip" "oot-coop-$TAG-windows.zip" || { echo "::error::oot-coop-$TAG.zip and -windows.zip differ"; exit 1; }
+          fi
           # The Linux kit (issue 127), when the release has one: its update.sh checks it too.
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
             --pattern "oot-coop-$TAG-linux-*.tar.gz" --pattern "oot-coop-$TAG-linux-*.tar.gz.sha256" || true

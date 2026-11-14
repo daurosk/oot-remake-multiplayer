@@ -58,6 +58,29 @@ try {
     Check ($pick.Tag -eq 'v0.1.0-beta10') 'the newest release with a zip and a checksum, drafts never'
     Check ($pick.Sum -eq 'dl/oot-coop-v0.1.0-beta10.zip.sha256') 'its checksum file'
     Check ($null -eq (Select-KitRelease @((Rel 'v0.1.0-beta2' $false @('oot-coop-v0.1.0-beta2.zip'))))) 'no release without a checksum'
+    # From v0.11.0 the Windows kit is oot-coop-<tag>-windows.zip, and the same file goes up as oot-coop-<tag>.zip too
+    # (make_kit_hookshot.ps1) for the kits up to v0.10.1, whose updater looks for that name only.
+    $both = @('oot-coop-v0.11.0-windows.zip', 'oot-coop-v0.11.0-windows.zip.sha256', 'oot-coop-v0.11.0.zip', 'oot-coop-v0.11.0.zip.sha256',
+              'oot-coop-v0.11.0-linux.zip', 'oot-coop-v0.11.0-linux.zip.sha256', 'Update.bat')
+    $pick = Select-KitRelease @((Rel 'v0.10.1' $false @('oot-coop-v0.10.1.zip', 'oot-coop-v0.10.1.zip.sha256')), (Rel 'v0.11.0' $false $both))
+    Check ($pick.Tag -eq 'v0.11.0' -and $pick.Zip -eq 'dl/oot-coop-v0.11.0-windows.zip' -and $pick.Sum -eq 'dl/oot-coop-v0.11.0-windows.zip.sha256') 'v0.11.0: the -windows zip is taken when both names are up'
+    $pick = Select-KitRelease @((Rel 'v0.11.0' $false @('oot-coop-v0.11.0-windows.zip', 'oot-coop-v0.11.0-windows.zip.sha256', 'oot-coop-v0.11.0-linux.zip', 'oot-coop-v0.11.0-linux.zip.sha256')))
+    Check ($pick.Tag -eq 'v0.11.0' -and $pick.Zip -eq 'dl/oot-coop-v0.11.0-windows.zip') 'a release with only the -windows zip is found'
+    $pick = Select-KitRelease @((Rel 'v0.11.0' $false @('oot-coop-v0.11.0-windows.zip', 'oot-coop-v0.11.0.zip', 'oot-coop-v0.11.0.zip.sha256')))
+    Check ($pick.Zip -eq 'dl/oot-coop-v0.11.0.zip' -and $pick.Sum -eq 'dl/oot-coop-v0.11.0.zip.sha256') 'a -windows zip with no checksum: the old name with its checksum instead'
+    Check ($null -eq (Select-KitRelease @((Rel 'v0.11.0' $false @('oot-coop-v0.11.0-linux.zip', 'oot-coop-v0.11.0-linux.zip.sha256'))))) 'the Linux zip is never taken by the Windows updater'
+    # What the v0.10.1 kits run (its Select-KitRelease, the exact name only): it sees v0.11.0 through the old name.
+    $v0101 = Join-Path $release 'tests\fixtures\update-v0.10.1-select.ps1'
+    if (Test-Path -LiteralPath $v0101) {
+        $old = & { param($f, $l) . $f; Select-KitRelease $l } $v0101 @((Rel 'v0.10.1' $false @('oot-coop-v0.10.1.zip', 'oot-coop-v0.10.1.zip.sha256')), (Rel 'v0.11.0' $false $both))
+        Check ($old.Tag -eq 'v0.11.0' -and $old.Zip -eq 'dl/oot-coop-v0.11.0.zip') 'the v0.10.1 updater finds v0.11.0 by oot-coop-v0.11.0.zip'
+        $old = & { param($f, $l) . $f; Select-KitRelease $l } $v0101 @((Rel 'v0.11.0' $false @('oot-coop-v0.11.0-windows.zip', 'oot-coop-v0.11.0-windows.zip.sha256')))
+        Check ($null -eq $old) 'the v0.10.1 updater cannot see a release with only the -windows zip (why the old name must go up too)'
+    } else { Check $false "the v0.10.1 Select-KitRelease fixture is missing ($v0101)" }
+    # make_kit_hookshot.ps1 writes both names (the whole path, with a real kit: old_kit_update_test.ps1).
+    $mk = [System.IO.File]::ReadAllText((Join-Path $release 'make_kit_hookshot.ps1'))
+    Check ($mk.Contains('$zip = Join-Path $OutRoot "$name-windows.zip"') -and $mk.Contains('$old = "$kit.zip"') -and
+           $mk.Contains('"$hash  $name-windows.zip`n"') -and $mk.Contains('"$hash  $name.zip`n"')) 'make_kit_hookshot.ps1 writes oot-coop-<tag>-windows.zip and oot-coop-<tag>.zip, each with its .sha256'
 
     # --- The player's files
     foreach ($p in 'emulator\user\config\coop.ini', 'emulator\user\keys\prod.keys', 'emulator\user\load\0400486024DEC000\coop-puppet\x',

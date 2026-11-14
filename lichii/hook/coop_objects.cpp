@@ -567,17 +567,18 @@ public:
     // block another game moved (CoopWorld::BlockNode::kStart_fn), on the
     // next game frame, after that frame's pose writes. `node` is checked by
     // its vtable again then.
-    void StartBlockNode(u64 node, u64 actor) {
+    void StartBlockNode(u64 node, u64 actor, const coop::protocol::Vec3& from,
+                        const coop::protocol::Vec3& to) {
         std::lock_guard lock(mutex_);
         if (node_starts_.size() < 16) {
-            node_starts_.emplace_back(node, actor);
+            node_starts_.push_back({node, actor, from, to});
         }
     }
 
-    // Node starts made since the last ask.
-    std::size_t TakeNodeStarts() {
+    // Node starts made and skipped since the last ask (for the 5 s log line).
+    std::pair<std::size_t, std::size_t> TakeNodeStarts() {
         std::lock_guard lock(mutex_);
-        return std::exchange(node_started_, 0);
+        return {std::exchange(node_started_, 0), std::exchange(node_skipped_, 0)};
     }
 
     // Calls made since the last ask (for the 5 s log line).
@@ -894,10 +895,24 @@ public:
         // start and target from the block's place, as when the node is
         // entered, so this player's next push starts where the block is.
         while (next_node_start_ < work_node_starts_.size()) {
-            const auto [node, actor] = work_node_starts_[next_node_start_++];
+            const NodeStart& n = work_node_starts_[next_node_start_++];
+            const u64 node = n.node;
             u64 table = 0;
-            if (block_ == 0 || !Alive(guest, actor) || !guest.Read(node, &table, 8) ||
+            if (block_ == 0 || !Alive(guest, n.actor) || !guest.Read(node, &table, 8) ||
                 table != main_ + CoopWorld::BlockNode::kVtable) {
+                ++node_skipped_;
+                continue;
+            }
+            // Still idle at the old rest, read again now (review): our
+            // player may have grabbed the block since the walk read it.
+            const auto stale = CoopWorld::NodeRestWords(
+                [&guest](u64 address) -> std::optional<u64> {
+                    u64 word = 0;
+                    return guest.Read(address, &word, 8) ? std::optional<u64>(word) : std::nullopt;
+                },
+                node, n.from, n.to);
+            if (stale.busy || stale.writes.empty()) {
+                ++node_skipped_;
                 continue;
             }
             const std::array<std::uint8_t, 0x10> args{};
@@ -1173,10 +1188,17 @@ private:
     u64 block_ = 0;
     bool allocating_ = false;
     bool alloc_tried_ = false;
-    std::vector<std::pair<u64, u64>> node_starts_;       // deku-visuals-b: node, block actor
-    std::vector<std::pair<u64, u64>> work_node_starts_;
+    struct NodeStart {  // deku-visuals-b: a push node to start again
+        u64 node = 0;
+        u64 actor = 0;  // its block
+        coop::protocol::Vec3 from{};  // the old rest both its places must still hold
+        coop::protocol::Vec3 to{};
+    };
+    std::vector<NodeStart> node_starts_;
+    std::vector<NodeStart> work_node_starts_;
     std::size_t next_node_start_ = 0;
     std::size_t node_started_ = 0;
+    std::size_t node_skipped_ = 0;
     std::vector<Pose> work_;
     // Issue 157: the animation each copy's own AI last chose that we put
     // back (name, steady ms), and the ones to give back once it is ours.
@@ -1290,6 +1312,7 @@ public:
             if (sharing_) {
                 sync_.Reset();
                 world_.Reset();
+                block_retry_.clear();
                 sharing_ = false;
             }
             return;
@@ -1652,9 +1675,9 @@ public:
                                             : CoopWorld::RestScan{};
                     if (node && !stale.busy) {
                         if (!stale.writes.empty()) {
-                            TheMover().StartBlockNode(*node, fix.address);
+                            TheMover().StartBlockNode(*node, fix.address, fix.from, fix.to);
                             LOG_INFO(Core, "coop: world: {:016x} {} push node {:x}: its own start "
-                                           "(main+{:#x}) runs again, from where it rests now",
+                                           "(main+{:#x}) asked to run again, from where it rests now",
                                      fix.hash, fix.name, *node, CoopWorld::BlockNode::kStartFn);
                         } else {
                             LOG_INFO(Core, "coop: world: {:016x} {} push node {:x} already starts from "
@@ -1754,6 +1777,7 @@ public:
         {
             if (*scene != guard_scene_) {
                 guard_scene_ = *scene;
+                block_retry_.clear();  // deku-visuals-b: its blocks are gone with it
                 // Those actors are gone with the scene (enemies come back with it).
                 if (const std::size_t dropped = held_writes_.Forget(); dropped != 0) {
                     LOG_INFO(Core, "coop: objects: the scene changed: {} waiting changes dropped", dropped);
@@ -2039,6 +2063,7 @@ private:
             names_.clear();
             sync_.Reset();
             world_.Reset();
+            block_retry_.clear();
             extras_.Reset();  // difficulty: that run's extra enemies are gone with it
             {
                 ScrubsBox& box = TheScrubs();  // a new game run: its block is gone
@@ -3254,6 +3279,11 @@ private:
         TheMover().Want(main_, std::move(wish), std::move(removes), std::move(plays));
         if (now_us - drift_at_ >= kDriftLogUs) {
             const auto [moved, deleted, played, framed] = TheMover().TakeCounts();
+            if (const auto [started, skipped] = TheMover().TakeNodeStarts(); started + skipped > 0) {
+                LOG_INFO(Core, "coop: world: push node starts run {}, skipped {} (block gone, another "
+                               "node, or busy by then)",
+                         started, skipped);
+            }
             if (drift_count_ > 0 || moved > 0 || deleted > 0 || played > 0 || framed > 0 ||
                 sync_.HurtsTaken() + sync_.HurtsMissed() > 0) {
                 LOG_INFO(Core,

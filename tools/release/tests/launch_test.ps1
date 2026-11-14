@@ -661,7 +661,37 @@ try {
     Check ((Get-KitHookshotGame $hk) -eq $other -and (Get-KitHookshotNeed $hk) -eq 'moved') 'hookshot need: game-folder.txt is followed; its game gone -> moved'
     Write-File (Join-Path $other 'bin\longshot.exe') 'exe'
     Check ((Get-KitHookshotExe $other) -eq (Join-Path $other 'bin\longshot.exe')) 'hookshot exe: bin\ first'
-    # hs-missing (a tester read "No co-op Hookshot game" as "couldn't find Hookshot"): antivirus took the module
+    # kit-copy (a 0.10.1 player: a Windows copy of a built kit said "the co-op game of another kit is running"):
+    # a copied or moved kit uses its OWN hookshot\game, never the other kit's, whatever game-folder.txt says
+    $cp = "$hk - Copy"
+    try {
+        Copy-Item -LiteralPath $hk -Destination $cp -Recurse
+        Write-File (Join-Path $hk 'hookshot\game-folder.txt') "$g`n"            # 0.10.1: the full path to its own game
+        Write-File (Join-Path $cp 'hookshot\game-folder.txt') "$g`n"            # ... and the copy keeps that path
+        $cg = Join-Path $cp 'hookshot\game'
+        Check ((Get-KitHookshotGame $hk) -eq $g) 'kit-copy: a 0.10.1 kit naming its own game by full path keeps it'
+        Check ((Get-KitHookshotGame $cp) -eq $cg -and (Get-KitHookshotNeed $cp) -eq '') "kit-copy: copied built kit -> its own game, ready [$(Get-KitHookshotGame $cp)]"
+        Write-File (Join-Path $cp 'hookshot\game-folder.txt') "hookshot\game`n"
+        Check ((Get-KitHookshotGame $cp) -eq $cg) 'kit-copy: a relative game-folder.txt is the kit''s own folder'
+        Remove-Item -LiteralPath $cg -Recurse -Force
+        Write-File (Join-Path $cp 'hookshot\game-folder.txt') "$g`n"
+        Check ((Get-KitHookshotGame $cp) -eq $cg -and (Get-KitHookshotNeed $cp) -eq 'game') "kit-copy: copied unbuilt kit -> its own (missing) game: built, not shared [$(Get-KitHookshotNeed $cp)]"
+        Remove-Item -LiteralPath (Join-Path $cp 'hookshot\game-folder.txt')
+        Check ((Get-KitHookshotNeed $cp) -eq 'game') 'kit-copy: copied before the first build (no game-folder.txt) -> game'
+        Write-File (Join-Path $cp 'hookshot\game-folder.txt') "$(Join-Path $hk 'gone\hookshot\game')`n"
+        Check ((Get-KitHookshotNeed $cp) -eq 'game') 'kit-copy: a moved kit whose old folder is gone -> its own game, not moved'
+        Write-File (Join-Path $cp 'hookshot\game-folder.txt') "$other`n"
+        Check ((Get-KitHookshotGame $cp) -eq $other) 'kit-copy: -Out (a game elsewhere, not a kit''s hookshot\game) is still followed'
+        # the copy of a built game: same stamp -> found, another stamp or no game -> not, never itself
+        $want = Get-KitHookshotStamp $cp
+        Check ((Find-KitHookshotGameToCopy $cp $want @($hk, $cp)) -eq (Join-Path ([System.IO.Path]::GetFullPath($hk)) 'hookshot\game')) 'kit-copy: a built game of another kit, same stamp -> copied, not built'
+        Check (-not (Find-KitHookshotGameToCopy $cp "$want-x" @($hk))) 'kit-copy: another kit''s game of another stamp -> not copied'
+        Check (-not (Find-KitHookshotGameToCopy $hk (Get-KitHookshotStamp $hk) @($hk))) 'kit-copy: a kit never copies from itself'
+        Check (-not (Find-KitHookshotGameToCopy $cp $want @($cp, (Join-Path $hk 'nothing')))) 'kit-copy: no other built kit -> not copied'
+    } finally {
+        Remove-Item -LiteralPath $cp -Recurse -Force -ErrorAction SilentlyContinue
+        Write-File (Join-Path $hk 'hookshot\game-folder.txt') "$other`n"
+    }    # hs-missing (a tester read "No co-op Hookshot game" as "couldn't find Hookshot"): antivirus took the module
     Remove-Item -LiteralPath (Join-Path $hk 'hookshot\hookshot_coop.dll')
     Check ((Get-KitHookshotNeed $hk) -eq 'quarantine') 'hookshot need: the module in neither the kit nor the game -> quarantine (no build)'
     Rename-Item -LiteralPath (Join-Path $hk 'hookshot\PIN') 'PIN.off'
@@ -900,5 +930,84 @@ try {
 $last = @(Get-Content (Join-Path $kitSrc 'Play-OoT-Coop.bat') | Where-Object { $_ -and $_ -notmatch '^(@echo off|rem )' })
 Check ($last.Count -eq 1 -and $last[0] -match 'play\.ps1" choose -Hookshot' -and $last[0] -match '& exit /b$') 'Play-OoT-Coop.bat: play.ps1 choose -Hookshot, one line'
 
+# tools-move (a 0.10.1 player: "Access to the path '...\hookshot\tools.new' is denied" on the first build): a file
+# in the folder still held (antivirus, Explorer, a python.exe just ended) -> tried again, then robocopy /MOVE
+$mv = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-move-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+try {
+    Write-File "$mv\tools.new\python\python.exe" 'stub'
+    Write-File "$mv\tools.new\nx2\make_game.py" 'x'
+    $script:held = [System.IO.File]::Open("$mv\tools.new\python\python.exe", 'Open', 'Read', 'Read')
+    $script:waits = 0
+    $why = Move-KitFolderRetry "$mv\tools.new" "$mv\tools" 10 100 { $script:waits++; if ($script:waits -eq 2) { $script:held.Dispose() } }
+    Check ($why -eq '' -and $script:waits -ge 2 -and $script:waits -lt 20 -and (Test-Path "$mv\tools\nx2\make_game.py") -and -not (Test-Path "$mv\tools.new")) "tools-move: a file held for a moment -> tried again, then moved [$why, waits $script:waits]"
+    Remove-Item -LiteralPath "$mv\tools" -Recurse -Force
+    Write-File "$mv\tools.new\python\python.exe" 'stub'
+    Write-File "$mv\tools.new\nx2\make_game.py" 'x'
+    $script:held = [System.IO.File]::Open("$mv\tools.new\python\python.exe", 'Open', 'Read', 'Read')
+    try {
+        $why = Move-KitFolderRetry "$mv\tools.new" "$mv\tools" 1 100
+        Check ($why -eq '' -and (Test-Path "$mv\tools\nx2\make_game.py") -and (Read-File "$mv\tools\python\python.exe") -eq 'stub') "tools-move: held the whole time -> robocopy /MOVE copies it all [$why]"
+        $why = Remove-KitFolderRetry "$mv\tools.new" 1 100
+        Check ([bool]$why) "tools-move: a folder that stays held -> why, not a crash [$why]"
+    } finally { $script:held.Dispose() }
+    Check ((Remove-KitFolderRetry "$mv\tools.new" 5 100) -eq '' -and -not (Test-Path "$mv\tools.new")) 'tools-move: let go -> removed'
+    Check ((Remove-KitFolderRetry "$mv\none" 1 100) -eq '') 'tools-move: nothing to remove -> fine'
+    $txt = Get-KitHeldFolderText 'D:\coop\hookshot\tools.new' 'Access denied'
+    Check ($txt -match 'tools\.new' -and $txt -match 'antivirus' -and $txt -match 'Exclusions' -and $txt -match 'Explorer') "tools-move: the message names the folder, antivirus, Explorer and the exclusion [$txt]"
+} finally {
+    Remove-Item -LiteralPath $mv -Recurse -Force -ErrorAction SilentlyContinue
+}
+# kit-copy, the build itself: a second kit (here a 0.10.1 copy naming the first kit's game) copies the first kit's
+# built game into its own hookshot\game instead of building (no game files, no network: the tools are stubbed ready),
+# without the first kit's coop.ini and coop-options.ini, and notes its game folder relative to the kit
+$kc = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-kitcopy-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+try {
+    $commit = 'e7ed2f7a6526cd6b841b86678b3ac96eb6e5b1c8'
+    foreach ($k in "$kc\kit-1", "$kc\kit-1 - Copy") {
+        Copy-Item -LiteralPath (Join-Path $kitSrc 'scripts') -Destination "$k\scripts" -Recurse
+        Copy-Item -LiteralPath (Join-Path $kitSrc 'coop.ini.template') -Destination "$k\scripts\coop.ini.template"   # (as make_kit.ps1 lays it out)
+        Write-File "$k\hookshot\PIN" "runtime=Longshot`nrepo=https://git.magicbean.dev/MagicBeanDev/Longshot`ncommit=$commit`n"
+        Write-File "$k\hookshot\TOOLS.txt" "release=v3.0.0-rc.3`nlock_sha256=b3`nsource_commit=$commit`nsource_sha256=aa`n"
+        Write-File "$k\hookshot\patches\0001-a.patch" "one`n"
+        Write-File "$k\hookshot\hookshot_coop.dll" 'MODULE'
+        Write-File "$k\Start OoT Co-op.bat" '@echo off'
+        Write-File "$k\VERSION.txt" "kit: oot-coop-test`n"
+    }
+    $k1 = "$kc\kit-1"; $k2 = "$kc\kit-1 - Copy"
+    $hash = (Get-FileHash -LiteralPath "$k1\hookshot\patches\0001-a.patch" -Algorithm SHA256).Hash.ToLowerInvariant()
+    $stampKc = "release=v3.0.0-rc.3`ncommit=$commit`npatches=$hash"
+    Check ((Get-KitHookshotStamp $k1) -eq $stampKc) 'kit-copy build: the build''s stamp is Get-KitHookshotStamp''s'
+    foreach ($k in $k1, $k2) { Write-File "$k\hookshot\tools\coop-tools.txt" $stampKc; Write-File "$k\hookshot\tools\python\python.exe" 'stub' }
+    Write-File "$k1\hookshot\game\bin\longshot.exe" 'exe'
+    Write-File "$k1\hookshot\game\coop-built-from.txt" $stampKc
+    Write-File "$k1\hookshot\game\bin\coop.ini" "name = Saria`n"
+    Write-File "$k1\hookshot\game\bin\coop-options.ini" "LICHII_COOP_PAD=1`n"
+    Write-File "$k1\hookshot\game\bin\hookshot_log.txt" 'kit 1 log'
+    Write-File "$k1\hookshot\game-folder.txt" "$k1\hookshot\game`n"
+    Write-File "$k2\hookshot\game-folder.txt" "$k1\hookshot\game`n"   # what a Windows copy of a 0.10.1 kit has
+    Write-File "$k2\coop-options.ini" "LICHII_COOP_PAD=2`n"
+    $keepKc = @($env:LOCALAPPDATA, $env:OOT_COOP_NO_SHORTCUT)
+    $env:LOCALAPPDATA = "$kc\appdata"; $env:OOT_COOP_NO_SHORTCUT = '1'
+    $ErrorActionPreference = 'Continue'
+    try { $out = (& powershell -NoProfile -ExecutionPolicy Bypass -File "$k2\scripts\hookshot-build.ps1" 2>&1) -join '|'; $code = $LASTEXITCODE }
+    finally { $env:LOCALAPPDATA = $keepKc[0]; $env:OOT_COOP_NO_SHORTCUT = $keepKc[1]; $ErrorActionPreference = 'Stop' }
+    $b2 = "$k2\hookshot\game\bin"
+    Check ($code -eq 0 -and $out -match 'copying the one another kit on this PC built' -and $out -match 'starts with that kit''s saves' -and $out -notmatch 'Building the game' -and (Test-Path "$b2\longshot.exe")) "kit-copy build: the copy gets its own game, copied not built [$code $out]"
+    Check ((Read-File "$k2\hookshot\game-folder.txt").Trim() -eq 'hookshot\game') "kit-copy build: game-folder.txt is relative [$(Read-File "$k2\hookshot\game-folder.txt")]"
+    Check ((Read-File "$b2\coop.ini") -notmatch 'Saria' -and (Read-File "$b2\coop-options.ini") -match 'PAD=2' -and -not (Test-Path "$b2\hookshot_log.txt")) 'kit-copy build: its own coop.ini and coop-options.ini, no log of the other kit'
+    Check ((Get-KitHookshotGame $k2) -eq "$k2\hookshot\game" -and (Get-KitHookshotGame $k1) -eq "$k1\hookshot\game") 'kit-copy build: two kits, two games'
+    # an unzipped-twice kit (no game-folder.txt, found through kits.txt) copies the same way
+    Write-File "$kc\appdata\OoT-Coop\kits.txt" "$k1`n"
+    $k3 = "$kc\kit-2"
+    Copy-Item -LiteralPath $k2 -Destination $k3 -Recurse
+    Remove-Item -LiteralPath "$k3\hookshot\game", "$k3\hookshot\game-folder.txt" -Recurse -Force
+    $env:LOCALAPPDATA = "$kc\appdata"; $env:OOT_COOP_NO_SHORTCUT = '1'
+    $ErrorActionPreference = 'Continue'
+    try { $out = (& powershell -NoProfile -ExecutionPolicy Bypass -File "$k3\scripts\hookshot-build.ps1" 2>&1) -join '|'; $code = $LASTEXITCODE }
+    finally { $env:LOCALAPPDATA = $keepKc[0]; $env:OOT_COOP_NO_SHORTCUT = $keepKc[1]; $ErrorActionPreference = 'Stop' }
+    Check ($code -eq 0 -and $out -match 'copying the one another kit' -and (Test-Path "$k3\hookshot\game\bin\longshot.exe")) "kit-copy build: a kit unzipped twice copies the first one's game too [$code $out]"
+} finally {
+    Remove-Item -LiteralPath $kc -Recurse -Force -ErrorAction SilentlyContinue
+}
 if ($failed) { Write-Host "$failed failed"; exit 1 }
 Write-Host 'all passed'

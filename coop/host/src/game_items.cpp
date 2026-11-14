@@ -545,6 +545,8 @@ constexpr ItemGrant kGrants[] = {
   // Item_Quiver_Small: 30.
   COOP_CAP(0xa8c3e1fb, "Arrow", kCapArrow, 30),
   COOP_AMMO(0xa8c3e1fb, "Item_Arrow_Normal", kArrows, 30),
+  // Item_Wallet_Large: 1000 (its ExpansionMaxNumActor, GameData Rupee, MaxNum 1000). No fill.
+  COOP_CAP(0xafa4bb52, "Rupee", kCapRupee, 1000),
   // Item_BombBag_Small: 20.
   COOP_CAP(0xb0a1bf51, "Bomb", kCapBomb, 20),
   COOP_AMMO(0xb0a1bf51, "Item_Bomb", kBombs, 20),

@@ -5,6 +5,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "coop/host/flag_watcher.hpp"
@@ -1210,4 +1211,19 @@ TEST_CASE("rando items: a shared scale dives as deep as OOTRR's (DiveDepth 6 / 9
   CHECK(!dive_depth_raise(1, 0, 6.0f));             // already there: nothing written
   CHECK(!dive_depth_raise(1, 0, 12.0f));            // never lowered
   CHECK(!dive_depth_raise(1, 0, std::numeric_limits<float>::quiet_NaN()));
+}
+
+TEST_CASE("rando items: every wallet tier gives its room for rupees, as the game's own tables say") {
+  // GameParameter/ExpansionMaxNumActor/Item_Wallet_*.bgyml: GameData Rupee, MaxNum 500 / 1000; the
+  // small wallet's 200 is read from a save. No rupees come with a wallet.
+  constexpr std::uint32_t kRupeeCap = 0xe0010a50;
+  for (const auto& [item, cap] : {std::pair{"Item_Wallet_Small", 200}, std::pair{"Item_Wallet_Medium", 500},
+                                  std::pair{"Item_Wallet_Large", 1000}}) {
+    CAPTURE(item);
+    MapStore game = game_with_grant_flags();
+    ItemFlagStore store(game);
+    CHECK(store.write(owned(pouch(item))));
+    CHECK(game.value(kRupeeCap) == cap);
+    CHECK(game.value(kRupees) == 0);
+  }
 }

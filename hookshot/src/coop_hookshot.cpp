@@ -24,6 +24,8 @@
 #include <cstdlib>
 #include <bit>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -512,6 +514,9 @@ void LoadLook(const HosCoopDraw& d) {
     }
     CoopDraw::Look l;
     l.regular = d.font(d.user, Utf8(*dir / "font-regular.otf").c_str());
+    if (std::ifstream f(*dir / "font-regular.otf", std::ios::binary); f) {   // its metrics: the title prompt's words centred on its button
+        l.regular_metrics = CoopDraw::MetricsOf({std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()});
+    }
     l.medium = d.font(d.user, Utf8(*dir / "font-medium.otf").c_str());
     if (l.medium == 0) {
         l.medium = l.regular;

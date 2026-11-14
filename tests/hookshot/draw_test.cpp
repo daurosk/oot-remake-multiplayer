@@ -3,6 +3,7 @@
 // through a canvas that records the calls.
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -473,6 +474,109 @@ TEST_CASE("hookshot draw: a title screen line, with or without the Minus button"
     CoopDraw::Scene none;
     none.title = CoopDraw::TitleView{};
     CHECK_FALSE(CoopDraw::Wanted(none));
+}
+
+namespace {
+
+// A font file with only the tables MetricsOf reads: hhea (ascender, descender), head (unitsPerEm) and OS/2 (version,
+// sCapHeight); os2_version 0: no OS/2 table.
+std::vector<std::uint8_t> FakeFont(int ascender, int descender, int em, int os2_version, int cap) {
+    std::vector<std::uint8_t> b;
+    auto put = [&](std::uint32_t v, int n) {
+        for (int i = n - 1; i >= 0; --i) {
+            b.push_back(static_cast<std::uint8_t>(v >> (8 * i)));
+        }
+    };
+    const int tables = os2_version ? 3 : 2;
+    put(0x4F54544Fu, 4), put(static_cast<std::uint32_t>(tables), 2), put(0, 6);
+    const std::uint32_t dir_end = 12 + 16 * static_cast<std::uint32_t>(tables);
+    put(0x68686561u, 4), put(0, 4), put(dir_end, 4), put(36, 4);             // hhea
+    put(0x68656164u, 4), put(0, 4), put(dir_end + 36, 4), put(54, 4);        // head
+    if (os2_version) {
+        put(0x4F532F32u, 4), put(0, 4), put(dir_end + 90, 4), put(96, 4);   // OS/2
+    }
+    std::vector<std::uint8_t> hhea(36), head(54), os2(96);
+    auto set = [](std::vector<std::uint8_t>& t, std::size_t at, int v) {
+        t[at] = static_cast<std::uint8_t>((v >> 8) & 0xFF), t[at + 1] = static_cast<std::uint8_t>(v & 0xFF);
+    };
+    set(hhea, 4, ascender), set(hhea, 6, descender);
+    set(head, 18, em);
+    set(os2, 0, os2_version), set(os2, 88, cap);
+    b.insert(b.end(), hhea.begin(), hhea.end());
+    b.insert(b.end(), head.begin(), head.end());
+    if (os2_version) {
+        b.insert(b.end(), os2.begin(), os2.end());
+    }
+    return b;
+}
+
+}  // namespace
+
+TEST_CASE("hookshot draw: a font's metrics from its hhea, head and OS/2 tables") {
+    const auto m = CoopDraw::MetricsOf(FakeFont(880, -120, 1000, 4, 700));
+    CHECK(m.ascent == doctest::Approx(0.88f));
+    CHECK(m.cap == doctest::Approx(0.70f));
+    const auto no_cap = CoopDraw::MetricsOf(FakeFont(800, -200, 1000, 1, 0));   // OS/2 version 1: no sCapHeight
+    CHECK(no_cap.ascent == doctest::Approx(0.8f));
+    CHECK(no_cap.cap == doctest::Approx(0.7f));   // Longshot's 0.7 em
+    const auto no_os2 = CoopDraw::MetricsOf(FakeFont(1900, -500, 2048, 0, 0));
+    CHECK(no_os2.ascent == doctest::Approx(1900.0f / 2400.0f));
+    CHECK(no_os2.cap == doctest::Approx(0.7f * 2048 / 2400.0f).epsilon(0.01));
+    const CoopDraw::FontMetrics plain;
+    for (const auto& junk : {std::vector<std::uint8_t>{}, std::vector<std::uint8_t>(40, 0xFF), FakeFont(0, 0, 1000, 4, 700)}) {
+        const auto j = CoopDraw::MetricsOf(junk);
+        CHECK(j.ascent == plain.ascent);
+        CHECK(j.cap == plain.cap);
+    }
+}
+
+TEST_CASE("hookshot draw: the title's Minus button and its word share a middle at every window shape") {
+    const CoopDraw::TitleView t{"Multiplayer", true};
+    const CoopDraw::FontMetrics fonts[] = {{}, {0.88f, 0.70f}, {0.75f, 0.52f}, {0.97f, 0.70f}};
+    // 16:9 (720p, 1080p, 4K), 16:10, 21:9 and 32:9 ultrawide, a 4:3 window, a small window.
+    const float sizes[][2] = {{1280, 720}, {1920, 1080}, {3840, 2160}, {1920, 1200}, {2560, 1080}, {5120, 1440}, {1024, 768}, {640, 480}};
+    for (const auto& f : fonts) {
+        for (const auto& wh : sizes) {
+            const auto b = CoopDraw::TitleAt(wh[0], wh[1], t, f);
+            const float caps_mid = b.text_top + f.ascent * b.px - 0.5f * f.cap * b.px;   // baseline minus half the capitals
+            CHECK(std::abs(caps_mid - b.cy) < 0.01f);
+            // The 16:9 picture's units: the same look, only bigger or smaller.
+            const float u = std::min(wh[0] / 16.0f, wh[1] / 9.0f) * 9.0f / 720.0f;
+            const float left = (wh[0] - 16.0f * u * 80.0f) / 2;
+            CHECK(b.cx - b.r == doctest::Approx(left + 48.0f * u));
+            CHECK(b.text_x - (b.cx + b.r) == doctest::Approx(10.0f * u));   // the word after the button, a gap
+            CHECK(b.cy + b.r < wh[1]);                                       // on the window
+        }
+    }
+    // Without the button the word starts where the button would.
+    const auto plain = CoopDraw::TitleAt(1920, 1080, CoopDraw::TitleView{"Loading Saria's save..."}, {});
+    const auto with = CoopDraw::TitleAt(1920, 1080, t, {});
+    CHECK(plain.text_x == doctest::Approx(with.cx - with.r));
+    CHECK(plain.text_top == doctest::Approx(with.text_top));
+}
+
+TEST_CASE("hookshot draw: the title prompt draws its word where TitleAt says, on the button's middle") {
+    Canvas c(1920, 1080);
+    CoopDraw::Scene s;
+    s.title = CoopDraw::TitleView{"Multiplayer", true};
+    auto look = GameLook();
+    look.regular_metrics = {0.86f, 0.66f};
+    CoopDraw::Draw(c.d, s, look);
+    const auto b = CoopDraw::TitleAt(1920, 1080, *s.title, look.regular_metrics);
+    const auto circles = c.Of("circle");
+    REQUIRE(circles.size() == 2);
+    CHECK(circles[0].x == doctest::Approx(b.cx));
+    CHECK(circles[0].y == doctest::Approx(b.cy));
+    bool word = false;
+    for (const auto& t : c.Of("text")) {
+        if (t.text == "Multiplayer" && t.rgba == CoopDraw::Rgba(255, 255, 255, 255)) {   // (the fill, not its shadow)
+            word = true;
+            CHECK(t.x == doctest::Approx(b.text_x));
+            CHECK(t.y == doctest::Approx(b.text_top));
+            CHECK(t.px == doctest::Approx(b.px));
+        }
+    }
+    CHECK(word);
 }
 
 // Down but not out (hookshot/src/coop_dbno_draw.h).

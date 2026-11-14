@@ -42,10 +42,29 @@ constexpr std::uint32_t Rgba(int r, int g, int b, int a) {
            static_cast<std::uint32_t>(b & 0xFF) << 16 | static_cast<std::uint32_t>(a & 0xFF) << 24;
 }
 
+// A font's vertical metrics as Hookshot's Dear ImGui sizes it: a text `px`
+// high spans the font's ascender to its descender (stb_truetype's
+// ScaleForPixelHeight, hhea), so its baseline is ascent * px below the top
+// it is drawn at and its capitals are cap * px high. The defaults are for a
+// font we cannot read (Hookshot's own): Longshot's own prompts' cap height
+// (vk_ui.h mid_top: capitals 0.7 of px) and a usual ascent.
+struct FontMetrics {
+    float ascent = 0.8f;  // hhea ascender / (ascender - descender)
+    float cap = 0.7f;     // OS/2 sCapHeight / (ascender - descender)
+};
+// From a TTF/OTF file's bytes (its hhea, head and OS/2 tables); the defaults
+// when they are not there or make no sense.
+FontMetrics MetricsOf(const std::vector<std::uint8_t>& font);
+// The top to draw a `px` text at so its capitals are centred on y, as
+// Longshot centres a prompt's label on its button (vk_ui.h mid_top, which
+// reads the ascent from the font the same way).
+float MidTop(const FontMetrics& m, float px, float y);
+
 // The game look's pieces, as hos_coop_draw2's font and image calls gave them
 // (0: not loaded). The co-op window's GameLook.
 struct Look {
     int regular = 0;             // font-regular.otf
+    FontMetrics regular_metrics;  // its metrics (MetricsOf on the file)
     int medium = 0;              // font-medium.otf (the regular one when it is missing)
     std::array<int, 5> hearts{};  // heart-0..4.png: 0 to 4 quarters filled
     bool On() const {
@@ -114,13 +133,21 @@ CheatsBox CheatsAt(float width, float height, const CheatsView& c);
 // The row under (x, y), for the mouse; nothing outside the rows.
 std::optional<std::size_t> CheatsRowAt(float width, float height, const CheatsView& c, float x, float y);
 
-// A line on the title screen, bottom left, while it is up: today only the
-// host's save loading (coop_title.cpp; no co-op hint there now, the
-// Multiplayer tab is in the pause menu).
+// A line on the title screen, bottom left, while it is up (coop_title.cpp):
+// the "(-) Multiplayer" prompt (Minus opens the menu's Multiplayer tab), or
+// the host's save loading without the button.
 struct TitleView {
     std::string prompt;   // the words; "" for none
     bool button = false;  // the Minus button before them
 };
+// Where DrawTitle puts a title line on a `width` x `height` window: the Minus
+// button's centre and radius (when it has one) and the words' top left, the
+// words' capitals centred on the button (MidTop with the font's metrics).
+struct TitleBox {
+    float cx = 0, cy = 0, r = 0;
+    float text_x = 0, text_top = 0, px = 0;
+};
+TitleBox TitleAt(float width, float height, const TitleView& t, const FontMetrics& m);
 
 // The other players on the HUD minimap and on the pause menu's Map page
 // (docs/overlay.md, "Players on the map"; coop/overlay/map_icons.hpp): our

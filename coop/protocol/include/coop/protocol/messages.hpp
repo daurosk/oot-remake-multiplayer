@@ -129,6 +129,14 @@ enum class MessageType : std::uint16_t {
   voice_frame = 420,  // 420 to 424: proximity voice chat (docs/protocol.md, "Voice")
   mod_list = 490,  // 490 to 499: mods (docs/protocol.md, "Mods")
   mod_settings = 491,
+  lobby_action = 510,  // 510 to 519: the Lobby's host moderation (docs/protocol.md, "Lobby")
+  lobby_mutes = 511,
+  lobby_result = 512,
+  local_join = 460,  // 460 to 469: split screen's extra players (docs/protocol.md, "Local players")
+  local_joined = 461,
+  local_leave = 462,
+  local_sample = 463,
+  local_message = 464,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -221,6 +229,13 @@ enum class RefuseReason : std::uint8_t {
   name_taken = 4,
   bad_name = 5,  // empty or nothing but spaces
   bad_password = 6,  // the server has a join password and the JOIN_PROOF did not match
+  // Protocol 11, the Lobby (docs/protocol.md "Lobby"): the host took this
+  // player out. Sent after WELCOME too, right before the server closes the
+  // connection; the game then stops and does not join again by itself.
+  kicked = 7,
+  // The host banned this player for the rest of the session: as kicked, and
+  // a HELLO with that name or from that address is refused with this.
+  banned = 8,
   // Never sent: the game's own refusal of a server that did not encrypt
   // although the game has a join password (docs/protocol.md "Encrypted
   // traffic"), so nobody on the path can stand in for a no-password server.
@@ -247,6 +262,9 @@ struct JoinChallenge {
 // this connection's JOIN_CHALLENGE (an empty password when it has none).
 struct JoinProof {
   JoinProofBytes proof{};
+  // Protocol 11 (the Lobby): the player key, sealed (seal_player_key), 32
+  // bytes after the proof.
+  std::optional<SealedPlayerKey> player_key{};
   bool operator==(const JoinProof&) const = default;
 };
 
@@ -1507,6 +1525,101 @@ struct ModSettings {
   bool operator==(const ModSettings&) const = default;
 };
 
+// The Lobby (protocol 11, docs/protocol.md "Lobby"): the host's moderation,
+// all of it carried out by the server, which takes a LOBBY_ACTION from the
+// host only. A player's own (local) mutes never reach the wire.
+enum class LobbyActionKind : std::uint8_t {
+  kick = 1,          // out now; may join again
+  ban = 2,           // out, and the name and address refused until the session ends
+  mute_voice = 3,    // the server stops relaying the player's VOICE_FRAME
+  unmute_voice = 4,
+  mute_chat = 5,     // the server drops the player's CHAT
+  unmute_chat = 6,
+};
+inline constexpr std::uint8_t kMaxLobbyAction = 6;
+
+// LOBBY_ACTION, the host to the server: do `action` to player `target`.
+struct LobbyAction {
+  LobbyActionKind action = LobbyActionKind::kick;
+  std::uint8_t target = 1;  // 1 to kMaxPlayers
+  bool operator==(const LobbyAction&) const = default;
+};
+
+// LOBBY_MUTES bits.
+namespace lobby_mute {
+inline constexpr std::uint8_t voice = 1u << 0;
+inline constexpr std::uint8_t chat = 1u << 1;
+}  // namespace lobby_mute
+
+// LOBBY_MUTES, the server to everyone: what the host has muted of a player
+// now (the Lobby shows it). Sent to all on each change and, for each muted
+// player, to a joiner after WELCOME. Unknown bits are kept.
+struct LobbyMutes {
+  std::uint8_t player = 1;  // 1 to kMaxPlayers
+  std::uint8_t flags = 0;   // lobby_mute bits
+  bool operator==(const LobbyMutes&) const = default;
+};
+
+// What came of a LOBBY_ACTION. Raw value kept on decode.
+enum class LobbyResultCode : std::uint8_t {
+  done = 0,
+  not_host = 1,    // only the host may do it
+  no_player = 2,   // nobody has that number
+  is_host = 3,     // the host cannot do it to itself
+  unchanged = 4,   // it was so already (muted twice)
+};
+
+// LOBBY_RESULT, the server to the player who sent a LOBBY_ACTION.
+struct LobbyResult {
+  LobbyActionKind action = LobbyActionKind::kick;
+  std::uint8_t target = 1;
+  LobbyResultCode result = LobbyResultCode::done;
+  bool operator==(const LobbyResult&) const = default;
+};
+
+// Split screen (docs/protocol.md, "Local players"): the extra players of one
+// game, seats 1 to kMaxLocalSeats (seat 0 is the connection's own player).
+inline constexpr std::uint8_t kMaxLocalSeats = 3;
+
+// LOCAL_JOIN: the game asks for a player number for an extra local player.
+struct LocalJoin {
+  std::uint8_t seat = 1;
+  std::string nickname;  // 1 to kMaxNicknameChars, as HELLO's
+  bool operator==(const LocalJoin&) const = default;
+};
+
+// LOCAL_JOINED: the answer, to that game only: the seat's number, or 0 and
+// why not (server_full, name_taken, bad_name).
+struct LocalJoined {
+  std::uint8_t seat = 1;
+  std::uint8_t player_number = 0;
+  RefuseReason reason = RefuseReason::server_full;  // when player_number is 0
+  bool operator==(const LocalJoined&) const = default;
+};
+
+// LOCAL_LEAVE: the extra local player leaves (the others get PLAYER_LEFT).
+struct LocalLeave {
+  std::uint8_t seat = 1;
+  bool operator==(const LocalLeave&) const = default;
+};
+
+// LOCAL_SAMPLE and LOCAL_MESSAGE: one of an extra local player's own
+// messages, encoded whole, in an envelope naming its seat. The server takes
+// it as that player's (writing its number in the player field). A sample
+// carries PLAYER_SAMPLE, PLAYER_POSE or PLAYER_RIDE (on the samples channel);
+// a message PLAYER_STATUS, PLAYER_EQUIP, PLAYER_LIFE or OCARINA_NOTE (on the
+// session channel). Decoding checks the inner message.
+struct LocalSample {
+  std::uint8_t seat = 1;
+  std::vector<std::uint8_t> inner;
+  bool operator==(const LocalSample&) const = default;
+};
+struct LocalMessage {
+  std::uint8_t seat = 1;
+  std::vector<std::uint8_t> inner;
+  bool operator==(const LocalMessage&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
@@ -1520,9 +1633,20 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim, DungeonEvent, PlayerRide,
                              OcarinaNote, PlatformClock, PlatformCounter,
                              DbnoMode, DbnoStatus, DbnoRevive, Difficulty, VoiceFrame,
-                             ModList, ModSettings>;
+                             ModList, ModSettings, LobbyAction, LobbyMutes, LobbyResult,
+                             LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage>;
 
 MessageType type_of(const Message& message);
+
+// What an envelope may carry (LOCAL_SAMPLE, LOCAL_MESSAGE).
+bool local_sample_carries(MessageType type);
+bool local_message_carries(MessageType type);
+// An extra local player's message in its envelope (LOCAL_SAMPLE or
+// LOCAL_MESSAGE by the inner type); nullopt when no envelope carries it.
+std::optional<Message> local_envelope(std::uint8_t seat, const Message& inner);
+// The message inside an envelope; nullopt when it is not a LOCAL_SAMPLE or
+// LOCAL_MESSAGE, or what it holds does not decode.
+std::optional<Message> local_inner(const Message& envelope);
 
 // The channel a message is sent on. TEST_PAYLOAD may go on 0 or 3; this
 // returns 3 and the test tool picks for itself.

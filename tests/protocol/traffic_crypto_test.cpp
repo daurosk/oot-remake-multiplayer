@@ -2,6 +2,7 @@
 // traffic"): key derivation, sealing, and what must not open.
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -275,4 +276,23 @@ TEST_CASE("traffic crypto: cost per packet") {
                                   std::chrono::steady_clock::now() - t0).count() / 50;
   MESSAGE("key exchange, both ends (once per join): " << handshake_us << " us");
   CHECK(handshake_us < 200000.0);
+}
+
+TEST_CASE("traffic crypto: the player key is sealed with a key of its own, opened only with that connection's") {
+  std::array<std::uint8_t, 32> c2s{};
+  c2s.fill(3);
+  PlayerKey key{};
+  for (std::size_t i = 0; i < key.size(); ++i) key[i] = static_cast<std::uint8_t>(i * 7);
+  const SealedPlayerKey sealed = seal_player_key(c2s, key);
+  CHECK_FALSE(std::equal(key.begin(), key.end(), sealed.begin()));  // not readable on the way
+  CHECK(open_player_key(c2s, sealed) == key);
+  std::array<std::uint8_t, 32> other = c2s;
+  other[0] ^= 1;
+  CHECK_FALSE(open_player_key(other, sealed));  // another connection's keys
+  SealedPlayerKey changed = sealed;
+  changed[2] ^= 0x80;
+  CHECK_FALSE(open_player_key(c2s, changed));  // changed on the way
+  changed = sealed;
+  changed[kSealedPlayerKeyBytes - 1] ^= 1;      // its tag
+  CHECK_FALSE(open_player_key(c2s, changed));
 }

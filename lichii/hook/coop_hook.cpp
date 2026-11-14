@@ -53,6 +53,7 @@
 #include "coop_boss.h"
 #include "coop_teleport_game.h"
 #include "coop_pvp_game.h"
+#include "coop_lobby_game.h"
 #include "coop_dbno_game.h"
 #include "coop_mod_share.h"
 #include "coop_scene_probe.h"
@@ -79,6 +80,8 @@
 #include "coop_story.h"
 #include "coop_quests.h"
 #include "coop_live_events.h"
+#include "coop_local_game.h"
+#include "coop_local_net.h"
 #include "coop_shared_scenes.h"
 #include "coop_objects.h"
 #include "coop_ocarina_sound.h"
@@ -255,6 +258,7 @@ public:
         config.hello.game_build_id = std::string(kGameBuildId);
         config.hello.game_version = std::string(kGameVersion);
         config.hello.nickname = settings_.name;
+        config.player_key = settings_.player_key;
         config.join_password = settings_.password;
         client_ = std::make_unique<coop::net::Client>(std::move(config));
         if (!client_->start()) {
@@ -317,7 +321,15 @@ public:
                 }
             }
             CoopRide::OnEvent(event);  // their horses (PLAYER_RIDE, issue 199)
-            CoopVoice::OnEvent(event);  // their voices (VOICE_FRAME, docs/voice.md)
+            CoopLobby::OnEvent(event, client);  // the Lobby's mutes and the host's actions
+            // Their voices (VOICE_FRAME, docs/voice.md), but one we muted ourselves (the Lobby).
+            if (const auto* v = event.kind == coop::net::EventKind::message
+                                    ? std::get_if<coop::protocol::VoiceFrame>(&event.message)
+                                    : nullptr;
+                v == nullptr || !CoopLobby::VoiceHidden(v->player_number)) {
+                CoopVoice::OnEvent(event);
+            }
+            CoopLocalNet::OnEvent(event);  // split screen's seats in the session (coop_local_net.h)
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -543,6 +555,14 @@ public:
             session_->set_color(*color);
         }
         const auto report = session_->frame(reading, hold ? &*hold : nullptr);
+        if (memory) {  // split screen: each extra local player is a player of the session (coop_local_net.h)
+            CoopLocalNet::Online(
+                *memory, reading, report.connected, report.server_now_us,
+                [this](const coop::protocol::Message& m) {
+                    return session_->with_client([&m](coop::net::Client& client) { return client.send(m); });
+                },
+                [](const std::string& line) { LOG_INFO(Core, "coop: {}", line); });
+        }
         if (quests) {
             for (const auto& r : quests->take_raised()) {
                 LOG_INFO(Core, "coop: quests: {} {} -> {} (shared Threads of Time; issue 193)", r.quest,
@@ -840,6 +860,9 @@ public:
                 return shown;
             });
         }
+        // Local co-op (coop_local_game.h): the first Link this frame, then its Core's step, before the puppets are planned.
+        CoopLocalGame::Frame({view.game && view.scene.has_value(), view.position,
+                              view.age == coop::protocol::Age::adult});
         CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                             report.connected ? session_.get() : nullptr, report.server_now_us);
         // Proximity voice (docs/voice.md): our microphone out, theirs at their Links.
@@ -909,6 +932,11 @@ public:
         for (auto& line : CoopDbno::TakeLines()) {
             chat_.Add(std::move(line), true);
         }
+        // The Lobby (docs/play-online.md "Lobby"): the tab's host actions go out.
+        CoopLobby::Frame(report.connected ? session_.get() : nullptr);
+        for (auto& line : CoopLobby::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
         // Difficulty (docs/play-online.md "Difficulty"): the host's choice goes out.
         CoopDifficulty::Frame(report.connected ? session_.get() : nullptr);
         for (auto& line : CoopDifficulty::TakeLines()) {
@@ -960,6 +988,13 @@ public:
         }
         if (CoopDbno::OnChat(text, *session_)) {
             return true;  // /dbno: the same
+        }
+        if (CoopLobby::OnChat(text, *session_)) {
+            return true;  // /kick, /ban, /mute, /unmute (the Lobby): the same
+        }
+        if (CoopLobby::OwnChatMuted()) {
+            chat_.Add("the host muted your chat: nobody sees it", true);
+            return true;
         }
         const bool sent =
             session_->with_client([&](coop::net::Client& c) { return c.send_chat(text); });
@@ -1482,7 +1517,9 @@ private:
             chat_.Add("server " + note_, true);
             break;
         case EventKind::chat:
-            chat_.Add(name(event.player, {}) + ": " + event.text, false);
+            if (!CoopLobby::ChatHidden(event.player)) {  // the Lobby: muted by us
+                chat_.Add(name(event.player, {}) + ": " + event.text, false);
+            }
             break;
         case EventKind::player_joined:
             chat_.Add(name(event.player, event.nickname) + " joined", true);
@@ -1940,6 +1977,21 @@ Coop* Get() {
 
 } // namespace
 
+// The Lobby (docs/protocol.md "Lobby"): the player's own key, from
+// player-key.txt beside coop.ini (made there once), so the host's mutes and
+// bans follow the player and not the name.
+static void WithPlayerKey(Settings& settings) {
+    if (settings.player_key) {
+        return;
+    }
+    std::string note;
+    settings.player_key =
+        LoadPlayerKey(Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "player-key.txt", note);
+    if (!note.empty()) {
+        LOG_INFO(Core, "coop: {}", note);
+    }
+}
+
 void Start() {
     std::lock_guard lock(g_mutex);
     if (g_started || g_shut_down) {
@@ -1979,6 +2031,7 @@ void Start() {
     if (g_chosen_color) {
         settings.color = *g_chosen_color;
     }
+    WithPlayerKey(settings);
     auto coop = std::make_unique<Coop>(std::move(settings));
     if (coop->Begin()) {
         g_coop = std::move(coop);
@@ -2024,6 +2077,7 @@ bool Begin(Settings settings) {
     if (g_chosen_color) {
         settings.color = *g_chosen_color;
     }
+    WithPlayerKey(settings);
     auto coop = std::make_unique<Coop>(std::move(settings));
     if (!coop->Begin()) {
         return false;

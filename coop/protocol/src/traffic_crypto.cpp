@@ -35,6 +35,8 @@ std::array<std::uint8_t, 32> expand(const std::array<std::uint8_t, 32>& prk, con
   return key;
 }
 
+constexpr char kPlayerKeyLabel[] = "oot-coop player key v1";
+
 void nonce_for(std::uint8_t channel, std::uint64_t counter, std::uint8_t (&nonce)[24]) {
   std::memset(nonce, 0, sizeof nonce);
   for (int i = 0; i < 8; ++i) nonce[i] = static_cast<std::uint8_t>(counter >> (8 * i));
@@ -65,6 +67,28 @@ KeyPair& KeyPair::operator=(KeyPair&& other) noexcept {
     crypto_wipe(other.secret_.data(), other.secret_.size());
   }
   return *this;
+}
+
+SealedPlayerKey seal_player_key(const std::array<std::uint8_t, 32>& client_to_server, const PlayerKey& key) {
+  std::array<std::uint8_t, 32> own = expand(client_to_server, kPlayerKeyLabel);
+  const std::uint8_t nonce[24] = {};
+  SealedPlayerKey sealed{};
+  crypto_aead_lock(sealed.data(), sealed.data() + kPlayerKeyBytes, own.data(), nonce, nullptr, 0, key.data(),
+                   key.size());
+  crypto_wipe(own.data(), own.size());
+  return sealed;
+}
+
+std::optional<PlayerKey> open_player_key(const std::array<std::uint8_t, 32>& client_to_server,
+                                         const SealedPlayerKey& sealed) {
+  std::array<std::uint8_t, 32> own = expand(client_to_server, kPlayerKeyLabel);
+  const std::uint8_t nonce[24] = {};
+  PlayerKey key{};
+  const int bad = crypto_aead_unlock(key.data(), sealed.data() + kPlayerKeyBytes, own.data(), nonce, nullptr, 0,
+                                     sealed.data(), kPlayerKeyBytes);
+  crypto_wipe(own.data(), own.size());
+  if (bad != 0) return std::nullopt;
+  return key;
 }
 
 KeyPair::~KeyPair() { crypto_wipe(secret_.data(), secret_.size()); }

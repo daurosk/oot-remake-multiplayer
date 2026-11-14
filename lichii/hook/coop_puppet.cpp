@@ -3,6 +3,7 @@
 
 #include "coop_camera.h"
 #include "coop_colors.h"
+#include "coop_local_game.h"
 #include "coop_pose.h"
 
 #include <algorithm>
@@ -187,7 +188,7 @@ void Director::PoseFrame(Guest& guest, std::uint64_t now_ms) {
     }
     std::vector<std::pair<std::uint8_t, std::uint64_t>> puppets;
     for (const auto& slot : slots_) {
-        if (slot.phase == Phase::live && slot.actor != 0) {
+        if (slot.phase == Phase::live && slot.actor != 0 && !slot.native) {
             puppets.emplace_back(slot.number, slot.actor);
         }
     }
@@ -300,6 +301,19 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                 slot.ocarina_hand = {};  // its bind block is freed with it
                 slot.taken = 0;
                 slot.lost_ms = now_ms;  // a load deletes it before the camera goes
+            } else if (slot.native) {
+                // A real Player (coop_native_player.h): the game runs it; nothing of
+                // ours is written into it, it is only watched.
+                if (state == addr::kStatePresent) {
+                    const auto read = [&guest](std::uint64_t a, void* out, std::size_t size) {
+                        return guest.Read(a, out, size);
+                    };
+                    if (auto line = slot.probe.Step(read, input_.main_base, slot.actor,
+                                                    CoopPose::FindPlayer(guest, input_.main_base),
+                                                    now_ms)) {
+                        Say("P" + std::to_string(slot.number) + " " + *line);
+                    }
+                }
             } else if (const Target* t = Wanted(slot.number);
                        t != nullptr && state == addr::kStatePresent && t->actor == slot.actor_name &&
                        input_.scene == slot.scene) {
@@ -619,6 +633,9 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
             pending_ = Pending::remove;
             return c;
         }
+        if (slot.native) {
+            return std::nullopt;  // a real Player: no call of ours drives it
+        }
         // The player's Ocarina notes (issue 152), and with LICHII_COOP_DEBUG_ANIM
         // what the puppet's sound user plays (issue 131).
         // Not only in show: A playing is an event on A, so B holds the puppet (still,
@@ -721,6 +738,8 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.phase = Phase::creating;
     slot.actor = 0;
     slot.actor_name = target.actor;
+    slot.native = CoopNativePlayer::IsPlayerActor(target.actor);
+    slot.probe.Reset();
     slot.scene = input_.scene;
     slot.request = 0;
     slot.taken = 0;
@@ -1529,6 +1548,9 @@ std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color) co
     if (!settings_.actor.empty()) {
         return settings_.actor;
     }
+    if (settings_.native_player) {
+        return CoopNativePlayer::ActorFor(adult);
+    }
     const std::string plain = adult ? "CoopPuppet_Adult" : "CoopPuppet_Child";
     if (settings_.tunics && color) {
         std::string_view tunic = CoopColors::TunicOf(*color);
@@ -1741,6 +1763,7 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
             .count());
     g_planner->SetFailedTunics(g_director->FailedTunics());
     auto input = g_planner->Plan(main_base, scene, position, local_event, remotes, now_ms, own_gear, own_drawn, own_color);
+    if (main_base != 0) CoopLocalGame::AddTargets(input);   // local co-op's players (coop_local_game.h)
     StampDrawing(input, now_ms);
     g_director->SetInput(std::move(input));
 }

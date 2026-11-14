@@ -4,6 +4,7 @@
 // which win. Co-op stays off unless a server is set. No emulator code here.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -22,8 +23,22 @@ struct Settings {
     // The player's colour, 0xRRGGBB (coop_colors.h); unset: the others give
     // this player its slot's colour.
     std::optional<std::uint32_t> color;
+    // The player's own key (the Lobby, docs/protocol.md "Lobby"): from
+    // player-key.txt beside coop.ini (LoadPlayerKey); sent sealed in JOIN_PROOF so the
+    // host's mutes and bans follow this player, not the name.
+    std::optional<std::array<std::uint8_t, 16>> player_key;
     bool enabled() const { return !server.empty(); }
 };
+
+// The key's text: 32 hex digits (any case, spaces and line ends around them
+// skipped). Nothing for anything else.
+std::optional<std::array<std::uint8_t, 16>> ParsePlayerKey(std::string_view text);
+std::string PlayerKeyText(const std::array<std::uint8_t, 16>& key);
+// The key in `file` (player-key.txt beside coop.ini). A missing or broken
+// file gets a new random key written to it, once, so the kit keeps it; if
+// that cannot be written the key holds for this run only (`note` says so).
+// Not in coop.ini: the launcher writes that file anew from its template.
+std::array<std::uint8_t, 16> LoadPlayerKey(const std::filesystem::path& file, std::string& note);
 
 // Reads `key = value` lines. Blank lines, `#` or `;` comments and `[section]`
 // headers are skipped. Keys: server (`host` or `host:port`), port, name, password,

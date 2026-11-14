@@ -10,11 +10,13 @@
 //   cave asks them one at a time through `svc #0xf4` (coop_svc.cpp);
 // - the AI hold reads the same table the emulator's hold cave reads
 //   (coop_hold.h), at the same place in main;
-// - settings: coop.ini beside hookshot.exe, then the LICHII_COOP_* variables,
+// - settings: coop.ini beside longshot.exe, then the LICHII_COOP_* variables,
 //   as in the emulator (the kit's launcher sets them from coop-options.ini).
 #include "coop_hookshot.h"
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
 #include <atomic>
 #include <mutex>
 #include <chrono>
@@ -53,6 +55,10 @@
 #include "coop_objects_sync.h"
 #include "coop_input.h"
 #include "coop_look.h"
+#include "coop_local_game.h"
+#include "coop_local_layer.h"
+#include "coop_local_probe.h"
+#include "coop_player_input.h"
 #include "coop_png.h"
 #include "coop_puppet.h"
 #include "coop_puppet_config.h"
@@ -67,6 +73,7 @@
 #include "hos_coop_api.h"
 #include "hos_coop_actors.h"
 #include "hos_coop_bosses.h"
+#include "hos_coop_pads.h"
 #include "hos_coop_host.h"
 #include "hos_coop_world.h"
 
@@ -132,7 +139,7 @@ std::string CreateName(const CoopPuppet::Call& c) {
     return std::string(name);
 }
 
-// Our patch 0002 (nx2/coop_puppet_guard.py) is in this hookshot.exe: its log text is in the exe's read-only data.
+// Our patch 0002 (nx2/coop_puppet_guard.py) is in this longshot.exe: its log text is in the exe's read-only data.
 // (Linux: always true, see the end.)
 bool PuppetGuardInExe() {
 #ifdef _WIN32
@@ -166,7 +173,7 @@ bool Refused(const CoopPuppet::Call& c) {
     static const bool allow = [] {
         const bool guard = PuppetGuardInExe();
         const bool on = CoopHookshot::AllowLinkPuppets(Env("LICHII_COOP_HOOKSHOT_LINK_PUPPETS"), guard);
-        LOG_INFO(Core, "coop: Hookshot: other players as Link {} (puppet guard {} this hookshot.exe{})",
+        LOG_INFO(Core, "coop: Hookshot: other players as Link {} (puppet guard {} this longshot.exe{})",
                  on ? "on" : "off", guard ? "in" : "NOT in",
                  guard ? "" : ": build it again with Build-Hookshot-Coop for patch 0002");
         return on;
@@ -182,7 +189,7 @@ bool Refused(const CoopPuppet::Call& c) {
     if (!said) {
         said = true;
         LOG_WARNING(Core,
-                    "coop: Hookshot: {} not made (this hookshot.exe has no puppet guard, or "
+                    "coop: Hookshot: {} not made (this longshot.exe has no puppet guard, or "
                     "LICHII_COOP_HOOKSHOT_LINK_PUPPETS=0); other players show as their fairy",
                     actor);
     }
@@ -764,7 +771,7 @@ bool KeysTaken() {
     return box || cheats;
 }
 
-// This game's controller and keyboard (coop_input.h): hookshot.exe's patch 0015 exports the choice; the kit's
+// This game's controller and keyboard (coop_input.h): longshot.exe's patch 0015 exports the choice; the kit's
 // LICHII_COOP_PAD and LICHII_COOP_KEYBOARD set it. Applied before co-op may turn itself off, so two games on one PC
 // keep their own pads either way (the choice stays in the exe). An exe without patch 0015: every pad counts.
 void UseInputSelect() {
@@ -852,6 +859,9 @@ bool Start(const HosCoopApi* api) {
     return true;
 }
 
+void LocalProbe();   // (below)
+void LocalLayer(void* ctx);   // (below)
+
 void Frame(void* ctx, int site) {
     if (!g_on) {
         return;
@@ -860,6 +870,8 @@ void Frame(void* ctx, int site) {
         CoopModsRuntime::Frame();
         CoopPause::Tick();   // the Multiplayer tab's follow-ups, also while the menu is closed
         CoopLook::Frame();   // a look chosen in the pause menu, once it closed
+        LocalProbe();
+        if (ctx != nullptr) LocalLayer(ctx);
     }
     if (site == HOS_COOP_SITE_PRESENT && !g_present_seen.exchange(true)) {
         LOG_INFO(Core, "coop: Hookshot calls co-op at each present (loads and pause included)");
@@ -1033,6 +1045,12 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
     if (!g_on || x == nullptr) {
         return 0;
     }
+    if (id == CoopPlayerInput::kWrapButtons || id == CoopPlayerInput::kWrapSticks ||
+        id == CoopPlayerInput::kWrapInputOff || id == CoopPlayerInput::kWrapControllerGet) {
+        // Local co-op: an extra player's Player reads its own controller. (native-puppets-b2's remote input, once
+        // wired, is a second handler of these ids: both must run, and either may take phase 0.)
+        return CoopLocalGame::Wrap(id, phase, x);
+    }
     if (id == HOS_COOP_WRAP_EVENT_REQUEST) {
         // The game asks for an event: its name at the request (phase 0: x1 is the request), whether the manager took
         // it after the game's function (phase 1: x0). Both on the same game thread, one after the other.
@@ -1145,10 +1163,120 @@ void DrawWithLook(const HosCoopDraw& d) {
     CoopDraw::Draw(d, DrawScene(), g_look_state.load() == kLookOn ? g_look : CoopDraw::Look{});
 }
 
+// Local co-op's research probe (coop_local_probe.h, LICHII_COOP_LOCAL_PROBE=1): the renderer's layers and the
+// controller manager, logged every 10 s, five times. Reads only.
+void LocalProbe() {
+    static const bool wanted = [] {
+        const char* v = std::getenv("LICHII_COOP_LOCAL_PROBE");
+        return v != nullptr && *v != 0 && std::strcmp(v, "0") != 0;
+    }();
+    static int said = 0;
+    static std::chrono::steady_clock::time_point next{};
+    const auto now = std::chrono::steady_clock::now();
+    if (!wanted || said >= 5 || now < next) return;
+    next = now + std::chrono::seconds(10);
+    said++;
+    const CoopLocalProbe::ReadFn read = [](std::uint64_t a, void* out, std::size_t n) {
+        return CoopRuntime::Read(a, out, n);
+    };
+    for (const auto* lines : {&CoopLocalProbe::Layers, &CoopLocalProbe::Controllers})
+        for (const std::string& line : (*lines)(read, CoopRuntime::MainBase()))
+            LOG_INFO(Core, "coop: local probe {}: {}", said, line);
+}
+
+// Split screen's second world layer, research (coop_local_layer.h): LICHII_COOP_LOCAL_LAYER=1 only, with an exe whose
+// call() and scratch() are there (patch 0004). The calc thread's every-frame site.
+void LocalLayer(void* ctx) {
+    static const bool wanted = [] {
+        const char* v = std::getenv("LICHII_COOP_LOCAL_LAYER");
+        return v != nullptr && std::string_view(v) == "1";
+    }();
+    if (!wanted || g_api == nullptr || g_api->size < offsetof(HosCoopApi, scratch) + sizeof(g_api->scratch) ||
+        g_api->scratch == nullptr || g_api->call == nullptr)
+        return;
+    static CoopLocalLayer::Second second{[] {
+        CoopLocalLayer::Game g;
+        g.main_base = [] { return CoopRuntime::MainBase(); };
+        g.read = [](std::uint64_t a, void* out, std::size_t n) { return CoopRuntime::Read(a, out, n); };
+        g.write = [](std::uint64_t a, const void* in, std::size_t n) { return CoopRuntime::Write(a, in, n); };
+        g.log = [](const std::string& line) { LOG_INFO(Core, "coop: {}", line); };
+        return g;
+    }()};
+    static void* frame_ctx = nullptr;   // (this call's: scratch() and call() take it)
+    frame_ctx = ctx;
+    static const bool set = [] {
+        second.Set([](const std::vector<std::uint8_t>& b) { return g_api->scratch(frame_ctx, b.data(), b.size()); },
+                   [](std::uint64_t f, const std::array<std::uint64_t, 8>& x) -> std::optional<std::uint64_t> {
+                       HosCoopCall k{};
+                       k.function = f;
+                       for (std::size_t i = 0; i < 8; i++) k.x[i] = x[i];
+                       std::uint64_t x0 = 0;
+                       if (!g_api->call(frame_ctx, &k, &x0)) return std::nullopt;
+                       return x0;
+                   });
+        return true;
+    }();
+    (void)set;
+    std::optional<std::array<float, 3>> first;
+    if (const auto p = CoopLocalGame::FirstLink()) first = std::array<float, 3>{(*p)[0], (*p)[1], (*p)[2]};
+    second.Step(first);
+}
+
+// Local co-op (coop_local_game.h): the exe's pads (patch 0016, hos_coop_pads.h) and the Player's wraps 16, 17 and 19.
+// An exe without them: CoopLocal says NotSupported. LICHII_COOP_LOCAL=<pad slot> starts a second player on that pad
+// at the first frame in play, without the menu (tests).
+void UseLocalPads() {
+#ifdef _WIN32
+    const HMODULE exe = GetModuleHandleW(nullptr);
+    const auto find = [exe](const char* name) { return reinterpret_cast<void*>(GetProcAddress(exe, name)); };
+#else
+    const auto find = [](const char* name) { return dlsym(RTLD_DEFAULT, name); };
+#endif
+    const auto info = reinterpret_cast<hos_coop_pad_info_fn>(find(HOS_COOP_PAD_INFO));
+    const auto take = reinterpret_cast<hos_coop_pad_take_fn>(find(HOS_COOP_PAD_TAKE));
+    CoopLocalGame::Deps deps;
+    if (info && take) {
+        deps.pads = [info] {
+            std::vector<CoopLocalGame::Pad> pads;
+            for (int slot = 1; slot <= 64; slot++) {   // (by place in SDL's list, from 1: patch 0016)
+                char name[64] = {};
+                std::uint32_t serial = 0;
+                int npad = 0;
+                const int there = info(slot, &serial, name, sizeof name, &npad);
+                if (there < 0) break;
+                if (there > 0) pads.push_back({slot, serial, name, npad});
+            }
+            return pads;
+        };
+        deps.take = [take](int slot, std::uint32_t serial, int npad) { return take(slot, serial, npad) != 0; };
+    }
+    deps.wraps = [] {
+        return HasWrap(CoopPlayerInput::kWrapButtons) && HasWrap(CoopPlayerInput::kWrapSticks) &&
+               HasWrap(CoopPlayerInput::kWrapInputOff) && HasWrap(CoopPlayerInput::kWrapControllerGet);
+    };
+    deps.main_base = [] { return CoopRuntime::MainBase(); };
+    deps.slots = [] { return CoopPuppet::TheDirector().Slots(); };
+    deps.read = [](std::uint64_t address, void* out, std::size_t size) { return CoopRuntime::Read(address, out, size); };
+    deps.write = [](std::uint64_t address, const void* in, std::size_t size) {
+        return CoopRuntime::Write(address, in, size);
+    };
+    deps.log = [](const std::string& line) { LOG_INFO(Core, "coop: {}", line); };
+    LOG_INFO(Core, "coop: local co-op: {}", info && take ? "this Hookshot gives the module its pads (patch 0016)"
+                                                          : "this Hookshot has no pads for local co-op (patch 0016)");
+    CoopLocalGame::Install(std::move(deps));
+    if (const char* slot = std::getenv("LICHII_COOP_LOCAL"); slot && *slot) {
+        CoopLocalGame::AutoStart(std::atoi(slot));
+    }
+    if (const char* views = std::getenv("LICHII_COOP_LOCAL_VIEWS"); views && *views) {   // (tests: the split alone)
+        CoopLocalGame::ForceViews(std::atoi(views));
+        LOG_INFO(Core, "coop: local co-op: LICHII_COOP_LOCAL_VIEWS={}: the views split with no second player", views);
+    }
+}
+
 }  // namespace CoopHookshot
 
 extern "C" {
-// The host's save for a guest (issue 167): hookshot.exe's patch 0008 exports the account save's folder and a
+// The host's save for a guest (issue 167): longshot.exe's patch 0008 exports the account save's folder and a
 // re-mount of it; with them a guest switches to the co-op folder when it joins (CoopSave, save::folder_choice).
 // An exe without patch 0008: CoopSave as on a fixed folder (LICHII_COOP_HOST_SAVE, else the player's own).
 void UseSaveSwitch() {
@@ -1180,6 +1308,7 @@ void UseSaveSwitch() {
 COOP_HOOKSHOT_EXPORT int hos_coop_start(const HosCoopApi* api) {
     if (!CoopHookshot::Start(api)) return 0;
     UseSaveSwitch();
+    CoopHookshot::UseLocalPads();
     return 1;
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_frame(void* ctx, int site) {

@@ -110,6 +110,17 @@ std::optional<SaveSlot> unpack(std::span<const std::uint8_t> bytes) {
   return slot;
 }
 
+std::vector<std::uint8_t> pack_no_save() {
+  std::vector<std::uint8_t> out(kMagic.begin(), kMagic.end());
+  out.push_back(0);
+  return out;
+}
+
+bool is_no_save(std::span<const std::uint8_t> bytes) {
+  return bytes.size() == kMagic.size() + 1 && std::memcmp(bytes.data(), kMagic.data(), kMagic.size()) == 0 &&
+         bytes[kMagic.size()] == 0;
+}
+
 std::uint32_t crc32(std::span<const std::uint8_t> bytes) {
   static const auto table = [] {
     std::array<std::uint32_t, 256> t{};
@@ -197,17 +208,20 @@ std::vector<std::uint8_t> Assembler::take() { return std::exchange(done_, {}); }
 
 std::vector<Planner::Send> Planner::due(std::optional<Time> newest) {
   std::vector<Send> out;
-  if (!newest || (!reload_ && asks_.empty())) return out;
-  if (loaded_at_) {
-    if (*newest <= *loaded_at_) return out;  // not yet the loaded save on disk
-    loaded_at_.reset();
+  if (!newest) {
+    // No save on disk (a new game): each asker hears so now instead of waiting for nothing.
+    for (const std::uint8_t p : asks_) out.push_back({p, proto::SaveReason::join, true});
+    asks_.clear();
+    return out;
   }
-  if (reload_) {
+  if (reload_ && (!loaded_at_ || *newest > *loaded_at_)) {
     reload_ = false;
+    loaded_at_.reset();
     asks_.clear();  // everyone gets this one
     out.push_back({0, proto::SaveReason::host_load});
     return out;
   }
+  // Asks are answered at once with the newest save on disk, also while the send after a load waits.
   for (const std::uint8_t p : asks_) out.push_back({p, proto::SaveReason::join});
   asks_.clear();
   return out;
@@ -293,18 +307,51 @@ WriteResult write_coop_save(const fs::path& coop_dir, const SaveSlot& slot, cons
     const fs::path from = own_dir / name;
     if (fs::is_regular_file(from, ec)) fs::copy_file(from, to, ec);
   }
-  std::vector<fs::path> slots{coop_dir / "slot_00"};
-  for (fs::directory_iterator it(coop_dir, ec), end; !ec && it != end; it.increment(ec)) {
-    const std::string name = it->path().filename().string();
-    if (name != "slot_00" && slot_name(name) && it->is_directory(ec)) slots.push_back(it->path());
-  }
-  for (const auto& dir : slots) {
-    std::error_code dec;
-    fs::create_directories(dir, dec);
-    if (dec) return WriteResult::failed;
-    for (const auto& f : slot.files) {
-      if (!slot_file(f.name) || !write_file(dir / f.name, f.bytes)) return WriteResult::failed;
+  std::set<std::string> names{"slot_00"};
+  for (const fs::path& from : {coop_dir, own_dir}) {
+    std::error_code iec;
+    for (fs::directory_iterator it(from, iec), end; !iec && it != end; it.increment(iec)) {
+      const std::string name = it->path().filename().string();
+      std::error_code dec;
+      if (slot_name(name) && it->is_directory(dec)) names.insert(name);
     }
+  }
+  for (const auto& name : names) {
+    const fs::path dir = coop_dir / name;
+    fs::path part = dir;
+    part += ".part";
+    std::error_code dec;
+    fs::remove_all(part, dec);
+    dec.clear();
+    fs::create_directories(part, dec);
+    bool ok = !dec;
+    for (const auto& f : slot.files) {
+      if (!ok) break;
+      ok = slot_file(f.name) && write_file(part / f.name, f.bytes);
+    }
+    // Whole, then in place: slot_NN is the old slot or the new one, never half of one. The old one is moved to
+    // slot_NN.old first and put back if the new one cannot go in (a file the game holds open on Windows).
+    fs::path old = dir;
+    old += ".old";
+    const bool had_old = ok && fs::exists(dir, dec);
+    if (ok && had_old) {
+      fs::remove_all(old, dec);
+      dec.clear();
+      fs::rename(dir, old, dec);
+      ok = !dec;
+    }
+    if (ok) {
+      fs::rename(part, dir, dec);
+      ok = !dec;
+      if (!ok && had_old) {
+        std::error_code bec;
+        fs::rename(old, dir, bec);
+      }
+    }
+    std::error_code rec;
+    fs::remove_all(part, rec);
+    if (!ok) return WriteResult::failed;
+    if (had_old) fs::remove_all(old, rec);
   }
   return WriteResult::written;
 }
@@ -324,6 +371,11 @@ int clear_coop_slots(const fs::path& coop_dir) {
     if (!rec) ++n;
   }
   return n;
+}
+
+PendingStep pending_step(bool slot_in, bool title_up, bool in_game) {
+  if (in_game) return PendingStep::drop;
+  return slot_in && title_up ? PendingStep::go : PendingStep::keep;
 }
 
 bool decide_again(bool decided, bool over, bool in_game) {

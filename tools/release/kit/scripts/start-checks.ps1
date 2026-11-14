@@ -101,12 +101,12 @@ function Get-KitMissingRuntime([string]$Kit, [string]$System32 = "$env:SystemRoo
     }
 }
 
-# A built game whose files are gone (coop-built-from.txt is there, hookshot.exe or the co-op module is not):
+# A built game whose files are gone (coop-built-from.txt is there, longshot.exe or the co-op module is not):
 # an antivirus took them. Said, not rebuilt (a rebuild is 45 minutes and would be taken again).
 function Get-KitGameQuarantined([string]$Game) {
     if (-not (Test-Path -LiteralPath (Join-Path $Game 'coop-built-from.txt'))) { return '' }
-    $exe = @((Join-Path $Game 'bin\hookshot.exe'), (Join-Path $Game 'hookshot.exe')) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-    if (-not $exe) { return 'hookshot.exe' }
+    $exe = @((Join-Path $Game 'bin\longshot.exe'), (Join-Path $Game 'longshot.exe'), (Join-Path $Game 'bin\hookshot.exe'), (Join-Path $Game 'hookshot.exe')) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if (-not $exe) { return 'longshot.exe' }
     if (-not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $exe) 'hookshot_coop.dll'))) { return 'hookshot_coop.dll' }
     return ''
 }

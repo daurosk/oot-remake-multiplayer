@@ -1,10 +1,11 @@
-# Clones or updates the Hookshot source to the commit in hookshot/PIN and applies
+# Clones or updates the Longshot (formerly Hookshot) source to the commit in hookshot/PIN and applies
 # hookshot/patches/*.patch in order, as commits on a local branch "coop".
 # Refuses if the source tree has uncommitted changes. Never pushes anywhere.
 #
 #   powershell -ExecutionPolicy Bypass -File hookshot\fetch.ps1 [-Dest <folder>]
 #
-# The default folder is hookshot-src next to the main checkout of this repo.
+# The default folder is longshot-src next to the main checkout of this repo (hookshot-src for a
+# PIN without runtime=Longshot: an older Hookshot pin keeps its own checkout).
 
 param(
     [string]$Dest = ""
@@ -36,9 +37,10 @@ if ($Dest -eq "") {
     $common = (& git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir)
     if ($LASTEXITCODE -ne 0) { Fail "not inside a git checkout" }
     $mainRoot = Split-Path -Parent $common
-    $Dest = Join-Path (Split-Path -Parent $mainRoot) "hookshot-src"
+    $srcName = if ($pin["runtime"] -eq "Longshot") { "longshot-src" } else { "hookshot-src" }
+    $Dest = Join-Path (Split-Path -Parent $mainRoot) $srcName
 }
-Write-Host "fetch.ps1: Hookshot source in $Dest"
+Write-Host "fetch.ps1: $(if ($pin["runtime"]) { $pin["runtime"] } else { "Hookshot" }) source in $Dest"
 
 if (-not (Test-Path $Dest)) {
     Invoke-Git clone $pin.repo $Dest
@@ -60,7 +62,7 @@ if ($LASTEXITCODE -ne 0) {
     & git -C $Dest cat-file -e "$($pin.commit)^{commit}" 2>$null
     if ($LASTEXITCODE -ne 0) { Fail "commit $($pin.commit) not found in $($pin.repo)" }
 }
-# Hookshot pins a commit; a tag line is optional.
+# The pin is a commit; a tag line is optional.
 if ($pin.ContainsKey("tag")) {
     $tagCommit = (& git -C $Dest rev-parse --verify --quiet "refs/tags/$($pin.tag)^{commit}")
     if ($tagCommit -and $tagCommit -ne $pin.commit) {

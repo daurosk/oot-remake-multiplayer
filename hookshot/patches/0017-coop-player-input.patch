@@ -1,0 +1,68 @@
+From a52928ca45d7f13a491f7c508300a85a3e3dc190 Mon Sep 17 00:00:00 2001
+From: daurosk <354202035+daurosk@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 15:11:06 -0900
+Subject: [PATCH] Co-op player input: the Player's pad reads are wrapped for
+ the co-op module
+
+The other player's Link is to be the game's own Player actor. Four wrapped functions (patch 0005's wraps): the Player's button and stick reads, its input-off check and the controller getter. The module gives another player's Link that player's input there; without it the game's functions run as they are.
+---
+ nx2/coop_hooks.py        |  2 ++
+ nx2/coop_player_wraps.py | 33 +++++++++++++++++++++++++++++++++
+ 2 files changed, 35 insertions(+)
+ create mode 100644 nx2/coop_player_wraps.py
+
+diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
+index b4c0d96b..d50a212c 100644
+--- a/nx2/coop_hooks.py
++++ b/nx2/coop_hooks.py
+@@ -63,6 +63,8 @@ def install(lifter, img, build_id):
+     # installs below add, so its place among them does not matter)
+     import coop_world_wraps
+     coop_world_wraps.install(lifter, img, build_id)
++    import coop_player_wraps   # (patch 0017: the other players' Link reads its own input)
++    coop_player_wraps.install(lifter, img, build_id)
+     import coop_actor_lift   # (patch 0007: enemies, breakables, drops, projectiles)
+     coop_actor_lift.install(lifter, img, build_id)
+     import coop_puppet_guard   # (patch 0002: the other players' Link)
+diff --git a/nx2/coop_player_wraps.py b/nx2/coop_player_wraps.py
+new file mode 100644
+index 00000000..100c3085
+--- /dev/null
++++ b/nx2/coop_player_wraps.py
+@@ -0,0 +1,33 @@
++"""Co-op's wrapped game functions for the other players' Link (oot-remake-multiplayer's patch 0017, its
++docs/native-player.md).
++
++The other player's Link is to be the game's own Player actor, run by the game's own player code from the other
++player's buttons and sticks. The Player reads its pad in two small functions, each with one caller (an AI node's
++update, the node in x19: its actor is [[[x19+8]+8]+0x1f0]). Wrapped with patch 0005's wraps (nx2/coop_world_wraps.py,
++host/coop_world.c): the co-op module copies what the game read for the local Link, and fills the same bytes in for
++another player's Link in place of the controller read. Without the module, or for the local Link, the game's own
++function runs as it is.
++
++WRAPS: (id as in the module's hos_coop_player.h, main offset, its first words), as coop_world_wraps.WRAPS.
++"""
++import coop_world_wraps
++
++WRAPS = (
++    # HOS_COOP_WRAP_PLAYER_BUTTONS: (x0 = out) the held, pressed and released buttons of controller 0 into out+0x18,
++    # +0x1a, +0x1c. One caller, main+0x279ce04
++    (16, 0x279ce80, (0xd503237f, 0xa9be7bfd, 0xa9014ff4, 0x910003fd, 0xd0012708, 0xaa0003f3, 0xf000ae20, 0x913b6c00)),
++    # HOS_COOP_WRAP_PLAYER_STICKS: (x0 = out) the two sticks of controller 0 into out+0 and out+8. One caller,
++    # main+0x279e24c (ExecutePlayerCalcStick)
++    (17, 0x279e2c0, (0xd503237f, 0xa9be7bfd, 0xa9014ff4, 0x910003fd, 0x90012708, 0xaa0003f3, 0xb000ae20, 0x913b6c00)),
++    # HOS_COOP_WRAP_PLAYER_INPUT_OFF: whether the player's input is off (a menu, an event of the local game); both
++    # callers are the two node updates above, which then skip the read. Another player's Link must not stop for it
++    (18, 0x3025850, (0xd000f388, 0x9138e108, 0xf9400109, 0xb4000149, 0x9100c128, 0xb940010a, 0x3500012a, 0xb940352a)),
++    # HOS_COOP_WRAP_CONTROLLER_GET: (x0 = the controller manager, w1 = index, w2 = the asker's hash) the controller
++    # every reader of the pad asks for (19 callers: the two above, the controller query nodes, the Ocarina, the menus)
++    (19, 0x3b25e00, (0xd503237f, 0xa9be7bfd, 0xf9000bf3, 0x910003fd, 0x9104400a, 0x5100042b, 0x9102c009, 0xaa0003e8)),
++)
++
++
++def install(lifter, img, build_id):
++    """The wraps into lifter.wraps, with patch 0005's checks; returns how many went in."""
++    return coop_world_wraps.install(lifter, img, build_id, WRAPS)
+-- 
+2.56.0.windows.4
+

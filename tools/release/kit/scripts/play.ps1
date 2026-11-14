@@ -5,7 +5,7 @@
 #        Host.bat (play.ps1 host)  starts this kit's server too and plays on it (127.0.0.1)
 #        Join.bat (play.ps1 join)  asks for the host's address each time
 #        Host-Hookshot.bat, Join-Hookshot.bat (play.ps1 host|join -Hookshot)  the same with the
-#                                  Hookshot game Build-Hookshot-Coop.bat built (coop.ini beside its hookshot.exe)
+#                                  Hookshot game Build-Hookshot-Coop.bat built (coop.ini beside its longshot.exe)
 # On every start it looks for a newer co-op release and, as auto_update in coop-options.ini
 # says, updates the kit (emulator included) and starts the new kit's play.ps1 with -NoUpdate.
 # Every later play.ps1 must accept -NoUpdate.
@@ -45,7 +45,7 @@ if ($Mode -eq 'choose') {
 }
 if ($Hookshot) {
     # The game Build-Hookshot-Coop.bat built (hookshot-build.ps1 notes where, for -Out); its module
-    # reads coop.ini beside hookshot.exe. The emulator's own steps below are skipped for it. A game not
+    # reads coop.ini beside longshot.exe. The emulator's own steps below are skipped for it. A game not
     # built yet, or one an update left behind, is brought up to date after the update check below.
     $hsGame = Get-KitHookshotGame $kit
     $exe = Get-KitHookshotExe $hsGame
@@ -195,7 +195,7 @@ if ($Hookshot) {
 }
 if ($Mode -eq 'title') {
     if (-not $Hookshot) { Write-Host 'play.ps1 title is for Hookshot (Play-OoT-Coop.bat).'; exit 1 }
-    $running = Get-Process hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
+    $running = Get-Process longshot, hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
     if ($running) { Write-Host 'This Hookshot game is already running: Host and Join are on its title screen.'; exit 1 }
     # No session from this start: no server and no join password in coop.ini (the name, the colour and the
     # last invite code stay), and none in the variables an earlier start in this window may have left.
@@ -366,7 +366,7 @@ Write-Host "Co-op: server $Server, port $Port, name $Name, join password $(if ($
 
 $user = Join-Path $emu 'user'
 if ($Hookshot) {
-    $running = Get-Process hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
+    $running = Get-Process longshot, hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
     if ($running) { Write-Host 'This Hookshot game is already running; close it first to use new settings.'; exit 1 }
 }
 elseif (-not (Get-ChildItem (Join-Path $user 'keys') -Filter '*.keys' -ErrorAction SilentlyContinue)) {
@@ -464,7 +464,7 @@ if ($Hookshot) {
         $(if ($hsOnly) { '  It is made from your game file (the one hookshot\game-files.txt names): put that file back, then start again.' } else { '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").' })))
     $started = Get-Date
     $game = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru
-    Write-Host "Hookshot started. Its hookshot_log.txt (beside the game) says 'coop: module loaded', then 'coop: connected'."
+    Write-Host "Hookshot started. Its longshot_log.txt (beside the game) says 'coop: module loaded', then 'coop: connected'."
     exit 0
 }
 # AMD cards: shader libraries off unless the player chose (kit-paths.ps1, issue 118).

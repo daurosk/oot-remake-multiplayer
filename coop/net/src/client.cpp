@@ -140,6 +140,11 @@ std::string_view refuse_reason_text(proto::RefuseReason reason) {
     case proto::RefuseReason::bad_name: return "bad name";
     case proto::RefuseReason::bad_password:
       return "wrong join password: ask the host for it, then start Join.bat again and type it";
+    case proto::RefuseReason::kicked:
+      return "the host took you out of the game: you can join again";
+    case proto::RefuseReason::banned:
+      return "the host banned you from this game: you cannot join it again until the host "
+             "stops hosting";
     case proto::RefuseReason::not_encrypted:
       return "the server did not ask for the join password, so the game did not join it "
              "unencrypted (every session has a password and is encrypted): the host's server "
@@ -525,6 +530,26 @@ void Client::on_connected_message(proto::Message message, std::uint8_t channel) 
     return;
   }
 
+  // The Lobby (protocol 11): the host took us out. The server closes the
+  // connection next; we stop here and do not join again by ourselves.
+  if (const auto* refused = std::get_if<proto::Refused>(&message);
+      refused && (refused->reason == proto::RefuseReason::kicked ||
+                  refused->reason == proto::RefuseReason::banned)) {
+    if (peer_ != nullptr) {
+      enet_peer_disconnect_now(peer_, 0);
+      peer_ = nullptr;
+    }
+    players_.clear();
+    clear_shared();
+    early_.clear();
+    state_ = State::refused;
+    Event event;
+    event.kind = EventKind::refused;
+    event.refuse_reason = refused->reason;
+    push(std::move(event));
+    return;
+  }
+
   if (std::holds_alternative<proto::Welcome>(message) ||
       std::holds_alternative<proto::Refused>(message) ||
       std::holds_alternative<proto::JoinChallenge>(message)) {
@@ -740,7 +765,11 @@ bool Client::answer_challenge(const proto::JoinChallenge& challenge,
   if (!keys) return false;
   // The proof goes out plain (the server needs it to make its keys); from
   // the next packet on, everything is sealed.
-  const bool sent = send_raw(proto::JoinProof{proof}, proto::kChannelSession);
+  proto::JoinProof answer{proof};
+  // The Lobby: our player key, sealed with a key from this connection's
+  // client-to-server key (nobody on the way reads it).
+  if (config_.player_key) answer.player_key = proto::seal_player_key(keys->send, *config_.player_key);
+  const bool sent = send_raw(answer, proto::kChannelSession);
   cipher_ = std::make_unique<proto::TrafficCipher>(*keys);
   keys->wipe();
   return sent;

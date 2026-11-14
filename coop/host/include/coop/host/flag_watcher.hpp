@@ -55,6 +55,7 @@ struct FlagStats {
   std::uint64_t pickups_learned = 0;   // 64-bit keys taken as pickups from a message
   std::uint64_t pickup_resets = 0;     // a pickup's 0, ours or incoming: not passed on
   std::uint64_t max_drops_kept = 0;    // a max-rule value our game lowered: ours, not sent
+  std::uint64_t max_caps_kept = 0;     // a rise of our own past cap_max's cap: put back, not sent
   std::uint64_t read_failures = 0;
   std::uint64_t write_failures = 0;    // each failed try; it is tried again next frame
   std::uint64_t bad_snapshots = 0;     // parts out of order: the snapshot is dropped
@@ -179,6 +180,16 @@ class FlagWatcher {
   void expect_doubled_gain();
   // The reopened chest's get scene is over: nothing more is taken back.
   void end_doubled_gain() { doubled_ = 0; }
+
+  // Boss cutscenes (lichii/hook/coop_boss_scenes.h, one heart container for
+  // all): while a cap is set for a max-rule int, a rise of our own game's
+  // value past `cap` is put back (to the higher of the value before and the
+  // cap) and never sent, so a second pickup of the boss's one container
+  // cannot raise the group through the max rule. Values from the group are
+  // written as before, and a rise up to the cap is sent as any change. One
+  // cap per key; a new call replaces it.
+  void cap_max(FlagKey key, std::int32_t cap) { max_caps_[key] = cap; }
+  void clear_max_cap(FlagKey key) { max_caps_.erase(key); }
   static constexpr std::uint64_t kDoubledGainFrames = 5 * 60;
   static constexpr std::int32_t kMaxDoubledGains = 4;
 
@@ -346,6 +357,7 @@ class FlagWatcher {
     std::int32_t own = 0;           // that change, ours only
   };
   std::map<FlagKey, Guard> guards_;          // guard_count, by count
+  std::map<FlagKey, std::int32_t> max_caps_;  // cap_max
   std::map<FlagKey, FlagKey> guard_source_;  // a source: its count
   Table added_;                              // count deltas add() put in this frame
   std::vector<CountGuarded> counts_guarded_;  // take_counts_guarded

@@ -58,6 +58,7 @@ target_link_libraries(coop_host PUBLIC coop_protocol coop_net coop_presence PRIV
 # No rendering and no game addresses; the caller hands over the camera.
 add_library(coop_overlay STATIC
   overlay/src/overlay.cpp
+  overlay/src/map_icons.cpp
 )
 target_include_directories(coop_overlay PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/overlay/include")
 # Header only: the scene rules (coop/host/scene.hpp), so a marker shows in the

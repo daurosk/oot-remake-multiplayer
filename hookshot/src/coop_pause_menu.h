@@ -164,7 +164,7 @@ private:
         kOpenHost, kOpenJoin, kOpenLocal, kOpenSettings, kOpenCommands, kCommand,
         kStartHost, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan, kLeave,
         kRejoin, kCode, kJoinNow,
-        kName, kLook, kPlayers, kVoice, kChatKey, kController, kKeyboard,
+        kName, kLook, kPlayers, kVoice, kChatKey, kController, kKeyboard, kMapPlayers, kMapNames,
         kOpenCustomize
     };
     struct Line;   // a row, what it does and its help

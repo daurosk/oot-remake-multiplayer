@@ -124,7 +124,16 @@ $tools = if ($Tools) { [System.IO.Path]::GetFullPath($Tools) } else { Join-Path 
 $work = if ($Work) { [System.IO.Path]::GetFullPath($Work) } else { Join-Path $hs 'work' }
 # (beside a shared tools folder, so its 400 MB of parts are fetched once for every kit)
 $downloads = if ($Tools) { Join-Path (Split-Path -Parent $tools) 'downloads' } else { Join-Path $hs 'downloads' }
-if (-not $Out) { $Out = Join-Path $hs 'game' }
+if (-not $Out) {
+    # The game this kit built last (game-folder.txt, written below; a build with -Out puts it elsewhere): an update
+    # puts the new co-op into THAT game. Only when that folder is gone does the default folder get a new build.
+    $Out = Join-Path $hs 'game'
+    $where = Join-Path $hs 'game-folder.txt'
+    if (Test-Path -LiteralPath $where) {
+        $last = "$(Get-Content -LiteralPath $where -TotalCount 1)".Trim()
+        if ($last -and (Test-Path -LiteralPath $last -PathType Container)) { $Out = $last }
+    }
+}
 $Out = [System.IO.Path]::GetFullPath($Out)
 $python = Join-Path $tools 'python\python.exe'
 

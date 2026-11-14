@@ -32,7 +32,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import ainb, byml, dumpcheck, dungeon_rooms, hud, look_live, nup, rstb, sarc, title_menu, tunic, tunic_extra, zs  # noqa: E402
+from . import ainb, byml, dumpcheck, dungeon_rooms, hud, look_live, map_captures, nup, rstb, sarc, title_menu, tunic, tunic_extra, zs  # noqa: E402
 
 TITLE_ID = "0400486024DEC000"
 DEFAULT_MOD_NAME = "coop-puppet"
@@ -558,11 +558,13 @@ def strip_zs(path):
 
 def nup_scene_files(n):
     """RomFS paths of the scene files (Banc/<scene>/*.bcett.byml.zs) in an open Nup, the ones
-    dungeon_rooms.scene_rooms reads from a RomFS folder."""
+    dungeon_rooms.scene_rooms reads from a RomFS folder, and the two map files map_captures reads."""
     out = []
     for scene, (kind, _i) in sorted(n.listdir("Banc").items()):
         if kind == "d":
             out += n.glob(f"Banc/{scene}/*.bcett.byml.zs")
+    for pattern in map_captures.FILES:  # the map pictures' places, for coop_maps.txt
+        out += n.glob(pattern)[:1]
     return out
 
 
@@ -960,6 +962,9 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     scenes, rooms, points = dungeon_rooms.write_table(romfs, os.path.join(mod_dir, "coop_rooms.txt"), dicts)
     log(f"coop_rooms.txt: {points} placements in {rooms} rooms of {scenes} dungeons")
     manifest["rooms"] = {"scenes": scenes, "rooms": rooms, "placements": points}
+    maps = map_captures.write_table(romfs, os.path.join(mod_dir, "coop_maps.txt"))
+    log(f"coop_maps.txt: {maps} maps (players on the minimap and the pause map)")
+    manifest["maps"] = maps
     manifest["tool_sha256"] = tool_hash()  # the kit compares it with its own tool (Get-PuppetPackHint)
     write(os.path.join(mod_dir, "coop_puppet.json"), json.dumps(manifest, indent=1).encode())
     return manifest

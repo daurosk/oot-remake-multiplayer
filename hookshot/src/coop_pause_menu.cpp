@@ -149,11 +149,11 @@ std::vector<Menu::Line> Menu::Lines() const {
                                  "are not touched."});
         out.push_back({Action("Local co-op"), Act::kOpenLocal, "Two players on this PC."});
         out.push_back({Action("Settings"), Act::kOpenSettings,
-                       "Your name, Link's look, how many players can join your game, voice chat, the chat key, and "
-                       "which controller this game reads."});
+                       "Your name, Link's look, how many players can join your game, voice chat, the chat key, "
+                       "which controller this game reads, and players on the map."});
         out.push_back({Action("Customize Link"), Act::kOpenCustomize,
                        "A colour for each part of your tunics, shields, swords, boots and gauntlets, with a picture of "
-                       "the result. Your Link wears it when you close the menu, and the other players see it."});
+                       "the result. Your Link wears it when you close the menu; the other players see your tunic's colour."});
         out.push_back({Action("Commands"), Act::kOpenCommands, "The chat's commands, and the key that opens the chat."});
         break;
     case Page::kHost:
@@ -243,6 +243,11 @@ std::vector<Menu::Line> Menu::Lines() const {
                            "in background: the keys count behind other windows too. Off: neither (a controller "
                            "only)."});
         }
+        out.push_back({Toggle("Show players on map", options_.map_players), Act::kMapPlayers,
+                       "The other players as arrows in their colours on the minimap and on the Map page's area and "
+                       "dungeon maps (not the world map). Off: neither shows them."});
+        out.push_back({Toggle("Names on map", options_.map_names), Act::kMapNames,
+                       "Each player's name beside their arrow on the maps. Off: the arrows only."});
         break;
     case Page::kCustomize:   // (its own rows: coop_look_menu.h)
         break;
@@ -616,6 +621,8 @@ void Menu::Decide(Act act) {
         Change(act, 1);
         break;
     case Act::kVoice:
+    case Act::kMapPlayers:
+    case Act::kMapNames:
         Change(act, 0);   // (a toggle: A flips it)
         break;
     case Act::kNone:
@@ -658,6 +665,14 @@ void Menu::Change(Act act, int step) {
         break;
     case Act::kKeyboard:
         request_ = Request{Request::Kind::kKeyboard, {}};
+        break;
+    case Act::kMapPlayers:
+        options_.map_players = step > 0 ? true : step < 0 ? false : !options_.map_players;
+        request_ = Request{Request::Kind::kSave, {}};
+        break;
+    case Act::kMapNames:
+        options_.map_names = step > 0 ? true : step < 0 ? false : !options_.map_names;
+        request_ = Request{Request::Kind::kSave, {}};
         break;
     default:
         break;

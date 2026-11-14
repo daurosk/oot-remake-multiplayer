@@ -497,11 +497,11 @@ try {
     Write-File (Join-Path $hsGame 'coop.ini') "server = 127.0.0.1`r`nport = 27510`r`nname = Saria`r`npassword = hunter2`r`n"
     $env:OOT_COOP_UPDATE_API = Join-Path $tmp 'no-such-releases.json'
     $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$kit\scripts\play.ps1`" join -Server 127.0.0.1 -Name Saria -Hookshot -NoUpdate < `"$enter`"" 2>&1) -join '|'
-    Check ($out -match 'Puppet pack: found\.' -and $out -match 'Your Link: the red tunic' -and $out -match 'Hookshot started') "play.ps1 -Hookshot: the pack found and your red tunic said [$out]"
+    Check ($out -match 'Puppet pack: found\.' -and $out -match 'Your Link: the red tunic' -and $out -match 'Game started') "play.ps1 -Hookshot: the pack found and your red tunic said [$out]"
     Check ([System.IO.File]::ReadAllText((Join-Path $hsPack 'romfs\Tex\Angin_Tile_A_Alb.bntx.zs')) -eq 'RED') 'play.ps1 -Hookshot: the red tile in the Hookshot pack before the game starts'
     Remove-Item -LiteralPath $hsPack -Recurse -Force
     $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$kit\scripts\play.ps1`" join -Server 127.0.0.1 -Name Saria -Hookshot -NoUpdate < `"$enter`"" 2>&1) -join '|'
-    Check ($out -match 'Puppet pack: not in the Hookshot game' -and $out -match 'Hookshot started') "play.ps1 -Hookshot: no pack: says so, still starts [$out]"
+    Check ($out -match 'Puppet pack: not in the co-op game' -and $out -match 'Game started') "play.ps1 -Hookshot: no pack: says so, still starts [$out]"
     # Play-OoT-Coop.bat (play.ps1 choose -Hookshot): no question and no session, so the title screen's Host
     # and Join work (a server in coop.ini makes them answer "Co-op is on already in this game"). After a
     # host or join run its server and password lines go; the name and the last invite code stay.
@@ -512,7 +512,7 @@ try {
     $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$kit\scripts\play.ps1`" choose -Hookshot -NoUpdate < nul" 2>&1) -join '|'
     Remove-Item Env:LICHII_COOP_SERVER -ErrorAction SilentlyContinue
     $idle = Read-File (Join-Path $hsGame 'coop.ini')
-    Check ($out -match 'Hookshot started' -and $out -match 'Host or Join on the title screen' -and $out -notmatch 'H or J' -and $out -notmatch 'Invite code') "Play-OoT-Coop: starts the game with no question [$out]"
+    Check ($out -match 'Game started' -and $out -match 'Host or Join in the game''s menu, first tab Multiplayer' -and $out -notmatch 'H or J' -and $out -notmatch 'Invite code') "Play-OoT-Coop: starts the game with no question [$out]"
     Check ($idle -notmatch '(?m)^\s*server\s*=' -and $idle -notmatch '(?m)^\s*password\s*=') "Play-OoT-Coop: no server and no join password left in coop.ini after a host run [$idle]"
     Check ($idle -match '(?m)^name = Saria\r?$' -and $idle -match '(?m)^last_invite = ABCDE-FGHJK\r?$' -and $idle -match '(?m)^port = 27510\r?$') 'Play-OoT-Coop: the name, the port and the last invite code stay'
     Check (-not (Test-Path "$kit\server-args.txt") -and -not (Get-Process coop_server -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) })) 'Play-OoT-Coop: no server is started'
@@ -520,7 +520,7 @@ try {
     Remove-Item -LiteralPath (Join-Path $hsGame 'coop.ini') -Force
     $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$kit\scripts\play.ps1`" choose -Hookshot -NoUpdate < nul" 2>&1) -join '|'
     $idle = Read-File (Join-Path $hsGame 'coop.ini')
-    Check ($out -match 'Hookshot started' -and $idle -notmatch '(?m)^\s*server\s*=') "Play-OoT-Coop: a first start (no coop.ini) writes one with no server [$out]"
+    Check ($out -match 'Game started' -and $idle -notmatch '(?m)^\s*server\s*=') "Play-OoT-Coop: a first start (no coop.ini) writes one with no server [$out]"
     Get-Process hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
     # A built kit's coop.ini.template and coop-ini.ps1 keep @PORT@ (make_kit.ps1 copies with
     # kit_text.ps1), and play.ps1 writes the port each join needs: 27512 (the join helper) for an
@@ -571,7 +571,7 @@ try {
             $iniFile = if ($bat -eq 'Host.bat') { "$kit\emulator\user\config\coop.ini" } else { Join-Path $hsGame 'coop.ini' }
             $out = (cmd /c "`"$kit\$bat`" -NoUpdate < nul" 2>&1) -join '|'
             $ini = Read-File $iniFile
-            Check ($out -match 'joining that session again as the host' -and $out -match '(Emulator|Hookshot) started') "${bat}, the kit's server running: says it joins the running session again, and the game starts [$out]"
+            Check ($out -match 'joining that session again as the host' -and $out -match '(Emulator|Game) started') "${bat}, the kit's server running: says it joins the running session again, and the game starts [$out]"
             Check ($ini -match '(?m)^password = SessionPassword123\s*$' -and $ini -match '(?m)^server = 127\.0\.0\.1\s*$' -and $ini -match '(?m)^port = 27633\s*$') "${bat}, the kit's server running: coop.ini has the saved password and port [$(($ini -split "`n") -match '^(server|port|password)' -join '|')]"
             Check ($out -notmatch 'new random one' -and $out -notmatch 'Close' -and $out -notmatch 'SessionPassword123') "${bat}, the kit's server running: no new password, no refusal, the password is not printed"
             Start-Sleep -Milliseconds 500
@@ -587,7 +587,7 @@ try {
         Check ($out -match 'Close that window, then start Host\.bat again' -and $out -notmatch 'Emulator started' -and (Read-File "$kit\emulator\user\config\coop.ini") -eq $before) "Host.bat, a saved session for another port: refused, coop.ini untouched [$out]"
         Remove-Item -LiteralPath (Get-KitHostSessionFile $kit) -Force
         $out = (cmd /c "`"$kit\Host-Hookshot.bat`" -NoUpdate < nul" 2>&1) -join '|'
-        Check ($out -match 'Close that window, then start Host-Hookshot\.bat again' -and $out -notmatch 'Hookshot started' -and -not (Test-Path "$kit\server-args.txt")) "Host-Hookshot.bat, no saved session: refused, names Host-Hookshot.bat [$out]"
+        Check ($out -match 'Close that window, then start Host-Hookshot\.bat again' -and $out -notmatch 'Game started' -and -not (Test-Path "$kit\server-args.txt")) "Host-Hookshot.bat, no saved session: refused, names Host-Hookshot.bat [$out]"
         # server_password set in coop-options.ini: as before, that password and the running server.
         Add-Content -LiteralPath "$kit\coop-options.ini" -Value "`r`nserver_password = hunter2"
         $out = (cmd /c "`"$kit\Host.bat`" -NoUpdate < nul" 2>&1) -join '|'
@@ -866,11 +866,11 @@ try {
     $built = { Test-Path -LiteralPath (Join-Path $hm 'hookshot\tools') }
     # never built: plain words, the offer, n = no build, a pointer to Build-Hookshot-Coop.bat
     $out = & $runHs 'join'
-    Check ($out -match 'Playing on the emulator\? Use Join\.bat \(or Host\.bat\).*\|Hookshot isn''t set up yet' -and $out -match 'Set it up now\? \(then the game starts; closing this window cancels\) \[Y/n\]' -and $out -match 'Not now\. Build-Hookshot-Coop\.bat' -and $out -notmatch 'Hookshot started' -and -not (& $built)) "Join-Hookshot, no game: says not set up yet, offers the build, n builds nothing [$out]"
+    Check ($out -match 'Playing on the emulator\? Use Join\.bat \(or Host\.bat\).*\|Hookshot isn''t set up yet' -and $out -match 'Set it up now\? \(then the game starts; closing this window cancels\) \[Y/n\]' -and $out -match 'Not now\. Build-Hookshot-Coop\.bat' -and $out -notmatch 'Game started' -and -not (& $built)) "Join-Hookshot, no game: says not set up yet, offers the build, n builds nothing [$out]"
     $out = & $runHs 'host'
-    Check ($out -match "Hookshot isn't set up yet" -and $out -match 'Set it up now\?' -and $out -notmatch 'Hookshot started') "Host-Hookshot, no game: the same offer [$out]"
+    Check ($out -match "Hookshot isn't set up yet" -and $out -match 'Set it up now\?' -and $out -notmatch 'Game started') "Host-Hookshot, no game: the same offer [$out]"
     $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$hm\scripts\play.ps1`" choose -Hookshot -NoUpdate < `"$no`"" 2>&1) -join '|'
-    Check ($out -match "Hookshot isn't set up yet" -and $out -match 'Set it up now\?' -and $out -notmatch 'Hookshot started') "Play-OoT-Coop, no game: the same offer [$out]"
+    Check ($out -match "Hookshot isn't set up yet" -and $out -match 'Set it up now\?' -and $out -notmatch 'Game started') "Play-OoT-Coop, no game: the same offer [$out]"
     # the built game moved or deleted: names where it was and -Out
     $gone = Join-Path $hm 'moved away\game'
     Write-File (Join-Path $hm 'hookshot\game-folder.txt') "$gone`n"
@@ -883,16 +883,16 @@ try {
     Write-File (Join-Path $g 'hookshot_coop.dll') 'MODULE'
     Write-File (Join-Path $g 'coop-built-from.txt') "release=v2.1.0`ncommit=0000000000000000000000000000000000000000`npatches="
     $out = & $runHs 'join'
-    Check ($out -match 'built for another Hookshot version' -and $out -match 'Update it now\?' -and $out -notmatch 'Hookshot started' -and -not (& $built)) "Join-Hookshot, an older pin: the rebuild offer [$out]"
+    Check ($out -match 'built for another game version' -and $out -match 'Update it now\?' -and $out -notmatch 'Game started' -and -not (& $built)) "Join-Hookshot, an older pin: the rebuild offer [$out]"
     # the module taken (antivirus): no build offered, the restore and exclusion steps
     Remove-Item -LiteralPath (Join-Path $g 'hookshot_coop.dll'), (Join-Path $hm 'hookshot\hookshot_coop.dll')
     $out = & $runHs 'join'
-    Check ($out -match 'hookshot_coop\.dll is missing' -and $out -match 'Antivirus' -and $out -match 'Protection history' -and $out -match 'Exclusions' -and $out -notmatch '\[Y/n\]' -and $out -notmatch 'Hookshot started' -and -not (& $built)) "Join-Hookshot, the module quarantined: antivirus steps, no build [$out]"
+    Check ($out -match 'hookshot_coop\.dll is missing' -and $out -match 'Antivirus' -and $out -match 'Protection history' -and $out -match 'Exclusions' -and $out -notmatch '\[Y/n\]' -and $out -notmatch 'Game started' -and -not (& $built)) "Join-Hookshot, the module quarantined: antivirus steps, no build [$out]"
     # the game's copy gone after it was put in (a kit without a pin to build: the last check before the start)
     Remove-Item -LiteralPath (Join-Path $hm 'hookshot\PIN')
     Write-File (Join-Path $hm 'hookshot\hookshot_coop.dll') 'MODULE'
     $out = & $runHs 'join'
-    Check ($out -match 'hookshot_coop\.dll is missing' -and $out -match 'Antivirus' -and $out -notmatch 'No co-op Hookshot game' -and $out -notmatch 'Hookshot started') "Join-Hookshot, the game's module gone: antivirus steps, not 'No co-op Hookshot game' [$out]"
+    Check ($out -match 'hookshot_coop\.dll is missing' -and $out -match 'Antivirus' -and $out -notmatch 'No co-op Hookshot game' -and $out -notmatch 'Game started') "Join-Hookshot, the game's module gone: antivirus steps, not 'No co-op Hookshot game' [$out]"
 } finally {
     Remove-Item -LiteralPath $hm -Recurse -Force -ErrorAction SilentlyContinue
 }

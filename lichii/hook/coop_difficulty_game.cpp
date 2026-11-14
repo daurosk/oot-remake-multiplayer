@@ -180,7 +180,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     g.state.values = m->values;
     g.state.set_by = m->set_by;
     g.now.store(Packed(m->values));
-    const std::size_t players = client.players().size() + 1;
+    const std::size_t players = client.players().size();  // (this client included)
     if (changed) {
         g.Line("Difficulty: " + Describe(g.state.choice, m->values, players));
     }

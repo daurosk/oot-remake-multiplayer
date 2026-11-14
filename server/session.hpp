@@ -323,6 +323,10 @@ struct Stats {
   std::uint64_t lobby_mutes_kept = 0;  // ... from the same address: it kept that player's mutes (a restart)
   std::uint64_t chat_muted = 0;      // CHAT from a player the host muted: dropped
   std::uint64_t voice_muted = 0;     // VOICE_FRAME from a player the host muted: dropped
+  // Boss heart containers (docs/protocol.md, "Boss cutscenes").
+  std::uint64_t boss_hearts_given = 0;     // first claims: one BOSS_HEART given to everyone
+  std::uint64_t boss_hearts_late = 0;      // later claims of a decided boss, answered to their sender
+  std::uint64_t boss_hearts_refused = 0;   // a "given" from a client
   // Connections refused at connect: their address already had
   // max_half_open_per_address waiting for HELLO. Not packets, so not in
   // dropped().
@@ -658,6 +662,7 @@ class Session {
   void on_pvp_hit(ConnectionId id, Connection& c, protocol::Message& message);
   void on_dbno_mode(ConnectionId id, Connection& c, const protocol::DbnoMode& m);
   void on_dbno_revive(ConnectionId id, Connection& c, protocol::Message& message);
+  void on_boss_heart(ConnectionId id, Connection& c, const protocol::BossHeart& m);
   // A player who can be given an object: not loading, paused, dead or downed.
   static bool busy(const Connection& c);
   void on_object_group(ConnectionId id, Connection& c, const protocol::ObjectGroup& g);
@@ -789,6 +794,11 @@ class Session {
   // Down but not out now: config_.dbno until the host changes it; back to
   // it when the session empties.
   protocol::DbnoMode dbno_;
+  // Each boss's one heart container (BOSS_HEART): the first claim the server
+  // got, by boss. Kept while anyone is in (as the flags), so a claim that
+  // comes late, or after the winner left, gets the same answer; forgotten
+  // when the session empties.
+  std::map<std::uint8_t, protocol::BossHeart> boss_hearts_;
   // Difficulty (protocol/difficulty.hpp): automatic, by the number of
   // players, until the host chooses; the host's choice then stays whoever
   // joins or leaves, a new host included. Automatic again when the session

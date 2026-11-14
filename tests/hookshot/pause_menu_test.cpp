@@ -329,7 +329,8 @@ TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off u
     m.Show(o);
     m.Open(Page::kSettings);
     CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
-                                               "Proximity voice chat", "Chat key"});   // (no patch 0015: no input rows)
+                                               "Proximity voice chat", "Chat key", "Show players on map",
+                                               "Names on map"});   // (no patch 0015: no input rows)
     View v = m.view();
     CHECK(v.rows[0].value == "Saria");
     CHECK(v.rows[1].value == "By player number");
@@ -369,6 +370,30 @@ TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off u
     CHECK_FALSE(m.options().voice);
     m.Press(Input::kDecide);   // A flips it
     CHECK(m.options().voice);
+}
+
+TEST_CASE("pause tab: Settings: players on the map and their names, on unless turned off, each saved") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kSettings);
+    View v = m.view();
+    REQUIRE(v.rows.size() == 7);   // (the chat key row before them; no patch 0015: no input rows)
+    CHECK(v.rows[5].kind == RowKind::kToggle);
+    CHECK(v.rows[5].on);
+    CHECK(v.rows[6].on);
+    SelectRow(m, "Show players on map");
+    m.Press(Input::kLeft);
+    CHECK_FALSE(m.options().map_players);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    m.Press(Input::kDecide);
+    CHECK(m.options().map_players);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    SelectRow(m, "Names on map");
+    m.Press(Input::kDecide);
+    CHECK_FALSE(m.options().map_names);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    m.Press(Input::kRight);
+    CHECK(m.options().map_names);
 }
 
 TEST_CASE("pause tab: a name the server would refuse is not kept") {
@@ -490,7 +515,7 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     CHECK(Selected(m) == "Chat key");   // (the rows came under it: the same row stays chosen)
     CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
                                                "Proximity voice chat", "Chat key", "Controller",
-                                               "Keyboard and mouse"});
+                                               "Keyboard and mouse", "Show players on map", "Names on map"});
     SelectRow(m, "Controller");
     View v = m.view();
     CHECK(v.rows[static_cast<std::size_t>(v.selected)].value == "all");
@@ -515,7 +540,7 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     CHECK(r->kind == Request::Kind::kKeyboard);
     // gone again (the module found no patch 0015): the selection stays on a row there is
     m.SetInputRows({}, {});
-    CHECK(Names(m).size() == 5);
+    CHECK(Names(m).size() == 7);   // (with the two map rows)
     CHECK_FALSE(Selected(m).empty());
 }
 

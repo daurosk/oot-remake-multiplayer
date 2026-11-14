@@ -16,7 +16,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from puppet_pack import build, byml, dumpcheck, dungeon_rooms, nup, rstb, sarc  # noqa: E402
+from puppet_pack import build, byml, dumpcheck, dungeon_rooms, map_captures, nup, rstb, sarc  # noqa: E402
 
 # The co-op HUD's tests run with these (CI runs this file).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -1238,6 +1238,16 @@ class FullBuildTest(unittest.TestCase):
         self.assertEqual([line for line in text.splitlines() if not line.startswith("#")], ["Dun 4 1.00 2.00 3.00"])
         self.assertEqual(m["rooms"], {"scenes": 1, "rooms": 1, "placements": 1})
 
+    def test_build_writes_the_map_table(self):
+        self.write(map_captures.CAPTURE.replace("*", "MapCaptureInfo.game__MapCaptureInfo"),
+                   byml.dumps(MapCapturesTest.CAPTURE))
+        self.write(map_captures.MENU.replace("*", "MapMenuInfo.game__ui__MapMenuInfo"),
+                   byml.dumps(MapCapturesTest.MENU))
+        m = build.build(self.romfs, os.path.join(self.dir, "mod_maps"), log=lambda *_: None)
+        text = build.read(os.path.join(self.dir, "mod_maps", "coop_maps.txt")).decode()
+        self.assertEqual([line for line in text.splitlines() if not line.startswith("#")], MapCapturesTest.ROWS)
+        self.assertEqual(m["maps"], 2)
+
     def test_place_test(self):
         from puppet_pack import place_test, zs
         mod = os.path.join(self.dir, "mod")
@@ -1769,6 +1779,63 @@ class DumpCheckTest(unittest.TestCase):
             code = build.main(["--romfs", self.romfs, "--mod-dir", os.path.join(self.dir, "mod")])
         self.assertEqual(code, 1)
         self.assertIn("Skeleton", err.getvalue())
+
+
+class MapCapturesTest(unittest.TestCase):
+    # Made-up numbers in the game's shape: entry i of the captures is the map of entry i of the menu.
+    CAPTURE = {"MapCaptureParamArray": [
+        {"CameraPos": {"X": -5.0, "Y": 120.0, "Z": -12.0}, "Height": 300.0,
+         "CaptureParamData": {"01": {"MapCaptureParam": {"Near": -20.0}}, "00": {"MapCaptureParam": {"Near": -95.0}}}},
+        {"CameraPos": {"X": 0.0, "Y": 200.0, "Z": 3.0}, "Height": 214.0, "IsDungeon": True,
+         "CaptureParamData": {"00": {"MapCaptureParam": {}}, "01": {"MapCaptureParam": {"Far": 105.0, "Near": 93.5}}}},
+        {"CaptureParamData": {"00": {"MapCaptureParam": {}}}},   # no camera: left out
+        {"CameraPos": {"X": 1.0, "Y": 1.0, "Z": 1.0}, "Height": 9.0},  # past the menu's entries: left out
+    ]}
+    MENU = {"MapMenuParamArray": [
+        {"LocationName": "Forest", "BancName": ["Forest_Child", "Forest_Adult"],
+         "ChangeBancInfo": [{"BancName": "Forest_Adult_Alternative"}]},
+        {"LocationName": "Temple", "BancName": ["Temple", "Temple"]},
+        {"LocationName": "Nowhere", "BancName": ["Nowhere_Child", "Nowhere_Adult"]},
+    ]}
+    ROWS = ["map Forest -5 -12 120 300 0 Forest_Child,Forest_Adult,Forest_Adult_Alternative -95:- -20:-",
+            "map Temple 0 3 200 214 1 Temple -:- 93.5:105"]
+
+    def test_rows_in_order_with_floors(self):
+        rows = map_captures.render(map_captures.captures(self.CAPTURE, self.MENU)).splitlines()
+        self.assertEqual([r for r in rows if not r.startswith("#")], self.ROWS)
+
+    def test_floors_in_their_number_order(self):
+        cap = {"MapCaptureParamArray": [{"CameraPos": {"X": 0.0, "Y": 200.0, "Z": 0.0}, "Height": 10.0,
+                                         "CaptureParamData": {str(i).zfill(1 if i > 9 else 2): {"MapCaptureParam": {"Near": float(i)}}
+                                                              for i in (10, 2, 0, 1)}}]}
+        menu = {"MapMenuParamArray": [{"LocationName": "Tower", "BancName": ["Tower", "Tower"]}]}
+        c = map_captures.captures(cap, menu)[0]
+        self.assertEqual([n for n, _f in c["floors"]], [0.0, 1.0, 2.0, 10.0])
+
+    def test_missing_files_give_an_empty_table(self):
+        d = tempfile.mkdtemp()
+        try:
+            out = os.path.join(d, "coop_maps.txt")
+            self.assertEqual(map_captures.write_table(d, out), 0)
+            self.assertTrue(all(line.startswith("#") for line in build.read(out).decode().splitlines()))
+            self.assertEqual(map_captures.main(["--romfs", d, "--out", out]), 1)
+        finally:
+            shutil.rmtree(d)
+
+    @unittest.skipUnless(os.environ.get("COOP_TEST_ROMFS"), "set COOP_TEST_ROMFS to the game's romfs")
+    def test_real_romfs_the_field_is_the_biggest_area(self):
+        # Only with the player's own game: checks the order rule (entry i is the map of entry i).
+        d = tempfile.mkdtemp()
+        try:
+            out = os.path.join(d, "coop_maps.txt")
+            self.assertGreater(map_captures.write_table(os.environ["COOP_TEST_ROMFS"], out), 20)
+            caps = map_captures.captures(map_captures._load(os.environ["COOP_TEST_ROMFS"], map_captures.CAPTURE),
+                                         map_captures._load(os.environ["COOP_TEST_ROMFS"], map_captures.MENU))
+            areas = [c for c in caps if not c["dungeon"]]
+            self.assertEqual(max(areas, key=lambda c: c["height"])["location"], "HyruleField")
+            self.assertTrue(all(c["dungeon"] for c in caps if c["location"] in ("InsideTheDekuTree", "FireTemple")))
+        finally:
+            shutil.rmtree(d)
 
 
 class DungeonRoomsTest(unittest.TestCase):

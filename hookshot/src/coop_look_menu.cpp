@@ -229,7 +229,7 @@ std::vector<Page::Line> Page::Lines() const {
         }
         out.push_back({{info.name, ValueText(look_[info.part]), 1, true, true}, What::kPart, info.part,
                        std::string(Note(info.part)) + " Left and Right try the colours; Confirm mixes your own. Your Link "
-                       "wears it when you close the menu, and the other players see it."});
+                       "wears it when you close the menu (the other players see only the tunic's colour for now)."});
     }
     out.push_back({{"All parts back to the game's own", "", 0}, What::kAllGame, Part::tunic,
                    "Every part in the game's own colours again (the tunic: your player number's colour for the others)."});

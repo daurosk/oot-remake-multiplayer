@@ -1,0 +1,54 @@
+# hs-boss-far-gohma (Hookshot, branch boss-cutscenes): A plays hs-boss-cutscenes-gohma's A route (walks in
+# through Gohma's door, kills her); B stays at the Deku Tree's entrance, far outside the boss's area.
+# B must get NO cutscene, no black screen and no move: only chat lines.
+# NEEDS and BEFORE the run: as hs-boss-cutscenes-gohma.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-boss-far-gohma
+# PASS (proof lines):
+#  1. A: "Dm_Deku_BossIn: our game started it" (as hs-boss-cutscenes-gohma 2).
+#  2. B: "Dm_Deku_BossIn: not played here (we are not in the boss's area)", the chat box "<A's name> entered
+#     the boss room of Queen Gohma"; never "playing it here too", "moving in" or "asked the scene change".
+#  3. B after a-kill: "Dm_Deku_BossOut: not played here", the chat line "<A's name> beat Queen Gohma".
+#  4. Screens b-intro / b-death: B's normal picture at the entrance (no black screen), B free to move.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 600
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+wait 120
+place -12.0 48.5 66.5   # the corridor, 11 m before the door (as gohma-door)
+wait 600                # B is placed there too
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door: the game's own boss trigger
+mark a-in
+wait 300
+mark a-intro
+wait 1500               # the door's event and the intro
+mark a-fight
+wait 600
+kill Enemy_DungeonBoss_Gohma
+wait 120
+mark a-kill
+wait 300
+mark a-death
+wait 2400
+mark end

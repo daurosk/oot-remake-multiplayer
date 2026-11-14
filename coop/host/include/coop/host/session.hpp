@@ -198,6 +198,17 @@ class Session {
   void end_doubled_gain() {
     if (watcher_) watcher_->end_doubled_gain();
   }
+  // Emulator thread only: FlagWatcher::cap_max / clear_max_cap (a boss's one
+  // heart container). False when flags are not shared.
+  bool cap_max(FlagKey key, std::optional<std::int32_t> cap) {
+    if (!watcher_) return false;
+    if (cap) {
+      watcher_->cap_max(key, *cap);
+    } else {
+      watcher_->clear_max_cap(key);
+    }
+    return true;
+  }
   // Emulator thread only: FlagWatcher::take_counts_guarded.
   std::vector<FlagWatcher::CountGuarded> take_counts_guarded() {
     return watcher_ ? watcher_->take_counts_guarded() : std::vector<FlagWatcher::CountGuarded>{};

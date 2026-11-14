@@ -51,6 +51,7 @@
 #include "coop/presence/presence.hpp"
 #include "coop/version.hpp"
 #include "coop_boss.h"
+#include "coop_boss_scenes.h"
 #include "coop_teleport_game.h"
 #include "coop_pvp_game.h"
 #include "coop_lobby_game.h"
@@ -228,6 +229,7 @@ struct FrameView {
     std::vector<std::uint8_t> hidden;  // others with no marker (scene.hpp: hide)
     std::optional<Markers> markers;  // none: no camera
     std::string camera_note;         // for the panel, when the game runs
+    bool event = false;              // our own event hides the others (and the game its HUD)
 };
 
 // What the network thread knows, for the window.
@@ -654,6 +656,15 @@ public:
         if (shared_scenes_) {
             SharedScenes(view, reading, memory, report.server_now_us);
         }
+        // Boss cutscenes (coop_boss_scenes.h): another player's boss intro or
+        // death, asked of our game by name, as a story cutscene's.
+        if (live_events_) {
+            for (auto& name : CoopBoss::TakeWantedEvents()) {
+                std::lock_guard lock(live_mutex_);
+                live_requester_.Want(std::move(name), view.scene.value_or(std::string()), CoopEvery::NowUs(),
+                                     CoopBossScenes::Director::kJoinUs);
+            }
+        }
         // review-p11-interactions: a gimmick or story event still waiting in
         // the requester is dropped when we left its scene, when it waited too
         // long (story cutscenes: kJoinUs) or when our game has it played.
@@ -829,6 +840,21 @@ public:
             CoopObjects::SetMaxLife(max_life && max_life->kind == coop::protocol::FlagKind::int32
                                         ? std::optional<std::int32_t>(static_cast<std::int32_t>(max_life->value))
                                         : std::nullopt);
+            // Boss cutscenes (coop_boss_scenes.h): the one shared heart container sees our maximum and may set it.
+            const bool known = max_life && max_life->kind == coop::protocol::FlagKind::int32;
+            CoopBoss::SetMaxLife(known ? std::optional<std::int32_t>(static_cast<std::int32_t>(max_life->value))
+                                       : std::nullopt);
+            // A second pickup of that container is put back by the flag watcher, never sent.
+            if (session_) {
+                session_->cap_max(coop::protocol::FlagKey{0xfbe01da1u, 0}, CoopBoss::MaxLifeCap());
+            }
+            if (const auto to = CoopBoss::TakeMaxLifeWrite(); to && known) {
+                auto set = *max_life;
+                set.value = static_cast<std::uint32_t>(*to);
+                const bool ok = game_store->write(set);
+                LOG_INFO(Core, "coop: boss: our maximum life {} -> {} (the boss's one heart container){}",
+                         static_cast<std::int32_t>(max_life->value), *to, ok ? "" : ": the write failed");
+            }
         }
         // Issue 144: changes from the others to actors near our Link wait while
         // our Link is in an event (a talk, a cutscene).
@@ -840,6 +866,7 @@ public:
                            reading->event_running.value_or(false),
                            reading->animation ? std::optional<std::string_view>(reading->animation->name)
                                               : std::nullopt);
+        view.event = event;  // (the map icons, CurrentMapView)
         if (report.connected) {
             view.others = session_->with_presence([&](coop::presence::Presence& p) {
                 auto shown = coop::overlay::collect(p, report.server_now_us);
@@ -923,6 +950,9 @@ public:
         // /teleport <player> (docs/setup.md "Chat commands"), after the boss
         // rooms: it reads whether our boss fight runs.
         CoopTeleport::Frame(system, view.game ? base_ : 0, reading, report.connected ? session_.get() : nullptr);
+        for (auto& line : CoopBoss::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
         // LICHII_COOP_SCENE_PROBE=1 only (docs/scenes.md "Free-play scene change").
         CoopSceneProbe::Frame(system, view.game ? base_ : 0, reading);
         for (auto& line : CoopTeleport::TakeLines()) {
@@ -969,6 +999,34 @@ public:
             return std::nullopt;
         }
         return frame_.markers;
+    }
+
+    // CurrentMapView (coop_hook.h): from the last frame, as the markers.
+    bool CurrentMapView(MapView& v) {
+        std::lock_guard lock(view_mutex_);
+        if (Clock::now() - frame_.at >= kFrameStale || !frame_.game || !frame_.scene || !frame_.position) {
+            return false;
+        }
+        v.scene.assign(*frame_.scene);
+        v.self = *frame_.position;
+        v.event = frame_.event;
+        v.others.resize(frame_.others.size());
+        for (std::size_t i = 0; i < frame_.others.size(); ++i) {
+            const auto& s = frame_.others[i];
+            auto& o = v.others[i];
+            o.number = s.number;
+            o.name.assign(s.name);
+            o.position = s.position;
+            o.rotation = s.rotation;
+            if (s.scene) {
+                if (!o.scene) o.scene.emplace();
+                o.scene->assign(*s.scene);
+            } else {
+                o.scene.reset();
+            }
+            o.fade = s.fade;
+        }
+        return true;
     }
 
     std::vector<OverlayLine> Lines() {
@@ -2140,6 +2198,14 @@ std::optional<Markers> CurrentMarkers() {
         return coop->CurrentMarkers();
     }
     return std::nullopt;
+}
+
+bool CurrentMapView(MapView& out) {
+    if (g_mod_refused) {
+        return false;
+    }
+    auto* coop = Get();
+    return coop != nullptr && coop->CurrentMapView(out);
 }
 
 bool SendChat(const std::string& text) {

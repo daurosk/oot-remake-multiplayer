@@ -1,0 +1,37 @@
+# hs-npc-walk (Hookshot/Longshot; npc-anim-2, #200): walking townspeople animate on the joiner's screen.
+# A reaches Kakariko first, so A's game owns the villagers; B arrives at the same spot 20 s later and
+# sees copies. Both stand still at the warp point facing the same way: the shots "w1".."w8" (a quarter
+# second apart, same moment in both games) show the same walkers side by side; across w1..w8 a walker's
+# legs must change pose on B as on A (frozen legs while it slides = FAIL).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-npc-walk
+# Grading lines (B's are the copies):
+#   expect="B:npc-anim: Npc_\S+ copied from P1 at \S+ \S+ \S+ plays '(Walk|Run)"
+#   expect="B:npc-anim: in 5 s [1-9]\d* owner animations played"   (0 = only frames set)
+#   and by eye: a walker's pose differs between B's w1..w8 shots.
+#   The debug lines "copy X shows 'Walk' frame f; its owner 'Walk' frame g" say how far apart they are.
+#! switches LICHII_COOP_DEBUG_NPC=1
+#! timeout 360
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1200               # the warp's load; A is there first and owns the villagers
+mark arrived
+wait 1500               # B arrives (warp at 20 s, load about 15 s) and takes copies
+place -62.0 98.5 40.0   # in the village between the walkers (the warp point is the gate: none in view)
+wait 300
+mark w1
+wait 15
+mark w2
+wait 15
+mark w3
+wait 15
+mark w4
+wait 15
+mark w5
+wait 15
+mark w6
+wait 15
+mark w7
+wait 15
+mark w8
+wait 600
+mark end

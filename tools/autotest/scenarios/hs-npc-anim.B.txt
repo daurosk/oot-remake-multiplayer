@@ -4,7 +4,7 @@ mark start
 wait 120
 place -15.30 100.90 18.80
 wait 60
-toward -12.55 20.01 10
+goto -13.60 19.35 0.3 90 # walk to him so the camera faces him (a one-push toward faced the wall)
 hold ZL 60
 mark b-owns
 wait 1040                 # A talks at about 1170 frames from the load: b-a-talks about 2 s later

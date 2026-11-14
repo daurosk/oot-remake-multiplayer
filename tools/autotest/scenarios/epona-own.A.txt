@@ -16,6 +16,10 @@
 # setenum both games' quest Get_Epona is Complete.
 # Shots: "mounted", "riding": B on a horse in A's window. "both-mounted", "both-riding": in each
 # window the other player on a horse beside our own. "end": both on foot, no copy horse left.
+# Longshot run 2026-11-13 15:02 (groups-20261113-145259): no mount: 'toward ... 6' gives the harness one push
+# before it knows the camera's angle, so Link turned away from her (shot B-by-horse: Link at her tail, no
+# Mount prompt). Now each rider is put 5 m off and walks to her side with goto, ending face to her. B's
+# probe-pause shot must show the pause menu (else scripted buttons do not reach the game at all).
 # Hookshot run 2026-11-13 (shots-hookshot/epona-own/20261113-012957): both adult at Epona with the
 # 'Mount' prompt shown, but 'press A' (6 ticks) did not mount; after setenum Complete the field Epona
 # is gone in both games (placed only while Get_Epona is not complete): the owned ride needs Epona's Song.
@@ -30,20 +34,30 @@ place -100.5 151.0 254.5 # 10 m south of Epona
 wait 240
 toward -100.47 264.55 6  # face her (and B)
 press ZL                 # camera behind A
-wait 60
-mark mounted             # B is on
-wait 200
+wait 300                 # B's probe and walk to its Epona (goto: 1 to 3 s)
+mark mounted             # B is on: a burst, as B's goto takes 1 to 3 s and an unowned Epona throws
+wait 30                  #   her rider after about 1.5 s
+mark mounted2
+wait 30
+mark mounted3
+wait 30
+mark mounted4
+wait 30
+mark mounted5
+wait 30
+mark mounted6
+wait 80
 mark riding
 wait 490                 # B rides, stops, gets off
 mark dismounted
 wait 320                 # B waits by its horse
 mark owned
-place -102.0 151.0 264.5 # beside our own (unowned field) Epona (1.5 m west of her)
+place -105.5 151.0 264.5 # 5 m west of our own (unowned field) Epona
 wait 240
-toward -100.47 264.55 6
+goto -101.7 264.55 0.5 180 # walk to her side, ending face to her
 wait 30
 press A 12               # get on, as B does
-wait 220
+wait 40
 mark both-mounted
 stick 0 0.8 230          # ride forward, both
 mark both-riding

@@ -1,0 +1,25 @@
+# hs-npc-walk, B: the joiner, arrives 20 s after A at the same spot (see hs-npc-walk.A.txt).
+#! switches LICHII_COOP_DEBUG_NPC=1
+mark start
+wait 1200
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1500               # the warp's load, then copies of A's villagers (w1 at 50 s, as A)
+place -62.0 98.5 40.0   # in the village between the walkers (the warp point is the gate: none in view)
+wait 300
+mark w1
+wait 15
+mark w2
+wait 15
+mark w3
+wait 15
+mark w4
+wait 15
+mark w5
+wait 15
+mark w6
+wait 15
+mark w7
+wait 15
+mark w8
+wait 600
+mark end

@@ -145,8 +145,8 @@ public:
     // Looks at the settings again: after the host's values came or went (a host without the randomizer changes no
     // value of ours, so no setting call comes).
     void Recheck() {
+        Check();  // first: drops a line no longer true (the host left, another seed)
         TellOthers();
-        Check();
     }
     // The chat lines since the last call (SwitchLine when the switch changed).
     std::vector<std::string> TakeLines();
@@ -173,7 +173,8 @@ private:
     bool on_now_ = false;      // the switch as the game started (mutex_)
     bool on_said_ = false;     // the switch as last said (mutex_)
     std::vector<std::string> lines_;  // mutex_
-    std::string tell_;                // a line for the others not sent yet (mutex_)
+    std::string tell_;                // a line for the others not sent yet (mutex_): never a path
+    std::string tell_seed_;           // the host's seed it is about (mutex_)
 };
 
 }  // namespace CoopRando

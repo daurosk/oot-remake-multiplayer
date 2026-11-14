@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <mutex>
 #include <set>
 #include <string>
@@ -521,4 +522,106 @@ TEST_CASE("rando: a host or a player alone whose build fails tells nobody") {
     rando.Recheck();
     rando.Wait();
     CHECK(told == 0);
+}
+
+namespace {
+// A guest's told lines, with a switch for being connected.
+struct Told {
+    std::mutex mutex;
+    std::vector<std::string> lines;
+    bool connected = true;
+    std::function<bool(const std::string&)> Hook() {
+        return [this](const std::string& line) {
+            const std::lock_guard lock(mutex);
+            if (!connected) return false;
+            lines.push_back(line);
+            return true;
+        };
+    }
+    std::vector<std::string> Get() {
+        const std::lock_guard lock(mutex);
+        return lines;
+    }
+};
+
+bool HasPath(const std::string& line) {
+    return line.find(":/") != std::string::npos || line.find(":\\") != std::string::npos ||
+           line.find('/') != std::string::npos || line.find('\\') != std::string::npos;
+}
+}  // namespace
+
+TEST_CASE("rando: the line a guest tells the others never holds a local path or setting") {
+    World w;
+    Told told;
+    auto hooks = w.Hooks();
+    hooks.tell_others = told.Hook();
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    loader.Start();
+    Rando rando(loader, hooks);
+    rando.Start();
+    // a setting naming a folder with the player's user name in it
+    REQUIRE(loader.Set(kFolder, "ootrr", "C:/Users/SecretName/ootrr.exe"));
+    REQUIRE(loader.Set(kFolder, "game_folder", CoopMods::ToUtf8(w.game)));
+    loader.SetHostValues(std::vector<CoopMods::SharedValue>{{kId, "on", "1"}, {kId, "seed", "HOSTP1"}});
+    rando.Wait();
+    CHECK(rando.Status().find("SecretName") != std::string::npos);  // said here, in the tab
+    // a failed build, whose local line names OOTRR's log in the mods folder
+    REQUIRE(loader.Set(kFolder, "ootrr", CoopMods::ToUtf8(w.ootrr)));
+    w.fail_at = 1;
+    loader.SetHostValues(std::vector<CoopMods::SharedValue>{{kId, "on", "1"}, {kId, "seed", "HOSTP2"}});
+    rando.Wait();
+    CHECK(rando.Status().find(CoopMods::ToUtf8(w.mods / kFolder / kLogFile)) != std::string::npos);
+    const auto lines = told.Get();
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[0] == "[randomizer] I play without the host's seed: OOTRR not found");
+    CHECK(lines[1] == "[randomizer] I play without the host's seed: OOTRR could not build the seed (exit 3)");
+    for (const std::string& l : lines) {
+        CHECK_MESSAGE(!HasPath(l), l);
+        CHECK(l.find("SecretName") == std::string::npos);
+    }
+}
+
+TEST_CASE("rando: a line not sent yet is dropped when the host's seed changes or the host goes") {
+    World w;  // no OOTRR set and none in the kit's place
+    Told told;
+    told.connected = false;
+    auto hooks = w.Hooks();
+    hooks.tell_others = told.Hook();
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    loader.Start();
+    Rando rando(loader, hooks);
+    rando.Start();
+    REQUIRE(loader.Set(kFolder, "game_folder", CoopMods::ToUtf8(w.game)));
+    loader.SetHostValues(std::vector<CoopMods::SharedValue>{{kId, "on", "1"}, {kId, "seed", "OLD1"}});
+    rando.Wait();
+    // OOTRR comes, the host picks another seed: built fine, so the old line is not true any more
+    REQUIRE(loader.Set(kFolder, "ootrr", CoopMods::ToUtf8(w.ootrr)));
+    loader.SetHostValues(std::vector<CoopMods::SharedValue>{{kId, "on", "1"}, {kId, "seed", "NEW2"}});
+    rando.Wait();
+    CHECK(On(loader, "randomizer-NEW2"));
+    {
+        const std::lock_guard lock(told.mutex);
+        told.connected = true;
+    }
+    rando.Recheck();
+    rando.Wait();
+    CHECK(told.Get().empty());
+    // failed again while not connected, then the host goes: nothing is sent later
+    {
+        const std::lock_guard lock(told.mutex);
+        told.connected = false;
+    }
+    REQUIRE(loader.Set(kFolder, "ootrr", CoopMods::ToUtf8(w.base / "gone.exe")));
+    loader.SetHostValues(std::vector<CoopMods::SharedValue>{{kId, "on", "1"}, {kId, "seed", "LATE3"}});
+    rando.Wait();
+    loader.SetHostValues(std::nullopt);
+    rando.Recheck();
+    rando.Wait();
+    {
+        const std::lock_guard lock(told.mutex);
+        told.connected = true;
+    }
+    rando.Recheck();
+    rando.Wait();
+    CHECK(told.Get().empty());
 }

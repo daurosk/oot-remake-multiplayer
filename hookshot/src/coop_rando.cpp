@@ -500,6 +500,12 @@ void Rando::Check() {
     bool seed_locked = false;
     const Want want = Wanted(&seed_locked);
     {
+        // A line for the others not sent yet is about the host's seed it named: gone with the host's values, or
+        // when the host's seed changed.
+        const std::lock_guard lock(mutex_);
+        if (!tell_.empty() && (!seed_locked || !loader_.HostValuesSet() || want.seed != tell_seed_)) tell_.clear();
+    }
+    {
         // Said once per change of the switch, in the tab until the restart and in the chat.
         const std::lock_guard lock(mutex_);
         // Back as this run started (a guest restarted on the host's seed, then joined): nothing to restart for.
@@ -591,13 +597,16 @@ void Rando::Build(const Plan& plan, const Want& want) {
             if (s.setting.key == "seed") hosts_seed = s.locked;
         }
     }
-    const auto fail = [&](std::string line) {
+    // `line` is for this game only (the tab and the log: it may name local folders); `reason` is what the others
+    // are told, a fixed plain text with no path or setting value in it (a path can hold the Windows user name).
+    const auto fail = [&](std::string line, std::string_view reason) {
         {
             const std::lock_guard lock(mutex_);
             last_failed_ = plan.folder;
             if (hosts_seed) {
                 // (sent, the line shows in this game's chat too, as "you: ...")
-                tell_ = TellLine(line);
+                tell_ = TellLine(reason);
+                tell_seed_ = want.seed;
                 if (!hooks_.tell_others) lines_.push_back(tell_);
             }
         }
@@ -619,7 +628,8 @@ void Rando::Build(const Plan& plan, const Want& want) {
                         ? std::string("OOTRR (the randomizer the kit brings) is not in tools/ootrr beside the game: "
                                       "start the game from the kit again (its setup downloads it)")
                         : "OOTRR not found at \"" + ootrr_setting + "\" (the OOTRR program setting): empty it to use "
-                                                                    "the kit's own");
+                                                                    "the kit's own",
+                    "OOTRR not found");
     }
     const auto game = FindGameFolder(game_setting, hooks_.game_dir);
     if (!game) {
@@ -627,11 +637,13 @@ void Rando::Build(const Plan& plan, const Want& want) {
                         ? std::string("the game's files (romfs beside the game, with Pack and System) are not there: "
                                       "build the kit's game again (Build-Hookshot-Coop)")
                         : "no game files (Pack and System) in \"" + game_setting +
-                              "\" (the Game folder setting): empty it to use the kit's own");
+                              "\" (the Game folder setting): empty it to use the kit's own",
+                    "game files not found");
     }
     for (const CoopMods::Row& r : loader_.Rows()) {
         if (CoopMods::NameSame(r.name, plan.folder) && r.on_now) {
-            return fail(plan.folder + " is in use by this game and not a finished seed: start the game again first");
+            return fail(plan.folder + " is in use by this game and not a finished seed: start the game again first",
+                        "the seed's folder is in use: a restart is needed");
         }
     }
     std::error_code ec;
@@ -642,7 +654,8 @@ void Rando::Build(const Plan& plan, const Want& want) {
     const fs::path seed_file = control / (plan.folder + ".ootrr");
     const int made = hooks_.run(*ootrr, GenerateArgs(want.preset, want.seed, seed_file), log);
     if (made != 0) {
-        return fail("OOTRR could not make the seed (" + exit_text(made) + "): see " + CoopMods::ToUtf8(log));
+        return fail("OOTRR could not make the seed (" + exit_text(made) + "): see " + CoopMods::ToUtf8(log),
+                    "OOTRR could not make the seed (" + exit_text(made) + ")");
     }
     const int built = hooks_.run(*ootrr, BuildArgs(seed_file, *game, root, plan.folder), log);
     if (built != 0 || !fs::is_regular_file(target / kSeedFile, ec)) {
@@ -652,12 +665,15 @@ void Rando::Build(const Plan& plan, const Want& want) {
         out << in.rdbuf();
         const std::string hint = BuildFailureHint(out.str());
         return fail("OOTRR could not build the seed (" + exit_text(built) + "): " +
-                    (hint.empty() ? "see " + CoopMods::ToUtf8(log) : hint));
+                        (hint.empty() ? "see " + CoopMods::ToUtf8(log) : hint),
+                    hint.empty() ? "OOTRR could not build the seed (" + exit_text(built) + ")"
+                                 : std::string("game files not version 1.1.1"));
     }
     WriteText(target / kPresetFile, (want.preset.empty() ? std::string("default") : want.preset) + "\n");
     {
         const std::lock_guard lock(mutex_);
         last_failed_.clear();
+        tell_.clear();  // built after all: a line not sent yet is not true any more
     }
     loader_.NoteChanged(kFolder, "Randomizer seed " + SeedWord(want.seed) + " is ready: start the game again to play it.");
 }

@@ -530,7 +530,7 @@ if (Test-Path -LiteralPath $ootrrPin) {
     $ootrrHave = if (Test-Path -LiteralPath $ootrrStamp) { (Get-Content -LiteralPath $ootrrStamp -TotalCount 1).Trim() } else { '' }
     if ($ootrrHave -eq $ootrrWant -and (Test-Path -LiteralPath (Join-Path $ootrrDir 'ootrr.exe'))) {
         Write-Host "  randomizer: OOTRR $($op.release) -> $ootrrDir (there already)"
-    } elseif (-not ($op.url -and $op.windows -and $op.windows_sha256 -match '^[0-9a-f]{64}$')) {
+    } elseif (-not ($op.url -and $op.windows -match '^[A-Za-z0-9._-]+$' -and $op.windows_sha256 -match '^[0-9a-f]{64}$')) {
         Write-Host '  hookshot\OOTRR.txt is incomplete: the randomizer is left out.' -ForegroundColor Yellow
     } else {
         New-Item -ItemType Directory -Force -Path $downloads | Out-Null

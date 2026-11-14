@@ -218,10 +218,12 @@ FolderChoice folder_choice(std::optional<bool> env, bool can_switch, bool connec
 bool decide_again(bool decided, bool over, bool in_game);
 
 // A guest's pending switch to the co-op folder (Hookshot), each frame: `go` only on the title's menu with the host's
-// save in (never during a load, where a re-mount changes the folder under the game's read: the 10.1 crash);
-// `drop` once Link is in the game (the player's own file or a new game). The hook also drops it when the player
-// picks a file on the title while waiting, or AutoLoad gives up (CoopSave::CancelPendingSwitch).
-enum class PendingStep { keep, go, drop };
+// save in and no file loaded (never during a load, where a re-mount changes the folder under the game's read: the
+// 10.1 crash; never under a game being played). Else `keep`: also while Link is in the game (the player loaded
+// their own file or a new game, maybe too early): the save still comes in and is switched to when they are back on
+// the title's menu, so "load a save after Success" holds. The hook holds it while the player's own pick on the
+// title loads (CoopSave::CancelPendingSwitch, ResumePendingSwitch).
+enum class PendingStep { keep, go };
 PendingStep pending_step(bool slot_in, bool title_up, bool in_game);
 
 // A guest's save state for ONE session (CoopSave): the ask sent, the parts coming in, a slot that came before the
@@ -262,8 +264,13 @@ class GuestNotices {
   static constexpr std::string_view kSuccessPlaying = "Success, load any save for changes to occur.";
   static constexpr std::string_view kTooEarly =
       "That save loaded before the host's save was in: go back to the title and load a save after Success.";
-  // A part of transfer `transfer_id` came: kLoading when it is a new transfer, else "".
-  std::string on_part(std::uint32_t transfer_id);
+  // A part of transfer `transfer_id` (of `count` parts) came: kLoading when it is a new transfer of a save, else "".
+  // A "no save" answer is one part (pack_no_save: a few bytes); a save slot is about 170 KB, many parts.
+  std::string on_part(std::uint32_t transfer_id, std::size_t count);
+  // The host answered "no save", or the transfer ended without a save to play (damaged, not a slot, the write or
+  // the folder switch failed): no Loading any more (the caller says what happened), no kTooEarly.
+  void on_no_save() { loading_ = false; }
+  void on_failed() { loading_ = false; }
   // The save is written and played from: kSuccessTitle when Link is not in the game, else kSuccessPlaying.
   std::string on_ready(bool in_game);
   // Each frame: Link in the game or not. kTooEarly when Link came in while the save was still loading.

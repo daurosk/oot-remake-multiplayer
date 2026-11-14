@@ -244,9 +244,11 @@ TEST_CASE("save transfer: a guest's switch to the host's save goes only on the t
   CHECK(pending_step(true, true, false) == PendingStep::go);     // in, on the title's menu
   CHECK(pending_step(true, false, false) == PendingStep::keep);  // in, but the title is not up (booting, or a
                                                                  // file loading): never a re-mount under a load
-  CHECK(pending_step(true, true, true) == PendingStep::drop);    // Link is in the game: the player's own file
-  CHECK(pending_step(false, false, true) == PendingStep::drop);
-  CHECK(pending_step(true, false, true) == PendingStep::drop);
+  // Link is in the game (the player's own file or a new game, maybe loaded too early): kept, never switched under it;
+  // switched once they are back on the title's menu with no file loaded
+  CHECK(pending_step(true, true, true) == PendingStep::keep);
+  CHECK(pending_step(false, false, true) == PendingStep::keep);
+  CHECK(pending_step(true, false, true) == PendingStep::keep);
 }
 
 TEST_CASE("save transfer: a send the full outbox could not take is owed again") {
@@ -513,8 +515,8 @@ TEST_CASE("save transfer: the guest's lines come in order: loading, (too early),
   // at the title: loading once per transfer, then success at the title
   N n;
   CHECK(n.on_in_game(false).empty());
-  CHECK(n.on_part(7) == N::kLoading);
-  CHECK(n.on_part(7).empty());   // (the same transfer's other parts)
+  CHECK(n.on_part(7, 11) == N::kLoading);
+  CHECK(n.on_part(7, 11).empty());   // (the same transfer's other parts)
   CHECK(n.loading());
   CHECK(n.on_in_game(false).empty());
   CHECK(n.on_ready(false) == N::kSuccessTitle);
@@ -523,7 +525,7 @@ TEST_CASE("save transfer: the guest's lines come in order: loading, (too early),
   // the player loads a save while it loads: told once to load again after Success
   N early;
   early.on_in_game(false);
-  CHECK(early.on_part(3) == N::kLoading);
+  CHECK(early.on_part(3, 11) == N::kLoading);
   CHECK(early.on_in_game(true) == N::kTooEarly);
   CHECK(early.on_in_game(true).empty());
   early.on_in_game(false);
@@ -533,14 +535,59 @@ TEST_CASE("save transfer: the guest's lines come in order: loading, (too early),
   // success says the changes need a load
   N playing;
   playing.on_in_game(true);
-  CHECK(playing.on_part(9) == N::kLoading);
+  CHECK(playing.on_part(9, 11) == N::kLoading);
   CHECK(playing.on_in_game(true).empty());
   CHECK(playing.on_ready(true) == N::kSuccessPlaying);
   // the host loads another save later: a new transfer says loading again
-  CHECK(playing.on_part(10) == N::kLoading);
+  CHECK(playing.on_part(10, 11) == N::kLoading);
   CHECK(playing.on_ready(true) == N::kSuccessPlaying);
   // the owner's exact wording
   CHECK(N::kLoading == "Host save loading, don't load a save.");
   CHECK(N::kSuccessTitle == "Success, load any save.");
   CHECK(N::kSuccessPlaying == "Success, load any save for changes to occur.");
+}
+
+TEST_CASE("save transfer: no Loading for a no-save answer; a failed transfer ends Loading") {
+  using N = save::GuestNotices;
+  // the host has no save: its answer is one part; no Loading, and loading a save then is not "too early"
+  N none;
+  none.on_in_game(false);
+  CHECK(none.on_part(4, 1).empty());
+  CHECK_FALSE(none.loading());
+  none.on_no_save();
+  CHECK(none.on_in_game(true).empty());
+  // a save that came damaged (or could not be read, written or switched to): Loading ends, no "too early" after
+  N failed;
+  failed.on_in_game(false);
+  CHECK(failed.on_part(5, 11) == N::kLoading);
+  failed.on_failed();
+  CHECK_FALSE(failed.loading());
+  CHECK(failed.on_in_game(true).empty());
+  // the host's next send is a new transfer: Loading again
+  failed.on_in_game(false);
+  CHECK(failed.on_part(6, 11) == N::kLoading);
+  CHECK(failed.loading());
+}
+
+TEST_CASE("save transfer: loaded too early, the save still comes and is switched to back on the title") {
+  using N = save::GuestNotices;
+  using save::PendingStep;
+  using save::pending_step;
+  N n;
+  bool slot_in = false, in_game = false, title = true;
+  n.on_in_game(in_game);
+  CHECK(n.on_part(8, 11) == N::kLoading);
+  // the player loads their own file while it comes: told to go back to the title after Success
+  title = false;
+  in_game = true;
+  CHECK(n.on_in_game(in_game) == N::kTooEarly);
+  // the rest comes in while they play: kept, never switched under the game
+  slot_in = true;
+  CHECK(pending_step(slot_in, title, in_game) == PendingStep::keep);
+  // back on the title's menu with no file loaded: switched, then Success (at the title)
+  in_game = false;
+  title = true;
+  CHECK(n.on_in_game(in_game).empty());
+  CHECK(pending_step(slot_in, title, in_game) == PendingStep::go);
+  CHECK(n.on_ready(in_game) == N::kSuccessTitle);
 }

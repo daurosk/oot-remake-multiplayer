@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_title.h"
 
-#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -13,7 +12,6 @@
 #include <random>
 #include <string>
 #include <system_error>
-#include <vector>
 
 #include <fmt/format.h>
 

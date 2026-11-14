@@ -180,15 +180,13 @@ void SwitchFrame(coop::net::Client& client) {
 // meanwhile): no switch, the save stays unused.
 void PendingFrame() {
     if (g_pending.empty()) return;
+    if (g_in_game && g_suspended) {
+        g_suspended = false;   // (the player's own pick has loaded: back on the title's menu, the switch goes)
+        LOG_INFO(Core, "coop: save: a file is loaded: the host's save is switched to when the title is back");
+    }
     switch (save::pending_step(g_guest.unwritten.has_value(), g_title_up && !g_suspended, g_in_game)) {
     case save::PendingStep::keep:
-        return;
-    case save::PendingStep::drop:
-        LOG_INFO(Core, "coop: save: a file is loaded: this game keeps it; the host's save is not used");
-        g_pending.clear();
-        g_suspended = false;
-        g_guest.unwritten.reset();
-        return;
+        return;   // (also while a file is played: switched on the title's menu, after it)
     case save::PendingStep::go:
         break;
     }
@@ -200,7 +198,8 @@ void PendingFrame() {
         LOG_WARNING(Core, "coop: save: could not switch the save folder to {}: this game keeps {}", to.string(),
                     g_dir.string());
         g_guest.ready = false;
-        Say("The host's save came, but this game could not switch to it (see the log).");
+        g_lines.on_failed();
+        Say("The host's save came, but this game could not switch to it (see the log): play your own save.");
         return;
     }
     NoteSaveDirLocked(to);
@@ -220,10 +219,12 @@ save::WriteResult WriteSlotTo(const fs::path& dir, const save::SaveSlot& slot, b
         break;
     case save::WriteResult::not_coop:
         LOG_WARNING(Core, "coop: save: refused to write the host's save into {}", dir.string());
+        g_lines.on_failed();
         break;
     case save::WriteResult::failed:
         LOG_ERROR(Core, "coop: save: could not write the host's save into {}", dir.string());
-        Say("The host's save could not be written (see the log).");
+        g_lines.on_failed();
+        Say("The host's save could not be written (see the log): play your own save.");
         break;
     }
     return result;
@@ -370,7 +371,9 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     }
     g_guest.last_part_us = CoopEvery::NowUs();
     g_guest.said_stuck = false;
-    if (part->player_number == client.host_number() && !client.is_host()) Say(g_lines.on_part(part->transfer_id));
+    if (part->player_number == client.host_number() && !client.is_host()) {
+        Say(g_lines.on_part(part->transfer_id, part->count));
+    }
     switch (g_guest.assembler.add(*part, client.host_number())) {
     case save::Assembler::Result::partial:
         return;
@@ -381,6 +384,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     case save::Assembler::Result::bad_crc:
         LOG_WARNING(Core, "coop: save: the host's save (transfer {}) came damaged (CRC); waiting for "
                           "the next one", part->transfer_id);
+        g_lines.on_failed();
         Say("The host's save came damaged; it is sent again after the host's next save.");
         return;
     case save::Assembler::Result::complete:
@@ -391,12 +395,15 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
         LOG_INFO(Core, "coop: save: the host has no save yet (a new game): this game keeps its own saves");
         g_guest.no_save = true;
         g_pending.clear();   // (nothing to switch to)
+        g_lines.on_no_save();
         Say("The host has no save yet: New Game starts one, Continue plays your own.");
         return;
     }
     const auto slot = save::unpack(packed);
     if (!slot) {
         LOG_WARNING(Core, "coop: save: the host's save (transfer {}) is not a save slot", part->transfer_id);
+        g_lines.on_failed();
+        Say("The host's save could not be read (see the log): play your own save, or join again.");
         return;
     }
     LOG_INFO(Core, "coop: save: the host's save is in ({} bytes, {}, transfer {})", packed.size(),

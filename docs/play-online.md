@@ -178,7 +178,7 @@ Everyone plays from the host's save: when you join, the host's game sends its ne
 2. **"Success, load any save."** It is in: press Continue (or pick any save in Load). At the title every save there is the host's.
 3. During play (you joined while playing, or the host loaded another save) it says **"Success, load any save for changes to occur."**: load a save (Load in the menu) to stand where the host's save starts.
 
-If you load a save before Success, the chat says to go back to the title and load again after Success. A save that comes late is still kept and announced. If the host's game ends before the save came, the title says so and Continue plays your own save. The title's bottom-left line says the same while it waits.
+If you load a save before Success, the chat says so: the host's save still comes in while you play, and when you go back to the title screen the chat says Success and you load it from there. A save that comes late is still kept and announced. If the host's game ends before the save came, the title says so and Continue plays your own save. The title's bottom-left line says the same while it waits.
 
 ## Lobby
 

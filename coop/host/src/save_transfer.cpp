@@ -227,8 +227,8 @@ std::vector<Planner::Send> Planner::due(std::optional<Time> newest) {
   return out;
 }
 
-std::string GuestNotices::on_part(std::uint32_t transfer_id) {
-  if (started_ && transfer_id == transfer_) return {};
+std::string GuestNotices::on_part(std::uint32_t transfer_id, std::size_t count) {
+  if (count <= 1 || (started_ && transfer_id == transfer_)) return {};
   started_ = true;
   transfer_ = transfer_id;
   loading_ = true;
@@ -405,8 +405,7 @@ int clear_coop_slots(const fs::path& coop_dir) {
 }
 
 PendingStep pending_step(bool slot_in, bool title_up, bool in_game) {
-  if (in_game) return PendingStep::drop;
-  return slot_in && title_up ? PendingStep::go : PendingStep::keep;
+  return slot_in && title_up && !in_game ? PendingStep::go : PendingStep::keep;
 }
 
 bool decide_again(bool decided, bool over, bool in_game) {

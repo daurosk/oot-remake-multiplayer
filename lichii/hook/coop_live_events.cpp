@@ -304,46 +304,23 @@ void Requester::WantFromRoom(std::string name, std::string scene) {
 
 std::uint64_t NearestActor(CoopPuppet::Guest& guest, std::uint64_t main, std::span<const std::string_view> names,
                            const std::array<float, 3>& at, float max_m) {
-    namespace fa = CoopFairy::addr;
-    const auto read = [&](std::uint64_t a, auto& out) { return a != 0 && guest.Read(a, &out, sizeof out); };
-    std::uint64_t manager = 0, lists = 0, node = 0;
-    if (main == 0 || !read(main + fa::kManagerPtr, manager) || !read(manager + fa::kLists, lists) || lists == 0) {
-        return 0;
-    }
-    const std::uint64_t head = lists + fa::kListHead;
-    if (!read(head, node)) {
-        return 0;
-    }
     std::uint64_t best = 0;
     float best_d2 = max_m * max_m;
-    for (std::size_t walked = 0; node != 0 && node != head && walked < fa::kMaxWalk; ++walked) {
-        std::uint64_t owner = 0, text = 0;
-        std::uint32_t state = 0;
-        if (read(node + fa::kNodeOwner, owner) && owner != 0 && owner + fa::kActorNode == node &&
-            read(owner + fa::kActorState, state) && state == fa::kStatePresent &&
-            read(owner + fa::kActorName, text)) {
-            // Each name read at its own length and its 0 (as CoopFairy's NameIs): never past the actor's string.
-            const bool named = std::any_of(names.begin(), names.end(), [&](std::string_view n) {
-                char buf[64] = {};
-                return n.size() < sizeof buf && guest.Read(text, buf, n.size() + 1) &&
-                       std::string_view(buf, n.size()) == n && buf[n.size()] == 0;
-            });
-            {
-                std::array<float, 3> p{};
-                if (named && guest.Read(owner + kActorPosition, p.data(), sizeof p)) {
-                    const float dx = p[0] - at[0], dy = p[1] - at[1], dz = p[2] - at[2];
-                    const float d2 = dx * dx + dy * dy + dz * dz;
-                    if (d2 <= best_d2) {
-                        best_d2 = d2;
-                        best = owner;
-                    }
-                }
+    CoopFairy::WalkActors(guest, main, [&](std::uint64_t actor) {
+        std::array<float, 3> p{};
+        if (CoopFairy::ActorPresent(guest, actor) &&
+            std::any_of(names.begin(), names.end(),
+                        [&](std::string_view n) { return CoopFairy::ActorNamed(guest, actor, n); }) &&
+            guest.Read(actor + CoopPuppet::addr::kActorPosition, p.data(), sizeof p)) {
+            const float dx = p[0] - at[0], dy = p[1] - at[1], dz = p[2] - at[2];
+            const float d2 = dx * dx + dy * dy + dz * dz;
+            if (d2 <= best_d2) {
+                best_d2 = d2;
+                best = actor;
             }
         }
-        if (!read(node, node)) {
-            return best;
-        }
-    }
+        return false;  // the whole list: the nearest wins
+    });
     return best;
 }
 
@@ -505,6 +482,17 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
                 notes_.push_back("live event " + current_ + ": its arguments do not fit the request; not asked");
                 return FreeFirst(guest, main);
             }
+            if (current_starter_ != 0 && current_room_asker_ &&
+                !(CoopFairy::ActorPresent(guest, current_starter_) &&
+                  std::any_of(std::begin(kAskerNames), std::end(kAskerNames), [&](std::string_view n) {
+                      return CoopFairy::ActorNamed(guest, current_starter_, n);
+                  }))) {
+                // Found when the event was picked, a frame ago: deleted since (its Logic_Delete, the room unloaded)?
+                // Never hand the game's link a freed actor.
+                notes_.push_back("live event " + current_ + ": our room's asker went away before the link; asked by "
+                                 "name alone");
+                current_starter_ = 0;
+            }
             if (current_starter_ != 0) {
                 c.function = main + addr::kSetLink;
                 c.x[0] = block_ + addr::kArgMember2;
@@ -534,6 +522,7 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
             current_.clear();
             current_args_.clear();
             current_starter_ = 0;
+            current_room_asker_ = false;
             return std::nullopt;  // one event a frame
         case Next::none:
             return std::nullopt;
@@ -561,9 +550,11 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
         current_ = std::move(wanted_.front().name);
         current_args_ = std::move(wanted_.front().args);
         current_starter_ = wanted_.front().starter;
+        current_room_asker_ = false;
         if (wanted_.front().room_asker && current_starter_ == 0) {
             std::string where;
             current_starter_ = FindAsker(guest, main, current_, wanted_.front().scene, where);
+            current_room_asker_ = current_starter_ != 0;
             notes_.push_back(current_starter_ != 0
                                  ? "live event " + current_ + ": started by our room's asker at " + where +
                                        " (its EventBool moves the room)"

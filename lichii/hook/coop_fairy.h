@@ -122,6 +122,14 @@ inline constexpr std::size_t kMaxWalk = 8192;
 // thread (or a test).
 std::uint64_t FindActor(CoopPuppet::Guest& guest, std::uint64_t main_base, std::string_view name);
 
+// The game's live actor list walked once: `visit` gets each actor the list owns (owner + kActorNode is its node), in
+// list order, and returns true to stop there. Returns the actor it stopped at, or 0. The calc thread (or a test).
+std::uint64_t WalkActors(CoopPuppet::Guest& guest, std::uint64_t main_base,
+                         const std::function<bool(std::uint64_t actor)>& visit);
+// The actor is present (state kStatePresent) / its name is exactly `name` (read at that length and its 0).
+bool ActorPresent(CoopPuppet::Guest& guest, std::uint64_t actor);
+bool ActorNamed(CoopPuppet::Guest& guest, std::uint64_t actor, std::string_view name);
+
 // The wing beat: the fairy actor (Dm_Npc_Navi) plays no animation of its own,
 // so each frame the local player's own Navi's skeleton pose is copied onto
 // every fairy (CoopPose::CopySkeleton). The fairies so flap and turn as the

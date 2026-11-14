@@ -736,7 +736,7 @@ struct ActorList {
         const std::uint64_t text = names + 0x40 * nodes.size();
         m.Write(text, name.c_str(), name.size() + 1);
         m.Put64(actor + fa::kActorName, text);
-        m.Write(actor + CoopLiveEvents::kActorPosition, at.data(), sizeof at);
+        m.Write(actor + CoopPuppet::addr::kActorPosition, at.data(), sizeof at);
         // Push at the front of the ring.
         m.Put64(node, m.Get64(head));
         m.Put64(head, node);
@@ -750,12 +750,12 @@ TEST_CASE("live events: a room gimmick event is started by our room's asker, so 
     m.Put64(kMain + addr::kManagerPtr, kHolder);
     m.Put64(kHolder, kManager);
     ActorList list(m);
-    constexpr std::uint64_t kAsker = 0x9800000000, kOtherAsker = 0x9810000000, kLadder = 0x9820000000,
+    constexpr std::uint64_t kAsker = 0x9800000000, kOtherAsker = 0x9810000000, kLift = 0x9820000000,
                             kGone = 0x9830000000;
-    // The compass room's asker at its place, the slingshot room's elsewhere, a ladder on the place, a dead asker.
+    // The compass room's asker at its place, the slingshot room's elsewhere, a lift on the place, a dead asker.
     list.Add(kAsker, "EventRequestActor", {-22.62f, 122.58f, -3.81f});
     list.Add(kOtherAsker, "EventRequestActor", {-37.5f, 117.8f, 12.5f});
-    list.Add(kLadder, "Obj_InsideTheDekuTree_ElevatorLift_A_01", {-22.6f, 122.6f, -3.8f});
+    list.Add(kLift, "Obj_InsideTheDekuTree_ElevatorLift_A_01", {-22.6f, 122.6f, -3.8f});
     list.Add(kGone, "EventRequestActor", {-22.6f, 122.6f, -3.8f}, 2);
 
     const std::array<std::string_view, 1> names{"EventRequestActor"};
@@ -806,4 +806,30 @@ TEST_CASE("live events: a room gimmick event is started by our room's asker, so 
         call = r.Step(m, true, Run(m, *call), kMain);
     }
     CHECK(order == std::vector<std::uint64_t>{addr::kArgBuild, addr::kRequest, addr::kStringFree, addr::kStringFree});
+}
+
+TEST_CASE("live events: an asker deleted between the pick and the link is not handed to the game") {
+    Mem m;
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    ActorList list(m);
+    constexpr std::uint64_t kAsker = 0x9800000000;
+    list.Add(kAsker, "EventRequestActor", {-37.5f, 117.8f, 12.5f});
+    CoopLiveEvents::Requester r;
+    r.WantFromRoom("InsideTheDekuTree_Gimmick_FallingLadder", "InsideTheDekuTree");
+    std::vector<std::uint64_t> order;
+    auto call = r.Step(m, false, 0, kMain);
+    while (call) {
+        order.push_back(call->function - kMain);
+        const std::uint64_t x0 = Run(m, *call);
+        if (call->function == kMain + addr::kArgBuild) {
+            m.Put32(kAsker + CoopFairy::addr::kActorState, 2);  // the room graph's Logic_Delete, this frame
+        }
+        call = r.Step(m, true, x0, kMain);
+    }
+    CHECK(order == std::vector<std::uint64_t>{addr::kMalloc, addr::kArgBuild, addr::kRequest, addr::kStringFree,
+                                              addr::kStringFree});
+    bool said = false;
+    for (const auto& n : r.TakeNotes()) said |= n.find("asker went away before the link") != std::string::npos;
+    CHECK(said);
 }

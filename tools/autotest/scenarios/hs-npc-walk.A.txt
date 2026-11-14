@@ -15,7 +15,9 @@ mark start
 warp KakarikoVillage_Child Kakariko_WellSide
 wait 1200               # the warp's load; A is there first and owns the villagers
 mark arrived
-wait 1800               # B arrives (warp at 20 s, load about 15 s) and takes copies
+wait 1500               # B arrives (warp at 20 s, load about 15 s) and takes copies
+place -62.0 98.5 40.0   # in the village between the walkers (the warp point is the gate: none in view)
+wait 300
 mark w1
 wait 15
 mark w2

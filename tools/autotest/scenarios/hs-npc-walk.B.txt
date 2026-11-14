@@ -3,7 +3,9 @@
 mark start
 wait 1200
 warp KakarikoVillage_Child Kakariko_WellSide
-wait 1800               # the warp's load, then copies of A's villagers (w1 at 50 s, as A)
+wait 1500               # the warp's load, then copies of A's villagers (w1 at 50 s, as A)
+place -62.0 98.5 40.0   # in the village between the walkers (the warp point is the gate: none in view)
+wait 300
 mark w1
 wait 15
 mark w2

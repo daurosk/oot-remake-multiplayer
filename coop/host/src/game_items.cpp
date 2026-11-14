@@ -605,6 +605,12 @@ std::optional<std::uint32_t> lift_grade_raise(std::int32_t goron, std::int32_t s
   return kOrder[want];
 }
 
+std::optional<float> dive_depth_raise(std::int32_t silver, std::int32_t gold, float current) {
+  const float want = gold >= 1 ? dive::kGoldDepth : silver >= 1 ? dive::kSilverDepth : 0.0f;
+  if (!(want > current)) return std::nullopt;  // a NaN current is left alone too
+  return want;
+}
+
 std::optional<std::string_view> ocarina_equip_mend(std::int32_t fairy, std::int32_t time,
                                                    std::string_view current) {
   const std::string_view want =

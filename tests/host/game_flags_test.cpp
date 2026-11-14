@@ -1,3 +1,4 @@
+#include <bit>
 #include <doctest/doctest.h>
 
 #include <functional>
@@ -472,4 +473,34 @@ TEST_CASE("game flags: without the call list the setters write the game's queues
   GameFlags::use_calls(nullptr);
   CHECK(GameFlags::set_bool(w, 0x18, true));
   CHECK((*coop::host::read_u32(w.mem, kMgr + 0x10 + 0x30) & 0xfffff) == 1);
+}
+
+TEST_CASE("game flags: Float flags (PlayerStatus.DiveDepth) read and set as the game's Float setter does") {
+  using coop::host::GameFlagType;
+  constexpr std::uint64_t kFloatEntries = 0x8700000000ull, kFloatSlots = 0x8710000000ull,
+                          kFloatQueue = 0x8720000000ull;
+  auto w = game();
+  table(w.mem, 0x190, kFloatEntries, kFloatSlots, 0x28, {0x77});
+  queue(w.mem, 0x190, kFloatQueue, 12);
+  w.mem.put_u32(kFloatEntries + 0x1c, std::bit_cast<std::uint32_t>(3.0f));
+  GameFlags f(w);
+  CHECK(f.get_float(0x77) == 3.0f);
+  CHECK_FALSE(f.get_float(0x22));  // an Int is not a Float
+  CHECK_FALSE(GameFlags::set_float(w, 0x22, 6.0f));
+  // Without the call list: into the Float queue, {f32 value, u32 hash}, as f_7100ba6f80 writes it.
+  REQUIRE(GameFlags::set_float(w, 0x77, 6.0f));
+  CHECK(coop::host::read_u32(w.mem, kFloatQueue) == std::bit_cast<std::uint32_t>(6.0f));
+  CHECK(coop::host::read_u32(w.mem, kFloatQueue + 4) == 0x77u);
+  CHECK(f.get_float(0x77) == 6.0f);
+  CHECK(coop::host::read_u32(w.mem, kIntQueue + 4) == 0u);  // the Int queue is untouched
+  CHECK(GameFlags::setter_has_room(w, GameFlagType::float32));
+  // With the game's setters: the write waits in the call list as a float32 with the value's bits.
+  coop::host::GameFlagCalls calls;
+  GameFlags::use_calls(&calls);
+  struct Off {
+    ~Off() { GameFlags::use_calls(nullptr); }
+  } off;
+  REQUIRE(GameFlags::set_float(w, 0x77, 9.0f));
+  CHECK(calls.pending(GameFlagType::float32, 0x77) == std::bit_cast<std::uint32_t>(9.0f));
+  CHECK(f.get_float(0x77) == 9.0f);
 }

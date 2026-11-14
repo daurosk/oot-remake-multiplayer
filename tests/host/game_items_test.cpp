@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <limits>
 #include <map>
 #include <set>
 #include <string>
@@ -1194,4 +1195,19 @@ TEST_CASE("rando items: a shared bracelet lets bomb flowers and bombs be lifted"
   CHECK(coop::host::lift_grade_raise(1, 1, 1, lift::kMiddle) == lift::kHigh);
   CHECK(!coop::host::lift_grade_raise(1, 0, 0, lift::kHigh));  // never lowered
   CHECK(lift::kGoron == pouch("Armor_Child_Gauntlet_Goron"));
+}
+
+TEST_CASE("rando items: a shared scale dives as deep as OOTRR's (DiveDepth 6 / 9)") {
+  namespace dive = coop::host::dive;
+  using coop::host::dive_depth_raise;
+  CHECK(dive::kDepth == protocol::flag_hash("PlayerStatus.DiveDepth"));
+  CHECK(dive::kSilver == pouch("Item_Scale_Silver"));
+  CHECK(dive::kGold == pouch("Item_Scale_Gold"));
+  CHECK(!dive_depth_raise(0, 0, 3.0f));             // no scale: the game's own 3.0
+  CHECK(dive_depth_raise(1, 0, 3.0f) == 6.0f);      // the Silver Scale from another player
+  CHECK(dive_depth_raise(1, 1, 6.0f) == 9.0f);      // then the Golden one
+  CHECK(dive_depth_raise(0, 1, 3.0f) == 9.0f);      // the Golden alone (progressive: both held, max rule)
+  CHECK(!dive_depth_raise(1, 0, 6.0f));             // already there: nothing written
+  CHECK(!dive_depth_raise(1, 0, 12.0f));            // never lowered
+  CHECK(!dive_depth_raise(1, 0, std::numeric_limits<float>::quiet_NaN()));
 }

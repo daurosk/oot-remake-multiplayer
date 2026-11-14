@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 
 #include "coop/host/game_flag_events.hpp"
 #include "coop/host/game_flags.hpp"
@@ -89,7 +90,7 @@ void Feed(Session& session) {
 // the caller then goes back to the queues (GameFlags::use_calls(nullptr)).
 inline bool RunSetters(coop::host::GameMemory& memory,
                        const std::function<bool(std::uint64_t function, std::uint64_t x0, std::uint64_t x1,
-                                                std::uint64_t x2)>& call) {
+                                                std::uint64_t x2, std::optional<std::uint32_t> s0)>& call) {
     coop::host::GameFlagCalls& calls = Calls();
     if (calls.size() == 0) {
         return true;
@@ -105,8 +106,12 @@ inline bool RunSetters(coop::host::GameMemory& memory,
             waited = true;
             return false;
         }
-        // (manager, value, hash or key): docs/flags.md, "Functions".
-        if (!call(memory.main_base() + coop::host::setter_offset(write.type), *manager, write.value, write.id)) {
+        // (manager, value, hash or key): docs/flags.md, "Functions". A Float: (manager, hash in w1, value in s0).
+        const std::uint64_t function = memory.main_base() + coop::host::setter_offset(write.type);
+        const bool made_call = write.type == coop::host::GameFlagType::float32
+                                   ? call(function, *manager, write.id, 0, write.value)
+                                   : call(function, *manager, write.value, write.id, std::nullopt);
+        if (!made_call) {
             ok = false;
             return false;
         }

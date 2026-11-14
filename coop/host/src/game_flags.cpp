@@ -39,6 +39,10 @@ constexpr Table kUInt{0x790, 0x798, 0x7a0, 0x7ac, 0x28, 0x1c, 0x7b0, 0x7b8, 0x7c
 // +0x1c, 8-byte queue slots {u32 value, u32 hash}, as the getter 0x7e73d0
 // and the setter 0x3e0980 read them.
 constexpr Table kEnum{0x250, 0x258, 0x260, 0x26c, 0x38, 0x1c, 0x270, 0x278, 0x280, 8};
+// Float (type 4, M + 0x190): the Int layout 0xc0 further on, as the getter 0x607f70 and the setter 0xba6f80
+// (f_7100ba6f80 in the recomp's main) read them: entries of 0x28, value (the float's bits) at +0x1c, 12-byte queue slots
+// {f32 value, u32 hash}. The setter takes the value in s0 and the hash in w1 (the Int setter: value w1, hash w2).
+constexpr Table kFloat{0x190, 0x198, 0x1a0, 0x1ac, 0x28, 0x1c, 0x1b0, 0x1b8, 0x1c0, 12};
 constexpr Table kString64{0x610, 0x618, 0x620, 0x62c, 0x108, 0, 0, 0, 0, 0};
 constexpr std::uint64_t kStringText = 0x68, kStringSize = 0x70;
 // The game's String64 buffers hold 64 bytes; more is not a String64.
@@ -221,6 +225,22 @@ std::optional<std::int32_t> GameFlags::get_int(std::uint32_t hash) {
   return static_cast<std::int32_t>(*v);
 }
 
+std::optional<float> GameFlags::get_float(std::uint32_t hash) {
+  const auto mgr = manager(memory_);
+  if (!mgr) return std::nullopt;
+  const auto index = find(memory_, *mgr, kFloat, hash);
+  if (!index) return std::nullopt;
+  if (const auto w = waiting(GameFlagType::float32, hash)) return std::bit_cast<float>(*w);
+  if (const auto q = queued(memory_, *mgr, kFloat.queue_cap, kFloat.queue_buf, kFloat.queue_word,
+                            kFloat.slot_size, hash))
+    return std::bit_cast<float>(*q);
+  const auto entries = read_ptr(memory_, *mgr + kFloat.entries);
+  if (!entries) return std::nullopt;
+  const auto v = read_u32(memory_, *entries + kFloat.stride * *index + kFloat.value);
+  if (!v) return std::nullopt;
+  return std::bit_cast<float>(*v);
+}
+
 std::optional<std::uint32_t> GameFlags::get_uint(std::uint32_t hash) {
   const auto mgr = manager(memory_);
   if (!mgr) return std::nullopt;
@@ -345,6 +365,7 @@ bool GameFlags::setter_has_room(GameMemory& m, GameFlagType type) {
   switch (type) {
     case GameFlagType::boolean: return !no_room(m, *mgr, kBool.queue_cap, kBool.queue_word);
     case GameFlagType::int32: return !no_room(m, *mgr, kInt.queue_cap, kInt.queue_word);
+    case GameFlagType::float32: return !no_room(m, *mgr, kFloat.queue_cap, kFloat.queue_word);
     case GameFlagType::enum32: return !no_room(m, *mgr, kEnum.queue_cap, kEnum.queue_word);
     case GameFlagType::uint32: return !no_room(m, *mgr, kUInt.queue_cap, kUInt.queue_word);
     case GameFlagType::key64: return !no_room(m, *mgr, kKeyQueueCap, kKeyQueueWord);
@@ -430,6 +451,16 @@ bool GameFlags::set_int(WritableGameMemory& m, std::uint32_t hash, std::int32_t 
     return calls->put({GameFlagType::int32, hash, static_cast<std::uint32_t>(value)});
   return enqueue(m, *mgr, kInt.queue_cap, kInt.queue_buf, kInt.queue_word, kInt.slot_size,
                  static_cast<std::uint32_t>(value), hash, false);
+}
+
+bool GameFlags::set_float(WritableGameMemory& m, std::uint32_t hash, float value) {
+  const auto mgr = manager(m);
+  if (!mgr || !find(m, *mgr, kFloat, hash)) return false;
+  const auto bits = std::bit_cast<std::uint32_t>(value);
+  if (GameFlagCalls* calls = g_calls.load(std::memory_order_acquire))
+    return calls->put({GameFlagType::float32, hash, bits});
+  return enqueue(m, *mgr, kFloat.queue_cap, kFloat.queue_buf, kFloat.queue_word, kFloat.slot_size, bits, hash,
+                 false);
 }
 
 bool GameFlags::set_uint(WritableGameMemory& m, std::uint32_t hash, std::uint32_t value) {

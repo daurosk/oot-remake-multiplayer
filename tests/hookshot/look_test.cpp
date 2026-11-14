@@ -380,7 +380,7 @@ TEST_CASE("look parts: every gear part has a texture, every texture once") {
     CHECK(parts.size() == CoopLook::kParts - 1);
 }
 
-TEST_CASE("look parts: the gear painted in a look; a painting's name says its colours") {
+TEST_CASE("look parts: the gear painted in a look, a painting's name says its colours") {
     Look look;
     CHECK_FALSE(CoopLookParts::AnyGear(look));
     CHECK(CoopLookParts::Name(look) == "gear");

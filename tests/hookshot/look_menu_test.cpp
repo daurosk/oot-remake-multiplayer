@@ -57,7 +57,7 @@ TEST_CASE("look menu: every part on the list, by item, under its heading") {
     CHECK_FALSE(v.picture.empty());
 }
 
-TEST_CASE("look menu: Left and Right try the presets; the change is handed on once") {
+TEST_CASE("look menu: Left and Right try the presets, the change is handed on once") {
     Page page;
     page.Open(Look{});
     const int frame = RowOf(page, "Hylian Shield", "Frame");
@@ -110,7 +110,7 @@ TEST_CASE("look menu: Confirm mixes a colour of one's own, Back goes back to the
     CHECK_FALSE(page.Press(Input::kBack));         // the list: the tab's own Back
 }
 
-TEST_CASE("look menu: a part with no colour mixes from the game's own; Game's own colour and Done") {
+TEST_CASE("look menu: a part with no colour mixes from the game's own, Game's own colour and Done") {
     Page page;
     page.Open(Look{});
     page.Select(static_cast<std::size_t>(RowOf(page, "Boots", "Leather")));
@@ -131,7 +131,7 @@ TEST_CASE("look menu: a part with no colour mixes from the game's own; Game's ow
     CHECK_FALSE(page.editing());
 }
 
-TEST_CASE("look menu: everything back to the game's own; the picture follows the item looked at") {
+TEST_CASE("look menu: everything back to the game's own, the picture follows the item looked at") {
     Look start;
     start[Part::tunic] = 0xFF0000u;
     start[Part::deku_shield] = 0x00FF00u;

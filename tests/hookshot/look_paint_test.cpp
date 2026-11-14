@@ -196,7 +196,7 @@ TEST_CASE("look paint: the same bytes as the pack tool's rewrite") {
     }
 }
 
-TEST_CASE("look paint: parts of one texture, each its own colour; the rest stays") {
+TEST_CASE("look paint: parts of one texture, each its own colour, the rest stays") {
     // BC1 blocks: a blue one, a grey one, a red one, a brown one (c0 > c1: 4-colour mode).
     auto block = [](std::uint16_t c0, std::uint16_t c1) {
         return std::vector<std::uint8_t>{static_cast<std::uint8_t>(c0), static_cast<std::uint8_t>(c0 >> 8),

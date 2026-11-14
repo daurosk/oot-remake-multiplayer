@@ -544,7 +544,7 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     CHECK_FALSE(Selected(m).empty());
 }
 
-TEST_CASE("pause tab: Customize Link opens the customizer; its changes are asked of the module; Back comes back") {
+TEST_CASE("pause tab: Customize Link opens the customizer, its changes are asked of the module, Back comes back") {
     Menu m;
     CoopTitleMenu::Options o;
     m.Show(o);

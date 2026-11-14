@@ -157,9 +157,37 @@ Hello hello_from(const std::string& nickname) {
   return h;
 }
 
-// Pumps everything until `done` or two seconds pass.
+// A clock a test steps one millisecond a pump, for a test that checks how
+// long something took: a test starved of CPU (ctest -j8 during a build) then
+// sees the same simulated times as an idle one. The server reads it through
+// ServerOptions::now_us; ENet's clock is one for the whole process, and
+// enet_time_set before every service puts it on ours.
+struct SimClock {
+  std::uint64_t ms = 100'000;  // ENet reads a time of 0 as "not set"
+  void step() { ++ms; }
+  void enet() const { enet_time_set(static_cast<enet_uint32>(ms)); }
+  std::function<std::uint64_t()> us() const {
+    return [this] { return ms * 1000u; };
+  }
+};
+
+// Pumps everything until `done` or two seconds pass (on `clock` if given).
 bool pump_until(EnetServer& server, std::vector<Client*> clients,
-                const std::function<bool()>& done) {
+                const std::function<bool()>& done, SimClock* clock = nullptr) {
+  if (clock != nullptr) {
+    const std::uint64_t end = clock->ms + 2000;
+    while (clock->ms < end) {
+      clock->step();
+      clock->enet();
+      server.service(0);
+      for (Client* c : clients) {
+        clock->enet();
+        c->pump();
+      }
+      if (done()) return true;
+    }
+    return false;
+  }
   auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   while (std::chrono::steady_clock::now() < deadline) {
     server.service(1);
@@ -509,7 +537,10 @@ TEST_CASE("loopback: a host's full-size snapshot reaches a joiner in full-size p
 
 TEST_CASE("loopback: a dropped client showing its rejoin token is back in within 2 s") {
   EnetLife enet;
+  SimClock clock;  // "within 2 s" is checked on it, not on a busy PC's clock
+  clock.enet();
   ServerOptions options = server_options();
+  options.now_us = clock.us();
   EnetServer server(options);
   REQUIRE(server.start());
 
@@ -518,38 +549,42 @@ TEST_CASE("loopback: a dropped client showing its rejoin token is back in within
   killed->connect(server.port());
   zelda.connect(server.port());
   REQUIRE(pump_until(server, {killed.get(), &zelda},
-                     [&] { return killed->connected && zelda.connected; }));
+                     [&] { return killed->connected && zelda.connected; }, &clock));
   killed->send(hello_from("Link"), kChannelSession);
-  REQUIRE(pump_until(server, {killed.get()}, [&] { return killed->find<RejoinToken>() != nullptr; }));
+  REQUIRE(pump_until(
+      server, {killed.get()}, [&] { return killed->find<RejoinToken>() != nullptr; }, &clock));
   const RejoinTokenBytes token = killed->find<RejoinToken>()->token;
   zelda.send(hello_from("Zelda"), kChannelSession);
-  REQUIRE(pump_until(server, {&zelda}, [&] { return zelda.find<Welcome>() != nullptr; }));
+  REQUIRE(pump_until(server, {&zelda}, [&] { return zelda.find<Welcome>() != nullptr; }, &clock));
 
   // Killed: the ENet host goes away without a word to the server.
   killed.reset();
-  const auto kill_time = std::chrono::steady_clock::now();
+  const std::uint64_t kill_time = clock.ms;
 
   // Straight away the name still belongs to a player heard just now.
   Client early;
   early.connect(server.port());
-  REQUIRE(pump_until(server, {&early, &zelda}, [&] { return early.connected; }));
+  REQUIRE(pump_until(server, {&early, &zelda}, [&] { return early.connected; }, &clock));
   early.send(hello_from("Link"), kChannelSession);
-  REQUIRE(pump_until(server, {&early, &zelda}, [&] { return early.disconnected; }));
+  REQUIRE(pump_until(server, {&early, &zelda}, [&] { return early.disconnected; }, &clock));
   const Refused* refused = early.find<Refused>();
   REQUIRE(refused != nullptr);
   CHECK(refused->reason == RefuseReason::name_taken);
 
-  while (std::chrono::steady_clock::now() - kill_time < std::chrono::milliseconds(1050)) {
-    server.service(1);
+  while (clock.ms - kill_time < 1050) {
+    clock.step();
+    clock.enet();
+    server.service(0);
+    clock.enet();
     zelda.pump();
   }
   // Issue 163: a second later, a connection without the token (a restarted
   // build, or another player behind the same address) is still refused.
   Client no_token;
   no_token.connect(server.port());
-  REQUIRE(pump_until(server, {&no_token, &zelda}, [&] { return no_token.connected; }));
+  REQUIRE(pump_until(server, {&no_token, &zelda}, [&] { return no_token.connected; }, &clock));
   no_token.send(hello_from("Link"), kChannelSession);
-  REQUIRE(pump_until(server, {&no_token, &zelda}, [&] { return no_token.disconnected; }));
+  REQUIRE(pump_until(server, {&no_token, &zelda}, [&] { return no_token.disconnected; }, &clock));
   REQUIRE(no_token.find<Refused>() != nullptr);
   CHECK(no_token.find<Refused>()->reason == RefuseReason::name_taken);
   CHECK(server.session().stats().rejoin_no_token == 1);
@@ -557,14 +592,14 @@ TEST_CASE("loopback: a dropped client showing its rejoin token is back in within
   // The same game, reconnecting with its token, takes the old place.
   Client restarted;
   restarted.connect(server.port());
-  REQUIRE(pump_until(server, {&restarted, &zelda}, [&] { return restarted.connected; }));
+  REQUIRE(pump_until(server, {&restarted, &zelda}, [&] { return restarted.connected; }, &clock));
   restarted.send(RejoinClaim{token}, kChannelSession);
   restarted.send(hello_from("Link"), kChannelSession);
   REQUIRE(pump_until(server, {&restarted, &zelda}, [&] {
     return restarted.find<Welcome>() != nullptr && zelda.find<PlayerJoined>() != nullptr;
-  }));
-  const auto back_after = std::chrono::steady_clock::now() - kill_time;
-  CHECK(back_after < std::chrono::seconds(2));
+  }, &clock));
+  const std::uint64_t back_after = clock.ms - kill_time;
+  CHECK(back_after < 2000);
   CHECK(restarted.find<Welcome>()->player_number == 1);
   REQUIRE(zelda.find<PlayerLeft>() != nullptr);
   CHECK(*zelda.find<PlayerLeft>() == PlayerLeft{1, LeaveReason::timed_out});

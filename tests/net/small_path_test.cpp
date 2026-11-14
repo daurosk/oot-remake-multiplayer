@@ -5,7 +5,6 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
-#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -34,6 +33,30 @@ struct EnetLife {
   EnetLife() { REQUIRE(enet_initialize() == 0); }
   ~EnetLife() { enet_deinitialize(); }
 };
+
+// The test's own clock, stepped one millisecond a round, so a test starved of
+// CPU (ctest -j8 during a build, sanitizers) sees the same losses, outages and
+// timeouts at the same simulated times as an idle one. The server and the
+// clients read it through their now_us option. ENet's clock is one for the
+// whole process; enet_time_set before every service puts it on ours (it only
+// runs on by the real time inside that one call).
+struct SimClock {
+  std::uint64_t ms = 100'000;  // ENet reads a time of 0 as "not set"
+  void step() { ++ms; }
+  void enet() const { enet_time_set(static_cast<enet_uint32>(ms)); }
+  std::function<std::uint64_t()> us() const {
+    return [this] { return ms * 1000u; };
+  }
+  int since(std::uint64_t t) const { return static_cast<int>(ms - t); }
+};
+
+coop::server::ServerOptions server_options(const SimClock& clock) {
+  coop::server::ServerOptions options;
+  options.port = 0;
+  options.session.join_password = "test-pass";
+  options.now_us = clock.us();
+  return options;
+}
 
 // Client <-> relay <-> server on 127.0.0.1; datagrams above `max_payload`
 // bytes of UDP payload are lost either way.
@@ -122,7 +145,7 @@ class LimitedPath {
   std::uint16_t port_ = 0;
 };
 
-ClientConfig config_to(std::uint16_t port, const std::string& name) {
+ClientConfig config_to(std::uint16_t port, const std::string& name, const SimClock& clock) {
   ClientConfig c;
   c.host = "127.0.0.1";
   c.port = port;
@@ -133,6 +156,7 @@ ClientConfig config_to(std::uint16_t port, const std::string& name) {
   c.join_password = "test-pass";  // every session has one (and is encrypted)
   c.retry_first_ms = 50;
   c.retry_max_ms = 400;
+  c.now_us = clock.us();
   return c;
 }
 
@@ -147,50 +171,47 @@ std::vector<proto::FlagEntry> flags_from(std::uint32_t first, std::uint32_t coun
 
 // One joiner behind a path, and what happened to it.
 struct Joiner {
-  Joiner(std::uint16_t server_port, std::size_t max_payload, const std::string& name)
-      : path(server_port, max_payload), client(config_to(path.port(), name)) {}
+  Joiner(std::uint16_t server_port, std::size_t max_payload, const std::string& name,
+         const SimClock& clock)
+      : path(server_port, max_payload), client(config_to(path.port(), name, clock)) {}
   LimitedPath path;
   Client client;
   int small_path_drops = 0;
   int other_drops = 0;
   int dropped_at_switch = -1;  // path.dropped when the small-path drop came
-  std::chrono::steady_clock::time_point last_drop{};
 };
-
-using Clock = std::chrono::steady_clock;
-
-int ms_since(Clock::time_point t) {
-  return static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t).count());
-}
 
 }  // namespace
 
 TEST_CASE("small path: games behind 1200-, 576- and 900-byte paths stay connected for 2 minutes (issue 143)") {
   EnetLife enet;
-  coop::server::ServerOptions options;
-  options.port = 0;
-  options.session.join_password = "test-pass";
-  coop::server::EnetServer server(options);
+  SimClock clock;
+  clock.enet();
+  coop::server::EnetServer server(server_options(clock));
   REQUIRE(server.start());
 
-  Client host(config_to(server.port(), "Link"));
+  Client host(config_to(server.port(), "Link", clock));
   REQUIRE(host.start());
   // Two joiners: datagrams above 1200 bytes lost (our 1100 fit), and above
   // 576 (they do not: one switch to ENet's smallest, then no more drops).
   std::vector<std::unique_ptr<Joiner>> joiners;
-  joiners.push_back(std::make_unique<Joiner>(server.port(), 1200, "Zelda"));
-  joiners.push_back(std::make_unique<Joiner>(server.port(), 576, "Saria"));
+  joiners.push_back(std::make_unique<Joiner>(server.port(), 1200, "Zelda", clock));
+  joiners.push_back(std::make_unique<Joiner>(server.port(), 576, "Saria", clock));
   // And 900: the last, shorter pieces of messages get through, the full
   // 1100-byte ones do not; it must switch once all the same.
-  joiners.push_back(std::make_unique<Joiner>(server.port(), 900, "Ruto"));
+  joiners.push_back(std::make_unique<Joiner>(server.port(), 900, "Ruto", clock));
 
   auto round = [&] {
-    server.service(1);
+    clock.step();
+    clock.enet();
+    server.service(0);
+    clock.enet();
     host.service(0);
     while (host.next_event()) {
     }
     for (auto& j : joiners) {
       j->path.service();
+      clock.enet();
       j->client.service(0);
       j->path.service();
       while (auto e = j->client.next_event()) {
@@ -201,13 +222,12 @@ TEST_CASE("small path: games behind 1200-, 576- and 900-byte paths stay connecte
         } else {
           ++j->other_drops;
         }
-        j->last_drop = Clock::now();
       }
     }
   };
   auto run_until = [&](int ms, auto done) {
-    const auto start = Clock::now();
-    while (ms_since(start) < ms) {
+    const auto start = clock.ms;
+    while (clock.since(start) < ms) {
       round();
       if (done()) return true;
     }
@@ -252,21 +272,21 @@ TEST_CASE("small path: games behind 1200-, 576- and 900-byte paths stay connecte
 
   // Two minutes of play: the host changes 400 flags every half second, each
   // joiner asks for 300 every 0.7 s (both several datagrams long).
-  const auto start = Clock::now();
+  const auto start = clock.ms;
   auto next_host = start;
   auto next_join = start;
   std::int32_t value = 8;
-  while (ms_since(start) < 120'000) {
-    if (Clock::now() >= next_host) {
+  while (clock.since(start) < 120'000) {
+    if (clock.ms >= next_host) {
       REQUIRE(host.set_flags(flags_from(1, 400, value)));
       ++value;
-      next_host += std::chrono::milliseconds(500);
+      next_host += 500;
     }
-    if (Clock::now() >= next_join) {
+    if (clock.ms >= next_join) {
       for (std::size_t i = 0; i < joiners.size(); ++i) {
         joiners[i]->client.set_flags(flags_from(5000 + 1000 * static_cast<std::uint32_t>(i), 300, value));
       }
-      next_join += std::chrono::milliseconds(700);
+      next_join += 700;
     }
     round();
   }
@@ -292,21 +312,24 @@ TEST_CASE("small path: games behind 1200-, 576- and 900-byte paths stay connecte
 
 TEST_CASE("small path: the server tells a remembered address again when it connects with full datagrams") {
   EnetLife enet;
-  coop::server::ServerOptions options;
-  options.port = 0;
-  options.session.join_password = "test-pass";
-  coop::server::EnetServer server(options);
+  SimClock clock;
+  clock.enet();
+  coop::server::EnetServer server(server_options(clock));
   server.remember_loopback_small_paths(true);  // every game here is on 127.0.0.1
   REQUIRE(server.start());
 
-  Client host(config_to(server.port(), "Link"));
+  Client host(config_to(server.port(), "Link", clock));
   REQUIRE(host.start());
   auto pump = [&](Client& c, LimitedPath* path, int ms, auto done) {
-    const auto start = Clock::now();
-    while (ms_since(start) < ms) {
-      server.service(1);
+    const auto start = clock.ms;
+    while (clock.since(start) < ms) {
+      clock.step();
+      clock.enet();
+      server.service(0);
+      clock.enet();
       host.service(0);
       if (path != nullptr) path->service();
+      clock.enet();
       if (&c != &host) c.service(0);
       if (path != nullptr) path->service();
       if (done()) return true;
@@ -319,7 +342,7 @@ TEST_CASE("small path: the server tells a remembered address again when it conne
   // A first game behind a 576 path: sent away once, comes back small.
   {
     LimitedPath path(server.port(), 576);
-    Client joiner(config_to(path.port(), "Saria"));
+    Client joiner(config_to(path.port(), "Saria", clock));
     REQUIRE(joiner.start());
     REQUIRE(pump(joiner, &path, 15000, [&] { return joiner.synced(); }));
     CHECK(joiner.small_datagrams());
@@ -334,7 +357,7 @@ TEST_CASE("small path: the server tells a remembered address again when it conne
   // The same address with a new game (it missed the note, or restarted):
   // told at once, before anything big is sent, and then in with 576.
   LimitedPath path(server.port(), 576);
-  Client again(config_to(path.port(), "Saria"));
+  Client again(config_to(path.port(), "Saria", clock));
   REQUIRE(again.start());
   REQUIRE(pump(again, &path, 15000, [&] { return again.synced(); }));
   CHECK(again.small_datagrams());
@@ -343,7 +366,7 @@ TEST_CASE("small path: the server tells a remembered address again when it conne
   // Told once more, then forgotten: the next game from there (another
   // player behind the same router) comes in at full size.
   CHECK_FALSE(server.small_path(local.host));
-  Client other(config_to(server.port(), "Malon"));
+  Client other(config_to(server.port(), "Malon", clock));
   REQUIRE(other.start());
   REQUIRE(pump(other, nullptr, 5000, [&] { return other.synced(); }));
   CHECK_FALSE(other.small_datagrams());
@@ -353,20 +376,23 @@ TEST_CASE("small path: the server tells a remembered address again when it conne
 
 TEST_CASE("small path: a loopback game sent away is not remembered (relay guests and the host share 127.0.0.1)") {
   EnetLife enet;
-  coop::server::ServerOptions options;
-  options.port = 0;
-  options.session.join_password = "test-pass";
-  coop::server::EnetServer server(options);
+  SimClock clock;
+  clock.enet();
+  coop::server::EnetServer server(server_options(clock));
   REQUIRE(server.start());
 
-  Client host(config_to(server.port(), "Link"));
+  Client host(config_to(server.port(), "Link", clock));
   REQUIRE(host.start());
   auto pump = [&](Client& c, LimitedPath* path, int ms, auto done) {
-    const auto start = Clock::now();
-    while (ms_since(start) < ms) {
-      server.service(1);
+    const auto start = clock.ms;
+    while (clock.since(start) < ms) {
+      clock.step();
+      clock.enet();
+      server.service(0);
+      clock.enet();
       host.service(0);
       if (path != nullptr) path->service();
+      clock.enet();
       if (&c != &host) c.service(0);
       if (path != nullptr) path->service();
       if (done()) return true;
@@ -379,7 +405,7 @@ TEST_CASE("small path: a loopback game sent away is not remembered (relay guests
   // A first game behind a 576 path: sent away once, comes back small.
   {
     LimitedPath path(server.port(), 576);
-    Client joiner(config_to(path.port(), "Saria"));
+    Client joiner(config_to(path.port(), "Saria", clock));
     REQUIRE(joiner.start());
     REQUIRE(pump(joiner, &path, 15000, [&] { return joiner.synced(); }));
     CHECK(joiner.small_datagrams());
@@ -392,7 +418,7 @@ TEST_CASE("small path: a loopback game sent away is not remembered (relay guests
   CHECK_FALSE(server.small_path(local.host));
   // The next game from 127.0.0.1 (the host's own, or another relay guest)
   // comes in at full size, not sent away.
-  Client other(config_to(server.port(), "Malon"));
+  Client other(config_to(server.port(), "Malon", clock));
   REQUIRE(other.start());
   REQUIRE(pump(other, nullptr, 5000, [&] { return other.synced(); }));
   CHECK_FALSE(other.small_datagrams());
@@ -401,33 +427,36 @@ TEST_CASE("small path: a loopback game sent away is not remembered (relay guests
 
 TEST_CASE("small path: plain loss and short outages on a line that carries full datagrams do not switch it") {
   EnetLife enet;
-  coop::server::ServerOptions options;
-  options.port = 0;
-  options.session.join_password = "test-pass";
-  coop::server::EnetServer server(options);
+  SimClock clock;
+  clock.enet();
+  coop::server::EnetServer server(server_options(clock));
   REQUIRE(server.start());
 
-  Client host(config_to(server.port(), "Link"));
+  Client host(config_to(server.port(), "Link", clock));
   REQUIRE(host.start());
-  Joiner joiner(server.port(), 1400, "Zelda");
+  Joiner joiner(server.port(), 1400, "Zelda", clock);
   // 5% of datagrams lost either way, and every 4 s nothing at all for 0.75 s
   // (a Wi-Fi stall), while big FLAG_STATEs and FLAG_SETs go both ways.
   std::mt19937 random(143);
   std::bernoulli_distribution loss(0.05);
-  const auto begin = Clock::now();
+  const auto begin = clock.ms;
   bool lossy = true;  // from the joiner's first packet on
   joiner.path.lose = [&](std::size_t) {
     if (!lossy) return false;
-    const int t = ms_since(begin) % 4000;
+    const int t = clock.since(begin) % 4000;
     return t >= 3250 || loss(random);
   };
 
   auto round = [&] {
-    server.service(1);
+    clock.step();
+    clock.enet();
+    server.service(0);
+    clock.enet();
     host.service(0);
     while (host.next_event()) {
     }
     joiner.path.service();
+    clock.enet();
     joiner.client.service(0);
     joiner.path.service();
     while (auto e = joiner.client.next_event()) {
@@ -440,8 +469,8 @@ TEST_CASE("small path: plain loss and short outages on a line that carries full 
     }
   };
   auto run_until = [&](int ms, auto done) {
-    const auto start = Clock::now();
-    while (ms_since(start) < ms) {
+    const auto start = clock.ms;
+    while (clock.since(start) < ms) {
       round();
       if (done()) return true;
     }
@@ -454,19 +483,19 @@ TEST_CASE("small path: plain loss and short outages on a line that carries full 
   REQUIRE(run_until(15000, [&] { return joiner.client.synced(); }));
   CHECK(joiner.small_path_drops == 0);
 
-  const auto start = Clock::now();
+  const auto start = clock.ms;
   auto next_host = start;
   auto next_join = start;
   std::int32_t value = 8;
-  while (ms_since(start) < 40'000) {
-    if (Clock::now() >= next_host) {
+  while (clock.since(start) < 40'000) {
+    if (clock.ms >= next_host) {
       REQUIRE(host.set_flags(flags_from(1, 400, value)));
       ++value;
-      next_host += std::chrono::milliseconds(500);
+      next_host += 500;
     }
-    if (Clock::now() >= next_join) {
+    if (clock.ms >= next_join) {
       joiner.client.set_flags(flags_from(5000, 300, value));
-      next_join += std::chrono::milliseconds(700);
+      next_join += 700;
     }
     round();
   }

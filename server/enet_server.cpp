@@ -97,6 +97,7 @@ std::uint16_t EnetServer::port() const {
 }
 
 std::uint64_t EnetServer::now_us() const {
+  if (options_.now_us) return options_.now_us();
   auto elapsed = std::chrono::steady_clock::now() - start_;
   return static_cast<std::uint64_t>(
       std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count());

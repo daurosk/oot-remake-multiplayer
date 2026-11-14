@@ -1158,7 +1158,7 @@ void LocalProbe() {
     const CoopLocalProbe::ReadFn read = [](std::uint64_t a, void* out, std::size_t n) {
         return CoopRuntime::Read(a, out, n);
     };
-    for (auto* lines : {&CoopLocalProbe::Layers, &CoopLocalProbe::Controllers})
+    for (const auto* lines : {&CoopLocalProbe::Layers, &CoopLocalProbe::Controllers})
         for (const std::string& line : (*lines)(read, CoopRuntime::MainBase()))
             LOG_INFO(Core, "coop: local probe {}: {}", said, line);
 }

@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <set>
 #include <span>
@@ -123,12 +124,17 @@ class Planner {
     bool no_save = false;  // the host has no save on disk: send pack_no_save()
     bool operator==(const Send&) const = default;
   };
-  // A player's ask is answered once while it stays: a repeated ask (an honest
-  // game asks once a run) is ignored, so a guest cannot make the host send
-  // its save over and over. Returns whether the ask was taken.
-  bool on_ask(std::uint8_t player) {
-    if (answered_.count(player) != 0) return false;
-    answered_.insert(player);
+  // A repeated ask within kReaskUs of the last one taken is ignored, so a
+  // guest cannot make the host send its save over and over; after that it is
+  // taken again (a guest whose ask or answer was lost asks again: GuestSession
+  // reask_due; or a rejoin under the same number before PLAYER_LEFT came).
+  // `now_us`: a steady clock in microseconds. Returns whether it was taken.
+  static constexpr std::uint64_t kReaskUs = 10'000'000;
+  bool on_ask(std::uint8_t player, std::uint64_t now_us) {
+    if (const auto it = answered_.find(player); it != answered_.end() && now_us - it->second < kReaskUs) {
+      return false;
+    }
+    answered_[player] = now_us;
     asks_.insert(player);
     return true;
   }
@@ -161,7 +167,7 @@ class Planner {
 
  private:
   std::set<std::uint8_t> asks_;
-  std::set<std::uint8_t> answered_;  // asks taken, until the player leaves
+  std::map<std::uint8_t, std::uint64_t> answered_;  // asks taken (when), until the player leaves
   bool reload_ = false;
   std::optional<Time> loaded_at_;  // the host's last load, until a save after it
 };
@@ -229,7 +235,16 @@ struct GuestSession {
   bool no_save = false;   // the host said it has no save yet (pack_no_save)
   bool said_stuck = false;
   std::uint64_t last_part_us = 0;
+  std::uint64_t asked_us = 0;   // when the last ask went out
+  int asks = 0;                 // asks sent this session
 };
+
+// A guest asks again when nothing at all came for kGuestReaskUs since its last ask (the ask or the whole answer was
+// lost, or the host refused it as too soon), at most kGuestMaxAsks times a session. Not while parts come in, once
+// the save (or "no save") is in, or once the slot waits to be written.
+inline constexpr std::uint64_t kGuestReaskUs = 15'000'000;
+inline constexpr int kGuestMaxAsks = 4;
+bool reask_due(const GuestSession& s, std::uint64_t now_us);
 
 // The slot_NN folders of a co-op save folder taken away, so it holds nothing until the host's save comes (a guest
 // switching to it must not find an older host's save and load that). Refuses a folder that is not a co-op one.

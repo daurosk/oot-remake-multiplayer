@@ -56,6 +56,9 @@ bool g_decided = false;   // the run-time choice is made (for this session: save
 // on its own folder, so the title never offers an empty or half-written co-op folder (that crashed the game).
 fs::path g_pending;
 bool g_title_up = false;   // the title's menu is up (NoteTitle, Hookshot's title module)
+// The player picked a file on the title (CancelPendingSwitch): the switch waits; it goes for good once Link is in
+// the game (their file), and comes back when they return to the title without one (ResumePendingSwitch).
+bool g_suspended = false;
 const void* g_decided_client = nullptr;   // the session's client it was made for
 
 // An environment variable's text ("" when unset).
@@ -119,6 +122,7 @@ void SwitchFrame(coop::net::Client& client) {
             g_decided = false;   // the next session (the title menu's Host after a Join, a rejoin) decides again
             g_guest = save::GuestSession{};   // and asks for the host's save again: everything of the last one goes
             g_pending.clear();
+            g_suspended = false;
             LOG_INFO(Core, "coop: save: the session is over: the next one chooses the save folder again");
         }
     }
@@ -168,12 +172,13 @@ void SwitchFrame(coop::net::Client& client) {
 // meanwhile): no switch, the save stays unused.
 void PendingFrame() {
     if (g_pending.empty()) return;
-    switch (save::pending_step(g_guest.unwritten.has_value(), g_title_up, g_in_game)) {
+    switch (save::pending_step(g_guest.unwritten.has_value(), g_title_up && !g_suspended, g_in_game)) {
     case save::PendingStep::keep:
         return;
     case save::PendingStep::drop:
         LOG_INFO(Core, "coop: save: a file is loaded: this game keeps it; the host's save is not used");
         g_pending.clear();
+        g_suspended = false;
         g_guest.unwritten.reset();
         return;
     case save::PendingStep::go:
@@ -255,6 +260,14 @@ bool HostSaveReady() {
     return g_guest.ready;
 }
 
+bool HostSaveComing() {
+    std::lock_guard lock(g_mutex);
+    if (g_guest.unwritten) return true;   // (in: written and switched to on the title's menu)
+    const auto& a = g_guest.assembler;
+    return a.received() != 0 && a.received() < a.count() &&
+           CoopEvery::NowUs() - g_guest.last_part_us < CoopEvery::kSaveStuckUs;
+}
+
 bool HostHasNoSave() {
     std::lock_guard lock(g_mutex);
     return g_guest.no_save;
@@ -267,10 +280,17 @@ void NoteTitle(bool title_up) {
 
 void CancelPendingSwitch(std::string_view why) {
     std::lock_guard lock(g_mutex);
-    if (g_pending.empty()) return;
-    g_pending.clear();
-    g_guest.unwritten.reset();
-    LOG_INFO(Core, "coop: save: {}: this game stays on its own saves; the host's save is not used", why);
+    if (g_pending.empty() || g_suspended) return;
+    g_suspended = true;
+    LOG_INFO(Core, "coop: save: {}: no switch to the host's save while that file loads (back on the title without "
+                   "it, the host's save is offered again)", why);
+}
+
+void ResumePendingSwitch() {
+    std::lock_guard lock(g_mutex);
+    if (g_pending.empty() || !g_suspended || g_in_game) return;
+    g_suspended = false;
+    LOG_INFO(Core, "coop: save: back on the title with no file loaded: the host's save is offered again");
 }
 
 std::string SaveDirectory(const std::string& path, bool account_save) {
@@ -322,11 +342,11 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     }
     if (const auto* ask = std::get_if<proto::SaveAsk>(&event.message)) {
         if (client.is_host()) {
-            if (g_planner.on_ask(ask->player_number)) {
+            if (g_planner.on_ask(ask->player_number, CoopEvery::NowUs())) {
                 LOG_INFO(Core, "coop: save: player {} asked for our save", ask->player_number);
             } else {
-                LOG_WARNING(Core, "coop: save: player {} asked for our save again: ignored (once a "
-                                  "player)", ask->player_number);
+                LOG_WARNING(Core, "coop: save: player {} asked for our save again within 10 s: ignored",
+                            ask->player_number);
             }
         }
         return;
@@ -396,10 +416,19 @@ void OnFrame(coop::net::Client& client, bool host_reset) {
                               "for 10 s; waiting for the next one",
                         g_guest.assembler.transfer_id(), g_guest.assembler.received(), g_guest.assembler.count());
         }
-        if (!g_guest.asked && (g_root ? g_use : UseCoopFolder())) {
-            g_guest.asked = client.send(proto::Message{proto::SaveAsk{}});
-            if (g_guest.asked) {
-                LOG_INFO(Core, "coop: save: asked the host (player {}) for its save", client.host_number());
+        // (Hookshot: only while the switch to the host's save is still wanted.)
+        const bool want = g_root ? g_use && !g_pending.empty() : UseCoopFolder();
+        const std::uint64_t now = CoopEvery::NowUs();
+        if (want && (!g_guest.asked || save::reask_due(g_guest, now))) {
+            const bool again = g_guest.asked;
+            if (client.send(proto::Message{proto::SaveAsk{}})) {
+                g_guest.asked = true;
+                g_guest.asked_us = now;
+                ++g_guest.asks;
+                LOG_INFO(Core, "coop: save: asked the host (player {}) for its save{}", client.host_number(),
+                         again ? fmt::format(" again (nothing came in {} s; ask {} of {})",
+                                             save::kGuestReaskUs / 1'000'000, g_guest.asks, save::kGuestMaxAsks)
+                               : std::string());
             }
         }
         return;

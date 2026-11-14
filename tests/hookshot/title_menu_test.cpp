@@ -238,90 +238,179 @@ TEST_CASE("title menu: the kit's options as the launcher's variables") {
     CHECK(KitVariables("color =\r\n").empty());
 }
 
+namespace {
+// One look for AutoLoad::Step.
+AutoLoad::Input Look(bool ready, bool title, int focused = 0, bool coming = false, bool in_game = false) {
+    AutoLoad::Input in;
+    in.host_save_ready = ready;
+    in.save_coming = coming;
+    in.title_up = title;
+    in.in_game = in_game;
+    in.focused = focused;
+    return in;
+}
+// Steps every 20 ms over [from, to): how many looks pressed A.
+int Presses(AutoLoad& a, std::uint64_t from, std::uint64_t to, const AutoLoad::Input& in) {
+    int n = 0;
+    for (std::uint64_t ms = from; ms < to; ms += 20) n += a.Step(ms, in).press_a ? 1 : 0;
+    return n;
+}
+// Steps every 100 ms over [from, to) with the same look.
+void Run(AutoLoad& a, std::uint64_t from, std::uint64_t to, const AutoLoad::Input& in) {
+    for (std::uint64_t ms = from; ms < to; ms += 100) a.Step(ms, in);
+}
+}  // namespace
+
 TEST_CASE("title menu: after Join the host's save loads in one step") {
     AutoLoad a;
     CHECK_FALSE(a.active());
     CHECK(a.Line().empty());
     a.Start(1000, "Saria");
     CHECK(a.active());
-    CHECK(a.Line() == "Getting Saria's save...");
+    CHECK(a.Line() == "Getting Saria's save: it loads by itself when it is here...");
     // waiting for the save: no presses
-    auto t = a.Step(2000, false, true, false);
+    auto t = a.Step(2000, Look(false, true));
     CHECK_FALSE(t.press_a);
     CHECK_FALSE(t.focus_continue);
     // the save is here, the title is up: Continue shown (a first-time joiner's title opened without it), the
-    // cursor to it, then A pressed now and then
-    t = a.Step(3000, true, true, false);
-    CHECK(a.Line() == "Loading Saria's save...");
-    t = a.Step(3050, true, true, false);
+    // cursor to it, then A pressed now and then, only with the cursor on Continue
+    t = a.Step(3000, Look(true, true));
     CHECK(t.reveal_continue);
-    CHECK_FALSE(t.focus_continue);
-    CHECK_FALSE(t.press_a);
-    CHECK_FALSE(a.Step(3100, true, true, false).reveal_continue);   // once
-    t = a.Step(3300, true, true, false);
+    CHECK(a.Line() == "Loading Saria's save...");
+    CHECK_FALSE(a.Step(3100, Look(true, true)).reveal_continue);   // once
+    t = a.Step(3300, Look(true, true, 0));
     CHECK(t.focus_continue);
     CHECK_FALSE(t.press_a);   // (the cursor first)
-    t = a.Step(3600, true, true, false);
+    t = a.Step(3600, Look(true, true, 0));
+    CHECK_FALSE(t.press_a);   // the cursor is not on Continue yet: no A on New Game
+    t = a.Step(3610, Look(true, true, AutoLoad::kContinue));
     CHECK(t.press_a);
-    CHECK_FALSE(t.focus_continue);   // once only
-    t = a.Step(3450, true, false, false);   // held 120 ms, then let go (the title may be gone: the file list)
-    CHECK_FALSE(t.press_a);
-    t = a.Step(3300 + 120 + AutoLoad::kPressEveryMs + 150, true, false, false);
-    t = a.Step(3300 + 2 * AutoLoad::kPressEveryMs, true, false, false);
-    int presses = 0;
-    for (std::uint64_t ms = 4000; ms < 10000; ms += 20) {
-        presses += a.Step(ms, true, false, false).press_a ? 1 : 0;
-    }
-    CHECK(presses > 10);   // (A held in a few short presses, about every 1.2 s)
+    CHECK_FALSE(t.focus_continue);   // (it is there)
+    // the title gone after that A (the file list, its question): A every 1.2 s, for a while
+    const int presses = Presses(a, 4000, 10000, Look(true, false, -1));
+    CHECK(presses > 10);
     CHECK(presses < 60);
     // Link is in the game: done, nothing more pressed, no line
-    a.Step(10000, true, false, true);
+    a.Step(10000, Look(true, false, -1, false, true));
     CHECK_FALSE(a.active());
+    CHECK_FALSE(a.watching());
     CHECK(a.Line().empty());
-    CHECK_FALSE(a.Step(10500, true, false, false).press_a);
+    CHECK_FALSE(a.Step(10500, Look(true, false)).press_a);
 }
 
-TEST_CASE("title menu: no host's save, or no way in: a plain line and no endless presses") {
+TEST_CASE("title menu: AutoLoad moves the cursor to Continue again while it is elsewhere") {
+    AutoLoad a;
+    a.Start(0, "Saria");
+    a.Step(100, Look(true, true));   // (reveal)
+    int focus = 0;
+    for (std::uint64_t ms = 200; ms < 200 + 3 * AutoLoad::kFocusEveryMs; ms += 20) {
+        focus += a.Step(ms, Look(true, true, 0)).focus_continue ? 1 : 0;
+    }
+    CHECK(focus == 3);   // once, then every 2 s while it is not there
+    CHECK(Presses(a, 7000, 9000, Look(true, true, 0)) == 0);   // and never an A on New Game
+}
+
+TEST_CASE("title menu: a hitch (the title seems gone a moment) lets no A in before one went in on Continue") {
+    CHECK_FALSE(AutoLoad::PressAllowed(false, -1, false));
+    CHECK(AutoLoad::PressAllowed(false, -1, true));
+    AutoLoad a;
+    a.Start(0, "Saria");
+    a.Step(100, Look(true, true, 0));
+    CHECK(Presses(a, 120, 5000, Look(true, false, -1)) == 0);
+    // and back on the title with the cursor on Continue: it presses
+    CHECK(Presses(a, 5000, 7000, Look(true, true, AutoLoad::kContinue)) > 0);
+}
+
+TEST_CASE("title menu: presses off the title stop after a while; on the title, stuck says press Continue") {
+    AutoLoad a;
+    a.Start(0, "Saria");
+    a.Step(100, Look(true, true, AutoLoad::kContinue));
+    CHECK(Presses(a, 120, 2000, Look(true, true, AutoLoad::kContinue)) > 0);
+    CHECK(Presses(a, 2000, 2000 + AutoLoad::kAfterTitleMs, Look(true, false, -1)) > 0);
+    // a long load (shaders): no more presses, still loading (no line about pressing)
+    CHECK(Presses(a, 2000 + AutoLoad::kAfterTitleMs + 1300, 60000, Look(true, false, -1)) == 0);
+    CHECK(a.active());
+    CHECK(a.Line() == "Loading Saria's save...");
+    // never got in and the title is back for kLoadMs: the plain line
+    Run(a, 60000, 60000 + AutoLoad::kLoadMs + 2000, Look(true, true, 0));
+    CHECK_FALSE(a.watching());
+    CHECK(a.Line() == "Press Continue to play Saria's save.");
+    CHECK_FALSE(a.Step(99000, Look(true, true, AutoLoad::kContinue)).press_a);
+}
+
+TEST_CASE("title menu: only title time with nothing coming counts toward 'late'; a late save still loads") {
     AutoLoad a;
     a.Start(0, "");
-    a.Step(AutoLoad::kWaitSaveMs + 1, false, true, false);
+    // a menu over the title, a file list, a slow PC (no title steps): no wait counted
+    Run(a, 100, 3 * AutoLoad::kWaitSaveMs, Look(false, false, -1));
+    CHECK(a.waiting());
+    CHECK(a.active());
+    // parts coming in on the title: no wait counted either
+    Run(a, 3 * AutoLoad::kWaitSaveMs, 5 * AutoLoad::kWaitSaveMs, Look(false, true, 0, true));
+    CHECK(a.active());
+    // a gap between two looks (a hitch, the game paused) counts as one second at most
+    a.Step(10 * AutoLoad::kWaitSaveMs, Look(false, true, 0));
+    CHECK(a.active());
+    // a minute on the title with nothing coming: late, the title's rows work again, the line says what to do
+    Run(a, 10 * AutoLoad::kWaitSaveMs, 11 * AutoLoad::kWaitSaveMs + 200, Look(false, true, 0));
     CHECK_FALSE(a.active());
-    CHECK(a.Line() == "your friend's save did not arrive: Continue plays your own save, New Game starts a new one.");
-    AutoLoad b;
-    b.Start(0, "Saria");
-    b.Step(100, true, true, false);
-    b.Step(100 + AutoLoad::kLoadMs + 1, true, true, false);
-    CHECK_FALSE(b.active());
-    CHECK(b.Line() == "Press Continue to play Saria's save.");
-    CHECK_FALSE(b.Step(100 + AutoLoad::kLoadMs + 500, true, true, false).press_a);
+    CHECK(a.watching());
+    CHECK(a.waiting());
+    CHECK(a.Line() == "your friend's save is not here yet (it still loads by itself if it comes): Continue plays "
+                      "your own save, New Game starts a new one.");
+    // parts start coming: back to "Getting"
+    a.Step(11 * AutoLoad::kWaitSaveMs + 300, Look(false, true, 0, true));
+    CHECK(a.active());
+    // ... and in: it loads by itself
+    const auto t = a.Step(11 * AutoLoad::kWaitSaveMs + 400, Look(true, true, 0));
+    CHECK(t.reveal_continue);
+    CHECK(a.Line() == "Loading your friend's save...");
 }
 
 TEST_CASE("title menu: a host with no save: AutoLoad stops waiting at once and presses nothing (hostsave-fix)") {
     AutoLoad a;
     a.Start(0, "Saria");
-    CHECK(a.Line() == "Getting Saria's save...");
-    a.Step(500, false, true, false);
+    a.Step(500, Look(false, true));
     a.NoSave();
-    CHECK_FALSE(a.active());
+    CHECK_FALSE(a.watching());
     CHECK(a.Line() == "Saria has no save yet: New Game starts one, Continue plays your own.");
-    for (std::uint64_t t = 600; t < AutoLoad::kWaitSaveMs * 2; t += 100) {
-        CHECK_FALSE(a.Step(t, false, true, false).press_a);
-    }
+    CHECK(Presses(a, 600, AutoLoad::kWaitSaveMs * 2, Look(false, true, AutoLoad::kContinue)) == 0);
     // While waiting, nothing is pressed: the game stays on the player's own folder until the save is whole.
     AutoLoad b;
     b.Start(0, "Saria");
-    for (std::uint64_t t = 100; t < AutoLoad::kWaitSaveMs; t += 100) {
-        const auto tick = b.Step(t, false, true, false);
+    for (std::uint64_t ms = 100; ms < AutoLoad::kWaitSaveMs; ms += 100) {
+        const auto tick = b.Step(ms, Look(false, true, AutoLoad::kContinue));
         CHECK_FALSE(tick.press_a);
         CHECK_FALSE(tick.reveal_continue);
         CHECK_FALSE(tick.focus_continue);
     }
-    b.NoSave();   // (only while waiting)
+    // late: "no save" still ends it
+    Run(b, AutoLoad::kWaitSaveMs, AutoLoad::kWaitSaveMs + 2000, Look(false, true));
+    CHECK_FALSE(b.active());
+    b.NoSave();
+    CHECK(b.Line() == "Saria has no save yet: New Game starts one, Continue plays your own.");
+    // loading already: no
     AutoLoad c;
     c.Start(0, "Saria");
-    c.Step(100, true, true, false);
+    c.Step(100, Look(true, true));
     c.NoSave();
     CHECK(c.active());
+}
+
+TEST_CASE("title menu: the player's Continue while the save comes is held back; late it plays their own") {
+    AutoLoad a;
+    a.Start(0, "Saria");
+    CHECK(a.HoldsPlayerA(true, AutoLoad::kContinue));
+    CHECK_FALSE(a.HoldsPlayerA(true, 0));                     // New Game: their choice
+    CHECK_FALSE(a.HoldsPlayerA(false, AutoLoad::kContinue));  // not the title
+    Run(a, 100, AutoLoad::kWaitSaveMs + 1000, Look(false, true));
+    CHECK_FALSE(a.HoldsPlayerA(true, AutoLoad::kContinue));   // late: "Continue plays your own save"
+    AutoLoad b;
+    b.Start(0, "Saria");
+    b.Step(100, Look(true, true));
+    CHECK_FALSE(b.HoldsPlayerA(true, AutoLoad::kContinue));   // loading: its own A goes in
+    AutoLoad off;
+    CHECK_FALSE(off.HoldsPlayerA(true, AutoLoad::kContinue)); // no join
 }
 
 TEST_CASE("title menu: the player picking a file while the host's save comes stops AutoLoad (hostsave-fix)") {
@@ -336,30 +425,50 @@ TEST_CASE("title menu: the player picking a file while the host's save comes sto
     a.Start(0, "Saria");
     CHECK(a.waiting());
     a.PlayerChose();
-    CHECK_FALSE(a.active());
-    CHECK(a.Line().empty());   // (their choice: no "did not arrive" line)
-    CHECK_FALSE(a.Step(AutoLoad::kWaitSaveMs + 1, true, true, false).press_a);
+    CHECK(a.chose());
+    CHECK_FALSE(a.active());   // (the title's rows work)
+    CHECK(a.Line().empty());   // (their choice: no line)
+    CHECK(Presses(a, 100, 3000, Look(true, true, AutoLoad::kContinue)) == 0);
+    // their file loads: Link in the game, done
+    a.Step(3000, Look(true, false, -1, false, true));
+    CHECK_FALSE(a.watching());
     // Once loading the host's save, the player's A changes nothing.
     AutoLoad b;
     b.Start(0, "Saria");
-    b.Step(100, true, true, false);
+    b.Step(100, Look(true, true));
     CHECK_FALSE(b.waiting());
     b.PlayerChose();
     CHECK(b.active());
 }
 
-TEST_CASE("title menu: with no Continue under the cursor AutoLoad presses nothing on the title") {
-    CHECK_FALSE(AutoLoad::PressAllowed(true, 0));    // New Game focused (Continue hidden: the cursor could not go there)
-    CHECK_FALSE(AutoLoad::PressAllowed(true, -1));   // nothing focused
-    CHECK_FALSE(AutoLoad::PressAllowed(true, 4));    // one of our rows
-    CHECK(AutoLoad::PressAllowed(true, AutoLoad::kContinue));
-    CHECK(AutoLoad::PressAllowed(false, 0));         // the title gone: the file list takes the A
-    // and AutoLoad then gives up with the plain line, no endless presses
+TEST_CASE("title menu: backing out of their own file to the title offers the host's save again (Revirie 0.10.1)") {
+    // The guest had saves of their own, picked one, backed out of it (they did not want to share it): the host's
+    // save must still load. Before, the pick dropped it for the whole session.
     AutoLoad a;
     a.Start(0, "Saria");
-    a.Step(10, true, true, false);
-    a.Step(AutoLoad::kLoadMs + 20, true, true, false);
-    CHECK(a.Line() == "Press Continue to play Saria's save.");
+    a.Step(100, Look(false, true, AutoLoad::kContinue));
+    a.PlayerChose();
+    // the title still up a moment after the A (TitleUp's 300 ms): nothing yet
+    for (std::uint64_t ms = 200; ms < 3000; ms += 100) CHECK_FALSE(a.Step(ms, Look(false, true, 0)).rearm);
+    // their file list (the title gone), then back on the title
+    Run(a, 3000, 5000, Look(false, false, -1));
+    bool rearm = false;
+    std::uint64_t ms = 5000;
+    for (; ms < 5000 + AutoLoad::kBackMs + 500 && !rearm; ms += 100) rearm = a.Step(ms, Look(false, true, 0)).rearm;
+    CHECK(rearm);
+    CHECK(ms >= 5000 + AutoLoad::kBackMs);
+    CHECK(a.active());
+    CHECK(a.Line() == "Getting Saria's save: it loads by itself when it is here...");
+    // the save comes (or was in already): it loads
+    CHECK(a.Step(ms + 100, Look(true, true, 0)).reveal_continue);
+    // A New Game the player went on with: in the game, done, nothing re-armed
+    AutoLoad b;
+    b.Start(0, "Saria");
+    b.PlayerChose();
+    Run(b, 100, 2000, Look(false, false, -1));
+    b.Step(2000, Look(false, false, -1, false, true));
+    CHECK_FALSE(b.watching());
+    CHECK_FALSE(b.Step(9000, Look(false, true, 0)).rearm);
 }
 
 TEST_CASE("Same network or VPN: the addresses a friend can use, and the line Join takes") {

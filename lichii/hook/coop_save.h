@@ -39,16 +39,27 @@ void NoteInGame(bool in_game);
 // a title menu may load it. Before that a guest's game stays on its own folder.
 bool HostSaveReady();
 
+// The host's save is on its way: parts came in the last 10 s, or it is in and waits for the title's menu to be
+// written and switched to. (A title waiting for it counts no wait time then.)
+bool HostSaveComing();
+
 // The host said it has no save yet (a new game): nothing to wait for.
 bool HostHasNoSave();
+
+// Hookshot: a session has chosen its save folder and is still connected (false before that, and once it ended:
+// the host dropped, the link went, Leave). A title waiting for the host's save stops when it goes off.
+bool SessionLive();
 
 // Hookshot's title module, each pad poll: whether the title's menu is up. A guest switches to the host's save only
 // then (never while a file loads).
 void NoteTitle(bool title_up);
 
-// A guest's switch to the host's save that has not happened yet is dropped for this session (the player picked a
-// file on the title while waiting, or the title said the save did not come): the game stays on its own saves.
+// A guest's switch to the host's save that has not happened yet waits (the player picked a file on the title):
+// never while that file loads; dropped once Link is in the game (their own file or a new game).
 void CancelPendingSwitch(std::string_view why);
+// The player is back on the title's menu with no file loaded (they backed out of their pick): the waiting switch
+// goes again (the host's save, once in, is written and switched to on the title's menu).
+void ResumePendingSwitch();
 
 // The emulator's save folder path for a user's account save (relative to the
 // NAND, "/user/save/0000000000000000/<user>/<title>"): with the co-op folder

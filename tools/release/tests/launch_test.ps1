@@ -691,7 +691,15 @@ try {
     } finally {
         Remove-Item -LiteralPath $cp -Recurse -Force -ErrorAction SilentlyContinue
         Write-File (Join-Path $hk 'hookshot\game-folder.txt') "$other`n"
-    }    # hs-missing (a tester read "No co-op Hookshot game" as "couldn't find Hookshot"): antivirus took the module
+    }
+    # collect-logs: a kit-built game (bin\longshot.exe beside image.bin) writes its log in the folder above bin\
+    Check (@(Get-KitHookshotLogDirs (Join-Path $other 'bin\longshot.exe')).Count -eq 1) 'hookshot log dirs: bin\ alone without image.bin beside it'
+    Write-File (Join-Path $other 'image.bin') 'img'
+    $dirs = @(Get-KitHookshotLogDirs (Join-Path $other 'bin\longshot.exe'))
+    Check ($dirs.Count -eq 2 -and $dirs[0] -eq $other -and $dirs[1] -eq (Join-Path $other 'bin')) 'hookshot log dirs: the game folder first, then bin\'
+    Remove-Item -LiteralPath (Join-Path $other 'image.bin')
+    Check (@(Get-KitHookshotLogDirs '').Count -eq 0) 'hookshot log dirs: no exe, none'
+    # hs-missing (a tester read "No co-op Hookshot game" as "couldn't find Hookshot"): antivirus took the module
     Remove-Item -LiteralPath (Join-Path $hk 'hookshot\hookshot_coop.dll')
     Check ((Get-KitHookshotNeed $hk) -eq 'quarantine') 'hookshot need: the module in neither the kit nor the game -> quarantine (no build)'
     Rename-Item -LiteralPath (Join-Path $hk 'hookshot\PIN') 'PIN.off'

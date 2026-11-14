@@ -468,3 +468,37 @@ TEST_CASE("look: an unpause with the look unchanged is told too") {
     CHECK(unpaused == 1);
     CoopLook::Init(Look{}, nullptr);
 }
+
+TEST_CASE("look tunic: the colour chosen before is worn at start, once the game loads your Link's tunic") {
+    // A player's report (0.10.1, before look-live): "Chosen color doesn't apply for self, but does for others".
+    // StartModule wears the settings' colour (coop.ini / coop-options.ini through LICHII_COOP_COLOR) before the
+    // game has loaded Link: the texture comes later (the title, then the save's scene), and is rewritten then.
+    FakeMemory m(kBase, 0x10000);
+    const std::map<std::string, std::vector<std::uint8_t>> pack = {
+        {"green", LookFile({{"Tile_A", TexelsOf(1)}})},
+        {"blue", LookFile({{"Tile_A", TexelsOf(7)}})},
+    };
+    std::vector<std::string> log;
+    CoopLookTunic::Wardrobe::Host host;
+    host.memory = &m;
+    host.range = [] { return std::pair<std::uint64_t, std::uint64_t>{kBase, kBase + 0x10000}; };
+    host.file = [&](const std::string& c) -> std::optional<std::vector<std::uint8_t>> {
+        const auto it = pack.find(c);
+        if (it == pack.end()) {
+            return std::nullopt;
+        }
+        return it->second;
+    };
+    host.log = [&](const std::string& l) { log.push_back(l); };
+    CoopLookTunic::Wardrobe w(host);
+    w.Wear(CoopLook::TunicName(0x2050E0));   // a hex colour near blue: the pack's nearest tunic
+    CHECK(w.Busy());
+    w.Step(0);   // nothing of Link loaded yet
+    const std::uint64_t at = kBase + 0x2000 + kOffset;
+    PutFile(m, kBase + 0x2000, "Tile_A", TexelsOf(1));   // the game loads the tunic (green, as the game has it)
+    w.Step(CoopLookTunic::Wardrobe::kSearchSoonMs - 1);
+    CHECK(Holding(m, at, 1));   // (the next search is not due yet)
+    w.Step(CoopLookTunic::Wardrobe::kSearchSoonMs);
+    CHECK(Holding(m, at, 7));   // blue, with no pause-menu change and no restart
+    CHECK(std::any_of(log.begin(), log.end(), [](const std::string& l) { return l.find("is blue now") != std::string::npos; }));
+}

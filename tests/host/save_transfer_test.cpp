@@ -155,14 +155,14 @@ TEST_CASE("save transfer: the host answers asks at once with its newest save, al
   save::Planner p;
   CHECK(p.due(t0).empty());  // nobody asked
 
-  p.on_ask(2);
+  p.on_ask(2, 0);
   CHECK(p.due(t0) == std::vector<Send>{{2, proto::SaveReason::join}});
   CHECK(p.due(t0).empty());  // once
 
   // hostsave-fix: the host loaded a save, then a guest asks. The ask is answered at once with the save on disk
   // (it used to wait for the game's next save, and the guest got nothing); every guest gets the next save after it.
   p.on_host_load(later);
-  p.on_ask(3);
+  p.on_ask(3, 0);
   CHECK(p.waiting());
   CHECK(p.due(t0) == std::vector<Send>{{3, proto::SaveReason::join}});  // at once, from before the load
   CHECK(p.waiting());
@@ -174,13 +174,13 @@ TEST_CASE("save transfer: the host answers asks at once with its newest save, al
 
   // An ask on the same look as the reload: the reload goes to everyone, once.
   p.on_host_load(later + std::chrono::seconds(5));
-  p.on_ask(4);
+  p.on_ask(4, 0);
   CHECK(p.due(later + std::chrono::seconds(6)) == std::vector<Send>{{0, proto::SaveReason::host_load}});
   CHECK(p.idle());
   p.forget(4);
 
   // A player who left is not answered.
-  CHECK(p.on_ask(4));
+  CHECK(p.on_ask(4, 0));
   p.forget(4);
   CHECK(p.due(later + std::chrono::seconds(3)).empty());
 }
@@ -188,7 +188,7 @@ TEST_CASE("save transfer: the host answers asks at once with its newest save, al
 TEST_CASE("save transfer: a host with no save tells the asker at once (hostsave-fix)") {
   using Send = save::Planner::Send;
   save::Planner p;
-  CHECK(p.on_ask(2));
+  CHECK(p.on_ask(2, 0));
   CHECK(p.due(std::nullopt) == std::vector<Send>{{2, proto::SaveReason::join, true}});
   CHECK(p.idle());
   CHECK(p.due(std::nullopt).empty());  // once
@@ -253,7 +253,7 @@ TEST_CASE("save transfer: a send the full outbox could not take is owed again") 
   using Send = save::Planner::Send;
   const auto t0 = fs::file_time_type::clock::now();
   save::Planner p;
-  CHECK(p.on_ask(2));
+  CHECK(p.on_ask(2, 0));
   const auto first = p.due(t0);
   REQUIRE(first == std::vector<Send>{{2, proto::SaveReason::join}});
   p.retry(first[0]);
@@ -294,16 +294,79 @@ TEST_CASE("save transfer: a guest that asks again and again gets the save once")
   using Send = save::Planner::Send;
   const auto t0 = fs::file_time_type::clock::now();
   save::Planner p;
-  CHECK(p.on_ask(2));
-  for (int i = 0; i < 100; ++i) CHECK_FALSE(p.on_ask(2));
+  CHECK(p.on_ask(2, 0));
+  for (int i = 0; i < 100; ++i) CHECK_FALSE(p.on_ask(2, 1000 * static_cast<std::uint64_t>(i)));
   CHECK(p.due(t0) == std::vector<Send>{{2, proto::SaveReason::join}});
-  for (int i = 0; i < 100; ++i) CHECK_FALSE(p.on_ask(2));
+  for (int i = 0; i < 100; ++i) CHECK_FALSE(p.on_ask(2, 0));
   CHECK(p.idle());
   CHECK(p.due(t0).empty());
   // It left and a player with its number joined: that one may ask.
   p.forget(2);
-  CHECK(p.on_ask(2));
+  CHECK(p.on_ask(2, 0));
   CHECK(p.due(t0) == std::vector<Send>{{2, proto::SaveReason::join}});
+}
+
+TEST_CASE("save transfer: an ask again after 10 s is answered again (a lost answer, a rejoin before PLAYER_LEFT)") {
+  // Revirie 0.10.1: the guest closed the game and joined again; the host still held its first ask as answered
+  // ("once a player") and sent nothing, so the guest's title never got a Continue.
+  using Send = save::Planner::Send;
+  const auto t0 = fs::file_time_type::clock::now();
+  const std::uint64_t s = 1'000'000;
+  save::Planner p;
+  CHECK(p.on_ask(2, 5 * s));
+  CHECK(p.due(t0) == std::vector<Send>{{2, proto::SaveReason::join}});
+  CHECK_FALSE(p.on_ask(2, 5 * s + save::Planner::kReaskUs - 1));
+  CHECK(p.on_ask(2, 5 * s + save::Planner::kReaskUs));
+  CHECK(p.due(t0) == std::vector<Send>{{2, proto::SaveReason::join}});
+  // and the 10 s start over from that one
+  CHECK_FALSE(p.on_ask(2, 5 * s + save::Planner::kReaskUs + 3 * s));
+  // another player is never held up by it
+  CHECK(p.on_ask(3, 5 * s + save::Planner::kReaskUs + 3 * s));
+}
+
+TEST_CASE("save transfer: a guest asks again when nothing at all came, or the transfer stopped part way") {
+  const std::uint64_t s = 1'000'000;
+  save::GuestSession g;
+  CHECK_FALSE(save::reask_due(g, 100 * s));   // never asked: the first ask is not a re-ask
+  g.asked = true;
+  g.asked_us = 10 * s;
+  g.asks = 1;
+  CHECK_FALSE(save::reask_due(g, 10 * s + save::kGuestReaskUs - 1));
+  CHECK(save::reask_due(g, 10 * s + save::kGuestReaskUs));
+  // parts came after the ask, none kept yet: nothing to ask for
+  save::GuestSession part = g;
+  part.last_part_us = 11 * s;
+  CHECK_FALSE(save::reask_due(part, 100 * s));
+  // a transfer under way (a part came just now), then stopped part way: asked again once it is quiet
+  save::GuestSession stalled = g;
+  const auto parts = save::split(save::pack(Slot(5)), 3, proto::SaveReason::join, 2);
+  REQUIRE(parts.size() > 2);
+  REQUIRE(stalled.assembler.add(Relayed(parts[0], 1), 1) == save::Assembler::Result::partial);
+  stalled.last_part_us = 12 * s;
+  CHECK_FALSE(save::reask_due(stalled, 12 * s + save::kGuestReaskUs - 1));   // still coming
+  CHECK(save::reask_due(stalled, 12 * s + save::kGuestReaskUs));
+  // just asked again: not again before kGuestReaskUs (the old parts are still kept)
+  stalled.asked_us = 12 * s + save::kGuestReaskUs;
+  stalled.asks = 2;
+  CHECK_FALSE(save::reask_due(stalled, stalled.asked_us + save::kGuestReaskUs - 1));
+  CHECK(save::reask_due(stalled, stalled.asked_us + save::kGuestReaskUs));
+  // the new transfer's parts come in: not while they come
+  stalled.last_part_us = stalled.asked_us + 2 * s;
+  CHECK_FALSE(save::reask_due(stalled, stalled.asked_us + save::kGuestReaskUs));
+  // the save is in, written, or the host said it has none
+  save::GuestSession in = g;
+  in.unwritten = save::SaveSlot{};
+  CHECK_FALSE(save::reask_due(in, 100 * s));
+  save::GuestSession ready = g;
+  ready.ready = true;
+  CHECK_FALSE(save::reask_due(ready, 100 * s));
+  save::GuestSession none = g;
+  none.no_save = true;
+  CHECK_FALSE(save::reask_due(none, 100 * s));
+  // at most kGuestMaxAsks a session
+  save::GuestSession many = g;
+  many.asks = save::kGuestMaxAsks;
+  CHECK_FALSE(save::reask_due(many, 100 * s));
 }
 
 TEST_CASE("save transfer: the newest slot is found and read") {

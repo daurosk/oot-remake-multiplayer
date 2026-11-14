@@ -227,6 +227,15 @@ std::vector<Planner::Send> Planner::due(std::optional<Time> newest) {
   return out;
 }
 
+bool reask_due(const GuestSession& s, std::uint64_t now_us) {
+  if (!s.asked || s.ready || s.no_save || s.unwritten || s.asks >= kGuestMaxAsks) return false;
+  if (now_us - s.asked_us < kGuestReaskUs) return false;
+  const auto& a = s.assembler;
+  if (a.received() == 0 && s.last_part_us <= s.asked_us) return true;  // (nothing at all came)
+  // Parts came: only a transfer that stopped part way (a part lost), quiet for kGuestReaskUs.
+  return a.received() != 0 && a.received() < a.count() && now_us - s.last_part_us >= kGuestReaskUs;
+}
+
 std::optional<fs::path> newest_slot(const fs::path& game_dir) {
   std::error_code ec;
   std::optional<fs::path> best;

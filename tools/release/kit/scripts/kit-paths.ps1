@@ -712,6 +712,19 @@ function Get-KitHookshotExe([string]$Game) {
     return $null
 }
 
+# Where a game's longshot_log*.txt, coop.ini and mods\ are: beside longshot.exe, and for a builder's bin\ layout
+# (bin\longshot.exe beside image.bin) the game folder above it, where Longshot writes them (hos_paths.h:
+# hos_game_path_a gives the folder's path then). Each folder once, the game folder first.
+function Get-KitHookshotLogDirs([string]$Exe) {
+    if (-not $Exe) { return @() }
+    $dir = Split-Path -Parent $Exe
+    $up = Split-Path -Parent $dir
+    if ((Split-Path -Leaf $dir) -ieq 'bin' -and $up -and (Test-Path -LiteralPath (Join-Path $up 'image.bin'))) {
+        return @($up, $dir)
+    }
+    return @($dir)
+}
+
 # The stamp the kit's hookshot-build.ps1 writes to the game's coop-built-from.txt: release, pin, patches.
 function Get-KitHookshotStamp([string]$Kit) {
     $hs = Join-Path $Kit 'hookshot'

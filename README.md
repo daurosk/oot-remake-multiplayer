@@ -70,7 +70,7 @@ To test co-op on two PCs with the test kit, see [docs/testing.md](docs/testing.m
 
 ## Contributing
 
-Anyone can contribute: fork, branch, pull request. Every pull request is reviewed before it is merged. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Questions go to [Discussions](https://github.com/daurosk/oot-remake-multiplayer/discussions) or [Discord](https://discord.gg/GwtRKAqng5).
+Anyone can contribute: fork, branch, pull request. Every pull request is reviewed before it is merged. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Using an AI coding agent? It reads [AGENTS.md](AGENTS.md). Questions go to [Discussions](https://github.com/daurosk/oot-remake-multiplayer/discussions) or [Discord](https://discord.gg/GwtRKAqng5).
 
 ## Rules for this repository
 

@@ -454,7 +454,7 @@ TEST_CASE("hookshot draw: a title screen line, with or without the Minus button"
     {
         Canvas c(1280, 720);
         CoopDraw::Scene s;
-        s.title = CoopDraw::TitleView{"Loading Saria's save..."};   // (the only line the title has now)
+        s.title = CoopDraw::TitleView{"Loading Saria's save..."};   // (the host's save loading: no button)
         CHECK(CoopDraw::Wanted(s));
         CoopDraw::Draw(c.d, s, GameLook());
         bool said = false;

@@ -561,6 +561,31 @@ TEST_CASE("hookshot: a module tab may draw a picture beside its page (patch 0019
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_view(double eye[3], double target[3])") != std::string::npos);
 }
 
+TEST_CASE("hookshot: a module may have a texture drawn with other texels (patch 0020, hos_coop_texture.h)") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0020-coop-texture-override.patch");
+    REQUIRE_FALSE(patch.empty());
+    CHECK(NewFile(patch, "host/hos_coop_texture.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_texture.h"));
+    // The exe's side is the file the unit tests build (texture_override_test.cpp).
+    CHECK(NewFile(patch, "host/coop_texture.c") == ReadFile(kRepo / "hookshot" / "src" / "coop_texture.c"));
+    // The exe's exports, the textures it is told of, and both renderers reading through the overlay.
+    CHECK(patch.find("+COOP_TEXTURE_EXPORT int hos_coop_textures(") != std::string::npos);
+    CHECK(patch.find("+COOP_TEXTURE_EXPORT int hos_coop_texture_override(uint64_t address, uint64_t serial,") !=
+          std::string::npos);
+    CHECK(patch.find("+        hos_coop_texture_made(o, o->gpu, o->L.size,") != std::string::npos);
+    CHECK(patch.find("+    hos_coop_texture_gone(o);") != std::string::npos);
+    CHECK(patch.find("+        x.overlay = (overlay_fn)look(\"hos_coop_texture_overlay\");") != std::string::npos);
+    CHECK(patch.find("+        hos_coop_texture_overlay(va, scratch.data(), total);") != std::string::npos);
+    // Nothing of the game is written: no lift, no guest write (only the pages marked for the renderers).
+    for (std::size_t at = patch.find("diff --git a/"); at != std::string::npos; at = patch.find("diff --git a/", at + 1)) {
+        CHECK((patch.compare(at, 18, "diff --git a/host/") == 0 || patch.compare(at, 17, "diff --git a/gpu/") == 0));
+    }
+    CHECK(patch.find("nx2/") == std::string::npos);
+    // The module finds them by name and never writes the game's memory for a look.
+    const std::string live = ReadFile(kRepo / "hookshot" / "src" / "coop_look_live.cpp");
+    CHECK(live.find("look(\"hos_coop_texture_override\")") != std::string::npos);
+    CHECK(live.find("CoopRuntime::Write") == std::string::npos);
+}
+
 TEST_CASE("hookshot: the sound wrap (patch 0014) is one row in 0005's table, its header hookshot/src's") {
     const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0014-coop-sound-wrap.patch");
     CHECK(NewFile(patch, "host/hos_coop_sound.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_sound.h"));

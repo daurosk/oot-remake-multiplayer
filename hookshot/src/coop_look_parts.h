@@ -11,8 +11,8 @@
 // The puppet pack has the game's own texels of these textures
 // (coop_look/gear.bin, tools/puppet_pack/look_live.py, the same file format as
 // the tunic's colours). The module paints them in the look and hands them to
-// a CoopLookTunic::Wardrobe, which finds the textures in the game's memory
-// and writes them, as for the tunic.
+// a CoopLookTunic::Wardrobe, which finds the textures the game made
+// and has Longshot draw them painted (texture overrides), as for the tunic.
 #pragma once
 
 #include <cstddef>

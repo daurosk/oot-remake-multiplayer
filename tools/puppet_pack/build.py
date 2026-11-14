@@ -799,7 +799,7 @@ def write_look_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, slots, l
                 t_rel, t_raw = textures[g]
                 data = look_items.texture_for(dicts.decompress(t_raw), g, slot)
                 t_dst = f"Tex/{look_items.tex_name(g, slot)}.bntx.zs"
-                write(os.path.join(out_romfs, t_dst), look_items.raw_zstd(data))  # the module writes it again
+                write(os.path.join(out_romfs, t_dst), recompress(dicts, t_raw, data))
                 table.add_new(strip_zs(t_dst), table.get(strip_zs(t_rel)) or len(data) + PACK_SIZE_MARGIN)
                 paths.append(t_dst)
             files += paths

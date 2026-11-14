@@ -33,10 +33,24 @@ Look Tunic(std::optional<std::uint32_t> c) {
     return l;
 }
 
-// One block of memory at `base`; anything else is not there.
-class FakeMemory final : public CoopLookTunic::Memory {
+// One block of the game's memory at `base` (anything else is not there), the
+// textures the game made in it and Longshot's overrides of them, as
+// host/coop_texture.c keeps them (patch 0020).
+class FakeTextures final : public CoopLookTunic::Textures {
 public:
-    FakeMemory(std::uint64_t base, std::size_t size) : base_(base), bytes_(size) {}
+    FakeTextures(std::uint64_t base, std::size_t size) : base_(base), bytes_(size) {}
+    std::vector<CoopLookTunic::Live> List(std::uint64_t lo, std::uint64_t hi, std::uint64_t* generation) const override {
+        std::vector<CoopLookTunic::Live> out;
+        for (const auto& t : made_) {
+            if (t.size >= lo && t.size <= hi) {
+                out.push_back(t);
+            }
+        }
+        if (generation != nullptr) {
+            *generation = generation_;
+        }
+        return out;
+    }
     bool Read(std::uint64_t a, void* out, std::size_t n) const override {
         if (!In(a, n)) {
             return false;
@@ -44,21 +58,68 @@ public:
         std::memcpy(out, bytes_.data() + (a - base_), n);
         return true;
     }
-    bool Write(std::uint64_t a, const void* in, std::size_t n) override {
-        if (!In(a, n)) {
+    bool Override(std::uint64_t a, std::uint64_t serial, const void* in, std::size_t n) override {
+        if (in == nullptr) {
+            Drop(a, n);
+            return true;
+        }
+        const bool inside = std::any_of(made_.begin(), made_.end(), [&](const auto& t) {
+            return t.serial == serial && t.address <= a && a + n <= t.address + t.size;
+        });
+        if (!inside) {
             return false;
         }
-        std::memcpy(bytes_.data() + (a - base_), in, n);
-        ++writes;
+        Drop(a, n);
+        const auto* p = static_cast<const std::uint8_t*>(in);
+        overrides_[a] = std::vector<std::uint8_t>(p, p + n);
+        ++overridden;
         return true;
     }
+    // The game makes a texture whose storage is [a, a + n) (its file already in memory).
+    void Make(std::uint64_t a, std::uint64_t n) {
+        Finalize(a);
+        made_.push_back({a, n, ++serials_});
+        ++generation_;
+    }
+    void Finalize(std::uint64_t a) {
+        for (auto it = made_.begin(); it != made_.end(); ++it) {
+            if (it->address == a) {
+                Drop(it->address, it->size);
+                made_.erase(it);
+                ++generation_;
+                return;
+            }
+        }
+    }
+    // What the renderer draws at a: the game's memory with the overrides over it.
+    std::vector<std::uint8_t> Drawn(std::uint64_t a, std::size_t n) const {
+        std::vector<std::uint8_t> out(bytes_.begin() + static_cast<std::ptrdiff_t>(a - base_),
+                                      bytes_.begin() + static_cast<std::ptrdiff_t>(a - base_ + n));
+        for (const auto& [at, o] : overrides_) {
+            for (std::size_t i = 0; i < o.size(); ++i) {
+                if (at + i >= a && at + i < a + n) {
+                    out[at + i - a] = o[i];
+                }
+            }
+        }
+        return out;
+    }
     std::uint8_t* at(std::uint64_t a) { return bytes_.data() + (a - base_); }
-    int writes = 0;
+    std::size_t overrides() const { return overrides_.size(); }
+    int overridden = 0;
 
 private:
+    void Drop(std::uint64_t a, std::uint64_t n) {
+        for (auto it = overrides_.begin(); it != overrides_.end();) {
+            it = it->first < a + n && a < it->first + it->second.size() ? overrides_.erase(it) : std::next(it);
+        }
+    }
     bool In(std::uint64_t a, std::size_t n) const { return a >= base_ && a + n <= base_ + bytes_.size(); }
     std::uint64_t base_;
     std::vector<std::uint8_t> bytes_;
+    std::vector<CoopLookTunic::Live> made_;
+    std::map<std::uint64_t, std::vector<std::uint8_t>> overrides_;
+    std::uint64_t generation_ = 0, serials_ = 0;
 };
 
 constexpr std::uint64_t kOffset = 0x100;   // the texels' place in the texture's file
@@ -73,13 +134,15 @@ std::vector<std::uint8_t> TexelsOf(std::uint8_t seed) {
     return t;
 }
 
-// A texture file's image at `address`: a header naming `name`, then the texels.
-void PutFile(FakeMemory& m, std::uint64_t address, const std::string& name, const std::vector<std::uint8_t>& texels) {
+// A texture file's image at `address`: a header naming `name`, then the
+// texels; and the game makes the texture over them.
+void PutFile(FakeTextures& m, std::uint64_t address, const std::string& name, const std::vector<std::uint8_t>& texels) {
     std::uint8_t* p = m.at(address);
     std::memcpy(p, "BNTX", 4);
     std::memcpy(p + 0x40, name.c_str(), name.size() + 1);
     std::memcpy(p + kOffset - 16, "BRTD", 4);
     std::memcpy(p + kOffset, texels.data(), texels.size());
+    m.Make(address + kOffset, texels.size());
 }
 
 using Named = std::vector<std::pair<std::string, std::vector<std::uint8_t>>>;
@@ -111,7 +174,12 @@ std::shared_ptr<const CoopLookTunic::Texels> Colour(const Named& textures) {
     return std::make_shared<const CoopLookTunic::Texels>(std::move(*t));
 }
 
-bool Holding(FakeMemory& m, std::uint64_t at, std::uint8_t seed) {
+// The renderer draws the texture at `at` in that seed's texels.
+bool Drawn(const FakeTextures& m, std::uint64_t at, std::uint8_t seed) {
+    return m.Drawn(at, kTexels) == TexelsOf(seed);
+}
+// The game's memory holds that seed's texels at `at`.
+bool Holding(FakeTextures& m, std::uint64_t at, std::uint8_t seed) {
     return std::memcmp(m.at(at), TexelsOf(seed).data(), kTexels) == 0;
 }
 
@@ -257,42 +325,46 @@ TEST_CASE("look tunic: look files are read whole or not at all") {
     CHECK_FALSE(CoopLookTunic::SameLayout(*t, *Colour({{"Tile_A", TexelsOf(9)}})));
 }
 
-TEST_CASE("look tunic: the mapped end of the heap") {
-    FakeMemory m(0x1000, 0x5000);
-    CHECK(CoopLookTunic::MappedEnd(m, 0x1000, 0x100000, 0x1000) == 0x6000);
-    CHECK(CoopLookTunic::MappedEnd(m, 0x1000, 0x3000, 0x1000) == 0x3000);       // the limit
-    CHECK(CoopLookTunic::MappedEnd(m, 0x80000, 0x100000, 0x1000) == 0x80000);   // nothing there
-}
-
-TEST_CASE("look tunic: your Link's textures are found and rewritten, a puppet's copy is left alone") {
-    FakeMemory m(kBase, 0x10000);
+TEST_CASE("look tunic: your Link's textures are found and drawn over, the game's memory and a puppet's copy left alone") {
+    FakeTextures m(kBase, 0x10000);
     const auto green = Colour({{"Tile_A", TexelsOf(1)}, {"Vest", TexelsOf(2)}});
     const auto red = Colour({{"Tile_A", TexelsOf(9)}, {"Vest", TexelsOf(8)}});
     PutFile(m, kBase + 0x1000, "Tile_A", TexelsOf(1));
     PutFile(m, kBase + 0x3000, "Vest", TexelsOf(2));
     PutFile(m, kBase + 0x5000, "Tile_A_Red", TexelsOf(1));   // a puppet's: another name
+    m.at(kBase + 0x7000)[0] = 1;
+    m.Make(kBase + 0x7000, kTexels);   // another texture of that size, other texels
 
-    const auto found = CoopLookTunic::Find(m, kBase, kBase + 0x10000, {green, red});
+    const auto found = CoopLookTunic::Find(m, {green, red});
     REQUIRE(found.places.size() == 2);
     CHECK(found.copies == 1);
     auto place = found.places[0];
     CHECK(place.address == kBase + 0x1000 + kOffset);
-    CHECK((place.colour == green));
-    CHECK(CoopLookTunic::Holds(m, place));
-    REQUIRE(CoopLookTunic::Put(m, place, red));
-    CHECK((place.colour == red));
-    CHECK(Holding(m, place.address, 9));
-    CHECK(Holding(m, kBase + 0x5000 + kOffset, 1));   // the puppet's copy
-    // The game loaded it again (green): a Put that expects red writes nothing.
-    std::memcpy(m.at(place.address), TexelsOf(1).data(), kTexels);
-    CHECK_FALSE(CoopLookTunic::Holds(m, place));
-    const int writes = m.writes;
-    CHECK_FALSE(CoopLookTunic::Put(m, place, green));
-    CHECK(m.writes == writes);
+    CHECK((place.held == green));
+    CHECK((place.drawn == green));
+    REQUIRE(CoopLookTunic::Draw(m, place, red));
+    CHECK((place.drawn == red));
+    CHECK(place.overridden);
+    CHECK(Drawn(m, place.address, 9));
+    CHECK(Holding(m, place.address, 1));   // the game's memory: as it was
+    CHECK(Drawn(m, kBase + 0x5000 + kOffset, 1));   // the puppet's copy
+    // Back to the game's own: the override taken away.
+    REQUIRE(CoopLookTunic::Draw(m, place, green));
+    CHECK_FALSE(place.overridden);
+    CHECK(m.overrides() == 0);
+    CHECK(Drawn(m, place.address, 1));
+    // An override outside a texture the game has is refused.
+    m.Finalize(place.address);
+    CHECK_FALSE(CoopLookTunic::Draw(m, place, red));
+    CHECK(m.overrides() == 0);
+    // Another texture made over the same storage after the place was found (a late Draw): refused too.
+    m.Make(place.address, kTexels);
+    CHECK_FALSE(CoopLookTunic::Draw(m, place, red));
+    CHECK(m.overrides() == 0);
 }
 
 TEST_CASE("look tunic: the wardrobe keeps your Link in the colour worn") {
-    FakeMemory m(kBase, 0x10000);
+    FakeTextures m(kBase, 0x10000);
     PutFile(m, kBase + 0x1000, "Tile_A", TexelsOf(1));
     const std::map<std::string, std::vector<std::uint8_t>> pack = {
         {"green", LookFile({{"Tile_A", TexelsOf(1)}})},
@@ -300,8 +372,7 @@ TEST_CASE("look tunic: the wardrobe keeps your Link in the colour worn") {
     };
     std::vector<std::string> log;
     CoopLookTunic::Wardrobe::Host host;
-    host.memory = &m;
-    host.range = [] { return std::pair<std::uint64_t, std::uint64_t>{kBase, kBase + 0x10000}; };
+    host.textures = &m;
     host.file = [&](const std::string& c) -> std::optional<std::vector<std::uint8_t>> {
         const auto it = pack.find(c);
         if (it == pack.end()) {
@@ -318,22 +389,39 @@ TEST_CASE("look tunic: the wardrobe keeps your Link in the colour worn") {
     w.Wear("red");
     CHECK(w.Busy());
     w.Step(0);
-    CHECK(Holding(m, at, 9));
-    // The game loads the texture again (a scene change): red again.
-    std::memcpy(m.at(at), TexelsOf(1).data(), kTexels);
+    CHECK(Drawn(m, at, 9));
+    CHECK(Holding(m, at, 1));
+    // Nothing changed: nothing set again.
+    const int set = m.overridden;
     w.Step(1000);
-    CHECK(Holding(m, at, 9));
+    CHECK(m.overridden == set);
+    // The game makes the texture again (a scene change; its override went with the old one): red again.
+    m.Make(at, kTexels);
+    CHECK(Drawn(m, at, 1));
+    w.Step(2000);
+    CHECK(Drawn(m, at, 9));
     // A colour the pack does not have: the one worn stays, said once.
     w.Wear("teal");
-    w.Step(2000);
     w.Step(3000);
-    CHECK(Holding(m, at, 9));
-    CHECK(std::count_if(log.begin(), log.end(), [](const std::string& l) { return l.find("teal") != std::string::npos; }) == 1);
-    // Back to green: written, then nothing more to do.
-    w.Wear("green");
     w.Step(4000);
-    CHECK(Holding(m, at, 1));
+    CHECK(Drawn(m, at, 9));
+    CHECK(std::count_if(log.begin(), log.end(), [](const std::string& l) { return l.find("teal") != std::string::npos; }) == 1);
+    // Back to green: the override taken away, then nothing more to do.
+    w.Wear("green");
+    w.Step(5000);
+    CHECK(Drawn(m, at, 1));
+    CHECK(m.overrides() == 0);
     CHECK_FALSE(w.Busy());
+    // The module stops while red is worn: its override goes.
+    w.Wear("red");
+    w.Step(6000);
+    CHECK(m.overrides() == 1);
+    w.Clear();
+    CHECK(m.overrides() == 0);
+    CHECK(Drawn(m, at, 1));
+    // A later start wears red again.
+    w.Step(7000);
+    CHECK(Drawn(m, at, 9));
 }
 
 // ---------------------------------------------------------------------------
@@ -414,15 +502,14 @@ TEST_CASE("look parts: the gear painted in a look, a painting's name says its co
     CHECK(CoopLookParts::Painted(*gear, boots)[0].texels == Shield());
 }
 
-TEST_CASE("look parts: the gear wardrobe paints your shield, and finds one loaded later at the unpause") {
-    FakeMemory m(kBase, 0x10000);
+TEST_CASE("look parts: the gear wardrobe paints your shield, and one the game makes later") {
+    FakeTextures m(kBase, 0x10000);
     PutFile(m, kBase + 0x1000, kHylian, Shield());
     Look look;
     look[Part::hylian_frame] = 0xE0C030u;
     const auto base = LookFile({{kHylian, Shield()}});
     CoopLookTunic::Wardrobe::Host host;
-    host.memory = &m;
-    host.range = [] { return std::pair<std::uint64_t, std::uint64_t>{kBase, kBase + 0x10000}; };
+    host.textures = &m;
     host.file = [&](const std::string& c) -> std::optional<std::vector<std::uint8_t>> {
         if (c == CoopLookParts::kBase) {
             return base;
@@ -437,20 +524,18 @@ TEST_CASE("look parts: the gear wardrobe paints your shield, and finds one loade
     w.Wear(CoopLookParts::Name(look));
     w.Step(0);
     const auto want = CoopLookParts::Painted(*CoopLookTunic::Parse(base), look)[0].texels;
-    CHECK(std::memcmp(m.at(kBase + 0x1000 + kOffset), want.data(), want.size()) == 0);
+    CHECK(m.Drawn(kBase + 0x1000 + kOffset, want.size()) == want);
+    CHECK(std::memcmp(m.at(kBase + 0x1000 + kOffset), Shield().data(), kTexels) == 0);   // the game's memory: its own
     CHECK(std::any_of(log.begin(), log.end(), [](const std::string& l) { return l.find("your Link's gear is") != std::string::npos; }));
-    // A second shield's texture loads (the game's own texels): not seen until the next search...
+    // A second shield's texture is made (the game's own texels): painted at the next round.
     PutFile(m, kBase + 0x4000, kHylian, Shield());
     w.Step(1000);
-    CHECK(std::memcmp(m.at(kBase + 0x4000 + kOffset), Shield().data(), kTexels) == 0);
-    // ...which the unpause brings forward.
-    w.Kick();
-    w.Step(2000);
-    CHECK(std::memcmp(m.at(kBase + 0x4000 + kOffset), want.data(), want.size()) == 0);
+    CHECK(m.Drawn(kBase + 0x4000 + kOffset, want.size()) == want);
     // Back to the game's own colours.
     w.Wear(CoopLookParts::kBase);
-    w.Step(3000);
-    CHECK(std::memcmp(m.at(kBase + 0x1000 + kOffset), Shield().data(), kTexels) == 0);
+    w.Step(2000);
+    CHECK(m.Drawn(kBase + 0x1000 + kOffset, kTexels) == Shield());
+    CHECK(m.overrides() == 0);
     CHECK_FALSE(w.Busy());
 }
 
@@ -473,7 +558,7 @@ TEST_CASE("look: an unpause with the look unchanged is told too") {
     CoopLook::Init(Look{}, nullptr);
 }
 
-TEST_CASE("look parts: a puppet copy's texture names, and its file painted again") {
+TEST_CASE("look parts: a puppet copy's textures are named per copy and painted in its look") {
     CHECK(CoopLookParts::SlotName(kHylian, 2) == "C2_Weapon_Shield_Hylian_Alb");
     CHECK(CoopLookParts::SlotName("Mt_Weapon_Sword_Biggoron_Alb.00", 1) == "C1_Weapon_Sword_Biggoron_Alb.00");
     CHECK(CoopLookParts::SlotName("Angin_Tile_A_Alb", 1).empty());
@@ -481,92 +566,70 @@ TEST_CASE("look parts: a puppet copy's texture names, and its file painted again
     for (const auto& g : CoopLookParts::Gear()) {
         CHECK(CoopLookParts::SlotName(g.name, 8).size() == std::strlen(g.name));   // as long (look_items.py)
     }
-    // Raw zstd frames, as look_items.py raw_zstd writes them.
-    for (const std::size_t n : {std::size_t{0}, std::size_t{5}, std::size_t{128 * 1024}, std::size_t{300000}}) {
-        std::vector<std::uint8_t> data(n);
-        for (std::size_t i = 0; i < n; ++i) {
-            data[i] = static_cast<std::uint8_t>(i * 7);
-        }
-        const auto frame = CoopLookParts::RawZstd(data);
-        CHECK(frame.size() == data.size() + 13 + 3 * std::max<std::size_t>(1, (n + 128 * 1024 - 1) / (128 * 1024)));
-        CHECK(CoopLookParts::UnrawZstd(frame) == data);
-        auto cut = frame;
-        cut.pop_back();
-        CHECK_FALSE(CoopLookParts::UnrawZstd(cut));
-    }
-    const std::vector<std::uint8_t> known = {0x28, 0xB5, 0x2F, 0xFD, 0xE0, 3, 0, 0, 0, 0, 0, 0, 0, 0x19, 0, 0, 'a', 'b', 'c'};
-    CHECK(CoopLookParts::RawZstd({'a', 'b', 'c'}) == known);   // (the bytes look_items.py makes)
-    CHECK_FALSE(CoopLookParts::UnrawZstd({0x28, 0xB5, 0x2F, 0xFD, 0x20, 3, 0, 0, 0}));   // another frame
-
-    // A copy's file: the BNTX with the painted texels at their offset.
-    const auto shield = Shield();
-    std::vector<std::uint8_t> bntx(kOffset + shield.size() + 32, 0x11);
-    std::copy(shield.begin(), shield.end(), bntx.begin() + kOffset);
     Look red;
     red[Part::hylian_face] = 0xFF0000u;
-    const auto gear = Colour({{kHylian, shield}});
-    const auto painted = CoopLookParts::Painted(*gear, red)[0];
-    REQUIRE(painted.offset == kOffset);
-    const auto out = CoopLookParts::Repainted(CoopLookParts::RawZstd(bntx), painted);
-    REQUIRE(out);
-    const auto file = CoopLookParts::UnrawZstd(*out);
-    REQUIRE(file);
-    CHECK(file->size() == bntx.size());
-    CHECK(std::equal(file->begin(), file->begin() + kOffset, bntx.begin()));   // the header as it was
-    CHECK(std::equal(painted.texels.begin(), painted.texels.end(), file->begin() + kOffset));
-    CHECK_FALSE(std::equal(shield.begin(), shield.end(), file->begin() + kOffset));   // painted
-    CHECK(std::equal(file->end() - 32, file->end(), bntx.end() - 32));
-    std::vector<std::uint8_t> small(kOffset + 8);
-    CHECK_FALSE(CoopLookParts::Repainted(CoopLookParts::RawZstd(small), painted));   // does not fit
+    const auto gear = Colour({{kHylian, Shield()}, {"Something_Else_Alb", Shield()}});
+    const auto plain = CoopLookParts::CopyTexels(*gear, 3, std::nullopt);
+    REQUIRE(plain.size() == 1);   // not a gear texture: no copy of it
+    CHECK(plain[0].name == "C3_Weapon_Shield_Hylian_Alb");
+    CHECK(plain[0].texels == Shield());
+    CHECK(plain[0].offset == kOffset);
+    const auto painted = CoopLookParts::CopyTexels(*gear, 3, red);
+    REQUIRE(painted.size() == 1);
+    CHECK(painted[0].texels == CoopLookParts::Painted(*gear, red)[0].texels);
+    CHECK(CoopLookTunic::SameLayout(plain, painted));
+
+    CoopLookParts::CopyLooks looks(4);
+    CHECK(CoopLookParts::CopiesName(looks) == CoopLookParts::kCopiesBase);
+    looks[2] = Look{};   // a look with no gear part: as the game's own
+    CHECK(CoopLookParts::CopiesName(looks) == CoopLookParts::kCopiesBase);
+    looks[2] = red;
+    const std::string name = CoopLookParts::CopiesName(looks);
+    CHECK(name != CoopLookParts::kCopiesBase);
+    looks[1] = red;
+    CHECK(CoopLookParts::CopiesName(looks) != name);   // which copy is painted counts
 }
 
-TEST_CASE("look parts: a puppet copy's files are painted in a folder, a broken one is said") {
-    namespace fs = std::filesystem;
-    const fs::path tex = fs::temp_directory_path() / ("coop_look_copy_test_" + std::to_string(std::rand()));
-    fs::create_directories(tex);
-    const auto put = [&](const std::string& name, const std::vector<std::uint8_t>& bytes) {
-        std::ofstream o(tex / (name + ".bntx.zs"), std::ios::binary);
-        o.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    };
-    const auto get = [&](const std::string& name) {
-        std::ifstream in(tex / (name + ".bntx.zs"), std::ios::binary);
-        return std::vector<std::uint8_t>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-    };
-    const auto shield = Shield();
-    std::vector<std::uint8_t> bntx(kOffset + shield.size() + 32, 0x11);
-    std::copy(shield.begin(), shield.end(), bntx.begin() + kOffset);
-    put("C3_Weapon_Shield_Hylian_Alb", CoopLookParts::RawZstd(bntx));
-    put("C4_Weapon_Shield_Hylian_Alb", CoopLookParts::RawZstd(bntx));
-    // The gear file names a sword too, which this pack has no copy of.
-    const auto gear = Colour({{kHylian, shield}, {"Mt_Weapon_Sword_Master_Alb", shield}});
+TEST_CASE("look parts: the puppets' wardrobe draws a copy the game makes, and leaves your own shield alone") {
+    FakeTextures m(kBase, 0x10000);
+    PutFile(m, kBase + 0x1000, kHylian, Shield());   // your own
+    const auto gear = *CoopLookTunic::Parse(LookFile({{kHylian, Shield()}}));
     Look red;
     red[Part::hylian_face] = 0xFF0000u;
-    using S = CoopLookParts::CopyResult::Status;
-
-    auto r = CoopLookParts::PaintCopyFiles(tex, *gear, 3, red);
-    CHECK(r.status == S::written);
-    CHECK(r.files == 1);   // the sword has no file: passed over
-    const auto want = CoopLookParts::Repainted(CoopLookParts::RawZstd(bntx), CoopLookParts::Painted(*gear, red)[0]);
-    REQUIRE(want);
-    CHECK(get("C3_Weapon_Shield_Hylian_Alb") == *want);
-    CHECK(get("C4_Weapon_Shield_Hylian_Alb") == CoopLookParts::RawZstd(bntx));   // the other copy is not touched
-    const auto time = fs::last_write_time(tex / "C3_Weapon_Shield_Hylian_Alb.bntx.zs");
-    r = CoopLookParts::PaintCopyFiles(tex, *gear, 3, red);   // already in these colours: left as it is
-    CHECK(r.status == S::written);
-    CHECK(r.files == 1);
-    CHECK(fs::last_write_time(tex / "C3_Weapon_Shield_Hylian_Alb.bntx.zs") == time);
-    r = CoopLookParts::PaintCopyFiles(tex, *gear, 3, Look{});   // back to the game's own colours
-    CHECK(get("C3_Weapon_Shield_Hylian_Alb") == CoopLookParts::RawZstd(bntx));
-    CHECK(CoopLookParts::PaintCopyFiles(tex, *gear, 5, red).files == 0);   // a copy with no files: nothing to do
-    for (const auto& e : fs::directory_iterator(tex)) {
-        CHECK(e.path().extension() != ".part");   // nothing left over
-    }
-    put("C4_Weapon_Shield_Hylian_Alb", {1, 2, 3});   // not a raw frame
-    r = CoopLookParts::PaintCopyFiles(tex, *gear, 4, red);
-    CHECK(r.status == S::broken);
-    CHECK(r.why.find("C4_Weapon_Shield_Hylian_Alb") != std::string::npos);
-    std::error_code ec;
-    fs::remove_all(tex, ec);
+    CoopLookParts::CopyLooks looks(2);
+    looks[1] = red;
+    const auto all = [&](const CoopLookParts::CopyLooks& l) {
+        CoopLookTunic::Texels out;
+        for (std::size_t k = 1; k <= l.size(); ++k) {
+            const auto t = CoopLookParts::CopyTexels(gear, k, l[k - 1]);
+            out.insert(out.end(), t.begin(), t.end());
+        }
+        return CoopLookTunic::Pack(out);
+    };
+    CoopLookTunic::Wardrobe::Host host;
+    host.textures = &m;
+    host.file = [&](const std::string& c) -> std::optional<std::vector<std::uint8_t>> {
+        return all(c == CoopLookParts::kCopiesBase ? CoopLookParts::CopyLooks(2) : looks);
+    };
+    host.log = [](const std::string&) {};
+    host.base = CoopLookParts::kCopiesBase;
+    host.what = "puppets' gear";
+    CoopLookTunic::Wardrobe w(host);
+    w.Wear(CoopLookParts::CopiesName(looks));
+    w.Step(0);   // no puppet wears a copy yet: nothing drawn
+    CHECK(m.overrides() == 0);
+    // The game makes copy 2's shield for a puppet (its file, the game's own texels, under the copy's name)...
+    PutFile(m, kBase + 0x3000, "C2_Weapon_Shield_Hylian_Alb", Shield());
+    PutFile(m, kBase + 0x5000, "C1_Weapon_Shield_Hylian_Alb", Shield());
+    w.Step(1000);
+    // ...and it is drawn in that player's look, the game's memory as it was.
+    const auto want = CoopLookParts::Painted(gear, red)[0].texels;
+    CHECK(m.Drawn(kBase + 0x3000 + kOffset, want.size()) == want);
+    CHECK(std::memcmp(m.at(kBase + 0x3000 + kOffset), Shield().data(), kTexels) == 0);
+    CHECK(m.Drawn(kBase + 0x5000 + kOffset, kTexels) == Shield());   // copy 1: the game's own colours
+    CHECK(m.Drawn(kBase + 0x1000 + kOffset, kTexels) == Shield());   // your own: not the puppets'
+    w.Clear();
+    CHECK(m.overrides() == 0);
 }
 
 TEST_CASE("look parts: a copy's texture name never names another folder") {

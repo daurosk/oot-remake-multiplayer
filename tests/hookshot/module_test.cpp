@@ -574,7 +574,15 @@ TEST_CASE("hookshot: a module may have a texture drawn with other texels (patch 
     CHECK(patch.find("+        hos_coop_texture_made(o, o->gpu, o->L.size,") != std::string::npos);
     CHECK(patch.find("+    hos_coop_texture_gone(o);") != std::string::npos);
     CHECK(patch.find("+        x.overlay = (overlay_fn)look(\"hos_coop_texture_overlay\");") != std::string::npos);
-    CHECK(patch.find("+        hos_coop_texture_overlay(va, scratch.data(), total);") != std::string::npos);
+    // The WebGPU renderer's read (gpu/render, Windows only) is 0021, so the Linux kit can leave it out
+    // (make_kit_linux.sh's webgpu_only): 0020 changes no gpu/render file, 0021 nothing else.
+    CHECK(patch.find("gpu/render/") == std::string::npos);
+    const std::string webgpu = ReadFile(kRepo / "hookshot" / "patches" / "0021-coop-texture-override-webgpu.patch");
+    REQUIRE_FALSE(webgpu.empty());
+    CHECK(webgpu.find("+        hos_coop_texture_overlay(va, scratch.data(), total);") != std::string::npos);
+    for (std::size_t at = webgpu.find("diff --git a/"); at != std::string::npos; at = webgpu.find("diff --git a/", at + 1)) {
+        CHECK(webgpu.compare(at, 24, "diff --git a/gpu/render/") == 0);
+    }
     // Nothing of the game is written: no lift, no guest write (only the pages marked for the renderers).
     for (std::size_t at = patch.find("diff --git a/"); at != std::string::npos; at = patch.find("diff --git a/", at + 1)) {
         CHECK((patch.compare(at, 18, "diff --git a/host/") == 0 || patch.compare(at, 17, "diff --git a/gpu/") == 0));

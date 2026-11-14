@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 
+#include "coop/protocol/codec.hpp"
 #include "coop_live_events.h"
 #include "coop_shared_scenes.h"
 
@@ -180,7 +181,12 @@ TEST_CASE("intro-ocarina: Saria's gift is never started in a game still in the o
         if (h == kExitBlocker) return blocker;
         return std::nullopt;
     };
+    CHECK(coop::protocol::flag_hash("HavePlayedEvent.Dm_Kokiri_0140") == kDekuTreeLast);
+    CHECK(coop::protocol::flag_hash("KokiriForest_Npc_Kokiri_007_Child_Blocker_00") == kExitBlocker);
     CHECK(CoopSharedScenes::Needs("Dm_Kokiri_0150").size() == 2);
+    for (const auto& n : CoopSharedScenes::Needs("Dm_Kokiri_0150")) {
+        CHECK_MESSAGE(coop::protocol::flag_hash(n.what) == n.hash, n.what);
+    }
     CHECK(CoopSharedScenes::Needs("Dm_Kokiri_0030").empty());
     CHECK_FALSE(CoopSharedScenes::GateHolds("Dm_Kokiri_0150", flag));
     CHECK(CoopSharedScenes::GateHolds("Dm_Kokiri_0030", flag));  // no gate

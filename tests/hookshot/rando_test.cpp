@@ -348,7 +348,7 @@ TEST_CASE("rando: a guest of a host without the randomizer plays without it") {
     rando.Recheck();
     rando.Wait();
     CHECK_FALSE(On(loader, "randomizer-MINE1"));
-    CHECK(rando.TakeLines() == std::vector<std::string>{SwitchLine(false)});
+    CHECK(rando.TakeLines().empty());  // this run never played the seed (built in it): nothing to restart for
     CHECK(loader.Value(kId, "on") == "1");  // our own switch is kept for a game alone
     loader.SetHostValues(std::nullopt);  // left: alone again, our seed again
     rando.Recheck();

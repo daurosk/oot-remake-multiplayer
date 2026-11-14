@@ -12,6 +12,7 @@
 #include "common/logging.h"
 #include "coop_hook.h"
 #include "coop_hookshot.h"
+#include "coop_i18n.h"
 #include "coop_pause_files.h"
 #include "coop_title.h"
 #include "coop_title_menu.h"
@@ -399,6 +400,22 @@ struct Drawn {
     std::vector<HosCoopMenuRow> rows;
 };
 
+// The page's text in the player's language (coop_i18n.h). Hookshot keeps the
+// pointers until its next call, so they point into this thread's copy; it is
+// reserved up front so no push moves a string an earlier row points at.
+thread_local std::vector<std::string> g_page_text;
+const char* Keep(const std::string& text) {
+    g_page_text.push_back(CoopI18n::Tr(text));
+    return g_page_text.back().c_str();
+}
+
+// The page's prompt words ("Choose", "Close"...). A null pointer means "no
+// prompt"; an empty one is a prompt with no words, which Hookshot reads as its
+// own default, so the words go through Keep like the rest.
+const char* KeepWords(const std::string& text) {
+    return text.empty() ? nullptr : Keep(text);
+}
+
 }  // namespace
 
 void Init(bool coop_on) {
@@ -423,7 +440,9 @@ int Tabs() {
 }
 
 const char* TabName(int tab) {
-    return tab == kMultiplayerTab ? "Multiplayer" : nullptr;
+    // The tab's own name, in the game's language (coop_i18n.h).
+    static const std::string name = CoopI18n::Tr("Multiplayer");
+    return tab == kMultiplayerTab ? name.c_str() : nullptr;
 }
 
 bool Page(int tab, HosCoopMenuPage* out) {
@@ -437,13 +456,15 @@ bool Page(int tab, HosCoopMenuPage* out) {
         drawn.view = g_menu.view();
     }
     const CoopPauseMenu::View& v = drawn.view;
+    g_page_text.clear();
+    g_page_text.reserve(v.rows.size() * 3 + 16);   // (+ the help, the gold line and the prompts)
     drawn.rows.resize(v.rows.size());
     for (std::size_t i = 0; i < v.rows.size(); ++i) {
         const CoopPauseMenu::Row& r = v.rows[i];
         HosCoopMenuRow& h = drawn.rows[i];
         h = HosCoopMenuRow{};
-        h.name = r.name.c_str();
-        h.value = r.value.c_str();
+        h.name = Keep(r.name);
+        h.value = Keep(r.value);
         h.kind = static_cast<std::uint8_t>(r.kind);
         h.on = r.on ? 1 : 0;
         h.left = r.left ? 1 : 0;
@@ -454,13 +475,13 @@ bool Page(int tab, HosCoopMenuPage* out) {
     out->rows = drawn.rows.data();
     out->selected = v.selected;
     out->typing = v.typing ? 1 : 0;
-    out->help_title = v.help_title.c_str();
-    out->help = v.help.c_str();
-    out->hint = v.hint.c_str();
-    out->gold = v.gold.c_str();
-    out->change = v.change.c_str();
-    out->confirm = v.confirm.c_str();
-    out->back = v.back.c_str();
+    out->help_title = Keep(v.help_title);
+    out->help = Keep(v.help);
+    out->hint = v.hint.c_str();   // (a code or an address: never translated)
+    out->gold = Keep(v.gold);
+    out->change = KeepWords(v.change);
+    out->confirm = KeepWords(v.confirm);
+    out->back = KeepWords(v.back);
     return true;
 }
 

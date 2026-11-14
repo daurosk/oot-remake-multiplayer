@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <utility>
 
+#include "coop_i18n.h"
+
 namespace CoopPauseMenu {
 
 namespace {
@@ -24,6 +26,17 @@ std::string Joined(const std::vector<std::string>& lines) {
         out += line;
     }
     return out;
+}
+
+// The same, each line in the player's language (coop_i18n.h): the lines are
+// looked up one by one, since only a whole line is in the table.
+std::string JoinedTr(const std::vector<std::string>& lines) {
+    std::vector<std::string> translated;
+    translated.reserve(lines.size());
+    for (const std::string& line : lines) {
+        translated.push_back(CoopI18n::Tr(line));
+    }
+    return Joined(translated);
 }
 
 Row Action(std::string name, std::string value = {}, bool fixed = false) {
@@ -692,9 +705,9 @@ View Menu::view() const {
         break;
     }
     if (!note_.empty()) {
-        v.help = Joined(note_);
+        v.help = JoinedTr(note_);
     } else if (said && !(line != nullptr && confirm_leave_)) {
-        v.help = Joined(session_.lines);
+        v.help = JoinedTr(session_.lines);
     } else if (line != nullptr) {
         v.help = line->help;
     }
@@ -725,6 +738,13 @@ View Menu::view() const {
         }
     }
     v.back = page_ == Page::kMain ? "Close" : "Back";
+    // The prompt strip's words in the player's language, translated here: Hookshot
+    // draws the strip with its own table (its "Choose", "Back" are the graphics
+    // page's words), and a word the tab wants said its own way -- "执行" on a row
+    // that acts, beside the "选择" its arrows carry -- would be overwritten there.
+    v.confirm = v.confirm.empty() ? std::string() : CoopI18n::Tr(v.confirm);
+    v.change = v.change.empty() ? std::string() : CoopI18n::Tr(v.change);
+    v.back = CoopI18n::Tr(v.back);
     return v;
 }
 

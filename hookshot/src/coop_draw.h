@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "coop_hook.h"
+#include "coop_i18n.h"
 #include "hos_coop_draw.h"
 
 namespace CoopDraw {
@@ -83,8 +84,9 @@ struct ChatBoxView {
 };
 
 // What the box shows: the text with a caret, the start cut ("...") to fit
-// `room` pixels; the placeholder when empty.
+// `room` pixels; the placeholder when empty, in the player's language.
 inline constexpr const char* kChatPlaceholder = "Say something (Enter sends, Esc closes)";
+inline std::string ChatPlaceholder() { return CoopI18n::Tr(kChatPlaceholder); }
 
 // One other player under your hearts (the co-op window's HudLayer).
 struct HudBlock {

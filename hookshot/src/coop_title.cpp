@@ -17,6 +17,7 @@
 
 #include "common/logging.h"
 #include "coop_hook.h"
+#include "coop_i18n.h"
 #include "coop_pause.h"
 #include "coop_pause_files.h"
 #include "coop_runtime.h"
@@ -451,12 +452,14 @@ std::optional<CoopDraw::TitleView> View() {
         return std::nullopt;
     }
     if (const std::string line = g_autoload.Line(); !line.empty()) {
-        return CoopDraw::TitleView{line};   // ("Loading Saria's save...")
+        // ("Loading Saria's save..." in the player's language: the name is data)
+        return CoopDraw::TitleView{CoopI18n::Tr(line)};
     }
     if (g_rows) {   // (the title's own rows: no prompt)
         return std::nullopt;
     }
-    return CoopDraw::TitleView{doing.empty() ? std::string("Multiplayer") : "Multiplayer: " + doing};
+    return CoopDraw::TitleView{doing.empty() ? CoopI18n::Tr("Multiplayer")
+                                             : CoopI18n::Tr("Multiplayer: ") + CoopI18n::Tr(doing)};
 }
 
 }  // namespace CoopTitle

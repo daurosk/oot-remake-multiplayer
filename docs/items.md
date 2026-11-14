@@ -49,7 +49,7 @@ Choices made here:
 - **Bottles**: `PouchData.Bottle<A–E>.StockNum` and `BottleInfo.Bottle<X>.IsValid` are shared (OR); `BottleItem` stays per player. A bottle given to a player who did not have it arrives empty.
 - **Ammo**: the bag, quiver and wallet tiers are shared (max); the count in them is per player.
 - **Magic**: `MPMax` and the spells are shared (max); `MP` is per player.
-- `FairyBless_*` items are per player for now: they are temporary blessings, not owned items (inferred).
+- `FairyBless_*` items are the Great Fairies' magic meter, double magic and double defence (OOTRR gives the magic meter as `Item_FairyBless_MP` and `_MPDouble`), so they are shared (max) since branch `rando-items`; a shared meter comes full (grants below). Before, they were per player (inferred as temporary blessings).
 
 ## Ammo capacity and what comes with an item (issue 128)
 
@@ -76,6 +76,7 @@ The game's own get scene sets the capacity and the starting ammo with the item. 
 | Nut bag small / medium / large | DekuNut 20 / 30 / 40 | filled to it | `IsGet.Item_DekuNut` (small) |
 | Stick bag small / medium / large | DekuStick 10 / 20 / 30 | filled to it | `IsGet.Item_DekuStick` (small) |
 | Wallet small / medium | Rupee 200 / 500 | none | |
+| Magic meter (`Item_FairyBless_MP`) / double magic (`_MPDouble`) | `PlayerStatus.MPMax` 240 / 480 | `PlayerStatus.MP` 240 / 480 (full) | 240 a level: OOTRR's own value |
 | `IsGet.Item_DekuStick` / `IsGet.Item_DekuNut` (the other player's first stick or nut pickup) | DekuStick 10 / DekuNut 20 | none | |
 
 A value already at or above the floor is left alone, so nothing is taken away. An item a game already holds gets its capacity again on every write of it through the store (ammo only for a new item): a save that got a shared item with room for 0 (issue 138: sticks and seeds that could not be picked up) was meant to be mended by the snapshot when it joins. A run of integrate-p7 showed the snapshot arrives on the title screen, before the save loads, and the load then puts the save's capacities back (room for 0 again). So grants now wait for Link: while there is no Link (the title screen, a save or a scene loading), items are merged but nothing is granted, and an item new to the game is noted. For 90 frames (about 1.5 s) after Link appears, the hook mends every held item's capacity, and a noted item gets its whole grant, ammo too (`LoadMend`, `ItemFlagStore::mend`, log `coop: items: N capacities mended after a load`). So a Slingshot that comes during a door's loading screen, or before a joiner's save loads, still comes with 30 seeds. A game that gets the item itself is left to the game. The ammo stays per player afterwards: only this one fill is written. The large wallet is left out (its size is not known). Not checked in a game: that the game reads the capacity from these flags (the cheat that sets them, `LICHII_COOP_OBJECTS_CHEAT`, gave working bombs), and the sizes of the remake's bags beyond the ones in the table above.
@@ -134,9 +135,9 @@ Each row: `PouchData.<item>.StockNum` and `IsGet.<item>` (— when there is none
 | `Item_DinFire` | 0xb796c16d | 0xfa04e611 | Shared, max |
 | `Item_EyeballFrog` | 0x919ea324 | 0x8e02d1ca | Shared, mirror (trade item) |
 | `Item_EyeDrop` | 0x5c41a6b1 | 0xb7bdd577 | Shared, mirror (trade item) |
-| `Item_FairyBless_DefenseDouble` | 0x9a826fab | 0x944b78be | Per player |
-| `Item_FairyBless_MP` | 0x5e671d92 | 0xb1309073 | Per player |
-| `Item_FairyBless_MPDouble` | 0x5f043856 | 0x87ca4826 | Per player |
+| `Item_FairyBless_DefenseDouble` | 0x9a826fab | 0x944b78be | Shared, max |
+| `Item_FairyBless_MP` | 0x5e671d92 | 0xb1309073 | Shared, max (the magic meter) |
+| `Item_FairyBless_MPDouble` | 0x5f043856 | 0x87ca4826 | Shared, max (double magic) |
 | `Item_FaroreWind` | 0x47f2ca87 | 0xffabf058 | Shared, max |
 | `Item_Hammer` | 0x1aafdb66 | 0x7227efd8 | Shared, max |
 | `Item_Hookshot` | 0x8573d2cd | 0xff98ed58 | Shared, max |
@@ -245,7 +246,7 @@ The "what it gives" flags are named and on in `item_shared_flags()`. The pickups
 
 ## In the code
 
-`coop/host/game_items.hpp` holds the tables above as data: 302 flags, each with its kind and rule, and a test hashes every name. `item_shared_flags()` is the shared list built from it (284 flags: every rule but per player). `ItemFlagStore` wraps the game's `GameFlagStore` and merges on write: max, OR and mirror as in the rules table, per-player flags and a wrong kind refused, anything that is not an item passed through. The host's `FlagWatcher` answers a `FLAG_SET` with what its game holds after the write, so the merged value is what everyone gets; a player's game takes the host's `FLAG_STATE` through the same store, so an item it has is not taken away by an answer that lacks it.
+`coop/host/game_items.hpp` holds the tables above as data: 303 flags (`IsGet.Item_Bottle` added for the randomizer), each with its kind and rule, and a test hashes every name. `item_shared_flags()` is the shared list built from it (288 flags: every rule but per player). `ItemFlagStore` wraps the game's `GameFlagStore` and merges on write: max, OR and mirror as in the rules table, per-player flags and a wrong kind refused, anything that is not an item passed through. The host's `FlagWatcher` answers a `FLAG_SET` with what its game holds after the write, so the merged value is what everyone gets; a player's game takes the host's `FLAG_STATE` through the same store, so an item it has is not taken away by an answer that lacks it.
 
 In the emulator (`lichii/hook`): the shared list is `item_shared_flags()` plus the flags of the user's `LICHII_COOP_FLAGS` file, and `Session::frame` gets an `ItemFlagStore` over the game's `GameFlagStore` every frame, so items are shared whenever co-op is on (`LICHII_COOP_ITEMS=0` turns them off, [lichii.md](lichii.md)). With `LICHII_COOP_DEBUG_FLAGS=1` an Int or Bool change of an item flag ends with `item <name>` in the log. `LICHII_COOP_CHEATS=1` adds a debug window that gives an item flag the way a pickup changes it (`lichii/hook/coop_cheats.*`, [lichii.md](lichii.md)).
 
@@ -317,6 +318,8 @@ A player given the ocarina by another player could not take it out. D-pad Left t
 Checked offline on 2026-11-11 (no game run): every one of the 63 distinct saves in `coop-kit` holds the Fairy Ocarina and `EquipOcarina = "Item_Ocarina_Fairy"`. Besides it, they hold three Bools set to 1 (default false), named by walking `GameDataList`'s structs: `0x541947d0.Ocarina` (0xaacdef1f), `0x57f52eb8.Ocarina` (0xda41879d), the two help-box structs that the bombs showed ([above](#bombs-from-the-cheat-issue-125)), and `0x41f3e410.Item_Ocarina_Fairy` (0x137df1ac). The ocarina has no get order (it is not one of struct 0xf5ab6461's 42 members) and no item button (D-pad Left is its own).
 
 The fix: whenever Link is in the game, the hook equips the best held ocarina when `EquipOcarina` is "" or is the Fairy Ocarina while the Ocarina of Time is held (`ocarina_equip_mend`; log `coop: items: ocarina '' -> 'Item_Ocarina_Fairy' for the held ocarina`). It is written straight into the String64's buffer, as the teleport does; never lowered, and a name it does not know is left alone. The help-box Bools are left to the game: at worst the first D-pad Left shows the ocarina's help box. Songs are `IsGet.Item_Melody_*` (shared, OR).
+
+**Playable at once (playtest 11, branch `rando-items`).** After one player's Saria scene the other got the ocarina but could play it only after quitting to the menu and loading the save. Saria's gift (and OOTRR's starting ocarina, `start_items/give.rs`) also sets the Bool `HavePreparedToPlayOcarina` (0x171de71f), which no list shared; the mend now raises it with the other ocarina Bools. Not checked in a run: that this flag is what the game waited for (if not, the next suspects are the equip name being read only on load, or the ocarina item button).
 
 Not checked in a run yet: that the written name is enough for D-pad Left, and that songs learned by another player can be played. The autotest `ocarina-given` checks both on B, after `tools/autotest/save_flags.py no-ocarina` has taken the ocarinas out of B's baseline save (what a save without them holds: the flags above at their defaults and `EquipOcarina` "").
 

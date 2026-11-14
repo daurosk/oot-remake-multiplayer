@@ -104,10 +104,12 @@ public:
     // the host has a valid value for shows it, locked, and the mods hear each value that changes by it (OnSetting).
     std::vector<SharedValue> SharedValues() const;
     void SetHostValues(std::optional<std::vector<SharedValue>> values);
+    // Whether host values are set: this game is a guest in a co-op game.
+    bool HostValuesSet() const;
 
     Restart RestartNeeded() const;
     // Something changed a mod's files under the running game (the randomizer made a new seed): a restart is needed
-    // until the game is started again. One reason per mod, the last one given.
+    // until the game is started again. One reason per mod, the last one given. An empty reason takes it back.
     void NoteChanged(std::string_view name, std::string reason);
 
     // The plugin host's part. The mods whose code is to be loaded now, first row first; then, per mod, what became of

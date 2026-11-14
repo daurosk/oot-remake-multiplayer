@@ -138,6 +138,9 @@ constexpr std::uint32_t kSlotA = 0xaacdef1f;        // 0x541947d0.Ocarina
 constexpr std::uint32_t kSlotB = 0xda41879d;        // 0x57f52eb8.Ocarina
 constexpr std::uint32_t kGotFairy = 0x137df1ac;     // 0x41f3e410.Item_Ocarina_Fairy
 constexpr std::uint32_t kGotTime = 0xac6a85e3;      // 0x41f3e410.Item_Ocarina_Time
+// Set with Saria's gift and with OOTRR's starting ocarina (start_items/give.rs): an
+// ocarina shared without it could not be played until a reload (playtest 11).
+constexpr std::uint32_t kPrepared = 0x171de71f;     // HavePreparedToPlayOcarina
 }  // namespace ocarina
 
 // The ocarina to equip for the held ones (Ocarina of Time over the Fairy

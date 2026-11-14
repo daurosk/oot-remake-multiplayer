@@ -51,6 +51,12 @@ Row Toggle(std::string name, bool on) {
     return r;
 }
 
+// A CoopInput label ("Controller: 2 - Xbox Wireless Controller") as a choice row: the words after ": " are the value.
+Row InputChoice(const char* name, const std::string& label) {
+    const auto colon = label.find(": ");
+    return Choice(name, colon == std::string::npos ? label : label.substr(colon + 2));
+}
+
 Row Note(std::string text) {
     Row r;
     r.name = std::move(text);
@@ -74,6 +80,16 @@ const std::vector<Command>& Commands() {
         {"/tp <player>", "The same as /teleport."},
         {"/pvp", "Says whether players can hurt each other (PvP) in this game."},
         {"/pvp on, /pvp off", "The host only: lets players hurt each other, or stops it, for everyone."},
+        // The Lobby (docs/play-online.md "Lobby"): the same as the Lobby tab's buttons.
+        {"/kick <player>", "The host only: takes that player out of the game. They can join again."},
+        {"/ban <player>",
+         "The host only: takes that player out, and they cannot join again, under any name, until the host stops "
+         "hosting."},
+        {"/mute <player>",
+         "The host: nobody hears that player's voice or sees their chat (the server stops passing them on); add "
+         "voice or chat for only that (/mute 2 voice). Anyone else: you stop hearing and seeing them yourself, and "
+         "nobody is told."},
+        {"/unmute <player>", "Undoes /mute (add voice or chat for only that)."},
     };
     return list;
 }
@@ -133,7 +149,11 @@ std::vector<Menu::Line> Menu::Lines() const {
                                  "are not touched."});
         out.push_back({Action("Local co-op"), Act::kOpenLocal, "Two players on this PC."});
         out.push_back({Action("Settings"), Act::kOpenSettings,
-                       "Your name, Link's look, how many players can join your game, and voice chat."});
+                       "Your name, Link's look, how many players can join your game, voice chat, the chat key, "
+                       "which controller this game reads, and players on the map."});
+        out.push_back({Action("Customize Link"), Act::kOpenCustomize,
+                       "A colour for each part of your tunics, shields, swords, boots and gauntlets, with a picture of "
+                       "the result. Your Link wears it when you close the menu; the other players see your tunic's colour."});
         out.push_back({Action("Commands"), Act::kOpenCommands, "The chat's commands, and the key that opens the chat."});
         break;
     case Page::kHost:
@@ -189,11 +209,10 @@ std::vector<Menu::Line> Menu::Lines() const {
     case Page::kCommands: {
         const std::string key = ChatKeyWords(options_.chat_key);
         out.push_back({Action("Open the chat", key), Act::kCommand,
-                       key == "Off" ? "The chat key is off (LICHII_COOP_CHAT_KEY=off in coop-options.ini): set a key "
-                                      "there (a letter, a digit, or F1 to F12) to chat."
+                       key == "Off" ? "The chat key is off. To chat, choose a key in Settings, Chat key."
                                     : "Press " + key + " in the game to open the chat box; Enter sends, Esc closes. "
-                                      "A line that starts with / is a command, not chat. Another key: "
-                                      "LICHII_COOP_CHAT_KEY in coop-options.ini."});
+                                      "A line that starts with / is a command, not chat. To use another key: "
+                                      "Settings, Chat key."});
         for (const Command& c : Commands()) {
             out.push_back({Action(c.typed), Act::kCommand, c.help});
         }
@@ -211,6 +230,26 @@ std::vector<Menu::Line> Menu::Lines() const {
         out.push_back({Toggle("Proximity voice chat", options_.voice), Act::kVoice,
                        "Talk with players near your Link through your microphone; they sound quieter the farther away "
                        "they are. Off: you neither send nor hear voices."});
+        out.push_back({Choice("Chat key", ChatKeyWords(options_.chat_key)), Act::kChatKey,
+                       "The key that opens the chat box in the game. Off: no chat box."});
+        if (!controller_row_.empty()) {
+            out.push_back({InputChoice("Controller", controller_row_), Act::kController,
+                           "Which controller this game reads: all of them (only while its window is in front), one "
+                           "of them (also behind another window: two games on one PC, each with its own), or none."});
+        }
+        if (!keyboard_row_.empty()) {
+            out.push_back({InputChoice("Keyboard and mouse", keyboard_row_), Act::kKeyboard,
+                           "Window in front: the keyboard and mouse count while this game's window is in front. Also "
+                           "in background: the keys count behind other windows too. Off: neither (a controller "
+                           "only)."});
+        }
+        out.push_back({Toggle("Show players on map", options_.map_players), Act::kMapPlayers,
+                       "The other players as arrows in their colours on the minimap and on the Map page's area and "
+                       "dungeon maps (not the world map). Off: neither shows them."});
+        out.push_back({Toggle("Names on map", options_.map_names), Act::kMapNames,
+                       "Each player's name beside their arrow on the maps. Off: the arrows only."});
+        break;
+    case Page::kCustomize:   // (its own rows: coop_look_menu.h)
         break;
     }
     return out;
@@ -290,6 +329,7 @@ void Menu::Open(Page page) {
     case Page::kLocal: act = Act::kOpenLocal; break;
     case Page::kSettings: act = Act::kOpenSettings; break;
     case Page::kCommands: act = Act::kOpenCommands; break;
+    case Page::kCustomize: act = Act::kOpenCustomize; break;
     }
     Go(Page::kMain, act);
     note_.clear();
@@ -338,6 +378,19 @@ void Menu::SetRejoin(std::string host, std::string code) {
     Clamp();
 }
 
+void Menu::SetInputRows(std::string controller, std::string keyboard) {
+    const auto before = Lines();
+    const Act act = selected_ < before.size() ? before[selected_].act : Act::kNone;
+    controller_row_ = std::move(controller);
+    keyboard_row_ = std::move(keyboard);
+    const auto after = Lines();
+    const auto same = std::find_if(after.begin(), after.end(), [act](const Line& l) { return l.act == act; });
+    if (same != after.end()) {
+        selected_ = static_cast<std::size_t>(same - after.begin());
+    }
+    Clamp();
+}
+
 std::optional<Request> Menu::TakeRequest() {
     auto r = std::move(request_);
     request_.reset();
@@ -380,6 +433,25 @@ void Menu::EndTyping(bool keep) {
 
 bool Menu::Press(Input input) {
     note_.clear();
+    if (page_ == Page::kCustomize) {   // (its own rows: coop_look_menu.h)
+        using L = CoopLookMenu::Input;
+        std::optional<L> in;
+        switch (input) {
+        case Input::kUp: in = L::kUp; break;
+        case Input::kDown: in = L::kDown; break;
+        case Input::kLeft: in = L::kLeft; break;
+        case Input::kRight: in = L::kRight; break;
+        case Input::kDecide: in = L::kDecide; break;
+        case Input::kBack: in = L::kBack; break;
+        case Input::kPaste:
+        case Input::kErase: break;
+        }
+        if (in && !customize_.Press(*in)) {
+            Go(Page::kMain, Act::kOpenCustomize);
+        }
+        TakeCustomize();
+        return true;
+    }
     const auto lines = Lines();
     const Line* line = selected_ < lines.size() && Selectable(lines[selected_]) ? &lines[selected_] : nullptr;
     if (!(input == Input::kDecide && line != nullptr && line->act == Act::kLeave)) {
@@ -459,6 +531,8 @@ bool Menu::Press(Input input) {
         case Page::kCommands:
             Go(Page::kMain, Act::kOpenCommands);
             break;
+        case Page::kCustomize:   // (Press gave it to the page)
+            break;
         }
         return true;
     case Input::kPaste:
@@ -496,6 +570,10 @@ void Menu::Decide(Act act) {
         break;
     case Act::kOpenCommands:
         Go(Page::kCommands);
+        break;
+    case Act::kOpenCustomize:
+        Go(Page::kCustomize);
+        customize_.Open(look_);
         break;
     case Act::kCommand:   // (a line to read: its help says it)
         break;
@@ -537,9 +615,14 @@ void Menu::Decide(Act act) {
         break;
     case Act::kLook:
     case Act::kPlayers:
+    case Act::kChatKey:
+    case Act::kController:
+    case Act::kKeyboard:
         Change(act, 1);
         break;
     case Act::kVoice:
+    case Act::kMapPlayers:
+    case Act::kMapNames:
         Change(act, 0);   // (a toggle: A flips it)
         break;
     case Act::kNone:
@@ -569,12 +652,38 @@ void Menu::Change(Act act, int step) {
         options_.voice = step > 0 ? true : step < 0 ? false : !options_.voice;
         request_ = Request{Request::Kind::kSave, {}};
         break;
+    case Act::kChatKey: {
+        const auto& list = CoopTitleMenu::ChatKeys();
+        const auto at = std::find(list.begin(), list.end(), options_.chat_key);
+        const std::size_t n = list.size(), i = at == list.end() ? 0 : static_cast<std::size_t>(at - list.begin());
+        options_.chat_key = list[(i + (step < 0 ? n - 1 : 1)) % n];
+        request_ = Request{Request::Kind::kSave, {}};
+        break;
+    }
+    case Act::kController:   // (one way round, either arrow: the list depends on the controllers connected now)
+        request_ = Request{Request::Kind::kController, {}};
+        break;
+    case Act::kKeyboard:
+        request_ = Request{Request::Kind::kKeyboard, {}};
+        break;
+    case Act::kMapPlayers:
+        options_.map_players = step > 0 ? true : step < 0 ? false : !options_.map_players;
+        request_ = Request{Request::Kind::kSave, {}};
+        break;
+    case Act::kMapNames:
+        options_.map_names = step > 0 ? true : step < 0 ? false : !options_.map_names;
+        request_ = Request{Request::Kind::kSave, {}};
+        break;
     default:
         break;
     }
 }
 
 void Menu::Select(std::size_t row) {
+    if (page_ == Page::kCustomize) {
+        customize_.Select(row);
+        return;
+    }
     const auto lines = Lines();
     if (typing_ || row >= lines.size() || !Selectable(lines[row]) || row == selected_) {
         return;
@@ -584,6 +693,12 @@ void Menu::Select(std::size_t row) {
 }
 
 void Menu::Click(std::size_t row, int side) {
+    if (page_ == Page::kCustomize) {
+        note_.clear();
+        customize_.Click(row, side);
+        TakeCustomize();
+        return;
+    }
     const auto lines = Lines();
     if (row >= lines.size() || !Selectable(lines[row])) {
         return;
@@ -659,6 +774,25 @@ bool Menu::Paste(std::string_view text) {
 
 View Menu::view() const {
     View v;
+    if (page_ == Page::kCustomize) {   // (its own rows: coop_look_menu.h)
+        const CoopLookMenu::View c = customize_.view();
+        for (const CoopLookMenu::Row& r : c.rows) {
+            Row row;
+            row.name = r.name;
+            row.value = r.value;
+            row.kind = static_cast<RowKind>(r.kind);
+            row.left = r.left;
+            row.right = r.right;
+            v.rows.push_back(std::move(row));
+        }
+        v.selected = c.selected;
+        v.help_title = c.help_title;
+        v.help = note_.empty() ? c.help : Joined(note_);
+        v.change = c.change;
+        v.confirm = c.confirm;
+        v.back = c.back;
+        return v;
+    }
     const auto lines = Lines();
     for (const Line& l : lines) {
         v.rows.push_back(l.row);
@@ -683,12 +817,16 @@ View Menu::view() const {
         break;
     case Page::kLocal:
         v.help_title = "Local co-op";
+        v.help = "Two players on one PC, the screen split in two. It is not in this test release yet: for now, play "
+                 "together from two PCs with Host a game and Join a game.";
         break;
     case Page::kSettings:
         v.help_title = "Settings";
         break;
     case Page::kCommands:
         v.help_title = "Commands";
+        break;
+    case Page::kCustomize:   // (above)
         break;
     }
     if (!note_.empty()) {
@@ -726,6 +864,22 @@ View Menu::view() const {
     }
     v.back = page_ == Page::kMain ? "Close" : "Back";
     return v;
+}
+
+void Menu::SetLook(const CoopLook::Look& look) {
+    look_ = look;
+}
+
+std::vector<CoopLookMenu::Shape> Menu::Picture() const {
+    return page_ == Page::kCustomize ? customize_.view().picture : std::vector<CoopLookMenu::Shape>{};
+}
+
+void Menu::TakeCustomize() {
+    if (auto look = customize_.TakeChange()) {
+        look_ = *look;
+        options_.colour = CoopLook::ColourText(look_[CoopLook::Part::tunic]);   // the Settings page's row agrees
+        request_ = Request{Request::Kind::kLookParts, {}};
+    }
 }
 
 }  // namespace CoopPauseMenu

@@ -16,12 +16,14 @@
 #include <string_view>
 #include <vector>
 
+#include "coop_look.h"
+#include "coop_look_menu.h"
 #include "coop_title_menu.h"
 
 namespace CoopPauseMenu {
 
 enum class Input { kUp, kDown, kLeft, kRight, kDecide, kBack, kPaste, kErase };
-enum class Page { kMain, kHost, kJoin, kLocal, kSettings, kCommands };
+enum class Page { kMain, kHost, kJoin, kLocal, kSettings, kCommands, kCustomize };
 
 // The chat's commands, as the Commands page lists them (docs/setup.md "Chat
 // commands"): what is typed, and what it does. A new command adds its line here.
@@ -44,8 +46,13 @@ struct Request {
     // the friend's ANSWER CODE from the clipboard to the host. kCopyAnswer: a
     // guest's answer code (its host could not be reached) onto the clipboard.
     // kCopyLan: the line for friends on the same network or VPN onto the
-    // clipboard.
-    enum class Kind { kHost, kJoin, kLeave, kSave, kLook, kPaste, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan };
+    // clipboard. kController / kKeyboard: the next choice of this game's
+    // controller / keyboard (CoopInput::CycleController / CycleKeyboard),
+    // applied and saved by the module, which then hands the new rows back
+    // (SetInputRows). kLookParts: look() is the look chosen on the Customize
+    // page (coop_look_menu.h); worn when the menu closes.
+    enum class Kind { kHost, kJoin, kLeave, kSave, kLook, kPaste, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan,
+                      kController, kKeyboard, kLookParts };
     Kind kind = Kind::kHost;
     std::string text;
 };
@@ -130,6 +137,18 @@ public:
     // The last code this game joined with, offered first on the Join page as
     // "Join <host> again" (one press). An empty code: no such row.
     void SetRejoin(std::string host, std::string code);
+    // The Settings page's Controller and Keyboard rows, as CoopInput's
+    // ControllerRow / KeyboardRow say them ("Controller: 2 - Xbox Wireless
+    // Controller"). Empty: this Hookshot cannot choose (no patch 0015), so
+    // the rows are not shown.
+    void SetInputRows(std::string controller, std::string keyboard);
+    // The look shown now (the one waiting for the menu to close, else the one
+    // worn): the Customize page opens on it.
+    void SetLook(const CoopLook::Look& look);
+    // The Customize page's picture of Link (hos_coop_menu_picture.h); empty
+    // on the other pages.
+    std::vector<CoopLookMenu::Shape> Picture() const;
+    const CoopLook::Look& look() const { return look_; }
 
     Page page() const { return page_; }
     std::size_t selected() const { return selected_; }
@@ -145,7 +164,8 @@ private:
         kOpenHost, kOpenJoin, kOpenLocal, kOpenSettings, kOpenCommands, kCommand,
         kStartHost, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan, kLeave,
         kRejoin, kCode, kJoinNow,
-        kName, kLook, kPlayers, kVoice
+        kName, kLook, kPlayers, kVoice, kChatKey, kController, kKeyboard, kMapPlayers, kMapNames,
+        kOpenCustomize
     };
     struct Line;   // a row, what it does and its help
     std::vector<Line> Lines() const;
@@ -167,9 +187,14 @@ private:
     std::string name_before_;      // the name as it was when its typing began
     std::string join_;
     std::string rejoin_host_, rejoin_code_;
+    std::string controller_row_, keyboard_row_;
     Session session_;
     std::vector<std::string> note_;
     std::optional<Request> request_;
+    // The Customize page (coop_look_menu.h): it has its own rows and presses.
+    CoopLookMenu::Page customize_;
+    CoopLook::Look look_;
+    void TakeCustomize();
 };
 
 }  // namespace CoopPauseMenu

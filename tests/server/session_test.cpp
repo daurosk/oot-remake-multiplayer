@@ -72,6 +72,20 @@ struct Harness {
   }
   // The REJOIN_TOKEN each connection was sent last (right after WELCOME).
   std::map<ConnectionId, RejoinTokenBytes> tokens;
+  // The Lobby: the player key each connection's game seals into its
+  // JOIN_PROOF (none: a game without one), and the HELLO and JOIN_CHALLENGE
+  // packets its traffic keys come from.
+  std::map<ConnectionId, PlayerKey> player_keys;
+  std::map<ConnectionId, Bytes> hello_packets, challenge_packets;
+  // Every DIFFICULTY sent since the last clear(), in order (not in `sent`).
+  std::vector<std::pair<ConnectionId, Difficulty>> difficulties;
+  std::vector<Difficulty> difficulty_to(ConnectionId id) const {
+    std::vector<Difficulty> out;
+    for (const auto& [to, d] : difficulties) {
+      if (to == id) out.push_back(d);
+    }
+    return out;
+  }
   std::uint64_t now = 1'000'000;
 
   // Every session has a join password (there is no plain way in). A config
@@ -110,8 +124,16 @@ struct Harness {
           tokens[s->to] = token->token;
           continue;
         }
+        // Kept apart as well: every joiner is told the difficulty, and the
+        // others when a player more or less moves the automatic scaler.
+        if (const auto* difficulty = std::get_if<Difficulty>(&m)) {
+          CHECK(s->channel == kChannelSession);
+          difficulties.push_back({s->to, *difficulty});
+          continue;
+        }
         if (const auto* challenge = std::get_if<JoinChallenge>(&m)) {
           if (challenge->key_share) server_shares[challenge->nonce] = *challenge->key_share;
+          challenge_packets[s->to] = s->bytes;
           if (auto_answer) {
             to_answer.emplace_back(s->to, challenge->nonce);
             continue;
@@ -128,7 +150,15 @@ struct Harness {
     std::vector<std::pair<ConnectionId, JoinNonce>> answer = std::move(to_answer);
     to_answer.clear();
     for (const auto& [id, nonce] : answer) {
-      session.received(id, kChannelSession, bytes_of(JoinProof{proof(password, nonce)}), now);
+      JoinProof p{proof(password, nonce)};
+      if (const auto key = player_keys.find(id); key != player_keys.end()) {
+        static const KeyPair game_keys = KeyPair::from_secret({7, 7, 7});  // hello_from's
+        const auto keys = derive_traffic_keys(game_keys, server_shares.at(nonce), password, hello_packets[id],
+                                              challenge_packets[id], /*is_server=*/false);
+        REQUIRE(keys);
+        p.player_key = seal_player_key(keys->send, key->second);
+      }
+      session.received(id, kChannelSession, bytes_of(p), now);
       collect();
     }
   }
@@ -140,6 +170,7 @@ struct Harness {
   }
 
   void receive(ConnectionId id, const Message& m, std::uint8_t channel) {
+    if (std::holds_alternative<Hello>(m)) hello_packets[id] = bytes_of(m);
     session.received(id, channel, bytes_of(m), now);
     collect();
   }
@@ -172,6 +203,7 @@ struct Harness {
   void clear() {
     sent.clear();
     dropped.clear();
+    difficulties.clear();
   }
 };
 
@@ -648,7 +680,7 @@ TEST_CASE("an empty session forgets the game build the first player set") {
   other.game_build_id = "0000000000000000";
   h.receive(2, other, kChannelSession);
   auto msgs = h.to(2);
-  REQUIRE(msgs.size() == 3);  // WELCOME, then HOST and FLAG_SNAPSHOT
+  REQUIRE(msgs.size() == 4);  // WELCOME, then HOST, DBNO_MODE and FLAG_SNAPSHOT
   CHECK(std::holds_alternative<Welcome>(msgs[0].message));
 }
 
@@ -777,12 +809,14 @@ TEST_CASE("the first player hosts, each joiner is told who hosts, then sent the 
   h.join(1, "Link");
   CHECK(h.session.host() == std::optional<std::uint8_t>{1});
   auto msgs = h.to(1);
-  REQUIRE(msgs.size() == 3);
+  REQUIRE(msgs.size() == 4);  // WELCOME, HOST, DBNO_MODE, FLAG_SNAPSHOT
   CHECK(std::holds_alternative<Welcome>(msgs[0].message));
   CHECK(msgs[1].channel == kChannelProgress);
   CHECK(std::get<Host>(msgs[1].message) == Host{1});
-  CHECK(msgs[2].channel == kChannelProgress);
-  CHECK(std::get<FlagSnapshot>(msgs[2].message) == FlagSnapshot{0, 1, {}});
+  CHECK(msgs[2].channel == kChannelSession);
+  CHECK(std::holds_alternative<DbnoMode>(msgs[2].message));
+  CHECK(msgs[3].channel == kChannelProgress);
+  CHECK(std::get<FlagSnapshot>(msgs[3].message) == FlagSnapshot{0, 1, {}});
 
   h.clear();
   h.join(2, "Zelda");
@@ -1002,12 +1036,14 @@ TEST_CASE("a joiner gets the table before any flag state sent after it joined") 
   h.join(2, "Zelda");
   h.receive(1, FlagState{0, {flag(2, 1)}}, kChannelProgress);
   auto msgs = h.to(2);
-  REQUIRE(msgs.size() == 4);
+  REQUIRE(msgs.size() == 5);  // WELCOME, HOST, DBNO_MODE, FLAG_SNAPSHOT, FLAG_STATE
   CHECK(std::holds_alternative<Welcome>(msgs[0].message));
   CHECK(std::get<Host>(msgs[1].message) == Host{1});
-  CHECK(std::get<FlagSnapshot>(msgs[2].message) == FlagSnapshot{0, 1, {flag(1, 1)}});
-  CHECK(std::get<FlagState>(msgs[3].message) == FlagState{1, {flag(2, 1)}});
-  for (std::size_t i = 1; i < 4; ++i) CHECK(msgs[i].channel == kChannelProgress);
+  CHECK(std::holds_alternative<DbnoMode>(msgs[2].message));
+  CHECK(std::get<FlagSnapshot>(msgs[3].message) == FlagSnapshot{0, 1, {flag(1, 1)}});
+  CHECK(std::get<FlagState>(msgs[4].message) == FlagState{1, {flag(2, 1)}});
+  CHECK(msgs[1].channel == kChannelProgress);
+  for (std::size_t i = 3; i < 5; ++i) CHECK(msgs[i].channel == kChannelProgress);
 }
 
 TEST_CASE("a large table goes to a joiner in parts") {
@@ -3699,6 +3735,107 @@ TEST_CASE("pvp: --pvp on is told at join, and hits go to their victim only") {
   CHECK(h.sent.empty());
 }
 
+TEST_CASE("difficulty: automatic by the number of players until the host chooses") {
+  Harness h;
+  h.join(1, "Link");
+  // Alone: the game as it is, and the joiner is told so.
+  CHECK(h.difficulty_to(1) == std::vector<Difficulty>{Difficulty{}});
+  CHECK(h.session.difficulty() == Difficulty{});
+  h.clear();
+  h.join(2, "Zelda");
+  const Difficulty two{0, true, DifficultyPreset::normal, auto_difficulty(2)};
+  CHECK(two.values == DifficultyValues{140, 120, 125});
+  CHECK(h.difficulty_to(1) == std::vector<Difficulty>{two});  // one more player
+  CHECK(h.difficulty_to(2) == std::vector<Difficulty>{two});  // once, not twice
+  h.clear();
+  h.join(3, "Saria");
+  const Difficulty three{0, true, DifficultyPreset::normal, auto_difficulty(3)};
+  for (ConnectionId id : {1u, 2u, 3u}) {
+    CHECK(h.difficulty_to(id) == std::vector<Difficulty>{three});
+  }
+  // A player leaves: back down, for those who stay.
+  h.clear();
+  h.session.disconnected(3, h.now);
+  h.collect();
+  CHECK(h.difficulty_to(1) == std::vector<Difficulty>{two});
+  CHECK(h.difficulty_to(2) == std::vector<Difficulty>{two});
+  CHECK(h.session.difficulty() == two);
+}
+
+TEST_CASE("difficulty: the host's choice is fixed, whoever joins or leaves") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  // A guest cannot: it is told what is in force, nobody else hears of it.
+  h.receive(2, Difficulty{0, false, DifficultyPreset::hard, {}}, kChannelSession);
+  const Difficulty two{0, true, DifficultyPreset::normal, auto_difficulty(2)};
+  CHECK(h.difficulty_to(2) == std::vector<Difficulty>{two});
+  CHECK(h.difficulty_to(1).empty());
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().difficulty_refused == 1);
+  // The host can, for everyone.
+  h.clear();
+  h.receive(1, Difficulty{0, false, DifficultyPreset::hard, {}}, kChannelSession);
+  const Difficulty hard{1, false, DifficultyPreset::hard, {200, 150, 150}};
+  CHECK(h.difficulty_to(1) == std::vector<Difficulty>{hard});
+  CHECK(h.difficulty_to(2) == std::vector<Difficulty>{hard});
+  CHECK(h.session.difficulty() == hard);
+  // The same again changes nothing: only the host hears back.
+  h.clear();
+  h.receive(1, Difficulty{0, false, DifficultyPreset::hard, {}}, kChannelSession);
+  CHECK(h.difficulty_to(1) == std::vector<Difficulty>{hard});
+  CHECK(h.difficulty_to(2).empty());
+  // A newcomer learns it at join; the others are told nothing, it did not change.
+  h.clear();
+  h.join(3, "Saria");
+  CHECK(h.difficulty_to(3) == std::vector<Difficulty>{hard});
+  CHECK(h.difficulty_to(1).empty());
+  CHECK(h.difficulty_to(2).empty());
+  // Nor does a leave change it, the host's own included: the next host keeps it.
+  h.clear();
+  h.session.disconnected(3, h.now);
+  h.session.disconnected(1, h.now);
+  h.collect();
+  CHECK(h.difficulty_to(2).empty());
+  CHECK(h.session.difficulty() == hard);
+  CHECK(h.session.host() == 2);
+  // The new host sets the sliders.
+  h.clear();
+  h.receive(2, Difficulty{0, false, DifficultyPreset::custom, {325, 75, 250}}, kChannelSession);
+  const Difficulty custom{2, false, DifficultyPreset::custom, {325, 75, 250}};
+  CHECK(h.difficulty_to(2) == std::vector<Difficulty>{custom});
+  h.clear();
+  h.join(4, "Darunia");
+  CHECK(h.difficulty_to(4) == std::vector<Difficulty>{custom});
+  CHECK(h.difficulty_to(2).empty());
+  // Back to the automatic scaler: the values follow the players again.
+  h.clear();
+  h.receive(2, Difficulty{0, true, DifficultyPreset::normal, {}}, kChannelSession);
+  const Difficulty automatic{2, true, DifficultyPreset::normal, auto_difficulty(2)};
+  CHECK(h.difficulty_to(2) == std::vector<Difficulty>{automatic});
+  CHECK(h.difficulty_to(4) == std::vector<Difficulty>{automatic});
+  h.clear();
+  h.join(5, "Ruto");
+  const Difficulty grown{2, true, DifficultyPreset::normal, auto_difficulty(3)};
+  CHECK(h.difficulty_to(2) == std::vector<Difficulty>{grown});
+  CHECK(h.difficulty_to(5) == std::vector<Difficulty>{grown});
+  // A preset after the sliders, then custom with new sliders.
+  h.clear();
+  h.receive(2, Difficulty{0, false, DifficultyPreset::easy, {500, 400, 300}}, kChannelSession);
+  CHECK(h.difficulty_to(5) == std::vector<Difficulty>{Difficulty{2, false, DifficultyPreset::easy, {75, 50, 100}}});
+  h.clear();
+  h.receive(2, Difficulty{0, false, DifficultyPreset::custom, {100, 100, 300}}, kChannelSession);
+  CHECK(h.difficulty_to(5) == std::vector<Difficulty>{Difficulty{2, false, DifficultyPreset::custom, {100, 100, 300}}});
+  // Everyone leaves: the next session starts automatic again.
+  for (ConnectionId id : {2u, 4u, 5u}) h.session.disconnected(id, h.now);
+  h.collect();
+  CHECK(h.session.difficulty() == Difficulty{});
+  h.clear();
+  h.join(6, "Nabooru");
+  CHECK(h.difficulty_to(6) == std::vector<Difficulty>{Difficulty{}});
+}
+
 TEST_CASE("pvp: only the host changes it, for everyone, and an empty session goes back") {
   Harness h;
   h.join(1, "Link");
@@ -3722,6 +3859,149 @@ TEST_CASE("pvp: only the host changes it, for everyone, and an empty session goe
   for (ConnectionId id : {1u, 2u, 3u}) h.session.disconnected(id, h.now);
   h.collect();
   CHECK_FALSE(h.session.pvp());
+}
+
+TEST_CASE("dbno: on by default and told at join, only the host changes it") {
+  Harness h;
+  CHECK(h.session.dbno().on);
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  CHECK(messages_of<DbnoMode>(h, 2) == std::vector<DbnoMode>{DbnoMode{}});
+  h.clear();
+  DbnoMode want{0, true, 60, 20, 8};
+  h.receive(2, want, kChannelSession);  // a guest cannot
+  CHECK(h.session.dbno() == DbnoMode{});
+  CHECK(only_message_to<DbnoMode>(h, 2) == DbnoMode{});
+  CHECK(h.to(1).empty());
+  CHECK(h.session.stats().dbno_mode_refused == 1);
+  h.clear();
+  h.receive(1, want, kChannelSession);
+  const DbnoMode set{1, true, 60, 20, 8};
+  CHECK(h.session.dbno() == set);
+  CHECK(only_message_to<DbnoMode>(h, 1) == set);
+  CHECK(only_message_to<DbnoMode>(h, 2) == set);
+  // The same again: only the host is answered.
+  h.clear();
+  h.receive(1, want, kChannelSession);
+  CHECK(only_message_to<DbnoMode>(h, 1) == set);
+  CHECK(h.to(2).empty());
+  h.clear();
+  h.join(3, "Saria");
+  CHECK(messages_of<DbnoMode>(h, 3) == std::vector<DbnoMode>{set});
+  for (ConnectionId id : {1u, 2u, 3u}) h.session.disconnected(id, h.now);
+  h.collect();
+  CHECK(h.session.dbno() == DbnoMode{});
+}
+
+TEST_CASE("dbno: --dbno off is told at join as off") {
+  SessionConfig config;
+  config.dbno.on = false;
+  Harness h(config);
+  h.join(1, "Link");
+  CHECK(messages_of<DbnoMode>(h, 1) == std::vector<DbnoMode>{DbnoMode{0, false}});
+}
+
+TEST_CASE("dbno: a revive goes to its downed player only, while the mode is on") {
+  SessionConfig config;
+  Harness h(config);
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  h.receive(2, DbnoRevive{0, 1, true}, kChannelOwnership);
+  CHECK(only_message_to<DbnoRevive>(h, 1) == DbnoRevive{2, 1, true});
+  CHECK(h.to(3).empty());
+  CHECK(h.session.stats().dbno_revives_relayed == 1);
+  h.clear();
+  h.receive(2, DbnoRevive{0, 2, true}, kChannelOwnership);  // itself
+  h.receive(2, DbnoRevive{0, 4, true}, kChannelOwnership);  // nobody
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().dbno_revives_dropped == 2);
+  h.receive(1, DbnoMode{0, false}, kChannelSession);
+  h.clear();
+  h.receive(2, DbnoRevive{0, 1, true}, kChannelOwnership);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().dbno_revives_dropped == 3);
+}
+
+TEST_CASE("dbno: a state is relayed to everyone else") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.receive(1, DbnoStatus{0, DbnoState::downed, 400, 0, 0}, kChannelSession);
+  CHECK(only_message_to<DbnoStatus>(h, 2) == DbnoStatus{1, DbnoState::downed, 400, 0, 0});
+  CHECK(h.to(1).empty());
+}
+
+TEST_CASE("dbno: a downed owner gives its enemy up, even in a fight, and is not given one") {
+  OwnerHarness h;
+  h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);  // a fight
+  SUBCASE("downed") {
+    h.receive(1, DbnoStatus{0, DbnoState::downed, 400, 0, 0}, kChannelSession);
+    h.run(250'000);
+    CHECK(h.asks() == 1);
+  }
+  SUBCASE("up again before: it stays") {
+    h.receive(1, DbnoStatus{0, DbnoState::downed, 400, 0, 0}, kChannelSession);
+    h.receive(1, DbnoStatus{0, DbnoState::up, 0, 0, 0}, kChannelSession);
+    h.run(250'000);
+    CHECK(h.asks() == 0);
+  }
+  SUBCASE("everyone else is downed too: it stays") {
+    h.receive(2, DbnoStatus{0, DbnoState::downed, 400, 0, 0}, kChannelSession);
+    h.receive(1, DbnoStatus{0, DbnoState::downed, 400, 0, 0}, kChannelSession);
+    h.run(kSecond);
+    CHECK(h.asks() == 0);
+  }
+}
+
+TEST_CASE("dbno: a downed player is not given an enemy by the distance rule") {
+  OwnerHarness h;
+  h.stand(1, 50);
+  h.stand(2, 5);
+  h.receive(2, DbnoStatus{0, DbnoState::downed, 400, 0, 0}, kChannelSession);
+  h.run(5 * kSecond);
+  CHECK(h.asks() == 0);
+}
+
+TEST_CASE("mods: each player's list is passed on and given to joiners, and shared settings only from the host") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  const ModList link{0, {{"rando", "1.0", {}}}};
+  h.receive(1, link, kChannelSession);
+  CHECK(only_message_to<ModList>(h, 2) == ModList{1, link.mods});
+  CHECK(messages_to<ModList>(h, 1).empty());
+  h.receive(2, ModList{}, kChannelSession);
+  CHECK(only_message_to<ModList>(h, 1) == ModList{2, {}});
+
+  h.clear();
+  const ModSettings seed{0, {{"rando", "seed", "AB12"}}};
+  h.receive(2, seed, kChannelSession);  // a guest's are dropped
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().mod_settings_refused == 1);
+  h.receive(1, seed, kChannelSession);
+  CHECK(only_message_to<ModSettings>(h, 2) == ModSettings{1, seed.settings});
+
+  // A newcomer gets both lists and the host's settings.
+  h.clear();
+  h.join(3, "Saria");
+  CHECK(messages_to<ModList>(h, 3) == std::vector<ModList>{ModList{1, link.mods}, ModList{2, {}}});
+  CHECK(messages_to<ModSettings>(h, 3) == std::vector<ModSettings>{ModSettings{1, seed.settings}});
+  // A list of a player who left is not given.
+  h.session.disconnected(2, h.now);
+  h.collect();
+  h.clear();
+  h.join(4, "Ruto");
+  CHECK(messages_to<ModList>(h, 4) == std::vector<ModList>{ModList{1, link.mods}});
+  // Everyone leaves: the settings are forgotten.
+  for (ConnectionId id : {1u, 3u, 4u}) h.session.disconnected(id, h.now);
+  h.collect();
+  h.clear();
+  h.join(5, "Nabooru");
+  CHECK(messages_to<ModSettings>(h, 5).empty());
 }
 
 // Issue 151 (fishing-3): a fish goes to the game whose lure is nearest it.
@@ -4294,4 +4574,652 @@ TEST_CASE("interest: the pose upload cap holds poses back, shared by the players
   CHECK(count_to<PlayerPose>(h, 2) >= most / 2);
   CHECK(count_to<PlayerPose>(h, 3) == count_to<PlayerPose>(h, 2));
   CHECK(h.session.stats().upload_capped > 0);
+}
+
+// --- The Lobby (docs/protocol.md "Lobby") ---
+
+namespace {
+
+template <typename T>
+std::vector<T> all_to(const Harness& h, ConnectionId id) {
+  std::vector<T> out;
+  for (const Sent& s : h.to(id)) {
+    if (const auto* m = std::get_if<T>(&s.message)) out.push_back(*m);
+  }
+  return out;
+}
+
+bool was_dropped(const Harness& h, ConnectionId id) {
+  return std::find(h.dropped.begin(), h.dropped.end(), id) != h.dropped.end();
+}
+
+}  // namespace
+
+// Split screen: extra local players on one connection (docs/protocol.md, "Local players").
+namespace {
+
+LocalJoined local_joined_to(const Harness& h, ConnectionId id) {
+  const auto answers = messages_of<LocalJoined>(h, id);
+  REQUIRE(answers.size() == 1);
+  return answers[0];
+}
+
+bool nothing_to_local_players(const Harness& h) {
+  return std::none_of(h.sent.begin(), h.sent.end(), [](const Sent& s) { return s.to >= kLocalPlayerIds; }) &&
+         std::none_of(h.dropped.begin(), h.dropped.end(), [](ConnectionId id) { return id >= kLocalPlayerIds; });
+}
+
+}  // namespace
+
+TEST_CASE("lobby: only the host may kick, ban or mute, others are told no") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  for (const LobbyActionKind a : {LobbyActionKind::kick, LobbyActionKind::ban,
+                                  LobbyActionKind::mute_voice, LobbyActionKind::mute_chat}) {
+    h.receive(2, LobbyAction{a, 3}, kChannelSession);
+    CHECK(only_message_to<LobbyResult>(h, 2) == LobbyResult{a, 3, LobbyResultCode::not_host});
+    CHECK(h.to(3).empty());
+    CHECK(h.to(1).empty());
+    CHECK(h.dropped.empty());
+    h.clear();
+  }
+  CHECK(h.session.stats().lobby_refused == 4);
+  CHECK(h.session.stats().lobby_done == 0);
+  CHECK(h.session.player_count() == 3);
+  // The host cannot do it to itself, nor to nobody.
+  h.receive(1, LobbyAction{LobbyActionKind::kick, 1}, kChannelSession);
+  CHECK(only_message_to<LobbyResult>(h, 1) ==
+        LobbyResult{LobbyActionKind::kick, 1, LobbyResultCode::is_host});
+  h.clear();
+  h.receive(1, LobbyAction{LobbyActionKind::kick, 9}, kChannelSession);
+  CHECK(only_message_to<LobbyResult>(h, 1) ==
+        LobbyResult{LobbyActionKind::kick, 9, LobbyResultCode::no_player});
+  CHECK(h.session.player_count() == 3);
+}
+
+TEST_CASE("lobby: a kicked player is told, closed, reported as kicked, and may join again") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  h.receive(1, LobbyAction{LobbyActionKind::kick, 2}, kChannelSession);
+  CHECK(only_message_to<Refused>(h, 2) == Refused{RefuseReason::kicked});
+  CHECK(was_dropped(h, 2));
+  CHECK(all_to<PlayerLeft>(h, 3) == std::vector<PlayerLeft>{PlayerLeft{2, LeaveReason::kicked}});
+  CHECK(all_to<LobbyResult>(h, 1) ==
+        std::vector<LobbyResult>{LobbyResult{LobbyActionKind::kick, 2, LobbyResultCode::done}});
+  CHECK(h.session.player_count() == 2);
+  // The transport's close afterwards changes nothing.
+  h.clear();
+  h.session.disconnected(2, h.now);
+  h.collect();
+  CHECK(h.to(3).empty());
+  // A kick is not a ban: the same name comes back.
+  h.join(4, "Zelda");
+  CHECK(h.session.player_count() == 3);
+}
+
+TEST_CASE("lobby: a banned player's name and address are refused until the session ends") {
+  Harness h;
+  constexpr std::uint32_t kHome = 0x0A00A8C0;  // 192.168.0.10 in ENet's memory order
+  constexpr std::uint32_t kOther = 0x0B00A8C0;
+  h.join(1, "Link");
+  h.join(2, "Zelda", kHome);
+  h.clear();
+  h.receive(1, LobbyAction{LobbyActionKind::ban, 2}, kChannelSession);
+  CHECK(only_message_to<Refused>(h, 2) == Refused{RefuseReason::banned});
+  CHECK(was_dropped(h, 2));
+  CHECK(h.session.player_count() == 1);
+  // The same name from elsewhere, any case: refused.
+  h.clear();
+  h.connect(3, kOther);
+  h.receive(3, hello_from("ZELDA"), kChannelSession);
+  CHECK(all_to<Refused>(h, 3) == std::vector<Refused>{Refused{RefuseReason::banned}});
+  // Another name from the same address: refused.
+  h.clear();
+  h.connect(4, kHome);
+  h.receive(4, hello_from("Impa"), kChannelSession);
+  CHECK(all_to<Refused>(h, 4) == std::vector<Refused>{Refused{RefuseReason::banned}});
+  CHECK(h.session.stats().lobby_banned == 2);
+  // Someone else from elsewhere: in.
+  h.join(5, "Saria", kOther);
+  CHECK(h.session.player_count() == 2);
+  // Everyone leaves: a new session forgets the ban.
+  h.session.disconnected(1, h.now);
+  h.session.disconnected(5, h.now);
+  h.collect();
+  h.join(6, "Zelda", kHome);
+  CHECK(h.session.player_count() == 1);
+}
+
+TEST_CASE("lobby: a ban never takes this PC's own address (relayed players share it)") {
+  Harness h;
+  constexpr std::uint32_t kLoopback = 0x0100007F;  // 127.0.0.1 in ENet's memory order
+  h.join(1, "Link", kLoopback);
+  h.join(2, "Zelda", kLoopback);
+  h.clear();
+  h.receive(1, LobbyAction{LobbyActionKind::ban, 2}, kChannelSession);
+  CHECK(h.session.player_count() == 1);
+  h.join(3, "Saria", kLoopback);  // another relayed player
+  CHECK(h.session.player_count() == 2);
+}
+
+TEST_CASE("lobby: a player muted in chat is not relayed, everyone is told, unmute") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  h.receive(1, LobbyAction{LobbyActionKind::mute_chat, 2}, kChannelSession);
+  const LobbyMutes muted{2, lobby_mute::chat};
+  CHECK(all_to<LobbyMutes>(h, 1) == std::vector<LobbyMutes>{muted});
+  CHECK(all_to<LobbyMutes>(h, 2) == std::vector<LobbyMutes>{muted});
+  CHECK(all_to<LobbyMutes>(h, 3) == std::vector<LobbyMutes>{muted});
+  h.clear();
+  h.receive(2, Chat{0, "spam"}, kChannelSession);
+  CHECK(h.to(1).empty());
+  CHECK(h.to(3).empty());
+  CHECK(h.session.stats().chat_muted == 1);
+  // Muting twice changes nothing.
+  h.receive(1, LobbyAction{LobbyActionKind::mute_chat, 2}, kChannelSession);
+  CHECK(only_message_to<LobbyResult>(h, 1) ==
+        LobbyResult{LobbyActionKind::mute_chat, 2, LobbyResultCode::unchanged});
+  // The others still talk.
+  h.clear();
+  h.receive(3, Chat{0, "hi"}, kChannelSession);
+  CHECK(all_to<Chat>(h, 1) == std::vector<Chat>{Chat{3, "hi"}});
+  // Back on.
+  h.clear();
+  h.receive(1, LobbyAction{LobbyActionKind::unmute_chat, 2}, kChannelSession);
+  CHECK(all_to<LobbyMutes>(h, 3) == std::vector<LobbyMutes>{LobbyMutes{2, 0}});
+  h.clear();
+  h.receive(2, Chat{0, "sorry"}, kChannelSession);
+  CHECK(all_to<Chat>(h, 1) == std::vector<Chat>{Chat{2, "sorry"}});
+}
+
+TEST_CASE("lobby: a muted player stays muted after leaving and coming back, joiners are told") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, LobbyAction{LobbyActionKind::mute_voice, 2}, kChannelSession);
+  h.session.disconnected(2, h.now);
+  h.collect();
+  h.clear();
+  const Welcome w = h.join(3, "zelda");
+  const LobbyMutes muted{w.player_number, lobby_mute::voice};
+  CHECK(all_to<LobbyMutes>(h, 3) == std::vector<LobbyMutes>{muted});
+  CHECK(all_to<LobbyMutes>(h, 1) == std::vector<LobbyMutes>{muted});
+  h.clear();
+  h.join(4, "Saria");  // a newcomer learns who is muted
+  CHECK(all_to<LobbyMutes>(h, 4) == std::vector<LobbyMutes>{muted});
+}
+
+TEST_CASE("lobby: a player muted in voice is not relayed, the others are") {
+  ObjectHarness h;
+  h.receive(1, sample_at("KokiriForest", {0, 0, 0}), kChannelPlayerSamples);
+  h.receive(2, sample_at("KokiriForest", {1, 0, 0}), kChannelPlayerSamples);
+  h.receive(3, sample_at("KokiriForest", {2, 0, 0}), kChannelPlayerSamples);
+  h.receive(1, LobbyAction{LobbyActionKind::mute_voice, 2}, kChannelSession);
+  h.clear();
+  h.receive(2, voice_frame(1), kChannelVoice);
+  CHECK(count_to<VoiceFrame>(h, 1) == 0);
+  CHECK(count_to<VoiceFrame>(h, 3) == 0);
+  CHECK(h.session.stats().voice_muted == 1);
+  h.receive(3, voice_frame(1), kChannelVoice);
+  CHECK(count_to<VoiceFrame>(h, 1) == 1);
+  CHECK(count_to<VoiceFrame>(h, 2) == 1);
+  h.receive(1, LobbyAction{LobbyActionKind::unmute_voice, 2}, kChannelSession);
+  h.clear();
+  h.receive(2, voice_frame(2), kChannelVoice);
+  CHECK(count_to<VoiceFrame>(h, 1) == 1);
+}
+
+TEST_CASE("lobby: when the host leaves, the new host has the controls and the mutes hold") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.receive(1, LobbyAction{LobbyActionKind::mute_chat, 3}, kChannelSession);
+  h.session.disconnected(1, h.now);
+  h.collect();
+  REQUIRE(h.session.host() == 2);
+  h.clear();
+  h.receive(3, Chat{0, "still muted"}, kChannelSession);
+  CHECK(h.to(2).empty());
+  h.receive(3, LobbyAction{LobbyActionKind::kick, 2}, kChannelSession);
+  CHECK(only_message_to<LobbyResult>(h, 3) ==
+        LobbyResult{LobbyActionKind::kick, 2, LobbyResultCode::not_host});
+  h.clear();
+  h.receive(2, LobbyAction{LobbyActionKind::kick, 3}, kChannelSession);
+  CHECK(all_to<Refused>(h, 3) == std::vector<Refused>{Refused{RefuseReason::kicked}});
+  CHECK(h.session.player_count() == 1);
+}
+
+TEST_CASE("local players: a seat gets its own number, the others meet it, its own game is told only LOCAL_JOINED") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.receive(1, LocalJoin{1, "Saria"}, kChannelSession);
+  const LocalJoined answer = local_joined_to(h, 1);
+  CHECK(answer == LocalJoined{1, 3, RefuseReason::server_full});
+  CHECK(messages_of<PlayerJoined>(h, 1).empty());
+  CHECK(messages_of<PlayerJoined>(h, 2) == std::vector<PlayerJoined>{{3, "Saria"}});
+  CHECK(h.session.player_count() == 3);
+  CHECK(h.session.stats().local_joined == 1);
+  // Asked again: the same answer, nobody told twice.
+  h.clear();
+  h.receive(1, LocalJoin{1, "Saria"}, kChannelSession);
+  CHECK(local_joined_to(h, 1).player_number == 3);
+  CHECK(h.to(2).empty());
+  // A later joiner finds it in its WELCOME.
+  const Welcome w = h.join(4, "Darunia");
+  CHECK(std::find(w.players.begin(), w.players.end(), PlayerInfo{3, "Saria"}) != w.players.end());
+  CHECK(nothing_to_local_players(h));
+}
+
+TEST_CASE("local players: what its game sends in the envelope reaches the others as the local player's") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, LocalJoin{2, "Saria"}, kChannelSession);
+  h.clear();
+  PlayerSample sample;
+  sample.time = {9, 1};
+  sample.position = Vec3{4.0f, 5.0f, 6.0f};
+  h.receive(1, *local_envelope(2, sample), kChannelPlayerSamples);
+  h.receive(1, *local_envelope(2, PlayerStatus{0, status::paused}), kChannelSession);
+  CHECK(h.to(1).empty());  // never back to its own game
+  const auto msgs = h.to(2);
+  REQUIRE(msgs.size() == 2);
+  CHECK(msgs[0].channel == kChannelPlayerSamples);
+  const auto* s = std::get_if<PlayerSample>(&msgs[0].message);
+  REQUIRE(s != nullptr);
+  CHECK(s->player_number == 3);
+  CHECK(s->position == sample.position);
+  CHECK(std::get<PlayerStatus>(msgs[1].message) == PlayerStatus{3, status::paused});
+  // A seat nobody joined: dropped and counted.
+  h.clear();
+  h.receive(1, *local_envelope(1, sample), kChannelPlayerSamples);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().local_no_seat == 1);
+  // The others' messages go to the game, never to the local player itself.
+  h.clear();
+  h.receive(2, Chat{0, "hi"}, kChannelSession);
+  CHECK(messages_of<Chat>(h, 1) == std::vector<Chat>{{2, "hi"}});
+  CHECK(nothing_to_local_players(h));
+}
+
+TEST_CASE("local players: refused as bad name, name taken or server full") {
+  SessionConfig three;
+  three.max_players = 3;
+  Harness h(three);
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.receive(1, LocalJoin{1, "  "}, kChannelSession);
+  CHECK(local_joined_to(h, 1) == LocalJoined{1, 0, RefuseReason::bad_name});
+  h.clear();
+  h.receive(1, LocalJoin{1, "Zelda"}, kChannelSession);
+  CHECK(local_joined_to(h, 1) == LocalJoined{1, 0, RefuseReason::name_taken});
+  h.clear();
+  h.receive(1, LocalJoin{1, "Saria"}, kChannelSession);
+  CHECK(local_joined_to(h, 1).player_number == 3);
+  h.clear();
+  h.receive(2, LocalJoin{1, "Mido"}, kChannelSession);
+  CHECK(local_joined_to(h, 2) == LocalJoined{1, 0, RefuseReason::server_full});
+  CHECK(messages_of<PlayerJoined>(h, 1).empty());
+  CHECK(h.session.stats().local_refused == 3);
+  // And a game's HELLO with the local player's name is refused, never taken over.
+  h.clear();
+  SessionConfig open;
+  Harness g(open);
+  g.join(1, "Link");
+  g.receive(1, LocalJoin{1, "Saria"}, kChannelSession);
+  g.clear();
+  g.connect(2);
+  g.receive(2, hello_from("Saria"), kChannelSession);
+  const auto refused = messages_of<Refused>(g, 2);
+  REQUIRE(refused.size() == 1);
+  CHECK(refused[0].reason == RefuseReason::name_taken);
+  CHECK(nothing_to_local_players(g));
+}
+
+TEST_CASE("local players: LOCAL_LEAVE frees the number, the others are told, its game is not") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, LocalJoin{3, "Saria"}, kChannelSession);
+  h.clear();
+  h.receive(1, LocalLeave{3}, kChannelSession);
+  CHECK(messages_of<PlayerLeft>(h, 2) == std::vector<PlayerLeft>{{3, LeaveReason::left}});
+  CHECK(messages_of<PlayerLeft>(h, 1).empty());
+  CHECK(h.session.player_count() == 2);
+  h.clear();
+  CHECK(h.join(5, "Mido").player_number == 3);  // the number is free again
+  // A leave for a seat nobody has: nothing.
+  h.clear();
+  h.receive(1, LocalLeave{1}, kChannelSession);
+  CHECK(h.sent.empty());
+}
+
+TEST_CASE("local players: they live by their game's traffic, leave with it, and never host") {
+  Harness h;
+  h.join(1, "Link");     // hosts
+  h.join(2, "Zelda");
+  h.receive(1, LocalJoin{1, "Saria"}, kChannelSession);
+  h.receive(2, LocalJoin{1, "Mido"}, kChannelSession);
+  h.clear();
+  // 12 s: both games keep talking; nobody is dropped.
+  for (int i = 0; i < 48; ++i) {
+    h.now += 250'000;
+    h.receive(1, Ping{h.now}, kChannelSession);
+    h.receive(2, Ping{h.now}, kChannelSession);
+    h.session.tick(h.now);
+    h.collect();
+  }
+  CHECK(h.dropped.empty());
+  CHECK(h.session.player_count() == 4);
+  CHECK(nothing_to_local_players(h));
+  // The host's game goes: its local player goes first, then it; the lowest
+  // remaining real player (2) hosts, not local player 3.
+  h.clear();
+  h.session.disconnected(1, h.now);
+  h.collect();
+  const auto left = messages_of<PlayerLeft>(h, 2);
+  REQUIRE(left.size() == 2);
+  CHECK(left[0].player_number == 3);
+  CHECK(left[1].player_number == 1);
+  const auto hosts = messages_of<Host>(h, 2);
+  REQUIRE(hosts.size() == 1);
+  CHECK(hosts[0].player_number == 2);
+  CHECK(h.session.player_count() == 2);
+  CHECK(nothing_to_local_players(h));
+}
+
+TEST_CASE("local players: a split-screen game that goes silent times out with its seats, and the server lives") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, LocalJoin{1, "Saria"}, kChannelSession);
+  h.receive(1, LocalJoin{2, "Mido"}, kChannelSession);
+  h.clear();
+  // Game 1 (and so its seats) goes quiet; game 2 keeps talking past the silence timeout.
+  for (int i = 0; i < 48; ++i) {
+    h.now += 250'000;
+    h.receive(2, Ping{h.now}, kChannelSession);
+    h.session.tick(h.now);
+    h.collect();
+  }
+  CHECK(h.dropped == std::vector<ConnectionId>{1});
+  CHECK(h.session.player_count() == 1);
+  const auto left = messages_of<PlayerLeft>(h, 2);
+  REQUIRE(left.size() == 3);
+  CHECK(left[2].player_number == 1);
+  CHECK(nothing_to_local_players(h));
+}
+
+TEST_CASE("local players: seats' envelopes do not use up their game's own message rate") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, LocalJoin{1, "Saria"}, kChannelSession);
+  h.clear();
+  PlayerSample sample;
+  sample.time = {1, 1};
+  sample.position = Vec3{1.0f, 0.0f, 0.0f};
+  for (int i = 0; i < 600; ++i) h.receive(1, *local_envelope(1, sample), kChannelPlayerSamples);
+  CHECK(h.session.stats().rate_limited > 0);  // the seat is held to its own rate
+  h.clear();
+  sample.time = {2, 1};
+  h.receive(1, sample, kChannelPlayerSamples);  // the game's own player still gets through
+  const auto got = messages_of<PlayerSample>(h, 2);
+  REQUIRE(got.size() == 1);
+  CHECK(got[0].player_number == 1);
+}
+
+// --- The Lobby: by the player key (HELLO, protocol 11), not the name ---
+
+namespace {
+
+PlayerKey key_of(std::uint8_t n) {
+  PlayerKey k{};
+  k.fill(n);
+  return k;
+}
+
+// Connects and sends a HELLO with this player key; returns the REFUSED, if any.
+std::optional<Refused> join_keyed(Harness& h, ConnectionId id, const std::string& name, std::uint8_t key,
+                                  std::optional<std::uint32_t> address = std::nullopt) {
+  h.connect(id, address);
+  h.player_keys[id] = key_of(key);
+  h.receive(id, hello_from(name), kChannelSession);
+  const auto refused = all_to<Refused>(h, id);
+  if (!refused.empty()) return refused.front();
+  REQUIRE_FALSE(all_to<Welcome>(h, id).empty());
+  return std::nullopt;
+}
+
+}  // namespace
+
+TEST_CASE("lobby: a muted player who comes back under another name, with the same key, is still muted") {
+  Harness h;
+  REQUIRE_FALSE(join_keyed(h, 1, "Link", 1));
+  REQUIRE_FALSE(join_keyed(h, 2, "Zelda", 2));
+  h.receive(1, LobbyAction{LobbyActionKind::mute_chat, 2}, kChannelSession);
+  h.session.disconnected(2, h.now);
+  h.collect();
+  h.clear();
+  REQUIRE_FALSE(join_keyed(h, 3, "NotZelda", 2));
+  h.clear();
+  h.receive(3, Chat{0, "new name"}, kChannelSession);
+  CHECK(h.to(1).empty());
+  CHECK(h.session.stats().chat_muted == 1);
+  // Someone else who takes the muted name, with their own key: not muted.
+  h.session.disconnected(3, h.now);
+  h.collect();
+  REQUIRE_FALSE(join_keyed(h, 4, "Zelda", 9));
+  h.clear();
+  h.receive(4, Chat{0, "hi"}, kChannelSession);
+  CHECK(all_to<Chat>(h, 1).size() == 1);
+}
+
+TEST_CASE("lobby: a ban follows the key: a new name does not get in, others behind the same router do") {
+  Harness h;
+  constexpr std::uint32_t kHome = 0x0A00A8C0;  // 192.168.0.10 in ENet's memory order
+  REQUIRE_FALSE(join_keyed(h, 1, "Link", 1));
+  REQUIRE_FALSE(join_keyed(h, 2, "Zelda", 2, kHome));
+  h.clear();
+  h.receive(1, LobbyAction{LobbyActionKind::ban, 2}, kChannelSession);
+  CHECK(h.session.player_count() == 1);
+  h.clear();
+  CHECK(join_keyed(h, 3, "Sheik", 2, kHome) == Refused{RefuseReason::banned});  // renamed: still out
+  h.clear();
+  CHECK_FALSE(join_keyed(h, 4, "Impa", 4, kHome));  // a housemate, own key: in (no address ban)
+  h.clear();
+  CHECK_FALSE(join_keyed(h, 5, "Zelda", 5));        // another player called Zelda: in
+  CHECK(h.session.stats().lobby_banned == 1);
+}
+
+TEST_CASE("lobby: over the relay (this PC's address) a ban follows the key too") {
+  Harness h;
+  constexpr std::uint32_t kLoopback = 0x0100007F;
+  REQUIRE_FALSE(join_keyed(h, 1, "Link", 1, kLoopback));
+  REQUIRE_FALSE(join_keyed(h, 2, "Zelda", 2, kLoopback));
+  h.receive(1, LobbyAction{LobbyActionKind::ban, 2}, kChannelSession);
+  h.clear();
+  CHECK(join_keyed(h, 3, "Sheik", 2, kLoopback) == Refused{RefuseReason::banned});
+  h.clear();
+  CHECK_FALSE(join_keyed(h, 4, "Saria", 3, kLoopback));
+}
+
+TEST_CASE("lobby: a split-screen seat is kicked alone, its game stays and is told, never the host's own seat") {
+  Harness h;
+  REQUIRE_FALSE(join_keyed(h, 1, "Link", 1));
+  REQUIRE_FALSE(join_keyed(h, 2, "Zelda", 2));
+  h.receive(2, LocalJoin{1, "Saria"}, kChannelSession);
+  h.receive(1, LocalJoin{1, "Mido"}, kChannelSession);
+  REQUIRE(h.session.player_count() == 4);
+  h.clear();
+  h.receive(1, LobbyAction{LobbyActionKind::kick, 4}, kChannelSession);  // Mido: the host's own seat
+  CHECK(all_to<LobbyResult>(h, 1) ==
+        std::vector<LobbyResult>{LobbyResult{LobbyActionKind::kick, 4, LobbyResultCode::is_host}});
+  h.clear();
+  h.receive(1, LobbyAction{LobbyActionKind::ban, 3}, kChannelSession);  // Saria, Zelda's seat
+  CHECK(h.session.player_count() == 3);
+  CHECK(h.dropped.empty());  // Zelda's game stays
+  CHECK(all_to<PlayerLeft>(h, 2) == std::vector<PlayerLeft>{PlayerLeft{3, LeaveReason::kicked}});
+  CHECK(all_to<PlayerLeft>(h, 1) == std::vector<PlayerLeft>{PlayerLeft{3, LeaveReason::kicked}});
+  // The banned seat cannot come back on that game, under any name.
+  h.clear();
+  h.receive(2, LocalJoin{1, "Ruto"}, kChannelSession);
+  CHECK(local_joined_to(h, 2).reason == RefuseReason::banned);
+  // Another seat of that game can.
+  h.clear();
+  h.receive(2, LocalJoin{2, "Ruto"}, kChannelSession);
+  CHECK(local_joined_to(h, 2).player_number != 0);
+}
+
+TEST_CASE("lobby: two players in at once with one key (a copied kit) are muted and banned one at a time") {
+  Harness h;
+  REQUIRE_FALSE(join_keyed(h, 1, "Link", 1));
+  REQUIRE_FALSE(join_keyed(h, 2, "Zelda", 2));
+  REQUIRE_FALSE(join_keyed(h, 3, "Saria", 2));  // the same key as Zelda: known by name
+  CHECK(h.session.stats().lobby_shared_key == 1);
+  h.receive(1, LobbyAction{LobbyActionKind::mute_chat, 2}, kChannelSession);
+  h.clear();
+  h.receive(3, Chat{0, "not muted"}, kChannelSession);
+  CHECK(all_to<Chat>(h, 1).size() == 1);
+  h.receive(1, LobbyAction{LobbyActionKind::ban, 3}, kChannelSession);  // Saria, by name
+  CHECK(h.session.player_count() == 2);  // Zelda stays
+  h.clear();
+  CHECK(join_keyed(h, 4, "Saria", 7) == Refused{RefuseReason::banned});
+}
+
+TEST_CASE("lobby: a sealed key that does not open counts, and that player is let in, known by name") {
+  Harness h;
+  h.join(1, "Link");
+  h.auto_answer = false;
+  h.connect(2);
+  h.receive(2, hello_from("Zelda"), kChannelSession);
+  const auto challenges = all_to<JoinChallenge>(h, 2);
+  REQUIRE(challenges.size() == 1);
+  JoinProof p{h.proof(h.password, challenges[0].nonce)};
+  p.player_key = SealedPlayerKey{};  // not sealed with this connection's key
+  h.receive(2, p, kChannelSession);
+  CHECK(h.session.stats().lobby_bad_key == 1);
+  CHECK(h.session.player_count() == 2);
+}
+
+TEST_CASE("lobby: a muted player who restarts the game and comes back renamed while the old one is still in stays muted") {
+  Harness h;
+  constexpr std::uint32_t kHome = 0x0A00A8C0;
+  constexpr std::uint32_t kFriend = 0x0B00A8C0;
+  REQUIRE_FALSE(join_keyed(h, 1, "Link", 1));
+  REQUIRE_FALSE(join_keyed(h, 2, "Zelda", 2, kHome));
+  h.receive(1, LobbyAction{LobbyActionKind::mute_voice, 2}, kChannelSession);
+  h.receive(1, LobbyAction{LobbyActionKind::mute_chat, 2}, kChannelSession);
+  h.clear();
+  // The old connection has not timed out yet; the new game, same key, same address, a new name.
+  const auto refused = join_keyed(h, 3, "Sheik", 2, kHome);
+  REQUIRE_FALSE(refused);
+  CHECK(h.session.stats().lobby_mutes_kept == 1);
+  const auto told = all_to<LobbyMutes>(h, 1);
+  REQUIRE(told.size() == 1);
+  CHECK(told[0].flags == (lobby_mute::voice | lobby_mute::chat));
+  h.clear();
+  h.receive(3, Chat{0, "free?"}, kChannelSession);
+  CHECK(all_to<Chat>(h, 1).empty());
+  // A copied kit at another address: not muted for it.
+  REQUIRE_FALSE(join_keyed(h, 4, "Impa", 2, kFriend));
+  h.clear();
+  h.receive(4, Chat{0, "hello"}, kChannelSession);
+  CHECK(all_to<Chat>(h, 1).size() == 1);
+}
+
+TEST_CASE("boss heart: two claims at once give one heart container, the first one's, to everyone") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  // Both games picked it up in the same moment; the server takes the first it got.
+  h.receive(2, BossHeart{0, 4, false, 16}, kChannelSession);
+  h.receive(1, BossHeart{0, 4, false, 16}, kChannelSession);
+  const BossHeart won{2, 4, true, 16};
+  // Player 1 (the loser) gets the winner's answer twice (the broadcast, then its own claim's), the
+  // others once: every game raises to 16 and never past it, so each gets exactly one +1.
+  for (ConnectionId id : {1u, 2u, 3u}) {
+    for (const auto& s : h.to(id)) {
+      const auto* m = std::get_if<BossHeart>(&s.message);
+      REQUIRE(m != nullptr);
+      CHECK(*m == won);
+    }
+  }
+  CHECK(h.to(1).size() == 2);
+  CHECK(h.to(2).size() == 1);
+  CHECK(h.to(3).size() == 1);
+  CHECK(h.session.stats().boss_hearts_given == 1);
+  CHECK(h.session.stats().boss_hearts_late == 1);
+  // Another boss is its own container.
+  h.clear();
+  h.receive(3, BossHeart{0, 5, false, 20}, kChannelSession);
+  CHECK(only_message_to<BossHeart>(h, 1) == BossHeart{3, 5, true, 20});
+}
+
+TEST_CASE("boss heart: the winner leaving right after its claim takes nothing from the others") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.receive(1, BossHeart{0, 0, false, 16}, kChannelSession);
+  h.session.disconnected(1, h.now);  // in the grab's moment
+  CHECK(h.session.stats().boss_hearts_given == 1);
+  bool got = false;
+  for (const auto& s : h.to(2)) {
+    if (const auto* m = std::get_if<BossHeart>(&s.message)) got = *m == BossHeart{1, 0, true, 16};
+  }
+  CHECK(got);
+  // Its game coming back (or the other's late pickup) gets the same answer, no second heart.
+  h.clear();
+  h.receive(2, BossHeart{0, 0, false, 20}, kChannelSession);
+  int answers = 0;  // (the leave's own messages may come with it)
+  for (const auto& s : h.to(2)) {
+    if (const auto* m = std::get_if<BossHeart>(&s.message)) {
+      ++answers;
+      CHECK(*m == BossHeart{1, 0, true, 16});
+    }
+  }
+  CHECK(answers == 1);
+  CHECK(h.session.stats().boss_hearts_given == 1);
+}
+
+TEST_CASE("boss heart: a client cannot send the server's answer") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.receive(1, BossHeart{0, 0, true, 16}, kChannelSession);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().boss_hearts_refused == 1);
+  h.receive(1, BossHeart{0, 0, false, 16}, kChannelSession);  // a claim still counts afterwards
+  CHECK(h.session.stats().boss_hearts_given == 1);
+}
+
+TEST_CASE("boss scene: relayed to everyone else with the sender's number") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  h.receive(1, BossScene{0, "InsideTheDekuTree", 0, BossSceneKind::intro_start, {1.0f, 2.0f, 3.0f}},
+            kChannelSession);
+  const BossScene relayed{1, "InsideTheDekuTree", 0, BossSceneKind::intro_start, {1.0f, 2.0f, 3.0f}};
+  CHECK(only_message_to<BossScene>(h, 2) == relayed);
+  CHECK(only_message_to<BossScene>(h, 3) == relayed);
+  CHECK(h.to(1).empty());
 }

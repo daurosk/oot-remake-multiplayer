@@ -444,3 +444,103 @@ TEST_CASE("time: a guest's reload without a save load seen (Link gone) sends no 
     REQUIRE(send.size() == 1);
     CHECK((std::get<proto::TimeOfDay>(send[0]).flags & proto::time_of_day::jump) != 0);
 }
+
+namespace {
+
+std::vector<proto::TimeOfDay> Jumps(const std::vector<proto::Message>& send) {
+    std::vector<proto::TimeOfDay> out;
+    for (const auto& t : Sent(send)) {
+        if ((t.flags & proto::time_of_day::jump) != 0) out.push_back(t);
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("time: the game's own time set is sent as a jump at once, with its time, and only once") {
+    Sync a;
+    std::vector<proto::Message> send;
+    a.Tick(36'000, false, 0, send);
+    a.GameSet(64'800);  // the Sun's Song starts: the clock itself has not moved yet
+    a.Tick(36'005, false, 250 * kMs, send);
+    auto jumps = Jumps(send);
+    REQUIRE(jumps.size() == 1);
+    CHECK(jumps[0].seconds == 64'800);
+    // The clock then gets there: the same jump, not sent again.
+    send.clear();
+    a.Tick(50'000, false, 2'000 * kMs, send);
+    a.Tick(64'800, false, 4'000 * kMs, send);
+    a.Tick(64'810, false, 4'250 * kMs, send);
+    CHECK(Jumps(send).empty());
+    CHECK(a.UnnamedJumps() == 0);
+
+    // A set of five minutes: too small for a read to call it a jump, but the game's own set.
+    a.GameSet(65'110);
+    a.Tick(64'820, false, 20'000 * kMs, send);
+    jumps = Jumps(send);
+    REQUIRE(jumps.size() == 1);
+    CHECK(jumps[0].seconds == 65'110);
+    // A set to where the clock is (within two minutes) moves nobody: not sent. One past midnight is not a time.
+    send.clear();
+    a.Tick(65'120, false, 40'000 * kMs, send);
+    a.GameSet(65'150);
+    a.Tick(65'130, false, 40'250 * kMs, send);
+    a.GameSet(90'000);
+    a.Tick(65'140, false, 40'500 * kMs, send);
+    CHECK(Jumps(send).empty());
+}
+
+TEST_CASE("time: our own set comes back as the game's set and is not sent") {
+    Sync guest;
+    std::vector<proto::Message> send;
+    guest.Tick(36'000, false, 0, send);
+    guest.Receive(From(1, 64'800, true));
+    const auto set = guest.Tick(36'005, false, 250 * kMs, send);
+    REQUIRE(set);
+    guest.GameSet(*set);  // the game's function ran for our call
+    guest.Tick(36'010, false, 500 * kMs, send);
+    guest.Tick(64'800, false, 2'500 * kMs, send);
+    CHECK(Jumps(send).empty());
+    CHECK(guest.UnnamedJumps() == 0);
+}
+
+TEST_CASE("time: a set while there is no clock (a load) is no jump, as a read after a load is none") {
+    Sync guest;
+    std::vector<proto::Message> send;
+    guest.Tick(36'000, false, 0, send);
+    guest.Loading(1'000 * kMs);
+    guest.Tick(std::nullopt, false, 1'000 * kMs, send);
+    guest.GameSet(43'166);  // the save's time
+    guest.Tick(std::nullopt, false, 1'250 * kMs, send);
+    guest.Tick(43'166, false, 1'500 * kMs, send);
+    guest.Tick(43'170, false, 1'750 * kMs, send);
+    CHECK(send.empty());
+
+    // A guest's set just after its load, with the clock read before it: the host's clock is taken again, nothing sent.
+    Sync other;
+    other.Tick(36'000, false, 0, send);
+    other.Loading(1'000 * kMs);
+    other.Tick(36'000, false, 1'100 * kMs, send);
+    other.GameSet(43'166);
+    other.Tick(36'001, false, 1'350 * kMs, send);
+    CHECK(send.empty());
+    other.Receive(From(1, 50'000));
+    const auto set = other.Tick(43'166, false, 2'600 * kMs, send);
+    REQUIRE(set);
+    CHECK(*set == 50'000);
+}
+
+TEST_CASE("time: with the game's sets as events, a jump no set named is still sent, and counted") {
+    Sync a;
+    std::vector<proto::Message> send;
+    a.Tick(36'000, false, 0, send);
+    a.GameSet(36'010);  // (events are on from here; this one moves nothing)
+    a.Tick(36'010, false, 250 * kMs, send);
+    CHECK(send.empty());
+    a.Tick(36'500, false, 30'000 * kMs, send);
+    a.Tick(64'800, false, 30'250 * kMs, send);  // long after the last set
+    const auto jumps = Jumps(send);
+    REQUIRE(jumps.size() == 1);
+    CHECK(jumps[0].seconds == 64'800);
+    CHECK(a.UnnamedJumps() == 1);
+}

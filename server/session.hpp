@@ -29,6 +29,10 @@ namespace coop::server {
 
 // The transport's own number for a connection, never reused while it lives.
 using ConnectionId = std::uint32_t;
+// Split screen's extra local players (docs/protocol.md, "Local players") are
+// players of the session without a transport connection of their own; the
+// session numbers them from here (a transport id this high is refused).
+inline constexpr ConnectionId kLocalPlayerIds = 0xF000'0000u;
 
 // An IPv4 address or a range of them ("25.1.2.3", "25.0.0.0/8"), as numbers
 // with the first dotted part highest. For --allow.
@@ -80,6 +84,10 @@ struct SessionConfig {
   // PvP (coop_server --pvp): players hurt each other. The host may change it
   // in the session (PVP_MODE); every player gets the server's value.
   bool pvp = false;
+  // Down but not out (coop_server --dbno; docs/protocol.md "Down but not
+  // out"): a player at no hearts is downed and can be revived. On unless the
+  // server or the host turns it off; every player gets the value at join.
+  protocol::DbnoMode dbno{};
   // Guessing the join password: an address that sends max_wrong_passwords
   // wrong proofs within wrong_password_window_us is closed at connect for
   // wrong_password_block_us (counted in password_blocked). 0: no limit.
@@ -291,10 +299,34 @@ struct Stats {
   std::uint64_t voice_out_of_range = 0; // a listener left out: too far from the speaker
   std::uint64_t voice_unplaced = 0;     // from a player whose scene is not known yet: dropped
   std::uint64_t voice_capped = 0;       // a listener left out: voice_max_speakers others were talking
+  // Split screen: extra local players let in and refused, and envelopes
+  // (LOCAL_SAMPLE, LOCAL_MESSAGE) for a seat that has no player.
+  std::uint64_t local_joined = 0;
+  std::uint64_t local_refused = 0;
+  std::uint64_t local_no_seat = 0;
   // PvP (docs/protocol.md, "PvP"). Relayed ones count in relayed too.
   std::uint64_t pvp_hits_relayed = 0;   // PVP_HIT passed on to its victim
   std::uint64_t pvp_hits_dropped = 0;   // PVP_HIT while PvP is off, or to nobody
   std::uint64_t pvp_mode_refused = 0;   // PVP_MODE from a player who does not host
+  // Down but not out (docs/protocol.md, "Down but not out").
+  std::uint64_t dbno_mode_refused = 0;  // DBNO_MODE from a player who does not host
+  std::uint64_t dbno_revives_relayed = 0;
+  std::uint64_t dbno_revives_dropped = 0;  // mode off, to nobody, or to themselves
+  std::uint64_t difficulty_refused = 0;  // DIFFICULTY from a player who does not host
+  std::uint64_t mod_settings_refused = 0;  // MOD_SETTINGS from a player who does not host
+  // The Lobby (docs/protocol.md "Lobby"): the host's kicks, bans and mutes.
+  std::uint64_t lobby_done = 0;      // LOBBY_ACTIONs carried out
+  std::uint64_t lobby_refused = 0;   // LOBBY_ACTION from a player who does not host
+  std::uint64_t lobby_banned = 0;    // HELLOs and LOCAL_JOINs refused: a banned player
+  std::uint64_t lobby_bad_key = 0;   // a sealed player key that did not open: the player is known by name
+  std::uint64_t lobby_shared_key = 0;  // a player key another player in has too (a copied kit): by name
+  std::uint64_t lobby_mutes_kept = 0;  // ... from the same address: it kept that player's mutes (a restart)
+  std::uint64_t chat_muted = 0;      // CHAT from a player the host muted: dropped
+  std::uint64_t voice_muted = 0;     // VOICE_FRAME from a player the host muted: dropped
+  // Boss heart containers (docs/protocol.md, "Boss cutscenes").
+  std::uint64_t boss_hearts_given = 0;     // first claims: one BOSS_HEART given to everyone
+  std::uint64_t boss_hearts_late = 0;      // later claims of a decided boss, answered to their sender
+  std::uint64_t boss_hearts_refused = 0;   // a "given" from a client
   // Connections refused at connect: their address already had
   // max_half_open_per_address waiting for HELLO. Not packets, so not in
   // dropped().
@@ -429,6 +461,10 @@ class Session {
   std::optional<std::uint8_t> host() const;
   // Whether players hurt each other now (config.pvp, then the host's PVP_MODE).
   bool pvp() const { return pvp_; }
+  // Down but not out now (config.dbno, then the host's DBNO_MODE).
+  const protocol::DbnoMode& dbno() const { return dbno_; }
+  // The difficulty in force now, as every player has been told (DIFFICULTY).
+  protocol::Difficulty difficulty() const;
   // Flags in the server's table.
   std::size_t flag_count() const { return flags_.size(); }
   // Connections from `address` still waiting for HELLO.
@@ -479,6 +515,8 @@ class Session {
     std::optional<protocol::RejoinTokenBytes> rejoin_claim;
     std::uint8_t number = 0;  // 1 to max_players once joined
     std::string nickname;
+    // Its last MOD_LIST, with its number (docs/protocol.md, "Mods").
+    std::optional<protocol::ModList> mods;
     // The scene the player is in, from its latest OBJECT_PRESENT or
     // PLAYER_SAMPLE scene; empty while not known.
     std::string scene;
@@ -501,6 +539,8 @@ class Session {
     std::uint8_t status = 0;
     std::uint64_t paused_since = 0;
     std::uint64_t dead_since = 0;
+    // DBNO_STATE as the player last said it: a downed player owns no enemy.
+    protocol::DbnoState dbno = protocol::DbnoState::up;
     // It entered a scene and has not been sent that scene's spawns yet.
     bool replay_due = false;
     std::uint64_t owners_told_at = 0;
@@ -508,6 +548,14 @@ class Session {
     // its own lure is; lures_at 0: none yet.
     std::map<protocol::ObjectId, protocol::FishLureEntry> lures;
     std::uint64_t lures_at = 0;
+    // An extra local player (split screen): the connection whose game it
+    // plays in, and its seat there. Nothing is ever sent to it (its game
+    // gets everything through that connection), and nothing from that game
+    // comes back to it or to its siblings.
+    std::optional<ConnectionId> parent;
+    std::uint8_t seat = 0;
+    // The Lobby: the player key its HELLO had (none: an old build).
+    std::optional<protocol::PlayerKey> player_key;
   };
 
   // One shared object (docs/objects.md "Server").
@@ -563,7 +611,14 @@ class Session {
                      std::uint64_t now_us);
   // The checks after the password, then WELCOME.
   void admit(ConnectionId id, Connection& c, const protocol::Hello& hello,
-             std::uint64_t now_us);
+             std::uint64_t now_us, const std::optional<protocol::PlayerKey>& player_key);
+  // Split screen (docs/protocol.md, "Local players").
+  void on_local(ConnectionId id, Connection& c, const protocol::Message& message, std::uint64_t now_us);
+  void local_join(ConnectionId id, Connection& c, const protocol::LocalJoin& j, std::uint64_t now_us);
+  std::optional<ConnectionId> local_player(ConnectionId parent, std::uint8_t seat) const;
+  std::vector<ConnectionId> local_players(ConnectionId parent) const;
+  // Whether a and b are one game's (the same connection, or its local players).
+  bool same_game(ConnectionId a, ConnectionId b) const;
   void on_player_message(ConnectionId id, Connection& c, std::uint8_t channel,
                          protocol::Message& message, std::size_t bytes, std::uint64_t now_us);
   void on_join_partner(ConnectionId id, Connection& c, protocol::JoinPartner& j);
@@ -585,7 +640,31 @@ class Session {
                          protocol::Message& message, std::uint64_t now_us);
   void on_damage(ConnectionId id, Connection& c, protocol::Damage& d, std::uint64_t now_us);
   void on_pvp_mode(ConnectionId id, Connection& c, const protocol::PvpMode& m);
+  void on_difficulty(ConnectionId id, Connection& c, const protocol::Difficulty& m);
+  // After a join or a leave: the automatic scaler's new values, to everyone
+  // but `except` (the joiner, told already; the leaver). Nothing when the
+  // values in force are the ones told before, as with the host's own choice.
+  void tell_difficulty_change(ConnectionId except);
+  void on_mods(ConnectionId id, Connection& c, protocol::Message& message);
+  // The Lobby: the host's kick, ban and mutes (docs/protocol.md "Lobby").
+  void on_lobby(ConnectionId id, const protocol::LobbyAction& a, std::uint64_t now_us);
+  std::uint8_t lobby_mutes_of(const Connection& c) const;
+  // Who a player is to the Lobby: its player key (sealed in JOIN_PROOF, protocol 11) when it
+  // sent one, a split-screen seat by its game's key and seat; the name only
+  // without a key. Mutes and bans follow this, so a new name escapes nothing.
+  std::string lobby_id(const std::string& nickname, const std::optional<protocol::PlayerKey>& key,
+                       std::optional<ConnectionId> parent, std::uint8_t seat) const;
+  std::string lobby_id(const Connection& c) const;
+  // A ban of a player known by name (no key, or a key another player had)
+  // holds for that name whatever key comes with it.
+  bool lobby_banned(const std::string& id, const std::string& nickname,
+                    std::optional<std::uint32_t> address) const;
   void on_pvp_hit(ConnectionId id, Connection& c, protocol::Message& message);
+  void on_dbno_mode(ConnectionId id, Connection& c, const protocol::DbnoMode& m);
+  void on_dbno_revive(ConnectionId id, Connection& c, protocol::Message& message);
+  void on_boss_heart(ConnectionId id, Connection& c, const protocol::BossHeart& m);
+  // A player who can be given an object: not loading, paused, dead or downed.
+  static bool busy(const Connection& c);
   void on_object_group(ConnectionId id, Connection& c, const protocol::ObjectGroup& g);
   void on_fish_lure(Connection& c, const protocol::FishLure& m, std::uint64_t now_us);
   // Proximity voice: to the others in the speaker's scene within voice_range_m.
@@ -697,12 +776,41 @@ class Session {
   SessionConfig config_;
   std::string session_game_build_;  // set while players are in
   std::map<ConnectionId, Connection> connections_;
+  ConnectionId next_local_id_ = kLocalPlayerIds;
   // The host's connection; set while players are in.
   std::optional<ConnectionId> host_;
+  // The Lobby, by lobby_id (the player key; the name only without one), so a
+  // muted or banned player who comes back, renamed or not, is still so;
+  // cleared when the session empties. A ban keeps the address only for a
+  // player without a key (a last resort: it keeps out everyone behind that
+  // router), and never this PC's own (127.x: every relayed player).
+  std::map<std::string, std::uint8_t> lobby_mutes_;
+  std::set<std::string> banned_ids_;
+  std::set<std::uint32_t> banned_addresses_;
   // PvP now: config_.pvp until the host changes it; back to config_.pvp when
   // the session empties. `pvp_set_by_` is PVP_MODE's set_by (0: the server).
   bool pvp_ = false;
   std::uint8_t pvp_set_by_ = 0;
+  // Down but not out now: config_.dbno until the host changes it; back to
+  // it when the session empties.
+  protocol::DbnoMode dbno_;
+  // Each boss's one heart container (BOSS_HEART): the first claim the server
+  // got, by boss. Kept while anyone is in (as the flags), so a claim that
+  // comes late, or after the winner left, gets the same answer; forgotten
+  // when the session empties.
+  std::map<std::uint8_t, protocol::BossHeart> boss_hearts_;
+  // Difficulty (protocol/difficulty.hpp): automatic, by the number of
+  // players, until the host chooses; the host's choice then stays whoever
+  // joins or leaves, a new host included. Automatic again when the session
+  // empties. `difficulty_set_by_` is DIFFICULTY's set_by; `difficulty_told_`
+  // the values the players in the session were last told.
+  protocol::DifficultyChoice difficulty_;
+  std::uint8_t difficulty_set_by_ = 0;
+  protocol::DifficultyValues difficulty_told_;
+  // The host's last MOD_SETTINGS (docs/protocol.md, "Mods"): kept when the
+  // host leaves until the new host sends its own; forgotten when the session
+  // empties.
+  std::optional<protocol::ModSettings> mod_settings_;
   // Every shared flag value the host has sent, by key. Kept when
   // the host leaves; forgotten when the session empties.
   std::map<protocol::FlagKey, protocol::FlagEntry> flags_;

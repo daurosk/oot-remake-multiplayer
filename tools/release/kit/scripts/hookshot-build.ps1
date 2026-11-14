@@ -16,7 +16,7 @@
 # What it does:
 # 1. Hookshot's own build tools: the parts of the Hookshot release named in hookshot\TOOLS.txt (its
 #    Python, llvm-mingw, the Vulkan/FFmpeg headers, wgpu-native and the prebuilt third-party files),
-#    downloaded from Hookshot's GitHub release and checked against the SHA-256 in that release's
+#    downloaded from Longshot's release (git.magicbean.dev) and checked against the SHA-256 in that release's
 #    hookshot-setup.txt (whose own SHA-256 is in TOOLS.txt). About 400 MB, once.
 # 2. Hookshot's source at the commit in hookshot\PIN (GitHub's source archive), with our patches
 #    from hookshot\patches applied (scripts\apply_patch.py: no git needed).
@@ -42,7 +42,10 @@ param(
     [string]$Tools = '',
     [string]$Work = '',
     [switch]$Rebuild,
-    [switch]$CheckOnly
+    [switch]$CheckOnly,
+    # A Longshot game folder of the player's own (kit-friction): its saves and, through its builder, Longshot's downloads
+    # (and compiled objects, same release only) are copied from it. 'none': do not ask. Asked once before a first build.
+    [string]$Longshot = ''
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'   # (Invoke-WebRequest's progress bar makes big downloads many times slower)
@@ -50,9 +53,33 @@ $ProgressPreference = 'SilentlyContinue'   # (Invoke-WebRequest's progress bar m
 
 $kit = Split-Path -Parent $PSScriptRoot
 $hs = Join-Path $kit 'hookshot'
+. (Join-Path $PSScriptRoot 'kit-paths.ps1')   # (Test-KitOtherKitGame, Find-KitHookshotGameToCopy)
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
 
 function Fail([string]$Text) { Write-Host ''; Write-Host "Longshot build: $Text" -ForegroundColor Red; exit 1 }
+# (kit-friction) Anything this script did not expect: the step it was at, in plain words, and for "access denied" or a
+# held file, who holds it (a 0.10.1 player saw only PowerShell's red error at a Move-Item, with no way to tell why).
+trap {
+    $m = $_.Exception.Message
+    $at = $_.InvocationInfo
+    Write-Host ''
+    Write-Host "Longshot build: stopped at hookshot-build.ps1 line $($at.ScriptLineNumber) ($("$($at.Line)".Trim())):" -ForegroundColor Red
+    Write-Host "  $m" -ForegroundColor Red
+    if ($m -match '(?i)denied|being used by another process|cannot access the file') {
+        $path = if ($m -match "'([A-Za-z]:\\[^']+)'") { $Matches[1] } else { '' }
+        # (no path in the message: no holder scan, which over a built kit's game\ would open thousands of files)
+        if ($path) {
+            $folder = if (Test-Path -LiteralPath $path -PathType Container) { $path } else { Split-Path -Parent $path }
+            Write-Host (Get-KitHeldFolderText $folder 'access denied') -ForegroundColor Yellow
+        } else {
+            Write-Host (Get-KitHeldFolderText $kit 'access denied' @() '') -ForegroundColor Yellow
+        }
+    } elseif ($m -match '(?i)application control|blocked by|virus|potentially unwanted') {
+        Write-Host '  Windows or the antivirus blocked a program of the build: Windows Security > Protection history says which; allow it, or add this kit''s folder under Exclusions. Smart App Control (Windows 11) blocks it whatever Defender''s settings (SETUP.md, "If something goes wrong").' -ForegroundColor Yellow
+    }
+    Write-Host '  Start again once that is done; what was downloaded is kept. Still stuck: scripts\collect-logs.cmd, and send its zip.'
+    exit 1
+}
 function Step([string]$Text) { Write-Host ''; Write-Host "== $Text" -ForegroundColor Cyan }
 function Read-KeyFile([string]$Path) {
     $map = @{}
@@ -127,15 +154,78 @@ $downloads = if ($Tools) { Join-Path (Split-Path -Parent $tools) 'downloads' } e
 if (-not $Out) {
     # The game this kit built last (game-folder.txt, written below; a build with -Out puts it elsewhere): an update
     # puts the new co-op into THAT game. Only when that folder is gone does the default folder get a new build.
+    # (Get-KitHookshotGame: a relative name is this kit's; another kit's hookshot\game is never used: kit-copy)
     $Out = Join-Path $hs 'game'
-    $where = Join-Path $hs 'game-folder.txt'
-    if (Test-Path -LiteralPath $where) {
-        $last = "$(Get-Content -LiteralPath $where -TotalCount 1)".Trim()
-        if ($last -and (Test-Path -LiteralPath $last -PathType Container)) { $Out = $last }
-    }
+    $last = Get-KitHookshotGame $kit
+    if ($last -and (Test-Path -LiteralPath $last -PathType Container)) { $Out = $last }
 }
 $Out = [System.IO.Path]::GetFullPath($Out)
 $python = Join-Path $tools 'python\python.exe'
+
+# --- A Longshot of the player's own (kit-friction) -----------------------------------------------
+# Never played or written to: co-op is a separate build (the release in hookshot\PIN with co-op's patches in its source).
+# Asked once, before the first build (hookshot\longshot-folder.txt keeps the answer; 'none' is a no).
+function Read-TimedLine([int]$Seconds) {
+    $redirected = $true
+    try { $redirected = [Console]::IsInputRedirected } catch { }
+    if ($redirected) { return "$([Console]::In.ReadLine())" }
+    $end = (Get-Date).AddSeconds($Seconds)
+    $text = ''
+    while ($text -or (Get-Date) -lt $end) {
+        if ([Console]::KeyAvailable) {
+            $key = [Console]::ReadKey($true)
+            if ($key.Key -eq 'Enter') { Write-Host ''; return $text }
+            if ($key.Key -eq 'Backspace') { if ($text) { $text = $text.Substring(0, $text.Length - 1); Write-Host -NoNewline "`b `b" } }
+            elseif ($key.KeyChar) { $text += $key.KeyChar; Write-Host -NoNewline $key.KeyChar }
+        } else { Start-Sleep -Milliseconds 50 }
+    }
+    Write-Host ''
+    return ''
+}
+$lsNote = Join-Path $hs 'longshot-folder.txt'
+$lsFresh = -not $CheckOnly -and -not $sharedWork -and -not (Test-Path -LiteralPath (Join-Path $Out 'coop-built-from.txt'))
+if (-not $Longshot -and $lsFresh -and -not $env:OOT_COOP_NO_LONGSHOT_ASK) {
+    if (Test-Path -LiteralPath $lsNote) { $Longshot = "$(Get-Content -LiteralPath $lsNote -TotalCount 1)".Trim() }
+    else {
+        Write-Host ''
+        Write-Host 'Built Longshot yourself? The co-op game is a separate build (co-op is built into its source), but your own'
+        Write-Host 'Longshot can lend it your saves and its downloads. Drag your Longshot game folder (the one with longshot.exe)'
+        Write-Host 'into this window and press Enter; just Enter (or 60 s) for no. (Asked once: hookshot\longshot-folder.txt keeps the answer;'
+        Write-Host 'delete that file to be asked again before a build.)'
+        $Longshot = (Read-TimedLine 60).Trim().Trim('"')
+        try { [System.IO.File]::WriteAllText($lsNote, "$(if ($Longshot) { $Longshot } else { 'none' })`n") } catch { }
+    }
+}
+$lsImage = ''
+$lsHomes = @()
+$lsSameRelease = $false
+if ($Longshot -and $Longshot -ne 'none' -and $lsFresh) {
+    $lsImage = Get-KitLongshotImageDir $Longshot
+    if (-not $lsImage) {
+        Write-Host "  $Longshot is no Longshot game folder (no image.bin in it or in its bin\): nothing taken from it." -ForegroundColor Yellow
+    } else {
+        $lsInfo = Get-KitLongshotGameInfo $Longshot
+        $lsVer = if ($lsInfo -and $lsInfo.version) { $lsInfo.version } else { 'of an unknown version' }
+        $lsHomes = @(Get-KitLongshotHomes $(if ($lsInfo) { $lsInfo.home } else { '' }))
+        $ourTag = if ($pin.tag) { $pin.tag } else { $toolsPin.release }
+        # (the compiled objects only from the same release: another's compiler and headers make other objects anyway,
+        # and a nightly is not a release co-op was tested on)
+        $lsSameRelease = $lsInfo -and $lsInfo.version -eq $ourTag
+        Write-Host "Found Longshot $lsVer at $Longshot."
+        if ($lsSameRelease) {
+            Write-Host "  The same release co-op is built on ($ourTag): its downloads and compiled files are copied (never changed) to save time;"
+            Write-Host '  the game is still translated again with co-op in it. Your saves are copied in after the build.'
+        } else {
+            Write-Host "  Co-op is built on $ourTag, so it is built fresh; only downloaded tools that are the very same files are reused."
+            Write-Host '  Your saves are copied in after the build (they are the game''s own files).'
+        }
+    }
+}
+# (no folder given: Longshot Builder's own home on this PC still lends its downloads, the same files by SHA-256)
+if (-not $lsHomes -and $lsFresh -and -not $env:OOT_COOP_NO_LONGSHOT_ASK) {
+    $lsHomes = @(Get-KitLongshotHomes)
+    foreach ($h in $lsHomes) { Write-Host "Found Longshot Builder $(if ($h.version) { $h.version } else { '' }) at $($h.path): its downloads that are the same files are reused." }
+}
 
 # --- 1 and 2: the tools and the patched source ---------------------------------------------
 $toolsStamp = Join-Path $tools 'coop-tools.txt'
@@ -181,7 +271,12 @@ if ($toolsReady) {
                                       File = (Join-Path $downloads "$($f[1])-$($f[4].Substring(0, 12)).zip") }
     }
     if ($parts.Count -ne $wanted.Count) { Fail "tools.lock of $($toolsPin.release) does not list the $($wanted.Count) windows-x64 tools this script needs (found $($parts.Count))." }
-    foreach ($p in $parts) { Get-Download $p.Urls $p.File $p.Sha }
+    foreach ($p in $parts) {
+        # (a tool zip your own Longshot's setup downloaded already: the same SHA-256, so the same file)
+        $lent = if ($lsHomes) { Copy-KitLongshotDownload $lsHomes $p.Sha $p.File } else { '' }
+        if ($lent) { Write-Host "  $($p.Name): copied from your Longshot's downloads ($lent)" }
+        Get-Download $p.Urls $p.File $p.Sha
+    }
     # Forgejo's source archive at PIN's commit, checked against TOOLS.txt's source_sha256 (a copy
     # already here is checked too, and fetched again when it differs).
     $sourceZip = Join-Path $downloads "longshot-$($pin.commit).zip"
@@ -189,7 +284,8 @@ if ($toolsReady) {
 
     Write-Host '  unpacking ...'
     $staging = "$tools.new"
-    if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+    $why = Remove-KitFolderRetry $staging
+    if ($why) { Fail (Get-KitHeldFolderText $staging $why) }
     # The source: the archive's one top folder (longshot/) left out.
     Expand-Zip $sourceZip $staging 1
     if (-not (Test-Path -LiteralPath (Join-Path $staging 'nx2\make_game.py'))) { Fail "Longshot's source archive has no nx2\make_game.py." }
@@ -209,8 +305,11 @@ if ($toolsReady) {
     # (--refresh keeps the originals of what the patches change: a later patch change refreshes only those)
     & (Join-Path $staging 'python\python.exe') -I -B (Join-Path $PSScriptRoot 'apply_patch.py') --refresh (Join-Path $staging '.coop-orig') $staging @($patches | ForEach-Object FullName)
     if ($LASTEXITCODE -ne 0) { Fail "The co-op patches do not apply to Longshot $($pin.commit). This kit is broken: tell the co-op testers." }
-    if (Test-Path -LiteralPath $tools) { Remove-Item -LiteralPath $tools -Recurse -Force }
-    Move-Item -LiteralPath $staging -Destination $tools
+    # (antivirus, Explorer or the indexer may hold a file of the fresh unzip for a moment: tried again, then robocopy)
+    $held = $tools
+    $why = Remove-KitFolderRetry $tools
+    if (-not $why) { $held = $staging; $why = Move-KitFolderRetry $staging $tools }
+    if ($why) { Fail (Get-KitHeldFolderText $held $why) }
     # (the stamp last: a move that stopped half way, a long path or a full disk, leaves no folder that looks ready)
     [System.IO.File]::WriteAllText($toolsStamp, $stamp)
     Write-Host '  ready.'
@@ -225,6 +324,37 @@ function Find-HookshotExe([string]$Folder) {
         }
     }
     return $null
+}
+# A second kit on this PC (unzipped twice, or a Windows copy of a kit): another kit's game made from the same
+# release, pin and patches is copied into this kit's own hookshot\game (a minute or two) instead of built again
+# (10 to 45 minutes). A copy, never the other kit's folder itself: two kits never start one game. Its coop.ini,
+# coop-options.ini and logs stay behind, so this kit gets its own name, server and controller below.
+$defaultOut = [System.IO.Path]::GetFullPath((Join-Path $hs 'game'))
+if (-not $Rebuild -and -not $CheckOnly -and $Out -ieq $defaultOut -and -not (Find-HookshotExe $Out)) {
+    $others = @()
+    $named = Join-Path $hs 'game-folder.txt'
+    if (Test-Path -LiteralPath $named) {
+        $n = "$(Get-Content -LiteralPath $named -TotalCount 1)".Trim()
+        if ($n -and [System.IO.Path]::IsPathRooted($n) -and (Test-KitOtherKitGame $kit $n)) { $others += Split-Path -Parent (Split-Path -Parent $n) }
+    }
+    $list = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'OoT-Coop\kits.txt' } else { '' }
+    if ($list -and (Test-Path -LiteralPath $list)) { $others += @(Get-Content -LiteralPath $list | Where-Object { $_ }) }
+    $from = Find-KitHookshotGameToCopy $kit $stamp $others
+    if ($from) {
+        Step "The game: copying the one another kit on this PC built ($from), instead of building it again"
+        Write-Host '  The copy starts with that kit''s saves (as they are now); from then on each kit has its own.'
+        $outWas = Test-Path -LiteralPath $Out
+        New-Item -ItemType Directory -Force -Path $Out | Out-Null
+        & robocopy $from $Out /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP /XF coop.ini coop-options.ini *.log *_log.txt | Out-Null
+        if ($LASTEXITCODE -ge 8 -or -not (Find-HookshotExe $Out)) {
+            Write-Host "  Copying failed (robocopy $LASTEXITCODE): the game is built here instead." -ForegroundColor Yellow
+            # (only a folder this copy made: one that was there before may hold the player's own files)
+            if (-not $outWas) { Remove-Item -LiteralPath $Out -Recurse -Force -ErrorAction SilentlyContinue }
+        } else {
+            Write-Host "  Copied to $Out (this kit's own game from now on)."
+        }
+        $global:LASTEXITCODE = 0
+    }
 }
 $gameStamp = Join-Path $Out 'coop-built-from.txt'
 $exe = Find-HookshotExe $Out
@@ -286,6 +416,9 @@ function Invoke-MakeGame([string[]]$MoreArgs, [string]$Log = '') {
     # (a shared work folder keeps all its build files, the translated C too: the next build of this pin
     # skips the translation unless a lift file changed. A kit's own folder keeps Longshot's default.)
     if ($sharedWork) { $env:LONGSHOT_KEEP_BUILD_FILES = '1' }
+    # (the release the menu names, top left: the source archive has no git history and no VERSION file, so
+    # without this the builder's nx2\version.py says "unknown")
+    if ($pin.tag) { $env:LONGSHOT_VERSION = $pin.tag }
     # (Longshot's lift key hashes every A64_/OOT_/RX_ variable it is started with: co-op's own OOT_COOP_* ones
     # (the test cache, the test password) would make a new key, and a whole new translation, for nothing)
     Get-ChildItem Env: | Where-Object { $_.Name -like 'OOT_COOP_*' } | ForEach-Object { Remove-Item "Env:\$($_.Name)" }
@@ -324,6 +457,21 @@ if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
     $buildArgs = $gameArgs + @('--out', $Out, '--work', $work, '--language', $Language)
     if ($Jobs) { $buildArgs += @('--jobs', "$Jobs") }
     New-Item -ItemType Directory -Force -Path $Out | Out-Null
+    # (your own Longshot of the same release: its compiled objects, keyed by source, flags and headers and never by folder,
+    # so the files co-op does not change are not compiled again. Only into a work folder with none yet; copied, not moved)
+    $ourTag = if ($pin.tag) { $pin.tag } else { $toolsPin.release }
+    $objTo = Join-Path $work 'objcache'
+    if ($lsFresh -and -not (Test-Path -LiteralPath $objTo)) {
+        foreach ($h in $lsHomes) {
+            $objFrom = Join-Path $h.path 'objcache'
+            if (-not (Test-Path -LiteralPath $objFrom) -or -not ($lsSameRelease -or $h.version -eq $ourTag)) { continue }
+            Write-Host "  copying the compiled files of your Longshot $ourTag ($objFrom) ..."
+            & robocopy $objFrom $objTo /E /R:1 /W:1 /XC /XN /XO /NFL /NDL /NJH /NJS /NP | Out-Null
+            if ($LASTEXITCODE -ge 8) { Write-Host "  (not copied, robocopy $($LASTEXITCODE): all of it is compiled here)" }
+            $global:LASTEXITCODE = 0
+            break
+        }
+    }
     $code = Invoke-MakeGame $buildArgs $buildLog
     if ($code -ne 0) { Fail "The build stopped (exit $code). Its log: $buildLog" }
     $exe = Find-HookshotExe $Out
@@ -331,7 +479,10 @@ if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
     [System.IO.File]::WriteAllText($gameStamp, $stamp)
 }
 # Where the game is, for Host-Hookshot.bat and Join-Hookshot.bat (play.ps1 -Hookshot).
-[System.IO.File]::WriteAllText((Join-Path $hs 'game-folder.txt'), "$Out`n")
+# (relative when it is inside the kit, so a copied or moved kit keeps its own game: kit-copy)
+$kitFull = [System.IO.Path]::GetFullPath($kit).TrimEnd('\') + '\'
+$outNote = if ($Out.StartsWith($kitFull, [StringComparison]::OrdinalIgnoreCase)) { $Out.Substring($kitFull.Length) } else { $Out }
+[System.IO.File]::WriteAllText((Join-Path $hs 'game-folder.txt'), "$outNote`n")
 
 # --- 4: co-op into the game ----------------------------------------------------------------
 Step 'Co-op into the game'
@@ -383,12 +534,20 @@ if ($Game) { [System.IO.File]::WriteAllText((Join-Path $hs 'game-files.txt'), "$
 if ($packFrom -and (Test-Path -LiteralPath $packFrom) -and (Test-Path -LiteralPath $packTool)) {
     Write-Host '  building the puppet pack ...'
     $ErrorActionPreference = 'Continue'
-    & $python -I -B $packTool --romfs $packFrom --mod-dir $mod --title-rows 2>&1 | ForEach-Object { "    $_" }
+    # (no --title-rows: the title stays the game's own; co-op is the pause menu's Multiplayer tab)
+    & $python -I -B $packTool --romfs $packFrom --mod-dir $mod 2>&1 | ForEach-Object { "    $_" }
     $code = $LASTEXITCODE
     $ErrorActionPreference = 'Stop'
     if ($code -ne 0) { Write-Host '  The puppet pack was not built (said why above): other players show as stand-ins.' -ForegroundColor Yellow }
 } else {
     Write-Host '  No game files to build the puppet pack from: run this again with -Game <your .nup>.' -ForegroundColor Yellow
+}
+
+# Your own Longshot's saves into the co-op game (once, after its first build; a slot already there is never overwritten).
+if ($lsImage) {
+    $ourImage = Get-KitLongshotImageDir $Out
+    if (-not $ourImage) { $ourImage = $exeDir }
+    foreach ($l in (Copy-KitLongshotSaves $lsImage $ourImage)) { Write-Host "  $l" }
 }
 
 # A desktop shortcut to the kit's launcher ("Start OoT Co-op.bat"; Play-OoT-Coop.bat in an older emulator kit), once,

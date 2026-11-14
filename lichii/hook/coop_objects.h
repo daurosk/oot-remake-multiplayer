@@ -85,6 +85,8 @@ unsigned TakeChestsOpenedTwice();
 // alive in the last walk of LICHII_COOP_OBJECTS (BossAlive); nothing when
 // no walk ran in the last 1.5 s, or its life is not read. Any thread.
 std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies);
+// The same walk: whether the boss has lost life (BossHurt).
+std::optional<bool> LastBossHurt(std::span<const std::string_view> bodies);
 // Small keys to give back to our game (the SmallKeyNum flag of the dungeon,
 // once each): a door's lock this game opened after another player already
 // had, or at the same moment with the higher player number (docs/dungeon.md,

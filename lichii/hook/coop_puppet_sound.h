@@ -65,7 +65,7 @@ namespace block {
 inline constexpr std::uint64_t kHandle = 0x6b0;  // 8 bytes
 inline constexpr std::uint64_t kAsset = 0x6b8;   // 8 bytes
 inline constexpr std::uint64_t kText = 0x6c0;    // the asset name
-inline constexpr std::uint64_t kTextCapacity = 0x40;  // to 0x700, the block's end
+inline constexpr std::uint64_t kTextCapacity = 0x38;  // to 0x6f8 (then coop_link_sound.h's handle)
 }  // namespace block
 
 // What the puppet's player asks for: the newest OCARINA_NOTE.

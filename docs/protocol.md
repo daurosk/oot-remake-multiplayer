@@ -117,7 +117,7 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 2 | `WELCOME` | 0 | server | above |
 | 3 | `REFUSED` | 0 | server | above |
 | 4 | `PLAYER_JOINED` | 0 | server | `u8` player number, nickname |
-| 5 | `PLAYER_LEFT` | 0 | server | `u8` player number, `u8` reason: 0 left, 1 timed out, 2 kicked (an unknown reason is kept) |
+| 5 | `PLAYER_LEFT` | 0 | server | `u8` player number, `u8` reason: 0 left, 1 timed out, 2 kicked by the host (an unknown reason is kept) |
 | 6 | `PING` | 0 | both | above |
 | 7 | `PONG` | 0 | both | above |
 | 8 | `PLAYER_STATUS` | 0 | both | `u8` player field, `u8` flags: bit 0 paused, 1 loading, 2 in cutscene, 3 in menu, 4 dead (unknown bits are kept); sent on every change |
@@ -141,6 +141,7 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 355 | `DUNGEON_EVENT` | 0 | both | `u8` player field, scene (string, 1 to 64), event name (string, 1 to 96, no `HavePlayedEvent.`): a room gimmick's event started in the sender's game. Relayed to the others in that scene (only while the sender is in it), never kept (protocol 10, branch `deku-dungeon-2`; 356 to 359 kept; [dungeon.md](dungeon.md), "Live events") |
 | 385 | `PLAYER_RIDE` | 3 | both | `u8` player field, `u8` flags (bit 0 riding; other bits refused), horse actor name (string, up to 64 characters; not empty when riding), offset 3 x f32 (each within 10 m), rotation 4 x f32 quaternion, `u8` 1 when an animation follows (string name up to 64 characters, f32 frame, f32 rate) else 0. Relayed (protocol 10, issue 199; 385 to 389 are for riding, [Riding](#riding-player_ride)) |
 | 401 | `PLATFORM_COUNTER` | 4 | both | `u8` player field, scene (string, 1 to 64), `u64` server time (microseconds), `u8` count (1 to 32), then per looping pause counter `u64` key (not 0, no key twice), `u32` period (microseconds, at least 100,000), `u32` time since its last start (microseconds), `u32` starts seen (at least 1). Relayed to the others in the sender's scene, never kept (protocol 10, branch `platforms-b2`; [Moving platforms](#moving-platforms-platform_clock)) |
+| 500 | `LINK_SOUND` | 0 | both | `u8` player field, name (string, 1 to 55: letters, digits and `_`): a sound the game itself started on the sender's own Link, by its asset name. Relayed to everyone else like `CHAT` (protocol 11, branch `ocarina-sound-b`; 501 to 509 kept; [Link sounds](#link-sounds-link_sound)) |
 | 400 | `PLATFORM_CLOCK` | 4 | both | `u8` player field, scene (string, 1 to 64), `u64` server time (microseconds) the words were read at, `u8` count (1 to 16), then per platform `u64` placement hash of its driver, `u64` key (region << 32 or byte offset: region 0 the actor, offset under 0x600; 2 + n the component in table entry n, under 0x200; 0xffff the AS slot 0 frame, offset 0; offsets a multiple of 4), `f32` value, `f32` rate a second (not 0, at most 10,000 either way), `f32` cycle (0 to 10^7, 0: not seen); finite floats, no hash twice. Relayed to the others in the sender's scene, never kept (protocol 10, branch `platforms-b`; 401 to 404 kept; [Moving platforms](#moving-platforms-platform_clock)) |
 | 16 | `HOST` | 1 | server | `u8` the hosting player's number (1 to 16) |
 | 420 | `VOICE_FRAME` | 5 | both | `u8` player field, `u16` sequence, `u8` flags (bit 0 end; others refused), then the rest: one Opus packet of 1 to 400 bytes, none with end. Relayed to the players in the sender's scene within the voice range, never kept (protocol 11, branch `proximity-voip`; 420 to 424 kept; [Voice](#voice-voice_frame-protocol-11)) |
@@ -199,10 +200,10 @@ Alex (2026-11-11): "Let's make it follow the hosts save." A host's build sends `
 
 Issue 167: a guest plays from the host's save file, not its own. The data is one save slot of the game's save folder (`slot_NN\progress.sav` and `caption.sav`, about 170 KB), packed by `coop/host/save_transfer.hpp` (`OOTSAVE1`, then each file's name and bytes; only those two names are allowed, never `option.sav`, `account.sav` or a path).
 
-- A guest's game (one that uses the co-op save folder, [flags.md](flags.md), "The host's save file") sends `SAVE_ASK` once a run, when it is connected and knows the host. The server passes it to the host only, with the asker's number; an ask from the host itself or with no host is dropped.
-- The host takes one ask per player while it stays (a repeated ask is ignored and logged; a player who left may ask again with its number), and keeps at most four slots' worth of parts waiting (a send past that is dropped and logged).
+- A guest's game (one that uses the co-op save folder, [flags.md](flags.md), "The host's save file") sends `SAVE_ASK` once a session, when it is connected and knows the host, and again when nothing at all came for 15 s, or when a transfer stopped part way and no part came for 15 s (a part lost: the host answers with the whole save under a new transfer id, which starts the guest's assembly again); at most 4 asks a session. The server passes it to the host only, with the asker's number; an ask from the host itself or with no host is dropped.
+- The host takes a player's ask again only 10 s or more after the last one it took (a quicker repeat is ignored and logged; a player who left may ask again at once with its number), and keeps at most four slots' worth of parts waiting (a send past that is dropped and logged).
 - The host answers at once (within half a second) with its newest slot (by `progress.sav`'s write time) as `SAVE_PART`s to the asker (`to player` = the asker, reason 1), also right after its own save load: a guest never waits on the host's next door for a save. A host with no slot on disk (a new game) answers at once with "no save": the packed form with a file count of 0 (`OOTSAVE1`, then `00`, 9 bytes), as an ordinary one-part transfer (no new type; an older guest refuses it as "not a save slot" and waits on). After its own save load the host also waits until the game writes a save after it (the game saves at every door), then sends that slot to every guest (`to player` 0, reason 2).
-- A guest's game on Hookshot stays on its own save folder while it waits: it writes the host's slot whole into the co-op folder (each slot into `slot_NN.part`, then renamed) and only then moves the game to that folder, so the title never loads an empty or half-written co-op folder. With "no save", or nothing within a minute, the title says so and its own Continue / New Game play the player's own save or a new one.
+- A guest's game on Hookshot stays on its own save folder while it waits: it writes the host's slot whole into the co-op folder (each slot into `slot_NN.part`, then renamed) and only then moves the game to that folder, so the title never loads an empty or half-written co-op folder. With "no save" the title says so and its own Continue / New Game play the player's own save or a new one; with nothing after a minute on the title it says the save is not here yet, and a save that comes later still loads by itself (flags.md).
 - Parts: the packed slot cut into 16384-byte parts (the last one the rest), `count` = ceil(total / 16384), at most 64 parts for 1 MiB. Every part carries the whole header, so each is checked alone: the codec refuses a wrong count, index, part size, reason, a size over 1 MiB, and reason 1 to player 0. The host sends a part a frame; the server takes `SAVE_PART` from the host only (outside the host's byte and message budgets: a dropped part would leave the transfer unfinished) and passes it to the named player, or to every other player for 0; a part for a player who is not there is dropped.
 - A guest keeps the parts of one transfer id (a newer id starts again), takes them out of order or twice, refuses a part not from the host or whose header differs from the transfer's, and checks the CRC-32 (zlib's) when all are in: a damaged save is dropped and the next one waited for.
 - A build without these messages refuses them as unknown types, so the server and every game must be protocol 9.
@@ -250,6 +251,19 @@ Small keys, Gold Skulltula tokens and heart pieces are counts ([items.md](items.
 - A player writes a total on top of any change its game made that it has not sent yet, and still sends that change. So every gain and every spend is counted once, whatever the order.
 - A count change does not wait for an answer of its own. A delta not answered when the host changes is sent again to the new host (the sum, if there were several); when the new host is us, it is dropped, since our game holds it and our snapshot carries it. A host's own count change goes out as its total. Our own delta that comes back to us as host (sent before we knew we host) is not added again.
 - Not covered: a delta that reached a host who left before its `FLAG_STATE` went out is lost with that host's game; one answered by a `FLAG_STATE` for the same flag from another player's change is no longer sent again on a host change.
+
+### Looks (`PLAYER_LOOK`)
+
+Protocol 11, type 430 (430 to 434 kept for looks). The colours a player chose for the parts of its Link in the Link customizer ([puppet.md](puppet.md#the-link-customizer); the part numbers are `CoopLook::Part`, `hookshot/src/coop_look.h`). On channel 0, reliable. A game sends it when its look changes and again whenever a player joins or it connects again (`lichii/hook/coop_look_share.cpp`), so a late joiner has it; the server relays it to everyone else with the sender's number and keeps nothing.
+
+| Bytes | Field |
+|---|---|
+| u8 | player: 0 from a client, 1 to 16 relayed |
+| u8 | parts listed, 0 to 64 |
+| per part: u8 | the part's number, 0 to 63 (one a build does not know is passed over by it) |
+| per part: u8 u8 u8 | its colour: red, green, blue |
+
+Only the parts set are listed, each once (a part twice, a number past 63 or a count past 64 is refused); none listed: every part in the game's own colours. An older game skips the type as unknown.
 
 ### Riding (`PLAYER_RIDE`)
 
@@ -330,6 +344,14 @@ The other players hear a player's Ocarina from that player's puppet (issue 152; 
 - The server relays it to everyone else like `CHAT`, with the sender's number in the player field.
 - Only the sound: a song played this way has no effect in the other games (no warp, no rain, no door); the song itself is checked only in the game that played it.
 
+### Link sounds (`LINK_SOUND`, protocol 11)
+
+The other players hear every sound the game itself starts on a player's Link, from that player's puppet (issues 131 and 152; [puppet.md](puppet.md), "Link sounds").
+
+- On Hookshot, patch 0014 wraps xlink2's `searchAndEmit` (main+0x440630). When the game starts a named asset on our own Link's sound user, the module keeps its name and the next frame sends `LINK_SOUND` with it: voice, footsteps, sword, shield, items, water, the Ocarina's notes if the game starts them there. The same name again within 80 ms is not sent, and at most 20 go out in a second.
+- The server relays it to everyone else like `CHAT`, with the sender's number in the player field.
+- A game starts the asset on that player's puppet with the game's own calls (the asset found once with 0x43db00, then 0x440630 on the puppet's own sound user) when the puppet is shown and within 30 m of its own Link; at most 24 starts a second for all puppets; a sound older than 0.4 s when it could start is dropped; one the puppet's animation already plays is not started twice.
+
 ### Field grass (`GRASS_CUT`)
 
 One cut of the field grass the foliage module draws (no actor; [world.md](world.md), "Field grass"), as the sender's game queued it.
@@ -394,7 +416,7 @@ The server's rules today (`server/session.cpp`):
 
 An **object id** is 10 bytes: `u8` kind (0 placed, 1 made), `u8` maker (0 for placed, 1 to 16 for made), `u64` value (the placement hash, or the maker's own counter). Any other kind, or a maker that does not fit the kind, is refused.
 
-Object components use the same scheme as `PLAYER_SAMPLE` (`u16` id, `u16` length, unknown ids skipped, each known id at most once, `time` required): 1 `time` (12), 2 `position` (12), 3 `velocity` (12), 4 `rotation` (16), 7 `animation` (as in `PLAYER_SAMPLE`), 16 `life` (`s32` life, `s32` max, 8), 17 `fuse` (f32 seconds left, 4), 18 `state` (`u8`: bit 0 in a fight, bit 1 held, bit 2 asleep, 1), 19 `slots` (protocol 10, branch gohma-sync, issue 150: a boss's AS slots after slot 0, such as Gohma's eye guard and eyelids: `u8` count up to 8, then per slot `u8` slot 1 to 31, name as in `animation` (empty: the slot plays nothing), `f32` frame, `f32` rate; no slot twice; sent only for bosses, older builds skip it). Floats must be finite. Types 370 to 374 were kept for gohma-sync and are not used: the slots ride in the samples, so no new message was needed.
+Object components use the same scheme as `PLAYER_SAMPLE` (`u16` id, `u16` length, unknown ids skipped, each known id at most once, `time` required): 1 `time` (12), 2 `position` (12), 3 `velocity` (12), 4 `rotation` (16), 7 `animation` (as in `PLAYER_SAMPLE`), 16 `life` (`s32` life, `s32` max, 8), 17 `fuse` (f32 seconds left, 4), 18 `state` (`u8`: bit 0 in a fight, bit 1 held, bit 2 asleep, 1), 19 `slots` (protocol 10, branch gohma-sync, issue 150: a boss's AS slots after slot 0, such as Gohma's eye guard and eyelids: `u8` count up to 8, then per slot `u8` slot 1 to 31, name as in `animation` (empty: the slot plays nothing), `f32` frame, `f32` rate; no slot twice; sent only for bosses, older builds skip it), 20 `bsa` (branches native-boss-gohma, bosses: what the owner's game did to a boss's brain and action verbs, so every copy does the same through the game's own functions; `u32` seq (the owner's change count for this boss, the newest change's), `s32` brain verb now, `u8` has action (0 or 1), with one the last action asked (below), then `u8` count (0 to 8) of the newest changes, oldest first, each `u32` seq (from 1, rising, none above seq), `u8` kind (0 brain: `s32` verb, `u8` force 0 or 1; 1 action: below). An action is `s32` action verb, `s32` slot, `u16` flags, `u8` mask (bits 0-2: places 0-2 present, bit 3: the extra pair present, bit 4: the game's "verb changed" argument; no other bit), each present place as 3 `f32`, the extra pair as 2 `f32`. A copy makes each change after its own newest once, in order; when the oldest held is past the one it needs (it missed more than 8) or the boss has a new owner, it starts from the state now, and a sample whose seq is not above the newest had is dropped; sent only for bosses, older builds skip it; [dungeons-boss.md](dungeons-boss.md), "Native boss sync"). Floats must be finite. Types 370 to 374 were kept for gohma-sync and are not used: the slots ride in the samples, so no new message was needed.
 
 The player field follows the `PLAYER_SAMPLE` rule (0 from a client, the sender's number when relayed).
 
@@ -449,6 +471,18 @@ Where a player stands with a dungeon's boss ([dungeons-boss.md](dungeons-boss.md
 
 Types 51 to 54 are kept for boss rooms and not used.
 
+### Boss cutscenes (protocol 11, `BOSS_SCENE`, `BOSS_HEART`)
+
+A boss's intro and death play for everyone in the boss's area, and its one heart container is given to everyone once ([dungeons-boss.md](dungeons-boss.md), "Boss cutscenes"; `lichii/hook/coop_boss_scenes.h` has the rules). On channel 0. Types 520 to 524 are kept for it.
+
+| Type | Name | Channel | Sent by | Body |
+|---|---|---|---|---|
+| 520 | `BOSS_SCENE` | 0 | both | `u8` player field, scene (string, 1 to 64: the sender's), `u8` boss (0 to 15, the index in `coop_boss_scenes.cpp`'s table), `u8` kind (1 intro started, 2 the starter's intro ended, 3 death started, 4 death ended; others refused), 3 x `f32` the sender's Link (finite) |
+| 521 | `BOSS_HEART` | 0 | both | `u8` player field (a claim: the claimer; the server's answer: the winner), `u8` boss (0 to 15), `u8` given (0 a claim, from a game; 1 the server's answer; others refused), `u32` maximum life in quarter hearts (1 to 80) |
+
+- `BOSS_SCENE` is relayed to everyone else with the sender's number, never kept. Each game decides whether it is in the area (and plays the event too) or only shows a chat line.
+- **One heart container per boss.** A game sends a claim when its maximum life rose in a beaten boss's area. The server keeps the first claim of each boss while anyone is in (forgotten when the session empties, as the flags): it answers it with given 1 to everyone, the claimer too; a later claim of that boss (the other side of a race, a game that comes back) is answered to its sender alone with the same winner and value; a given 1 from a game is dropped (`boss_hearts_given`, `boss_hearts_late`, `boss_hearts_refused`). Every game raises its maximum to the answer's value and never lowers it for that, so two answers never give two hearts, and a winner who leaves right after its claim takes nothing from the others (the answer went out at once). A second pickup (the container still on that screen) never reaches the others: while in a beaten boss's area a game's own `MaxLife` may not rise past one container on its maximum when the boss died (or the answer), and the flag watcher puts such a rise back unsent (`FlagWatcher::cap_max`). A claim over 80 is not sent.
+
 ### PvP (protocol 10, `PVP_MODE`, `PVP_HIT`, `PVP_HURT`)
 
 Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hook/coop_pvp.h`). Off unless the host turns it on. Types 241 to 250 are kept for it.
@@ -462,6 +496,88 @@ Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hoo
 - **The session's value is the server's.** `coop_server --pvp on|off` (the host's `pvp` line in coop-options.ini; off by default) sets it. A game starts every connection with PvP off; while it is on, the server sends `PVP_MODE` to each player at join, after `HOST`. The host may change it with its own `PVP_MODE` (the `/pvp` chat command): the server sends the new value, with the host's number, to everyone. A `PVP_MODE` from anyone else is not taken; the server answers that player alone with the value as it is. When the session empties, the value goes back to the server's start value.
 - **Hits go to their victim only, and only while PvP is on.** The server passes a `PVP_HIT` to the victim alone, with the attacker's number written in, and drops it while PvP is off (counted in `pvp_hits_dropped`), so a game with PvP off never gets one, whatever an attacker's game believes.
 - **The victim decides.** Its game takes the hit (or not, by the rules in play-online.md) and sends `PVP_HURT`, which the server relays to everyone else. A `PVP_HURT` naming its own sender as the attacker is dropped.
+
+### Down but not out (protocol 11, `DBNO_MODE`, `DBNO_STATE`, `DBNO_REVIVE`)
+
+A player at no hearts is downed instead of dead and a teammate can revive them ([play-online.md](play-online.md), "Down but not out"; `lichii/hook/coop_dbno.h` has the rules, `coop_dbno_game.h` the games' side). On unless the server or the host turns it off. Types 470 to 479 are kept for it.
+
+| Type | Name | Channel | Sent by | Body |
+|---|---|---|---|---|
+| 470 | `DBNO_MODE` | 0 | both | `u8` set by (0 the server's start, 1 to 16 the host who changed it), `u8` mode (0 off, 1 on; others refused), `u8` bleed-out seconds (10 to 240), `u8` revive hold in tenths of a second (5 to 100), `u8` life a revived player gets, quarter hearts (1 to 80); outside refused. No player field |
+| 471 | `DBNO_STATE` | 0 | both | `u8` player field, `u8` state (0 up, 1 downed, 2 out; others refused), `u16` bleed-out left in tenths (0 to 2400), `u8` reviver (0 nobody, 1 to 16, not the player), `u8` revive progress (0 to 255). Not downed: left, reviver and progress are 0; no reviver: progress 0 (else refused) |
+| 472 | `DBNO_REVIVE` | 2 | both | `u8` player field (the reviver), `u8` target (1 to 16, not the reviver), `u8` holding (0 let go, 1 held; others refused) |
+
+- **The session's value is the server's**, as `PVP_MODE`: `coop_server --dbno on|off` (on by default) sets it, the server sends `DBNO_MODE` to each player at join (on or off), and only the host may change it (`/dbno` in the chat, or the Host settings page through `CoopDbno::Change`); anyone else is answered alone with the value as it is (`dbno_mode_refused`). An empty session goes back to the start value. A game starts each connection with the mode off, so with a server that does not know it, death is the game's own.
+- **Each game decides its own state** and sends `DBNO_STATE` when it changes, every 0.5 s while downed (0.1 s while the ring fills), and again when someone joins or it reconnects. The server relays it to everyone else and keeps the state: a player who is not up owns no enemy and is given none (the enemy goes to the nearest player still up, whose game's AI then chases that player's Link).
+- **A revive goes to its downed player only.** The reviver's game sends `DBNO_REVIVE` every 0.2 s while A is held beside them, and once with holding 0 when it lets go; the server passes it to the target alone while the mode is on (`dbno_revives_relayed`; to nobody, to itself or with the mode off: dropped, `dbno_revives_dropped`). The downed game counts the hold (a hold counts 0.7 s past its last message) and says who revives and how far in its `DBNO_STATE`, so both see the same ring.
+
+### Difficulty (protocol 11, `DIFFICULTY`)
+
+How hard the enemies are in a session ([play-online.md](play-online.md), "Difficulty"; `coop/protocol/difficulty.hpp` has the rules, `lichii/hook/coop_difficulty.h` the games' side). Types 480 to 489 are kept for it.
+
+| Type | Name | Channel | Sent by | Body |
+|---|---|---|---|---|
+| 480 | `DIFFICULTY` | 0 | both | `u8` set by (0 nobody, 1 to 16 the host who chose), `u8` automatic (0 or 1; others refused), `u8` preset (0 easy, 1 normal, 2 hard, 3 custom; others refused), `u16` enemy life, `u16` enemy damage, `u16` enemy count, each in percent of the game's own and within its slider (life 25 to 500, damage 25 to 400, count 100 to 300; outside refused). No player field |
+
+- **Three values, the server's.** Enemy life, the damage enemies deal to players, and how many enemies there are, in percent. The server decides them and every game applies the ones it was last sent; a game starts every connection with 100, 100, 100 (the game as it is).
+- **Automatic until the host chooses.** While nobody has chosen, the values follow the number of players in the session (`auto_difficulty`): 100 for one player, and 40 life, 20 damage and 25 enemies more for each further one, up to 300, 200 and 200 (reached with 6 players).
+- **The host's choice is fixed.** The host sends its own `DIFFICULTY` (set by 0): automatic on or off, a preset, and the three sliders, which are read only with the custom preset (easy is 75, 50, 100; normal 100, 100, 100; hard 200, 150, 150). From then on the values stay as set, whoever joins or leaves, also when the host leaves and another player hosts. Turning automatic on again makes them follow the players again. A `DIFFICULTY` from anyone else is not taken (counted in `difficulty_refused`); the server answers that player alone with what is in force, as it answers a host whose choice changes nothing.
+- **Who is told, and when.** Every player at join, after `HOST` (and after `PVP_MODE` when that is sent); everyone when the host chooses; and everyone else when a join or a leave moved the automatic values. The values in the message are always the ones in force, so a late joiner needs nothing more. With automatic on, the preset reads normal.
+- **An empty session forgets it.** The next session starts automatic. The host's game keeps its player's last choice (`coop-difficulty.ini` beside `coop.ini`) and sends it again when it hosts a session nobody has chosen for.
+
+### Mods (protocol 11, `MOD_LIST`, `MOD_SETTINGS`)
+
+Types 490 to 499 (modloader-b; 490 and 491 used). Both on the session channel, from any player; see [mods.md](mods.md), "Mods in co-op".
+
+- `MOD_LIST` (490): the mods a game runs that every player needs alike (mod.json `"coop"` not `"own"`), in its load order: u8 player, u8 count (0 to 32), then per mod str id (1 to 48 of `a-z 0-9 . _ -`, not starting with one of `. _ -`; unique), str version (0 to 32 chars), 16 bytes hash (BLAKE2b of the mod's game files and code; all zero: not known). A game sends it once per connection, when it has hashed its mods. The server writes the sender's number, keeps each player's last one, relays it to the others and gives a joiner everyone else's (after `HOST`). Each game compares its own list with the host's; the order is not compared.
+- `MOD_SETTINGS` (491): the host's values of its mods' `"shared"` settings, all of them each time: u8 player, u8 count (0 to 32), then str mod id, str key (1 to 32 of `a-z 0-9 _`; a mod id and key once), str value (0 to 256 chars). Taken from the host only (`mod_settings_refused` counts the others); the server keeps the last one, relays it and gives it to each joiner; kept when the host leaves until the new host sends its own; forgotten when the session empties. A guest's game shows these values locked and uses them (the randomizer's seed).
+
+A build without protocol 11 does not know 490 and 491; all players need the same release.
+
+### Lobby (protocol 11, `LOBBY_ACTION`, `LOBBY_MUTES`, `LOBBY_RESULT`)
+
+Types 510 to 519 (lobby-b; 510 to 512 used). All three on the session channel. The host's moderation from the Lobby tab and the chat commands (play-online.md, "Lobby"); the server carries out every one of them and takes them from the host only, so no game can moderate by itself. A player's own mutes never reach the wire.
+
+- `LOBBY_ACTION` (510, client only): `u8` action (1 kick, 2 ban, 3 mute voice, 4 unmute voice, 5 mute chat, 6 unmute chat), `u8` target player (1 to 16). From anyone but the host it is refused (`lobby_refused`) and answered `not_host`; the host itself, or a number nobody has, is answered too and nothing happens.
+  - **Kick**: the server sends the target `REFUSED` 7 (kicked), closes it, and tells the others `PLAYER_LEFT` with reason 2 (kicked). The game stops and does not join again by itself (its client takes a `REFUSED` 7 or 8 after `WELCOME` too); the player may join again by hand.
+  - **Who a player is**: the **player key** sealed in its `JOIN_PROOF` (16 random bytes, below), so a mute or ban follows the player whatever name it takes, also over the relay. A split-screen seat is its game's key and its seat number. Only a `HELLO` without a key (an older build) falls back to the name (any ASCII case).
+  - **Ban**: as a kick with `REFUSED` 8 (banned); the server keeps the player's key, and refuses a `HELLO` with that key with `REFUSED` 8 (`lobby_banned`), under any name and from any address; a banned seat's game gets `LOCAL_JOINED` reason 8 for that seat. Only for a player without a key the server keeps the name and, as a last resort, the address too, which keeps out everyone joining directly from behind that router (a household, a carrier's shared address); this PC's own address (127.x, every relayed player's) is never kept. Forgotten when the session empties (on the game's own server: when the host stops hosting).
+  - **Kick or ban of a split-screen seat**: only that seat leaves (the others get `PLAYER_LEFT` kicked, and so does its own game); its game stays in. The host's own seats cannot be targeted (`is_host`).
+  - **Mute**: the server drops the player's `CHAT` (`chat_muted`) or `VOICE_FRAME` (`voice_muted`) and relays them to nobody. Kept by the player's key (the name without one), so a muted player who leaves and comes back, renamed or not, stays muted; kept when the host changes; forgotten when the session empties.
+- **The player key** (protocol 11): 16 random bytes the game makes once and keeps in `player-key.txt` beside `coop.ini` (32 hex digits; not in `coop.ini`, which the launcher writes anew from its template). It never goes in the plain `HELLO`: `JOIN_PROOF` carries it after the proof, 32 more bytes, sealed (`seal_player_key`: XChaCha20-Poly1305 with a key of its own made from this connection's client-to-server traffic key, which is new each connection and seals only this, so its nonce is fixed), so nobody on the way (a relay) reads it. A seal that does not open (`lobby_bad_key`) lets the player in, known by name. The server never relays the key. Two players in at once with one key (a kit copied to a friend): the one who came later is known by name (`lobby_shared_key`, a log line), so a mute or ban of one never takes both. From the same address as the key's holder (or both relayed) it is most likely that player's own game, restarted under a new name while the old connection is still in: it keeps what the host muted of the holder (`lobby_mutes_kept`). A ban of a player known by name keeps that name out whatever key comes with it. A player who deletes that file gets a new key: a ban then holds only by what the host sees next (a new player to ban again). A kit copied to a friend shares its key: delete `player-key.txt` in the copy.
+- `LOBBY_MUTES` (511, server only): `u8` player, `u8` bits (bit 0 voice, bit 1 chat; unknown bits kept): what the host muted of that player now. Sent to everyone on each change, and after `WELCOME` to a joiner for each muted player (the others learn it of a muted player who comes back).
+- `LOBBY_RESULT` (512, server only): `u8` action, `u8` target (as `LOBBY_ACTION`'s), `u8` result (0 done, 1 not host, 2 no such player, 3 the host itself, 4 already so; an unknown result is kept), to the player who sent the `LOBBY_ACTION`.
+- `REFUSED` reasons 7 (kicked) and 8 (banned) are protocol 11's.
+- **Host changes**: when the host leaves, the new host (the lowest number, "Who hosts") has the controls from the server's next `LOBBY_ACTION` on; the bans and mutes stay. There is no "make host": the server runs inside the host's game (hos_coop_host.h), so handing the host role to another game would move the flags' and save's truth there while the server and its controls stay on the first PC, and the session would still end when that game closes.
+### Local players (protocol 11)
+
+Split screen ([local-coop.md](local-coop.md)): the extra players of one game (seats 1 to 3; seat 0
+is the connection's own player) are players of the session on that game's one connection, each
+with a number and name of its own. The other games need nothing new: they meet each through the
+usual `PLAYER_JOINED`, samples and `PLAYER_LEFT`. Types 460 to 469 are kept; 465 to 469 are free.
+
+| Type | Name | From | Channel | Body |
+|---|---|---|---|---|
+| 460 | `LOCAL_JOIN` | game | session | u8 seat (1 to 3), str nickname (1 to 16, as HELLO's) |
+| 461 | `LOCAL_JOINED` | server | session | u8 seat, u8 player number (0: refused), u8 reason (`REFUSED`'s: 3 full, 4 name taken, 5 bad name; 0 when joined) |
+| 462 | `LOCAL_LEAVE` | game | session | u8 seat |
+| 463 | `LOCAL_SAMPLE` | game | player samples | u8 seat, then one whole message (header and body) to the end: `PLAYER_SAMPLE`, `PLAYER_POSE` or `PLAYER_RIDE` |
+| 464 | `LOCAL_MESSAGE` | game | session | u8 seat, then one whole message: `PLAYER_STATUS`, `PLAYER_EQUIP`, `PLAYER_LIFE` or `OCARINA_NOTE` |
+
+- An envelope whose inner message does not decode, is of another type (chat, flags and the world
+  stay the connection's own) or is itself an envelope does not decode.
+- The server answers every `LOCAL_JOIN` (the same answer again for a seat already in); a joined
+  seat gets a free number, and the others get `PLAYER_JOINED`. Its own game gets nothing but
+  `LOCAL_JOINED`.
+- An envelope's inner message is taken as the seat's own message, with the seat's own rate limits
+  and the seat's number written in its player field. Nothing of one game is sent back to it (not its
+  own player's, not its seats'), and the server never sends anything addressed to a seat: its game
+  gets everything through its connection.
+- A seat lives while its connection does (the connection's traffic keeps it from timing out); it
+  leaves by `LOCAL_LEAVE` or with its connection (the others get `PLAYER_LEFT` for each seat first).
+  A seat never hosts, and its name is never taken over by a rejoin.
+- After a reconnect the game asks again for every seat in play; until a seat has a number its
+  player plays on this PC only.
 
 ## Later stages (outline only)
 
@@ -505,6 +621,12 @@ Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hoo
 - Version 10 also (branch `encrypt-always-b`, 2026-11-12): every session has a join password and is encrypted; the plain path is gone both ways (a server refuses a `HELLO` without a key share and every `HELLO` when it has no password, and `coop_server` does not start without one; a game refuses a `WELCOME` without keys). No new type, no format change.
 - Version 10 is this release's protocol: everything above marked version 10 ships in it. `main` before this release had an unreleased draft of version 10 (without keep-number, encrypt-always and the platform types); a build of that draft and one of this release both say 10 but do not work together (the draft's `HELLO` has no previous number and may have no key share, and its server lets a game in without a password). The draft was never released, so no player has it. These were briefly numbered 11 on the integration branch.
 - Version 11 (branch `native-host-b`, 2026-11-12): up to 16 players. Player numbers are 1 to 16 (`kMaxPlayers`), `WELCOME` lists up to 15 others, 12 more slot colours; a version 10 game refuses a `WELCOME` with 5 or more players, so the version goes up. The server takes `--max-players` (1 to 16, default 4 until the games' side takes 16) and sends `PLAYER_SAMPLE` and `PLAYER_POSE` by where the players are ("Who gets which stream"). No new type.
+- Protocol 11 also (branch `dbno`): `DBNO_MODE` (470), `DBNO_STATE` (471), `DBNO_REVIVE` (472); 470 to 479 kept. No bump of its own: a build without them never downs anyone (it gets no `DBNO_MODE`, so it plays with the game's own death), and a server without them does not relay them.
+- Version 11 also (branch `difficulty`): `DIFFICULTY` (480; 480 to 489 kept), sent by the server to every player at join. No earlier layout changed and no bump of its own: it ships with the first version 11 release. A version 11 build without it ignores the type and plays the game as it is.
+- Protocol 11 also (branch `boss-cutscenes`): `BOSS_SCENE` (520), `BOSS_HEART` (521); 520 to 524 kept. No bump of its own: a build without them plays each boss's cutscenes alone (as before) and a server without them does not relay them.
+- Version 11 also (branch `look-live`): types 430 to 434 are kept for a look of several parts (shield, sword, boots, gauntlets). A colour changed in the pause menu needs none: it goes out in `PLAYER_EQUIP` `color` as at the start (docs/puppet.md, "Changing your colour in the game").
+- Version 11 also (branch `customizer-full`): `PLAYER_LOOK` (430), each part's colour from the Link customizer ([Looks](#looks-player_look)). No earlier layout changed and no bump of its own. A build without it ignores the type (that player's parts stay the game's own on its screen).
+- Version 11 also (branch `ocarina-sound-b`): `LINK_SOUND` (500); 500 to 509 kept for Link's sounds. A build without it ignores the type (no sounds from that player).
 
 ## Who gets which stream
 

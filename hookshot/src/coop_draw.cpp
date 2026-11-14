@@ -3,8 +3,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 #include <string_view>
 
+#include "coop_dbno_draw.h"
 #include "coop_hud_hearts.h"
 #include "coop_hud_layout.h"
 
@@ -440,7 +442,103 @@ void DrawCheats(const HosCoopDraw& d, const CheatsView& c) {
     }
 }
 
+// The others on the maps (MapShown): on the Map page's picture while it is
+// shown, else on the HUD minimap (not while a game menu is in front). An
+// arrow each in their colour, turned the way they face (a dot when that is
+// not known), on a dark rim; a player off the map is held at its edge, a
+// little paler, and one on another floor paler still. Their name under the
+// icon when the names are on. Our own Link is the game's arrow.
+void DrawMap(const HosCoopDraw& d, const MapShown& m, const Look* look) {
+    namespace map = coop::overlay::map;
+    static thread_local std::vector<map::Icon> icons;  // (the present's thread: kept between frames)
+    static thread_local std::string label;
+    float r = 0;
+    if (m.page && m.capture != nullptr) {
+        const map::Box pic = LayoutToScreen(*m.page, d.width, d.height);
+        r = std::max(6.0f, d.height * 0.012f);
+        map::picture_icons(pic, *m.capture, m.page_floor, m.players, icons);
+    } else if (m.minimap) {
+        map::Minimap mini;
+        mini.box = MinimapBox(d.width, d.height);
+        mini.metres_across = m.metres_across;
+        r = std::max(5.0f, mini.box.w * 0.035f);
+        mini.edge_inset = r;
+        map::minimap_icons(mini, m.scene, m.self, m.players, icons, m.capture);
+    } else {
+        return;
+    }
+    const float px = std::clamp(r * 1.9f, 11.0f, 24.0f);
+    if (look) {
+        Font(d, look->medium);
+    }
+    for (const auto& icon : icons) {
+        const int a = Alpha(icon.alpha * (icon.clamped ? 0.75f : 1.0f) * (icon.floor_delta != 0 ? 0.55f : 1.0f));
+        if (a == 0) {
+            continue;
+        }
+        const std::uint32_t rgb = icon.rgb;
+        const std::uint32_t fill = Rgba(static_cast<int>(rgb >> 16), static_cast<int>(rgb >> 8), static_cast<int>(rgb), a);
+        const std::uint32_t dark = Rgba(0, 0, 0, a * 3 / 4);
+        if (icon.angle) {
+            const float ca = std::cos(*icon.angle), sa = std::sin(*icon.angle);
+            const auto arrow = [&](float k, std::uint32_t c) {
+                d.triangle(d.user, icon.x + ca * r * k, icon.y + sa * r * k,                                       //
+                           icon.x - ca * r * 0.7f * k - sa * r * 0.75f * k, icon.y - sa * r * 0.7f * k + ca * r * 0.75f * k,  //
+                           icon.x - ca * r * 0.7f * k + sa * r * 0.75f * k, icon.y - sa * r * 0.7f * k - ca * r * 0.75f * k, c);
+            };
+            arrow(1.35f, dark);
+            arrow(1.0f, fill);
+        } else {
+            d.circle(d.user, icon.x, icon.y, r * 0.6f + 1.5f, dark, 0.0f);
+            d.circle(d.user, icon.x, icon.y, r * 0.6f, fill, 0.0f);
+        }
+        std::size_t at = 0;
+        while (at < m.players.size() && m.players[at].number != icon.number) {
+            ++at;
+        }
+        if (at >= m.names.size() || m.names[at].empty()) {
+            continue;
+        }
+        label.assign(m.names[at]);
+        label += FloorWords(icon.floor_delta);
+        const float tw = d.text_width(d.user, px, label.c_str());
+        const float x = std::clamp(icon.x - tw / 2, 2.0f, std::max(2.0f, d.width - tw - 2.0f));
+        const float y = icon.y + r * 1.2f;
+        if (look) {
+            GameText(d, x, y, px, fill, label.c_str());
+        } else {
+            Outlined(d, x, y, px, fill, a, label.c_str());
+        }
+    }
+}
+
 }  // namespace
+
+coop::overlay::map::Box MinimapBox(float width, float height) {
+    const float s = std::min(width / kLayoutW, height / kLayoutH);
+    const float ox = (width - kLayoutW * s) / 2, oy = (height - kLayoutH * s) / 2;
+    const float size = kMinimapSize * s;
+    const float cx = ox + (kLayoutW / 2 + kMinimapX) * s, cy = oy + (kLayoutH / 2 + kMinimapY) * s;
+    return {cx - size / 2, cy - size / 2, size, size};
+}
+
+coop::overlay::map::Box LayoutToScreen(const coop::overlay::map::Box& b, float width, float height) {
+    const float s = std::min(width / kLayoutW, height / kLayoutH);
+    const float ox = (width - kLayoutW * s) / 2, oy = (height - kLayoutH * s) / 2;
+    return {ox + b.x * s, oy + b.y * s, b.w * s, b.h * s};
+}
+
+std::string FloorWords(int delta) {
+    if (delta == 0) {
+        return {};
+    }
+    const int n = delta < 0 ? -delta : delta;
+    return " (" + std::to_string(n) + (delta > 0 ? " below)" : " above)");
+}
+
+float MinimapMetres(const coop::overlay::map::Capture& capture, float zoom) {
+    return zoom > 0 ? capture.height * kMinimapShare / zoom : 0.0f;
+}
 
 CheatsBox CheatsAt(float width, float height, const CheatsView& c) {
     CheatsBox b;
@@ -495,10 +593,9 @@ std::vector<ChatShown> ShownChat(const std::vector<CoopHook::ChatLine>& lines, b
     return out;
 }
 
-// The title's Multiplayer prompt (the menu itself is the Multiplayer tab of
-// Hookshot's menu, coop_pause.h): the Minus button and the words, bottom left,
-// in the game's font with its soft shadow; the plain look (no pack): the same
-// with Hookshot's font.
+// A title screen line (TitleView): the words, bottom left, after the Minus
+// button when it has one, in the game's font with its soft shadow; the plain
+// look (no pack): the same with Hookshot's font.
 static void DrawTitle(const HosCoopDraw& d, const TitleView& t, const Look* look) {
     const Pic p = Picture(d);
     const float u = p.u;
@@ -518,6 +615,10 @@ static void DrawTitle(const HosCoopDraw& d, const TitleView& t, const Look* look
     const float px = std::max(14.0f, 24.0f * u);
     const float r = px * 0.62f;
     const float cx = p.left + 48.0f * u + r, cy = p.height + (d.height - p.height) / 2 - 44.0f * u;
+    if (!t.button) {
+        text(p.left + 48.0f * u, cy - px * 0.62f, px, white, t.prompt);
+        return;
+    }
     d.circle(d.user, cx, cy, r, Rgba(0, 0, 0, 130), 0.0f);
     d.circle(d.user, cx, cy, r, Rgba(255, 255, 255, 230), std::max(1.5f, 2.0f * u));
     d.rect(d.user, cx - r * 0.5f, cy - std::max(1.0f, 1.5f * u), cx + r * 0.5f, cy + std::max(1.0f, 1.5f * u), white, 0.0f);
@@ -529,7 +630,7 @@ bool Wanted(const Scene& s) {
         return true;
     }
     return !s.chat.empty() || !s.hud.empty() || s.box.has_value() || s.cheats.has_value() || (s.markers && !s.markers->items.empty()) || s.players.has_value() ||
-           (s.panel && !s.panel->empty());
+           (s.panel && !s.panel->empty()) || s.dbno.has_value() || (s.map != nullptr && !s.map->players.empty() && (s.map->minimap || s.map->page));
 }
 
 bool GameLook(const HosCoopDraw& d, const Look& look) {
@@ -544,12 +645,19 @@ void Draw(const HosCoopDraw& d, const Scene& s, const Look& look) {
     if (s.markers) {
         DrawMarkers(d, *s.markers, s, game);
     }
+    if (s.map) {
+        DrawMap(d, *s.map, game);
+    }
     if (game) {
         DrawHud(d, s.hud, *game);
     }
     if (s.panel) {
         Font(d, 0);
         DrawPanel(d, *s.panel);
+    }
+    if (s.dbno) {
+        Font(d, game ? game->regular : 0);
+        CoopDbnoDraw::Draw(d, *s.dbno);
     }
     DrawChat(d, s.chat, DrawBox(d, s.box, game), s, game);
     if (s.players) {

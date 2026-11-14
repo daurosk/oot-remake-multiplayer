@@ -94,6 +94,23 @@ TEST_CASE("command line: --password and --password-env") {
   CHECK(password_problem("") == nullptr);
 }
 
+TEST_CASE("command line: --dbno on or off, on by default") {
+  std::string error;
+  CHECK(parse_command_line({}, error)->dbno);
+  auto off = parse_command_line({"--dbno", "off"}, error);
+  REQUIRE(off.has_value());
+  CHECK_FALSE(off->dbno);
+  auto on = parse_command_line({"--dbno", "yes"}, error);
+  REQUIRE(on.has_value());
+  CHECK(on->dbno);
+  for (std::vector<std::string> bad : std::vector<std::vector<std::string>>{
+           {"--dbno"}, {"--dbno", "maybe"}}) {
+    error.clear();
+    CHECK(!parse_command_line(bad, error).has_value());
+    CHECK(!error.empty());
+  }
+}
+
 TEST_CASE("command line: --pvp on or off, off by default") {
   std::string error;
   CHECK_FALSE(parse_command_line({}, error)->pvp);

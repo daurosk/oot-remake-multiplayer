@@ -113,6 +113,9 @@ struct ClientConfig {
   std::string host = "127.0.0.1";  // an IP, or a name (see above)
   std::uint16_t port = protocol::kDefaultPort;
   protocol::Hello hello;  // sent as is on every connection
+  // The player's own key (the Lobby, protocol 11): sent sealed in JOIN_PROOF
+  // on every connection, so the host's mutes and bans follow this player.
+  std::optional<protocol::PlayerKey> player_key;
   // The join password, for the server's JOIN_CHALLENGE (every session has
   // one). Empty: the server refuses with bad_password.
   std::string join_password;

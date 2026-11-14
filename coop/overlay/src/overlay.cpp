@@ -61,6 +61,7 @@ std::vector<Shown> collect(presence::Presence& presence, std::uint64_t server_no
     }
     s.position = pose->position;
     s.fade = pose->fade;
+    s.rotation = pose->rotation;
     out.push_back(std::move(s));
   }
   return out;

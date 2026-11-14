@@ -1,0 +1,13 @@
+{
+  "id": "hello-mod",
+  "name": "Hello mod",
+  "version": "1.0.0",
+  "author": "OoT co-op",
+  "description": "The smallest code mod: F7 shows its message and a frame count in the corner.",
+  "coop": "own",
+  "api": 1,
+  "code": "hello_mod.dll",
+  "settings": [
+    {"key": "message", "name": "Message", "type": "text", "max_length": 40, "default": "hello"}
+  ]
+}

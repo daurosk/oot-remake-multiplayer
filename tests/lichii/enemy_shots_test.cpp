@@ -2,6 +2,8 @@
 // sync and its director use them.
 #include <doctest/doctest.h>
 
+#include <algorithm>
+
 #include <array>
 #include <map>
 #include <string>
@@ -80,6 +82,18 @@ private:
 
 } // namespace
 
+TEST_CASE("enemy shots: Ganondorf's own shots name him as a maker (native boss sync)") {
+    // His pack makes DungeonBossGanondrof_Bullet_* (shared with Phantom Ganon) and
+    // Ganondorf_Bullet_Thunder_Shockwave: only the owner's Ganondorf fires them.
+    for (const char* name : {"DungeonBossGanondrof_Bullet_ChargeLightBall", "Ganondorf_Bullet_Thunder_Shockwave"}) {
+        CAPTURE(name);
+        const auto makers = es::MakersOf(name);
+        CHECK(std::find(makers.begin(), makers.end(), "Enemy_DungeonBoss_Ganondorf") != makers.end());
+    }
+    const auto pg = es::MakersOf("DungeonBossGanondrof_Bullet_LightBall");
+    CHECK(std::find(pg.begin(), pg.end(), "Enemy_DungeonBoss_PhantomGanon") != pg.end());
+}
+
 TEST_CASE("enemy shots: the names are known, with their makers") {
     for (const char* name :
          {"Octorok_Bullet", "Dodongo_Bullet_Fire", "DungeonBossDodongo_Bullet_Fire",
@@ -138,6 +152,42 @@ TEST_CASE("enemy shots: the shooters noted by the objects sync go stale") {
     CHECK(es::Shooters(10'000'000 + es::kFreshUs + 1).empty());
     CHECK(es::Shooters(9'000'000).empty());
     es::NoteShooters({}, 0);
+}
+
+TEST_CASE("enemy shots: a copy enemy's own shot is stopped at the game's create request (Hookshot)") {
+    const std::uint64_t before = es::StoppedAtCreate();
+    es::NoteShooters({{"Enemy_Octorok", {10.0f, 0.0f, 0.0f}, Owner::theirs},
+                      {"Enemy_Octorok", {60.0f, 0.0f, 0.0f}, Owner::ours},
+                      {"Enemy_Octorok", {120.0f, 0.0f, 0.0f}, Owner::unknown}},
+                     5'000'000);
+    CHECK(es::StopAtCreate("Octorok_Bullet", {11.0f, 0.0f, 0.5f}));        // the copy's: never made here
+    CHECK_FALSE(es::StopAtCreate("Octorok_Bullet", {61.0f, 0.0f, 0.0f}));  // ours: made and sent
+    CHECK_FALSE(es::StopAtCreate("Octorok_Bullet", {121.0f, 0.0f, 0.0f})); // no owner known: left alone
+    CHECK_FALSE(es::StopAtCreate("Octorok_Bullet", {300.0f, 0.0f, 0.0f})); // no maker near
+    CHECK_FALSE(es::StopAtCreate("Octorok_Bullet", {0.0f, 0.0f, 0.0f}));   // the place was not read
+    CHECK_FALSE(es::StopAtCreate("Item_Bomb", {11.0f, 0.0f, 0.5f}));       // no enemy shot
+    CHECK(es::StoppedAtCreate() == before + 1);
+    es::NoteShooters({}, 6'000'000);  // (a new scene's walk: nobody)
+    CHECK_FALSE(es::StopAtCreate("Octorok_Bullet", {11.0f, 0.0f, 0.5f}));
+}
+
+TEST_CASE("enemy shots: the shooter the game's shoot code names decides, not the place") {
+    // Two Octoroks side by side, ours nearer the shot's place than the copy that fires it.
+    es::NoteShooters({{"Enemy_Octorok", {10.0f, 0.0f, 0.0f}, Owner::theirs, 0x1000},
+                      {"Enemy_Octorok", {11.0f, 0.0f, 0.0f}, Owner::ours, 0x2000},
+                      {"Enemy_Octorok", {12.0f, 0.0f, 0.0f}, Owner::unknown, 0x3000}},
+                     7'000'000);
+    const proto::Vec3 at{11.1f, 0.0f, 0.0f};
+    CHECK_FALSE(es::StopAtCreate("Octorok_Bullet", at));     // by place: ours is nearest
+    CHECK(es::StopAtCreate("Octorok_Bullet", at, 0x1000));   // the copy fired it: never made
+    CHECK_FALSE(es::StopAtCreate("Octorok_Bullet", at, 0x2000));  // ours fired it
+    CHECK_FALSE(es::StopAtCreate("Octorok_Bullet", at, 0x3000));  // no owner known: left alone
+    // A shooter that is not a shared enemy here: the place decides, as before.
+    CHECK(es::StopAtCreate("Octorok_Bullet", {9.9f, 0.0f, 0.0f}, 0x9999));
+    // The copy's shot is stopped even when its place was not read.
+    CHECK(es::StopAtCreate("Octorok_Bullet", {0.0f, 0.0f, 0.0f}, 0x1000));
+    CHECK_FALSE(es::StopAtCreate("Item_Bomb", at, 0x1000));  // no enemy shot
+    es::NoteShooters({}, 8'000'000);
 }
 
 TEST_CASE("enemy shots: the owner's game sends its enemy's shot") {

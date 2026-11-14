@@ -3,6 +3,7 @@
 
 #include "coop_camera.h"
 #include "coop_colors.h"
+#include "coop_local_game.h"
 #include "coop_pose.h"
 
 #include <algorithm>
@@ -187,7 +188,7 @@ void Director::PoseFrame(Guest& guest, std::uint64_t now_ms) {
     }
     std::vector<std::pair<std::uint8_t, std::uint64_t>> puppets;
     for (const auto& slot : slots_) {
-        if (slot.phase == Phase::live && slot.actor != 0) {
+        if (slot.phase == Phase::live && slot.actor != 0 && !slot.native) {
             puppets.emplace_back(slot.number, slot.actor);
         }
     }
@@ -210,11 +211,34 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
         } else {
             slot.phase = Phase::live;
         }
+        // A sound call not made: its step is asked again (note) or the sound is lost
+        // (link sound), never left waiting for a Finish that cannot come.
+        if (pending_ == Pending::sound) {
+            slot.sound.pending = CoopPuppetSound::State::Step::none;
+        } else if (pending_ == Pending::link_sound) {
+            CoopLinkSound::Dropped(slot.link_sound);
+        }
         pending_ = Pending::none;
     }
     {
         std::lock_guard lock(input_mutex_);
         input_ = next_input_;
+        for (auto& t : next_input_.targets) {
+            t.sounds.clear();  // each received sound is taken once
+        }
+    }
+    for (auto& t : input_.targets) {
+        for (auto& slot : slots_) {
+            if (slot.number == t.number && !t.sounds.empty()) {
+                for (auto& s : t.sounds) {
+                    if (OcarinaSoundOn() && s.name.starts_with("Ocarina_")) {
+                        continue;  // the OCARINA_NOTE path plays the notes: not twice
+                    }
+                    slot.link_sound.heard.Push(std::move(s.name), s.at_ms);
+                }
+            }
+        }
+        t.sounds.clear();
     }
     if (input_.scene != scene_) {
         scene_ = input_.scene;
@@ -300,6 +324,19 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                 slot.ocarina_hand = {};  // its bind block is freed with it
                 slot.taken = 0;
                 slot.lost_ms = now_ms;  // a load deletes it before the camera goes
+            } else if (slot.native) {
+                // A real Player (coop_native_player.h): the game runs it; nothing of
+                // ours is written into it, it is only watched.
+                if (state == addr::kStatePresent) {
+                    const auto read = [&guest](std::uint64_t a, void* out, std::size_t size) {
+                        return guest.Read(a, out, size);
+                    };
+                    if (auto line = slot.probe.Step(read, input_.main_base, slot.actor,
+                                                    CoopPose::FindPlayer(guest, input_.main_base),
+                                                    now_ms)) {
+                        Say("P" + std::to_string(slot.number) + " " + *line);
+                    }
+                }
             } else if (const Target* t = Wanted(slot.number);
                        t != nullptr && state == addr::kStatePresent && t->actor == slot.actor_name &&
                        input_.scene == slot.scene) {
@@ -530,6 +567,10 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
     case Pending::sound:
         CoopPuppetSound::Finish(slot.sound, result, who, [this](const std::string& line) { Say(line); });
         break;
+    case Pending::link_sound:
+        CoopLinkSound::Finish(slot.link_sound, result, guest, slot.block, who,
+                              [this](const std::string& line) { Say(line); }, anim_);
+        break;
     case Pending::none:
         break;
     }
@@ -619,6 +660,9 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
             pending_ = Pending::remove;
             return c;
         }
+        if (slot.native) {
+            return std::nullopt;  // a real Player: no call of ours drives it
+        }
         // The player's Ocarina notes (issue 152), and with LICHII_COOP_DEBUG_ANIM
         // what the puppet's sound user plays (issue 131).
         // Not only in show: A playing is an event on A, so B holds the puppet (still,
@@ -636,6 +680,19 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
                                                       now_ms, who, say)) {
                 pending_ = Pending::sound;
                 return c;
+            }
+            // The player's own sounds (coop_link_sound.h), while no note is being started:
+            // the two share the block's asset and text cells.
+            if (slot.sound.step == CoopPuppetSound::State::Step::none &&
+                slot.sound.pending == CoopPuppetSound::State::Step::none) {
+                const std::uint64_t user = CoopPuppetSound::SoundUser(guest, slot.actor);
+                if (auto c = CoopLinkSound::Next(
+                        slot.link_sound, sound_budget_, guest, input_.main_base, slot.actor, user,
+                        slot.block, now_ms,
+                        [&guest, user] { return CoopPuppetSound::Playing(guest, user); }, who, say, anim_)) {
+                    pending_ = Pending::link_sound;
+                    return c;
+                }
             }
         }
         if (auto c = Equip(slot, *t, guest, now_ms)) {
@@ -721,6 +778,8 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.phase = Phase::creating;
     slot.actor = 0;
     slot.actor_name = target.actor;
+    slot.native = CoopNativePlayer::IsPlayerActor(target.actor);
+    slot.probe.Reset();
     slot.scene = input_.scene;
     slot.request = 0;
     slot.taken = 0;
@@ -1495,6 +1554,9 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         t.gear = r.gear;
         t.drawn = r.drawn;
         t.ocarina = r.ocarina;
+        if (show != Show::hide && CoopLinkSound::InHearing(position, r.position)) {
+            t.sounds = r.sounds;  // too far, or out of sight: not heard
+        }
         in.targets.push_back(std::move(t));
     }
     if (settings_.debug && position && now_ms - scene_since_ms_ >= settings_.debug_delay_ms) {
@@ -1528,6 +1590,9 @@ bool PackHasTunicPuppets(std::string_view manifest) {
 std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color) const {
     if (!settings_.actor.empty()) {
         return settings_.actor;
+    }
+    if (settings_.native_player) {
+        return CoopNativePlayer::ActorFor(adult);
     }
     const std::string plain = adult ? "CoopPuppet_Adult" : "CoopPuppet_Child";
     if (settings_.tunics && color) {
@@ -1573,6 +1638,7 @@ std::array<std::optional<std::uint8_t>, kNumbers> g_drawn;  // the same; guarded
 std::array<std::optional<std::uint32_t>, kNumbers> g_color; // the same; guarded
 std::optional<std::uint32_t> g_own_color;                    // ours; guarded
 std::array<CoopPuppetSound::Wanted, kNumbers> g_ocarina;  // the same; guarded (issue 152)
+std::array<std::vector<CoopLinkSound::Sound>, kNumbers> g_sounds;  // the same; guarded (LINK_SOUND)
 
 } // namespace
 
@@ -1608,6 +1674,7 @@ void OnEvent(const coop::net::Event& event) {
         g_drawn = {};
         g_color = {};
         g_ocarina = {};
+        g_sounds = {};
     } else if (event.kind == EventKind::player_left && event.player < g_anims.size()) {
         std::lock_guard lock(g_anim_mutex);
         g_anims[event.player].reset();
@@ -1615,6 +1682,7 @@ void OnEvent(const coop::net::Event& event) {
         g_drawn[event.player].reset();
         g_color[event.player].reset();
         g_ocarina[event.player] = {};
+        g_sounds[event.player].clear();
     } else if (event.kind == EventKind::player_equip && event.player != 0 &&
                event.player < g_gear.size()) {
         const auto& e = event.equipment;
@@ -1640,6 +1708,21 @@ void OnEvent(const coop::net::Event& event) {
         std::lock_guard lock(g_anim_mutex);
         auto& w = g_ocarina[note->player_number];
         w = CoopPuppetSound::Wanted{note->note, w.serial + 1, now_ms};
+    } else if (const auto* sound = std::get_if<coop::protocol::LinkSound>(&event.message);
+               event.kind == EventKind::message && sound != nullptr) {
+        if (sound->player_number == 0 || sound->player_number >= g_sounds.size()) {
+            return;
+        }
+        const auto now_ms = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        std::lock_guard lock(g_anim_mutex);
+        auto& queue = g_sounds[sound->player_number];
+        if (queue.size() >= CoopLinkSound::kHeardMax) {
+            queue.erase(queue.begin());  // the newest are kept
+        }
+        queue.push_back(CoopLinkSound::Sound{sound->name, now_ms});
     } else if (event.kind == EventKind::message) {
         const auto* sample = std::get_if<coop::protocol::PlayerSample>(&event.message);
         if (sample == nullptr || !sample->animation || sample->player_number == 0 ||
@@ -1712,6 +1795,7 @@ std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_n
                 r.drawn = g_drawn[r.number];
                 r.color = g_color[r.number];
                 r.ocarina = g_ocarina[r.number];
+                r.sounds = std::exchange(g_sounds[r.number], {});
             }
         }
     }
@@ -1741,6 +1825,7 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
             .count());
     g_planner->SetFailedTunics(g_director->FailedTunics());
     auto input = g_planner->Plan(main_base, scene, position, local_event, remotes, now_ms, own_gear, own_drawn, own_color);
+    if (main_base != 0) CoopLocalGame::AddTargets(input);   // local co-op's players (coop_local_game.h)
     StampDrawing(input, now_ms);
     g_director->SetInput(std::move(input));
 }

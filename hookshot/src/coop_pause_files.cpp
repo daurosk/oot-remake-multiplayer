@@ -23,6 +23,8 @@
 #include <arpa/inet.h>
 #include <ifaddrs.h>
 #include <netinet/in.h>
+
+#include "coop_clipboard_posix.h"
 #endif
 
 namespace CoopFiles {
@@ -90,7 +92,13 @@ bool WriteText(const fs::path& p, const std::string& text) {
 std::optional<fs::path> FindKit() {
     auto is_kit = [](const fs::path& d) {
         std::error_code ec;
+#ifdef _WIN32
         return fs::exists(d / "server" / "coop_server.exe", ec) && fs::exists(d / "start-server.cmd", ec);
+#else
+        // The Linux kit (tools/release/kit/linux-longshot): its data/ folder holds the server,
+        // coop-options.ini and the built game (data/game/), so data/ is the kit here.
+        return fs::exists(d / "server" / "coop_server", ec) && fs::exists(d / "coop-options.ini", ec);
+#endif
     };
     std::vector<fs::path> tries;
     if (const std::string e = Env("OOT_COOP_KIT"); !e.empty()) {
@@ -203,7 +211,7 @@ std::string ClipboardText() {
     CloseClipboard();
     return out.size() > 4096 ? out.substr(0, 4096) : out;
 #else
-    return {};
+    return CoopClipboard::Paste();
 #endif
 }
 
@@ -228,8 +236,7 @@ bool SetClipboardText(const std::string& text) {
     CloseClipboard();
     return ok;
 #else
-    (void)text;
-    return false;
+    return CoopClipboard::Copy(text);
 #endif
 }
 

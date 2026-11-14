@@ -27,20 +27,40 @@ foreach(line IN LISTS _coop_lines)
 endforeach()
 list(REMOVE_DUPLICATES _coop_sources)
 
-add_library(hookshot_coop MODULE src/coop_hookshot.cpp src/coop_draw.cpp src/coop_png.cpp src/coop_chatbox.cpp src/coop_cheats_panel.cpp
+add_library(hookshot_coop MODULE src/coop_hookshot.cpp src/coop_draw.cpp src/coop_map_page.cpp src/coop_dbno_draw.cpp src/coop_png.cpp src/coop_chatbox.cpp src/coop_cheats_panel.cpp
   src/coop_host_menu.cpp src/coop_title.cpp src/coop_title_menu.cpp src/coop_input.cpp src/coop_pause.cpp
-  src/coop_pause_menu.cpp src/coop_pause_files.cpp ${_coop_sources})
+  src/coop_pause_menu.cpp src/coop_pause_files.cpp
+  src/coop_mod_json.cpp src/coop_mod_library.cpp src/coop_mods.cpp src/coop_mod_plugins.cpp src/coop_mod_guard.cpp
+  src/coop_mods_runtime.cpp src/coop_rando.cpp src/coop_mods_tab.cpp src/coop_mods_tab_module.cpp
+  src/coop_lobby_tab.cpp src/coop_lobby_tab_module.cpp
+  src/coop_look.cpp src/coop_look_live.cpp src/coop_look_tunic.cpp src/coop_look_paint.cpp src/coop_look_parts.cpp src/coop_look_menu.cpp
+  ${_coop_sources})
 # compat/ first: its core/ and common/ headers stand in for the emulator's.
 target_include_directories(hookshot_coop PRIVATE compat src "${_coop_hook}" ../server)
 target_compile_definitions(hookshot_coop PRIVATE LICHII_COOP COOP_HOOKSHOT)
 # coop_server_lib: the co-op server, run inside the game when the player hosts from the menu.
 target_link_libraries(hookshot_coop PRIVATE coop coop_net coop_host coop_presence coop_overlay coop_server_lib
-                      fmt::fmt coop_warnings)
+                      monocypher fmt::fmt coop_warnings)
 set_target_properties(hookshot_coop PROPERTIES PREFIX "" CXX_VISIBILITY_PRESET hidden)
 # Proximity voice (docs/voice.md): the two exports Hookshot's mixer looks for
 # (hos_coop_voice.h, our patch 0009) and the game-free voice library.
 target_sources(hookshot_coop PRIVATE src/coop_voice_hookshot.cpp)
 target_link_libraries(hookshot_coop PRIVATE coop_voice)
+# Linux: the clipboard through the desktop's tools (wl-copy, xclip, xsel); Windows has its own.
+if(NOT WIN32)
+  target_sources(hookshot_coop PRIVATE src/coop_clipboard_posix.cpp)
+  # The game's bridge opens the module by its full path (RTLD_LOCAL); the renderer's menu tabs and
+  # drawing (patches 0001, 0012) and the world hooks (0005) then find it with
+  # dlopen("hookshot_coop.so", RTLD_NOLOAD), and glibc matches a bare name to a loaded library only
+  # by its SONAME. Without one they got nothing: no Multiplayer tab, chat or name tags on Linux.
+  target_link_options(hookshot_coop PRIVATE -Wl,-soname,hookshot_coop.so)
+  # The C++ runtime inside the module (none of its symbols exported), so it loads into the game on any
+  # distribution from the one it was built on (CI: Ubuntu 22.04, glibc 2.35, as Longshot's own) up,
+  # whatever libstdc++ that system has.
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_link_options(hookshot_coop PRIVATE -static-libstdc++ -static-libgcc -Wl,--exclude-libs,ALL -Wl,--no-undefined)
+  endif()
+endif()
 if(MSVC)
   # The emulator's own code builds with these off too (lichii/README.md).
   target_compile_options(hookshot_coop PRIVATE /wd4456 /wd4457 /wd4458 /wd4459 /bigobj)

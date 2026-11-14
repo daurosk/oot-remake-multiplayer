@@ -6,7 +6,12 @@
 // routers with, so the address in the answer code is the game's.
 //
 // 1. Tries the host directly for a few seconds (signed probes; the host's
-//    server answers them only for someone with the join password).
+//    server answers them only for someone with the join password). The same
+//    probes also go to this PC (127.0.0.1) and to the local network
+//    (broadcast), so a host on the same PC or network is reached without the
+//    router: many routers do not let a PC reach its own internet address
+//    (no hairpin NAT). Whichever address the host's signed answer comes from
+//    is the way the game's traffic takes.
 // 2. No answer: makes an ANSWER CODE (this socket's internet address, a
 //    nonce, the time, signed) for the friend to send to the host, and sends
 //    signed punches to the host until the host's punches come through.
@@ -34,6 +39,9 @@ struct JoinConfig {
   std::uint64_t direct_ms = 3000;  // the direct try, before the answer code
   std::uint64_t punch_ms = 180'000;  // then waiting for the host this long before the help text
   bool probe = true;               // tests: false to go the punching way
+  // Where else the probes go (a host on this PC or network). Empty
+  // (nullopt): nearby_targets(host). An empty list: only the host.
+  std::optional<std::vector<Addr>> nearby;
   // The game's own join (the title menu): the same nonce and public UDP port
   // for the same invite on this PC (coop_host_menu.h RejoinIds), so a host
   // that remembers this friend (punch.hpp remember_friends) lets a rejoin in
@@ -61,6 +69,10 @@ class JoinHelper {
 
   JoinState state() const { return state_; }
   bool direct() const { return direct_; }
+  // Where the host's server is reached: the invite's address, or the
+  // nearby one (this PC, the local network) that answered first.
+  Addr peer() const { return peer_; }
+  bool nearby_peer() const { return peer_ != config_.host; }
   std::uint16_t game_port() const;
   std::uint16_t public_socket_port() const;
   const std::string& answer_code() const { return answer_; }
@@ -85,13 +97,16 @@ class JoinHelper {
   std::uint64_t unix_now() const;
   void say(const std::string& text) const;
   void send_public(Addr to, std::span<const std::uint8_t> bytes);
-  void send_punch(PunchType type);
+  void send_punch(PunchType type, Addr to);
+  bool from_nearby(Addr from) const;
   void on_public(Addr from, std::span<const std::uint8_t> data);
   void on_game(Addr from, std::span<const std::uint8_t> data);
   void tick(std::uint64_t now);
-  void open(bool direct);
+  void open(bool direct, Addr peer);
 
   JoinConfig config_;
+  Addr peer_;
+  std::vector<Addr> nearby_;
   protocol::Sha256Digest key_{};
   Nonce nonce_{};
   ENetSocket public_socket_ = ENET_SOCKET_NULL;
@@ -111,6 +126,11 @@ class JoinHelper {
   std::uint64_t next_punch_ = 0;
   Stats stats_;
 };
+
+// The probe's other targets for a host at `host`: 127.0.0.1 and the local
+// network's broadcast address, each at the invite's port and at 27510 (the
+// server's own port when the router maps another one), without `host`.
+std::vector<Addr> nearby_targets(Addr host);
 
 // What to do when no way works (both helpers' and the server's windows).
 std::string no_way_help();

@@ -10,8 +10,13 @@
 #include <vector>
 
 #include "common/logging.h"
+#include "coop_colors.h"
 #include "coop_hook.h"
 #include "coop_hookshot.h"
+#include "coop_input.h"
+#include "coop_lobby_tab.h"
+#include "coop_look.h"
+#include "coop_mods_tab.h"
 #include "coop_pause_files.h"
 #include "coop_title.h"
 #include "coop_title_menu.h"
@@ -73,14 +78,24 @@ HosCoopStatus Status() {
     return st;
 }
 
-// Link's look: customizer-live-b's coop_look.h (CoopLook::SetPending when the player picks, ApplyOnUnpause when the
-// menu closes). These two are the only places it is wired. Until coop_look.h is under this branch: the colour is
-// saved (coop-options.ini color, by Save) and Link wears it at the next start.
+// Link's look (coop_look.h): CoopLook::SetPending when the player picks, ApplyOnUnpause when the menu closes; the
+// look is worn on the game's next frame (CoopLook::Frame). These two are the only places it is wired.
 std::vector<std::string> ChooseLook(const std::string& colour) {
     LOG_INFO(Core, "coop: multiplayer tab: Link's look: {}", colour.empty() ? std::string("by player number") : colour);
-    return {"Link wears it the next time the game starts."};
+    CoopLook::Look look = CoopLook::Shown();
+    look[CoopLook::Part::tunic] = CoopColors::Parse(colour);   // ("" or an unknown name: by player number)
+    CoopLook::SetPending(look);
+    return {"Link wears it when this menu closes."};
 }
-void WearChosenLook() {}
+void WearChosenLook() {
+    CoopLook::ApplyOnUnpause();
+}
+// The Customize page's look (coop_look_menu.h): every part at once.
+std::vector<std::string> ChooseLookParts(const CoopLook::Look& look) {
+    LOG_INFO(Core, "coop: multiplayer tab: customize: {} part colour(s) chosen", CoopLook::Wire(look).size());
+    CoopLook::SetPending(look);
+    return {"Link wears it when this menu closes."};
+}
 
 
 // What the module's host is doing, in plain words (CoopTitleMenu::PlainStatus). Only reads: what follows from
@@ -289,6 +304,8 @@ void Save() {
         CoopFiles::SetCoopEnvironment(g_menu.options());   // co-op has not started: they count for this run
     }
     CoopVoice::SetEnabled(g_menu.options().voice);   // voice chat on/off counts at once (ptt when on)
+    CoopHookshot::SetChatKey(g_menu.options().chat_key);   // the chat key too
+    CoopHookshot::SetMapOptions(g_menu.options().map_players, g_menu.options().map_names);   // at once too
     LOG_INFO(Core, "coop: multiplayer tab: settings saved{}{}", ok ? "" : " (a file could not be written)",
              kit ? "" : " (no kit found: coop.ini only)");
     std::vector<std::string> note;
@@ -303,6 +320,37 @@ void Save() {
     }
     if (!note.empty()) {
         g_menu.SetNote(note);
+    }
+}
+
+// The Settings page's Controller and Keyboard rows (coop_input.h): none without patch 0015.
+void InputRows() {
+    if (CoopInput::Available()) {
+        g_menu.SetInputRows(CoopInput::ControllerRow(), CoopInput::KeyboardRow());
+    } else {
+        g_menu.SetInputRows({}, {});
+    }
+}
+
+// The next controller (or keyboard) choice: at once, and in coop-options.ini for the next start.
+void CycleInput(bool controller) {
+    const CoopInput::Setting s = controller ? CoopInput::CycleController() : CoopInput::CycleKeyboard();
+    const char* key = controller ? "LICHII_COOP_PAD" : "LICHII_COOP_KEYBOARD";
+    const std::string value = controller ? CoopInput::PadValue(s.pad) : CoopInput::KeyboardValue(s.keyboard);
+    const bool usual = controller ? s.pad == CoopInput::kAuto : s.keyboard == CoopInput::Keyboard::Focus;
+    InputRows();
+    LOG_INFO(Core, "coop: multiplayer tab: {} = {}", key, value);
+    const auto kit = FindKit();
+    if (!kit) {
+        g_menu.SetNote({"No co-op kit found with this game: the choice counts until the game closes."});
+        return;
+    }
+    const auto file = *kit / "coop-options.ini";
+    const std::string before = ReadText(file);
+    const std::string after =
+        usual ? CoopTitleMenu::IniUnset(before, key) : CoopTitleMenu::IniSet(before, key, value, false);
+    if (!WriteText(file, after)) {
+        g_menu.SetNote({"A settings file could not be written: the choice counts until the game closes."});
     }
 }
 
@@ -360,8 +408,10 @@ void Act(const Request& r) {
         Save();
         const auto note = ChooseLook(r.text);
         g_menu.SetNote(note);
+        g_menu.SetLook(CoopLook::Shown());   // (the Customize page shows the tunic chosen here)
         break;
     }
+    case Request::Kind::kLookParts: g_menu.SetNote(ChooseLookParts(g_menu.look())); break;
     case Request::Kind::kPaste: g_menu.Paste(ClipboardText()); break;
     case Request::Kind::kCopyInvite:
         g_lan_lines.clear();
@@ -370,6 +420,8 @@ void Act(const Request& r) {
     case Request::Kind::kCopyAnswer: Copy(Status().answer, "answer code"); break;
     case Request::Kind::kPasteAnswer: PasteAnswer(); break;
     case Request::Kind::kCopyLan: CopyLan(); break;
+    case Request::Kind::kController: CycleInput(true); break;
+    case Request::Kind::kKeyboard: CycleInput(false); break;
     }
 }
 
@@ -387,9 +439,11 @@ void Settle() {
 void ShowTab() {
     g_shown = true;
     g_menu.Show(ReadOptions());
+    g_menu.SetLook(CoopLook::Shown());   // the Customize page opens on the look waiting, else the one worn
     const std::string coop = ReadText(CoopIni());
     const auto last = CoopTitleMenu::IniGet(coop, "last_invite");
     g_menu.SetRejoin(CoopTitleMenu::IniGet(coop, "last_host").value_or(""), last.value_or(""));
+    InputRows();   // (a controller plugged in while the menu was closed: its name)
     RefreshSession(true);
 }
 
@@ -418,15 +472,32 @@ void Tick() {
     Follow(Status());
 }
 
+// Tab 1: the Lobby (coop_lobby_tab.h), always: who is in the game, the host's controls.
+// Tab 2: Mods (coop_mods_tab.h), once the mod loader runs.
+constexpr int kLobbyTab = 1;
+constexpr int kModsTab = 2;
+
 int Tabs() {
-    return 1;
+    return CoopModsTab::Available() ? 3 : 2;
 }
 
 const char* TabName(int tab) {
+    if (tab == kModsTab && CoopModsTab::Available()) {
+        return CoopModsTab::TabName();
+    }
+    if (tab == kLobbyTab) {
+        return CoopLobbyTab::TabName();
+    }
     return tab == kMultiplayerTab ? "Multiplayer" : nullptr;
 }
 
 bool Page(int tab, HosCoopMenuPage* out) {
+    if (tab == kModsTab) {
+        return CoopModsTab::Page(out);
+    }
+    if (tab == kLobbyTab) {
+        return CoopLobbyTab::Page(out);
+    }
     if (tab != kMultiplayerTab || out == nullptr || out->size < sizeof(HosCoopMenuPage)) {
         return false;
     }
@@ -464,7 +535,43 @@ bool Page(int tab, HosCoopMenuPage* out) {
     return true;
 }
 
+bool Picture(int tab, HosCoopMenuPicture* out) {
+    if (tab != kMultiplayerTab || out == nullptr || out->size < sizeof(HosCoopMenuPicture)) {
+        return false;
+    }
+    thread_local std::vector<HosCoopMenuShape> shapes;   // (Hookshot copies them before the next call on its thread)
+    std::vector<CoopLookMenu::Shape> picture;
+    {
+        std::lock_guard lock(g_mutex);
+        picture = g_menu.Picture();
+    }
+    shapes.clear();
+    for (const CoopLookMenu::Shape& p : picture) {
+        if (shapes.size() == HOS_COOP_MENU_MAX_SHAPES) {
+            break;
+        }
+        HosCoopMenuShape s{};
+        s.rgba = p.rgba;
+        s.outline = p.outline ? 1 : 0;
+        s.n = static_cast<std::uint8_t>(std::min<std::size_t>(p.points.size(), HOS_COOP_MENU_SHAPE_POINTS));
+        for (std::size_t k = 0; k < s.n; ++k) {
+            s.xy[2 * k] = p.points[k].first;
+            s.xy[2 * k + 1] = p.points[k].second;
+        }
+        shapes.push_back(s);
+    }
+    out->shapes_n = static_cast<std::int32_t>(shapes.size());
+    out->shapes = shapes.data();
+    return !shapes.empty();
+}
+
 bool Input(int tab, int event, int arg, int arg2) {
+    if (tab == kModsTab) {
+        return CoopModsTab::MenuInput(event, arg, arg2);
+    }
+    if (tab == kLobbyTab) {
+        return CoopLobbyTab::MenuInput(event, arg, arg2);
+    }
     if (tab != kMultiplayerTab) {
         return false;
     }
@@ -504,7 +611,9 @@ int Wanted() {
 }
 
 bool Key(std::uint32_t vk, bool repeat) {
-    (void)repeat;
+    if (CoopModsTab::Key(vk, repeat)) {  // the Mods tab's text field, while it is typed into
+        return true;
+    }
     std::lock_guard lock(g_mutex);
     if (!g_shown || !g_menu.typing()) {
         return false;
@@ -536,6 +645,9 @@ bool Key(std::uint32_t vk, bool repeat) {
 }
 
 bool Char(std::uint32_t cp) {
+    if (CoopModsTab::Char(cp)) {
+        return true;
+    }
     std::lock_guard lock(g_mutex);
     if (!g_shown || !g_menu.typing()) {
         return false;
@@ -547,6 +659,9 @@ bool Char(std::uint32_t cp) {
 }
 
 bool KeysTaken() {
+    if (CoopModsTab::KeysTaken()) {
+        return true;
+    }
     std::lock_guard lock(g_mutex);
     return g_shown && g_menu.typing();
 }
@@ -567,21 +682,6 @@ void Open(CoopPauseMenu::Page page) {
     Settle();
     g_wanted = kMultiplayerTab;
     LOG_INFO(Core, "coop: multiplayer tab: opened from the title");
-}
-
-std::string Doing() {
-    std::lock_guard lock(g_mutex);
-    if (g_doing.empty()) {
-        return {};
-    }
-    switch (Status().state) {   // (what it is now: a join still waiting is not "joined", a failed one is nothing)
-    case HOS_COOP_STARTING:
-    case HOS_COOP_HOSTING: return g_doing == "hosting" ? "hosting" : "";
-    case HOS_COOP_JOINING:
-    case HOS_COOP_WAIT_HOST: return g_doing == "joined" ? "joining" : "";
-    case HOS_COOP_CONNECTED: return g_doing;
-    default: return {};
-    }
 }
 
 }  // namespace CoopPause

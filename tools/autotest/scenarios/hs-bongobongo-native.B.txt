@@ -1,0 +1,34 @@
+# hs-bongobongo-native, B (see hs-bongobongo-native.A.txt): B's copy of the boss takes A's verbs; B swings at it
+# between A's swings, so a copy's hit goes to the owner.
+mark start
+warp BongoBongoStage BongoBongoStage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+wait 1800
+press ZL 10
+mark b-1
+wait 700
+hold ZL+LSTICK_UP 60
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+wait 800
+mark b-2
+wait 700
+hold ZL+LSTICK_UP 60
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+wait 800
+mark b-3
+wait 1800
+mark end

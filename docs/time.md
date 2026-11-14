@@ -36,3 +36,15 @@ Switches: `LICHII_COOP_TIME=0` turns it off; `LICHII_COOP_DEBUG_TIME=1` logs the
 2. After the set, A's clock read 00:00 and did not move for the rest of the run (about 10 s), with flags 0x5c. Whether the clock runs again after a set's transition is not known.
 3. Whether the Sun's Song moves the clock through the same record (so it is seen as a jump) is not checked; it should, since it changes the time the getter returns.
 4. Indoor scenes and dungeons may stop the clock (the record kept the same value for several seconds in game B in the Graveyard): a stopped clock is not a jump, and the host's clock is still taken when it moves.
+
+## Through the game's own function (Hookshot)
+
+Every time change of the game goes through one function, main + 0xeee640 `(time object, seconds since midnight, mode, days or -1)`. Read from the instructions: its three callers are the AI node's set (0x34522d0, mode 1, days -1: also what co-op's own set calls), main + 0x3cd5cc and main + 0x34250f4 (mode 0; which of them is the Sun's Song, a night's sleep or a save's time is not known yet). Patch 0005 wraps it (`HOS_COOP_WRAP_TIME_SET`, [hookshot.md](hookshot.md) "World hooks"), so on Hookshot a jump is the game's set itself:
+
+- `CoopTime::OnGameSet` (the game's thread) hands the set to the time sync (`Sync::GameSet`). The next tick with a readable clock sends it as a jump, **with the set's own time and at once**, when it moved the clock we last read by more than two in-game minutes. Before, a jump was a guess: two reads more than half an hour apart, seen only once the clock had got there.
+- The same rules as before decide whether it goes out: not our own set (it comes back through the same function, within the quiet time), not a guest's load (the host's clock is taken again), and nothing while the clock cannot be read (a load).
+- A jump that is read within 10 s of a set is that set's and is not sent twice. A jump no set named is still sent as read, counted, and logged: `coop: time: a clock jump that no time set of the game named (N so far)`. N staying 0 is the proof that the wrap sees every time change.
+- Each of the first 20 sets is logged: `coop: time: the game set its clock to HH:MM:SS (mode M, days D; set N of this run)`, to learn in a run which changes come here (loads?) and how often.
+- Unchanged: the host's plain word once a second, the hourly set, and the nudge (a direct write of the seconds word: the game has no function that moves the clock without its time change).
+- Tests: `tests/lichii/time_test.cpp` ("the game's own time set ...", "our own set comes back ...", "a set while there is no clock ...", "a jump no set named ...").
+- Not seen in a game yet. To check: play the Sun's Song in one game: its log shows the set and `sent HH:MM (jump)` in the same second, the other game sets its clock, and N stays 0.

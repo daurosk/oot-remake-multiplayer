@@ -1,0 +1,21 @@
+# Native boss sync, one boss per group (branch bosses; docs/dungeons-boss.md, "Native boss sync").
+# Needs a Hookshot game build with patch 0013 (wraps 4 and 5). Group N plays on <kit>\hookshot-A<N> + -B<N>.
+# Each scenario's header has its proof lines; the expects below are the first three of them.
+
+[g1]
+hs-gohma-native         expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Gohma"
+hs-dodongo-native       expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 King Dodongo"
+hs-barinade-native      expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Barinade"
+
+[g2]
+hs-phantomganon-native  expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Phantom Ganon"
+hs-volvagia-native      expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Volvagia"
+hs-morpha-native        expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Morpha"
+
+[g3]
+hs-bongobongo-native    expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Bongo Bongo"
+hs-twinrova-native      expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Twinrova"
+
+[g4]
+hs-ganondorf-native     expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Ganondorf"
+hs-ganon-native         expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Ganon"

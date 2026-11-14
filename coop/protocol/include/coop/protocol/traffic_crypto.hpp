@@ -35,6 +35,16 @@ namespace coop::protocol {
 inline constexpr std::size_t kKeyShareBytes = 32;
 using KeyShare = std::array<std::uint8_t, kKeyShareBytes>;
 
+// A player's own key (protocol 11, the Lobby): 16 random bytes a kit makes
+// once and keeps (player-key.txt beside coop.ini), so the host's mutes and
+// bans follow the player, not the name. It goes to the server sealed in
+// JOIN_PROOF (seal_player_key), never in the plain HELLO, so nobody on the
+// way (a relay) reads it, and the server never relays it.
+inline constexpr std::size_t kPlayerKeyBytes = 16;
+using PlayerKey = std::array<std::uint8_t, kPlayerKeyBytes>;
+inline constexpr std::size_t kSealedPlayerKeyBytes = kPlayerKeyBytes + 16;  // the key, then its tag
+using SealedPlayerKey = std::array<std::uint8_t, kSealedPlayerKeyBytes>;
+
 // Bytes a sealed packet has on top of its message: counter and tag.
 inline constexpr std::size_t kSealCounterBytes = 8;
 inline constexpr std::size_t kSealTagBytes = 16;
@@ -78,6 +88,15 @@ struct TrafficKeys {
 // as they went on the wire (header included). `is_server` picks which key
 // is for sending. Empty when the other end's share is not a usable X25519
 // key (the all-zero secret of a low-order point).
+// The player key sealed for JOIN_PROOF, with a key of its own made from this
+// connection's client-to-server traffic key (TrafficKeys::send at the game,
+// ::receive at the server). That key is new for each connection and seals
+// only this, once, so its nonce is fixed. open_player_key: nothing when the
+// tag does not match (another connection's, or changed on the way).
+SealedPlayerKey seal_player_key(const std::array<std::uint8_t, 32>& client_to_server, const PlayerKey& key);
+std::optional<PlayerKey> open_player_key(const std::array<std::uint8_t, 32>& client_to_server,
+                                         const SealedPlayerKey& sealed);
+
 std::optional<TrafficKeys> derive_traffic_keys(const KeyPair& own, const KeyShare& peer,
                                                std::string_view password,
                                                std::span<const std::uint8_t> hello,

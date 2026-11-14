@@ -101,6 +101,10 @@ inline std::vector<Message> object_messages() {
   all.push_back(OcarinaNote{0, 0});
   all.push_back(VoiceFrame{2, 65535, 0, {0xf8, 0xff, 0xfe}});
   all.push_back(VoiceFrame{0, 7, voice::end, {}});
+  all.push_back(LinkSound{2, "Pl_Voice_Attack_00"});
+  all.push_back(LinkSound{0, "Ocarina_D"});
+  all.push_back(PlayerLook{0, {}});
+  all.push_back(PlayerLook{3, {{0, 0xC83020}, {4, 0x2050FF}, {63, 0}}});
   all.push_back(DropSpawn{0, kMadeId, "Graveyard", "Obj_Rupee_Green", {1.0f, 2.0f, 3.0f}, 123456789, drop_spawn::owned});
   all.push_back(DropSpawn{2, kMadeId, "spot00", "Obj_Heart", {0.0f, 0.0f, 0.0f}, 0, drop_spawn::again});
   all.push_back(DropTake{0, kMadeId, DropTakeReason::picked_up});
@@ -110,11 +114,21 @@ inline std::vector<Message> object_messages() {
   all.push_back(BossRoom{4, "SpiritTemple", 7, BossState::defeated});
   all.push_back(PvpMode{0, true});
   all.push_back(PvpMode{2, false});
+  all.push_back(Difficulty{});
+  all.push_back(Difficulty{3, false, DifficultyPreset::custom, {500, 25, 300}});
   all.push_back(PvpHit{0, 2, static_cast<std::uint8_t>(DamageCause::sword), 4, {1.0f, 2.0f, 3.0f}, {0.5f, 2.0f, 3.5f}});
   all.push_back(PvpHit{3, 1, 200, kMaxPvpLife, {0.0f, 0.0f, 0.0f}, {-1.0f, -2.0f, -3.0f}});
   all.push_back(PvpHurt{0, 1, 4, 8, 0});
   all.push_back(PvpHurt{2, 4, 0, 12, pvp_hurt::guarded});
   all.push_back(PvpHurt{1, 3, 6, 0, pvp_hurt::died});
+  all.push_back(DbnoMode{});
+  all.push_back(DbnoMode{2, false, kDbnoMaxBleedS, kDbnoMinReviveTenths, kDbnoMaxReviveLife});
+  all.push_back(DbnoStatus{});
+  all.push_back(DbnoStatus{0, DbnoState::downed, 450, 0, 0});
+  all.push_back(DbnoStatus{3, DbnoState::downed, kDbnoMaxLeftTenths, 1, 255});
+  all.push_back(DbnoStatus{2, DbnoState::out, 0, 0, 0});
+  all.push_back(DbnoRevive{0, 2, true});
+  all.push_back(DbnoRevive{4, 1, false});
   return all;
 }
 
@@ -132,6 +146,17 @@ inline std::vector<Message> every_message() {
   claim[0] ^= 0x5A;
   all.push_back(RejoinClaim{claim});
   all.push_back(DungeonEvent{1, "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_RoomD_PlatformUp"});
+  all.push_back(BossScene{2, "InsideTheDekuTree", 0, BossSceneKind::intro_start, {6.7f, 47.0f, 67.6f}});
+  all.push_back(BossScene{0, "InsideGanonCastle", 9, BossSceneKind::outro_end, {}});
+  all.push_back(BossHeart{0, 3, false, 16});
+  all.push_back(BossHeart{2, 3, true, kMaxBossHeartLife});
+  {
+    ModList mods{3, {{"oot-remake-rando", "1.2.0", {}}, {"hd-hud", "", {}}}};
+    for (std::size_t i = 0; i < mods.mods[0].hash.size(); ++i) mods.mods[0].hash[i] = static_cast<std::uint8_t>(i * 7);
+    all.push_back(mods);
+    all.push_back(ModList{});
+    all.push_back(ModSettings{2, {{"oot-remake-rando", "seed", "ABCD-1234"}, {"oot-remake-rando", "logic", ""}}});
+  }
   all.push_back(PlayerJoined{4, "Darunia"});
   all.push_back(PlayerLeft{1, LeaveReason::timed_out});
   all.push_back(Ping{0xFFFF'FFFF'FFFF'FFFEull});
@@ -156,6 +181,21 @@ inline std::vector<Message> every_message() {
   all.push_back(PlayerRide{0, kRideRiding, "Animal_Epona_Adult", {0.1f, -1.2f, 0.3f}, {0, 0.7f, 0, 0.7f}, Animation{"Run", 4.5f, 1.0f}});
   all.push_back(PlayerRide{2, 0, "", {}, {0, 0, 0, 1}, std::nullopt});
   for (Message& m : object_messages()) all.push_back(std::move(m));
+  all.push_back(Refused{RefuseReason::kicked});
+  all.push_back(Refused{RefuseReason::banned});
+  all.push_back(LobbyAction{LobbyActionKind::kick, 2});
+  all.push_back(LobbyAction{LobbyActionKind::unmute_chat, kMaxPlayers});
+  all.push_back(LobbyMutes{3, lobby_mute::voice | lobby_mute::chat});
+  all.push_back(LobbyMutes{1, 0});
+  all.push_back(LobbyResult{LobbyActionKind::ban, 4, LobbyResultCode::done});
+  all.push_back(LobbyResult{LobbyActionKind::mute_voice, 1, LobbyResultCode::not_host});
+  // Split screen (protocol 11, "Local players").
+  all.push_back(LocalJoin{2, "Mido"});
+  all.push_back(LocalJoined{1, 5, RefuseReason::server_full});
+  all.push_back(LocalJoined{3, 0, RefuseReason::name_taken});
+  all.push_back(LocalLeave{2});
+  all.push_back(*local_envelope(1, full_sample()));
+  all.push_back(*local_envelope(3, PlayerStatus{0, status::paused}));
   return all;
 }
 

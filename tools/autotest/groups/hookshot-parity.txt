@@ -67,7 +67,8 @@ hs-skulltula-token  expect='A:Obj_Token_Gold broken here'  expect='B:a token tak
 
 [g6]
 # People and items (hs-scenarios-2): NPC animations (#200), Zelda's Letter at the gate (#171), fishing (#151).
-hs-npc-anim  expect='B:share owner 0xa902e1bb9d91c6c5 is player 2'  expect='A:(?s)test mark talk.*npc-anim: our Link is in an event: \d+ NPCs near it claimed'  expect='A:(?s)test mark talk.*npc-anim: \d+ of the \d+ claimed NPCs are ours now'  expect='A:(?s)test mark closed.*npc-anim: the event.s NPCs are free again'  label="#200 NPC animations"
+hs-npc-anim  expect='B:share owner 0xa902e1bb9d91c6c5 is player 2'  expect='A:(?s)test mark a-near.*npc-anim: our Link is in an event: \d+ NPCs near it claimed'  expect='A:(?s)test mark a-near.*npc-anim: \d+ of the \d+ claimed NPCs are ours now'  expect='A:(?s)test mark closed.*npc-anim: the event.s NPCs are free again'  expect="B:npc-anim: Npc_Hylia_Dampe_001 copied from P1 at \S+ \S+ \S+ plays 'Talk'"  label="#200 NPC animations"
+hs-npc-walk  expect="B:npc-anim: Npc_\S+ copied from P1 at \S+ \S+ \S+ plays '(Walk|Run)"  expect='B:npc-anim: in 5 s [1-9]\d* owner animations played'  label="#200 walking townspeople (by eye: legs move in the w1..w8 shots of B)"
 hs-kak-letter  expect='A:bool 0x19898d14.*0 -> 1'  expect='B:bool 0x19898d14.*0 -> 1'  label="#171 letter at the gate"
 hs-fishing  expect="B:held 'Weapon_FishingRod'"  expect='A:share fish lure \d+ fish, [1-9]\d* near our lure'  label="#151 fishing (inconclusive if A rents no rod)"
 

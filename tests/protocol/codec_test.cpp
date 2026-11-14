@@ -102,7 +102,7 @@ TEST_CASE("an unknown sample component is skipped by its length") {
 
 TEST_CASE("an unknown message type is reported, not decoded") {
   Bytes b;
-  put_u16(b, 500);
+  put_u16(b, 60000);  // no type there (500 is LINK_SOUND)
   put_u16(b, 2);
   b.push_back(1);
   b.push_back(2);
@@ -1145,6 +1145,63 @@ TEST_CASE("issue 150: an object sample carries a boss's other AS slots") {
   CHECK(out.empty());
 }
 
+TEST_CASE("native boss sync: an object sample carries a boss's brain and action verbs") {
+  ObjectSample s{0, test::kPlacedId, 3, {}};
+  s.state.time = {5, 1};
+  s.state.bsa = BossBsa{7, 2, std::nullopt, {}};
+  Message m;
+  REQUIRE(decode(must_encode(s), m) == Error::none);
+  CHECK(std::get<ObjectSample>(m) == s);
+  // With an action: one place missing (NaN in the game), the extra pair there.
+  BossAction a;
+  a.verb = 11;
+  a.slot = 1;
+  a.flags = 0x101;
+  a.places[0] = Vec3{1.0f, 2.0f, 3.0f};
+  a.places[2] = Vec3{-4.0f, 5.5f, 0.0f};
+  a.extra = std::array<float, 2>{0.5f, 30.0f};
+  a.changed = false;
+  s.state.bsa->action = a;
+  REQUIRE(decode(must_encode(s), m) == Error::none);
+  CHECK(std::get<ObjectSample>(m) == s);
+  CHECK_FALSE(std::get<ObjectSample>(m).state.bsa->action->places[1]);
+  // The newest changes, brain and action, in order (seqs rising, none above seq).
+  s.state.bsa->recent = {BossChange{5, BossBrain{3, true}}, BossChange{6, a}, BossChange{7, BossBrain{2, false}}};
+  REQUIRE(decode(must_encode(s), m) == Error::none);
+  CHECK(std::get<ObjectSample>(m) == s);
+  const std::vector<BossChange> kept_recent = s.state.bsa->recent;
+  for (const auto& recent : {std::vector<BossChange>{BossChange{6, BossBrain{}}, BossChange{6, BossBrain{}}},
+                             std::vector<BossChange>{BossChange{8, BossBrain{}}},
+                             std::vector<BossChange>{BossChange{0, BossBrain{}}},
+                             std::vector<BossChange>(kMaxBossChanges + 1, BossChange{1, BossBrain{}})}) {
+    Bytes refused;
+    s.state.bsa->recent = recent;  // (in place: a copy of s made gcc 15 see the copy's vector as maybe uninitialized)
+    CHECK(encode(s, refused) == Error::bad_value);
+  }
+  s.state.bsa->recent = kept_recent;
+  // No bsa component: none after decoding (older senders).
+  Message plain;
+  REQUIRE(decode(must_encode(ObjectSample{0, test::kPlacedId, 3, {}}), plain) == Error::none);
+  CHECK_FALSE(std::get<ObjectSample>(plain).state.bsa);
+  // Refused: a place that is not finite.
+  Bytes out;
+  ObjectSample bad = s;
+  bad.state.bsa->action->places[1] = Vec3{std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f};
+  CHECK(encode(bad, out) == Error::bad_value);
+  CHECK(out.empty());
+  // Refused on decode: a has-action byte other than 0 or 1, too many changes.
+  ObjectSample plain_bsa{0, test::kPlacedId, 3, {}};
+  plain_bsa.state.time = {5, 1};
+  plain_bsa.state.bsa = BossBsa{1, 2, std::nullopt, {}};
+  Bytes b = must_encode(plain_bsa);
+  REQUIRE_GE(b.size(), 2u);
+  b[b.size() - 2] = 2;  // (the has-action byte: seq, verb, has-action, count last)
+  CHECK(decode_bytes(b) == Error::bad_value);
+  b[b.size() - 2] = 0;
+  b[b.size() - 1] = static_cast<std::uint8_t>(kMaxBossChanges + 1);  // (the count)
+  CHECK(decode_bytes(b) == Error::bad_value);
+}
+
 TEST_CASE("player pose has its number, channel and layout") {
   CHECK(static_cast<int>(MessageType::player_pose) == 26);
   CHECK(channel_of(MessageType::player_pose) == kChannelPlayerSamples);
@@ -1262,6 +1319,71 @@ TEST_CASE("a voice frame has its number, channel and layout") {
   CHECK(encode(VoiceFrame{0, 1, 0, std::vector<std::uint8_t>(kMaxVoiceBytes + 1, 0)}, out) ==
         Error::bad_value);
   CHECK(encode(VoiceFrame{200, 1, 0, {1}}, out) == Error::bad_value);
+}
+
+TEST_CASE("a Link sound has its number, channel and layout, and only the game's own names pass") {
+  CHECK(static_cast<int>(MessageType::link_sound) == 500);
+  CHECK(channel_of(MessageType::link_sound) == kChannelSession);
+  CHECK_FALSE(allowed_on_channel(MessageType::link_sound, kChannelPlayerSamples));
+  CHECK(may_send(Sender::client, MessageType::link_sound));
+  CHECK(may_send(Sender::server, MessageType::link_sound));
+  Message n = LinkSound{0, "Ocarina_D"};
+  CHECK(check_received(n, Sender::client, kChannelSession) == Error::none);
+  CHECK(set_sender(n, 16));
+  CHECK(sender_of(n) == 16);
+  const std::string longest(kMaxLinkSoundChars, 'a');
+  const Bytes b = must_encode(LinkSound{0, longest});
+  REQUIRE(b.size() == kHeaderSize + 1 + 2 + kMaxLinkSoundChars);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<LinkSound>(back).name == longest);
+  Bytes out;
+  CHECK(encode(LinkSound{0, ""}, out) == Error::bad_value);
+  CHECK(encode(LinkSound{0, longest + "a"}, out) == Error::bad_value);
+  CHECK(encode(LinkSound{0, "Pl Voice"}, out) == Error::bad_value);
+  CHECK(encode(LinkSound{0, "a/b"}, out) == Error::bad_value);
+  CHECK(encode(LinkSound{17, "Ocarina_D"}, out) == Error::bad_value);
+  Bytes bad = must_encode(LinkSound{0, "Ocarina_D"});
+  bad[kHeaderSize + 1 + 2] = '%';  // a name the game never has
+  Message m;
+  CHECK(decode(bad, m) == Error::bad_value);
+}
+
+TEST_CASE("a player's look has its number, channel and layout, each part once") {
+  CHECK(static_cast<int>(MessageType::player_look) == 430);
+  CHECK(channel_of(MessageType::player_look) == kChannelSession);
+  CHECK_FALSE(allowed_on_channel(MessageType::player_look, kChannelPlayerSamples));
+  CHECK(may_send(Sender::client, MessageType::player_look));
+  CHECK(may_send(Sender::server, MessageType::player_look));
+  Message n = PlayerLook{0, {{3, 0xE0C030}, {4, 0x20A040}}};
+  CHECK(check_received(n, Sender::client, kChannelSession) == Error::none);
+  CHECK(set_sender(n, 16));
+  CHECK(sender_of(n) == 16);
+  const Bytes b = must_encode(PlayerLook{2, {{3, 0xE0C030}, {4, 0x20A040}}});
+  REQUIRE(b.size() == kHeaderSize + 2 + 2 * 4);
+  CHECK(b[kHeaderSize + 2] == 3);
+  CHECK(b[kHeaderSize + 3] == 0xE0);  // red, green, blue
+  CHECK(b[kHeaderSize + 5] == 0x30);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<PlayerLook>(back) == PlayerLook{2, {{3, 0xE0C030}, {4, 0x20A040}}});
+  // every part number a build may grow to, once each
+  PlayerLook all{0, {}};
+  for (std::uint8_t i = 0; i < kMaxLookParts; ++i) all.parts.push_back({i, 0x010203u * i});
+  REQUIRE(decode(must_encode(all), back) == Error::none);
+  CHECK(std::get<PlayerLook>(back) == all);
+  Bytes out;
+  CHECK(encode(PlayerLook{0, {{3, 1}, {3, 2}}}, out) == Error::bad_value);   // a part twice
+  CHECK(encode(PlayerLook{0, {{64, 1}}}, out) == Error::bad_value);          // past the numbers kept
+  CHECK(encode(PlayerLook{0, {{1, 0x1000000}}}, out) == Error::bad_value);   // not 0xRRGGBB
+  CHECK(encode(PlayerLook{17, {}}, out) == Error::bad_value);
+  Bytes bad = must_encode(PlayerLook{0, {{3, 1}, {4, 2}}});
+  bad[kHeaderSize + 2 + 4] = 3;  // the second part as the first
+  Message m;
+  CHECK(decode(bad, m) == Error::bad_value);
+  Bytes cut = must_encode(PlayerLook{0, {{3, 1}}});
+  cut.pop_back();
+  CHECK(decode(cut, m) != Error::none);
 }
 
 TEST_CASE("bad times of day are refused") {
@@ -1741,6 +1863,141 @@ TEST_CASE("pvp messages: types 241 to 243, mode on the session channel, hits and
   CHECK(back == hurt);
 }
 
+TEST_CASE("down but not out: types 470 to 472, mode and state on the session channel, revive on ownership") {
+  CHECK(static_cast<int>(MessageType::dbno_mode) == 470);
+  CHECK(static_cast<int>(MessageType::dbno_state) == 471);
+  CHECK(static_cast<int>(MessageType::dbno_revive) == 472);
+  CHECK(channel_of(MessageType::dbno_mode) == kChannelSession);
+  CHECK(channel_of(MessageType::dbno_state) == kChannelSession);
+  CHECK(channel_of(MessageType::dbno_revive) == kChannelOwnership);
+  CHECK_FALSE(allowed_on_channel(MessageType::dbno_revive, kChannelSession));
+  CHECK_FALSE(allowed_on_channel(MessageType::dbno_state, kChannelOwnership));
+  CHECK_FALSE(allowed_on_channel(MessageType::dbno_mode, kChannelPlayerSamples));
+  for (const auto t : {MessageType::dbno_mode, MessageType::dbno_state, MessageType::dbno_revive}) {
+    CHECK(may_send(Sender::client, t));
+    CHECK(may_send(Sender::server, t));
+  }
+
+  // The defaults are the ones a server starts with: on, 45 s, 3 s, three hearts.
+  Message mode = DbnoMode{};
+  CHECK(std::get<DbnoMode>(mode) == DbnoMode{0, true, 45, 30, 12});
+  CHECK_FALSE(sender_of(mode));  // no player field: the server says who set it
+  Bytes b = must_encode(mode);
+  REQUIRE(b.size() == kHeaderSize + 5);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == mode);
+
+  Message state = DbnoStatus{0, DbnoState::downed, 123, 2, 200};
+  CHECK(check_received(state, Sender::client, kChannelSession) == Error::none);
+  CHECK_FALSE(set_sender(state, 2));  // nobody revives themselves
+  CHECK(set_sender(state, 1));
+  CHECK(sender_of(state) == 1);
+  CHECK(check_received(state, Sender::client, kChannelSession) == Error::wrong_sender);
+  CHECK(check_received(state, Sender::server, kChannelSession) == Error::none);
+  b = must_encode(state);
+  REQUIRE(b.size() == kHeaderSize + 6);
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == state);
+
+  Message revive = DbnoRevive{0, 2, true};
+  CHECK(check_received(revive, Sender::client, kChannelOwnership) == Error::none);
+  CHECK_FALSE(set_sender(revive, 2));
+  CHECK(set_sender(revive, 3));
+  b = must_encode(revive);
+  REQUIRE(b.size() == kHeaderSize + 3);
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == revive);
+}
+
+TEST_CASE("bad down but not out messages are refused") {
+  Bytes out;
+  CHECK(encode(DbnoMode{kMaxPlayers + 1, true, 45, 30, 12}, out) == Error::bad_value);
+  CHECK(encode(DbnoMode{0, true, kDbnoMinBleedS - 1, 30, 12}, out) == Error::bad_value);
+  CHECK(encode(DbnoMode{0, true, kDbnoMaxBleedS + 1, 30, 12}, out) == Error::bad_value);
+  CHECK(encode(DbnoMode{0, true, 45, kDbnoMinReviveTenths - 1, 12}, out) == Error::bad_value);
+  CHECK(encode(DbnoMode{0, true, 45, kDbnoMaxReviveTenths + 1, 12}, out) == Error::bad_value);
+  CHECK(encode(DbnoMode{0, true, 45, 30, 0}, out) == Error::bad_value);
+  CHECK(encode(DbnoMode{0, true, 45, 30, kDbnoMaxReviveLife + 1}, out) == Error::bad_value);
+  // Off still carries rules within the limits, so turning it on again needs no second message.
+  CHECK(encode(DbnoMode{0, false, 0, 30, 12}, out) == Error::bad_value);
+
+  CHECK(encode(DbnoStatus{kMaxPlayers + 1, DbnoState::up, 0, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(DbnoStatus{0, static_cast<DbnoState>(3), 0, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(DbnoStatus{0, DbnoState::downed, kDbnoMaxLeftTenths + 1, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(DbnoStatus{0, DbnoState::up, 1, 0, 0}, out) == Error::bad_value);      // time left while up
+  CHECK(encode(DbnoStatus{0, DbnoState::out, 0, 2, 0}, out) == Error::bad_value);     // a reviver while out
+  CHECK(encode(DbnoStatus{0, DbnoState::downed, 10, 0, 9}, out) == Error::bad_value); // progress, nobody reviving
+  CHECK(encode(DbnoStatus{2, DbnoState::downed, 10, 2, 9}, out) == Error::bad_value); // itself
+  CHECK(encode(DbnoStatus{0, DbnoState::downed, 10, kMaxPlayers + 1, 9}, out) == Error::bad_value);
+
+  CHECK(encode(DbnoRevive{0, 0, true}, out) == Error::bad_value);                // nobody
+  CHECK(encode(DbnoRevive{2, 2, true}, out) == Error::bad_value);                // itself
+  CHECK(encode(DbnoRevive{0, kMaxPlayers + 1, true}, out) == Error::bad_value);
+  CHECK(out.empty());
+
+  // The same from the wire.
+  Message back;
+  Bytes b = must_encode(DbnoMode{});
+  b[kHeaderSize + 1] = 2;  // mode
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(DbnoMode{});
+  b[kHeaderSize + 2] = 0;  // bleed-out seconds
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(DbnoStatus{0, DbnoState::downed, 10, 0, 0});
+  b[kHeaderSize + 1] = 3;  // state
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(DbnoStatus{0, DbnoState::downed, 10, 0, 0});
+  b[kHeaderSize + 1] = 0;  // up, with time left
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(DbnoRevive{0, 2, true});
+  b[kHeaderSize + 2] = 2;  // holding
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(DbnoRevive{0, 2, true});
+  b[kHeaderSize + 1] = 0;  // target
+  CHECK(decode(b, back) == Error::bad_value);
+}
+
+TEST_CASE("difficulty message: type 480, on the session channel, both ways") {
+  CHECK(static_cast<int>(MessageType::difficulty) == 480);
+  CHECK(channel_of(MessageType::difficulty) == kChannelSession);
+  CHECK(allowed_on_channel(MessageType::difficulty, kChannelSession));
+  CHECK_FALSE(allowed_on_channel(MessageType::difficulty, kChannelOwnership));
+  CHECK(may_send(Sender::client, MessageType::difficulty));
+  CHECK(may_send(Sender::server, MessageType::difficulty));
+
+  Message m = Difficulty{2, false, DifficultyPreset::hard, {200, 150, 150}};
+  CHECK_FALSE(sender_of(m));  // no player field: the server says who set it
+  Bytes b = must_encode(m);
+  REQUIRE(b.size() == kHeaderSize + 3 + 6);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == m);
+  m = Difficulty{};  // automatic, the game as it is
+  REQUIRE(decode(must_encode(m), back) == Error::none);
+  CHECK(back == m);
+
+  Bytes out;
+  CHECK(encode(Difficulty{kMaxPlayers + 1, true, DifficultyPreset::normal, {}}, out) == Error::bad_value);
+  CHECK(encode(Difficulty{0, false, static_cast<DifficultyPreset>(4), {}}, out) == Error::bad_value);
+  CHECK(encode(Difficulty{0, false, DifficultyPreset::custom, {24, 100, 100}}, out) == Error::bad_value);
+  CHECK(encode(Difficulty{0, false, DifficultyPreset::custom, {100, 401, 100}}, out) == Error::bad_value);
+  CHECK(encode(Difficulty{0, false, DifficultyPreset::custom, {100, 100, 99}}, out) == Error::bad_value);
+  b = must_encode(Difficulty{});
+  b[kHeaderSize + 1] = 2;  // neither automatic nor not
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(Difficulty{});
+  b[kHeaderSize + 2] = 4;  // no such preset
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(Difficulty{});
+  b[b.size() - 1] = 0;  // enemies 0%: under the slider
+  b[b.size() - 2] = 0;
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(Difficulty{});
+  b.pop_back();
+  CHECK(decode(b, back) != Error::none);
+}
+
 TEST_CASE("bad pvp messages are refused") {
   Bytes out;
   CHECK(encode(PvpMode{kMaxPlayers + 1, true}, out) == Error::bad_value);
@@ -1763,6 +2020,81 @@ TEST_CASE("bad pvp messages are refused") {
   CHECK(decode(b, m) == Error::bad_value);
   b = must_encode(PvpHit{0, 1, 1, 4, {}, {}});
   b[kHeaderSize + 3] = 0xff;  // amount far over the most
+  CHECK(decode(b, m) == Error::bad_value);
+}
+
+TEST_CASE("lobby messages have their numbers, channel, senders and layout") {
+  CHECK(static_cast<std::uint16_t>(MessageType::lobby_action) == 510);
+  CHECK(static_cast<std::uint16_t>(MessageType::lobby_mutes) == 511);
+  CHECK(static_cast<std::uint16_t>(MessageType::lobby_result) == 512);
+  CHECK(static_cast<std::uint8_t>(RefuseReason::kicked) == 7);
+  CHECK(static_cast<std::uint8_t>(RefuseReason::banned) == 8);
+  for (const auto t : {MessageType::lobby_action, MessageType::lobby_mutes,
+                       MessageType::lobby_result}) {
+    CHECK(channel_of(t) == kChannelSession);
+    CHECK_FALSE(allowed_on_channel(t, kChannelOwnership));
+  }
+  CHECK(may_send(Sender::client, MessageType::lobby_action));
+  CHECK_FALSE(may_send(Sender::server, MessageType::lobby_action));
+  CHECK(may_send(Sender::server, MessageType::lobby_mutes));
+  CHECK_FALSE(may_send(Sender::client, MessageType::lobby_mutes));
+  CHECK(may_send(Sender::server, MessageType::lobby_result));
+  CHECK_FALSE(may_send(Sender::client, MessageType::lobby_result));
+
+  Message action = LobbyAction{LobbyActionKind::mute_chat, 3};
+  CHECK_FALSE(sender_of(action));  // no player field: the server knows who sent it
+  Bytes b = must_encode(action);
+  REQUIRE(b.size() == kHeaderSize + 2);
+  CHECK(b[kHeaderSize] == 5);
+  CHECK(b[kHeaderSize + 1] == 3);
+  b = must_encode(LobbyResult{LobbyActionKind::kick, 2, LobbyResultCode::is_host});
+  REQUIRE(b.size() == kHeaderSize + 3);
+  CHECK(b[kHeaderSize + 2] == 3);
+  b.back() = 99;  // a newer server's result: kept
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(static_cast<std::uint8_t>(std::get<LobbyResult>(back).result) == 99);
+  b = must_encode(LobbyMutes{2, 0x80});  // unknown bits kept
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<LobbyMutes>(back).flags == 0x80);
+}
+
+TEST_CASE("join proof: the sealed player key (protocol 11) comes after the proof, or nothing") {
+  JoinProof p{};
+  p.proof[0] = 1;
+  const Bytes plain = must_encode(p);
+  SealedPlayerKey sealed{};
+  sealed[0] = 7;
+  p.player_key = sealed;
+  const Bytes with_key = must_encode(p);
+  CHECK(with_key.size() == plain.size() + kSealedPlayerKeyBytes);
+  Message back;
+  REQUIRE(decode(with_key, back) == Error::none);
+  CHECK(std::get<JoinProof>(back) == p);
+  REQUIRE(decode(plain, back) == Error::none);
+  CHECK_FALSE(std::get<JoinProof>(back).player_key);
+  Bytes odd = plain;
+  odd.insert(odd.end(), 16, 0);  // half a sealed key
+  set_u16(odd, 2, static_cast<std::uint16_t>(odd.size() - kHeaderSize));
+  CHECK(decode(odd, back) != Error::none);
+}
+
+TEST_CASE("bad lobby messages are refused") {
+  Bytes out;
+  CHECK(encode(LobbyAction{static_cast<LobbyActionKind>(0), 2}, out) == Error::bad_value);
+  CHECK(encode(LobbyAction{static_cast<LobbyActionKind>(kMaxLobbyAction + 1), 2}, out) ==
+        Error::bad_value);
+  CHECK(encode(LobbyAction{LobbyActionKind::kick, 0}, out) == Error::bad_value);
+  CHECK(encode(LobbyAction{LobbyActionKind::kick, kMaxPlayers + 1}, out) == Error::bad_value);
+  CHECK(encode(LobbyMutes{0, 1}, out) == Error::bad_value);
+  CHECK(encode(LobbyResult{LobbyActionKind::kick, 0, LobbyResultCode::done}, out) ==
+        Error::bad_value);
+  Message m;
+  Bytes b = must_encode(LobbyAction{LobbyActionKind::ban, 2});
+  b[kHeaderSize] = 7;  // no such action
+  CHECK(decode(b, m) == Error::bad_value);
+  b[kHeaderSize] = 2;
+  b[kHeaderSize + 1] = 0;  // nobody
   CHECK(decode(b, m) == Error::bad_value);
 }
 
@@ -1966,4 +2298,194 @@ TEST_CASE("platform counter: type 401, object samples channel, checked ticks (pl
   Bytes cut = must_encode(Message{m});
   cut[kHeaderSize + 1 + 15 + 8] = 3;
   CHECK(decode(cut, back) == Error::truncated);
+}
+
+TEST_CASE("mod list: type 490, session channel, ids checked, relayed with the sender (modloader)") {
+  CHECK(static_cast<int>(MessageType::mod_list) == 490);
+  CHECK(channel_of(MessageType::mod_list) == kChannelSession);
+  CHECK(allowed_on_channel(MessageType::mod_list, kChannelSession));
+  CHECK_FALSE(allowed_on_channel(MessageType::mod_list, kChannelProgress));
+  CHECK(may_send(Sender::client, MessageType::mod_list));
+  CHECK(may_send(Sender::server, MessageType::mod_list));
+  ModList m;
+  m.player_number = 5;
+  m.mods.push_back({"oot-remake-rando", "1.2", {}});
+  m.mods[0].hash[15] = 0xEE;
+  const Bytes b = must_encode(Message{m});
+  // type, length; u8 player, u8 count, id (2 + 16), version (2 + 3), hash 16
+  CHECK(b.size() == 4 + 1 + 1 + 18 + 5 + 16);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == Message{m});
+  CHECK(sender_of(back) == std::optional<std::uint8_t>{5});
+  Bytes out;
+  const auto bad = [&](auto change) {
+    ModList c = m;
+    change(c);
+    return encode(c, out) == Error::bad_value;
+  };
+  CHECK(bad([](ModList& c) { c.mods[0].id.clear(); }));
+  CHECK(bad([](ModList& c) { c.mods[0].id = "Upper"; }));
+  CHECK(bad([](ModList& c) { c.mods[0].id = "-dash-first"; }));
+  CHECK(bad([](ModList& c) { c.mods[0].id = std::string(kMaxModIdChars + 1, 'a'); }));
+  CHECK(bad([](ModList& c) { c.mods.push_back(c.mods[0]); }));
+  CHECK(bad([](ModList& c) { c.mods.resize(kMaxModEntries + 1); }));
+  CHECK(bad([](ModList& c) { c.player_number = kMaxPlayers + 1; }));
+  CHECK(encode(ModList{0, {{"a.b_c-9", "", {}}}}, out) == Error::none);
+  Bytes cut = must_encode(Message{m});
+  cut[kHeaderSize + 1] = 2;  // two mods said, one there
+  CHECK(decode(cut, back) == Error::truncated);
+}
+
+TEST_CASE("mod settings: type 491, session channel, unique keys (modloader)") {
+  CHECK(static_cast<int>(MessageType::mod_settings) == 491);
+  CHECK(channel_of(MessageType::mod_settings) == kChannelSession);
+  CHECK(may_send(Sender::client, MessageType::mod_settings));
+  ModSettings m{1, {{"rando", "seed", "Z9"}, {"rando", "shuffle_chests", "1"}}};
+  const Bytes b = must_encode(Message{m});
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == Message{m});
+  Bytes out;
+  const auto bad = [&](auto change) {
+    ModSettings c = m;
+    change(c);
+    return encode(c, out) == Error::bad_value;
+  };
+  CHECK(bad([](ModSettings& c) { c.settings[1].key = "seed"; }));
+  CHECK(bad([](ModSettings& c) { c.settings[0].key = "Seed"; }));
+  CHECK(bad([](ModSettings& c) { c.settings[0].key.clear(); }));
+  CHECK(bad([](ModSettings& c) { c.settings[0].mod_id = "x y"; }));
+  CHECK(bad([](ModSettings& c) { c.settings.resize(kMaxModSettingEntries + 1, c.settings[0]); }));
+  ModSettings longer = m;
+  longer.settings[0].value = std::string(kMaxModSettingValueChars + 1, 'v');
+  CHECK(encode(longer, out) == Error::string_too_long);
+}
+
+TEST_CASE("local players: types 460 to 464, their channels and senders (split screen)") {
+  CHECK(static_cast<int>(MessageType::local_join) == 460);
+  CHECK(static_cast<int>(MessageType::local_message) == 464);
+  CHECK(channel_of(MessageType::local_sample) == kChannelPlayerSamples);
+  CHECK(allowed_on_channel(MessageType::local_sample, kChannelPlayerSamples));
+  CHECK_FALSE(allowed_on_channel(MessageType::local_sample, kChannelSession));
+  for (MessageType t : {MessageType::local_join, MessageType::local_joined, MessageType::local_leave,
+                        MessageType::local_message}) {
+    CHECK(channel_of(t) == kChannelSession);
+    CHECK(allowed_on_channel(t, kChannelSession));
+    CHECK_FALSE(allowed_on_channel(t, kChannelPlayerSamples));
+  }
+  CHECK(may_send(Sender::client, MessageType::local_join));
+  CHECK_FALSE(may_send(Sender::server, MessageType::local_join));
+  CHECK(may_send(Sender::server, MessageType::local_joined));
+  CHECK_FALSE(may_send(Sender::client, MessageType::local_joined));
+  CHECK_FALSE(may_send(Sender::server, MessageType::local_sample));
+}
+
+TEST_CASE("local players: seats are 1 to 3, a refusal names why, a join names no reason") {
+  Bytes out;
+  CHECK(encode(Message{LocalJoin{0, "Mido"}}, out) == Error::bad_value);
+  CHECK(encode(Message{LocalJoin{4, "Mido"}}, out) == Error::bad_value);
+  CHECK(encode(Message{LocalJoin{1, ""}}, out) == Error::bad_value);
+  CHECK(encode(Message{LocalJoin{1, std::string(17, 'a')}}, out) != Error::none);
+  CHECK(encode(Message{LocalLeave{0}}, out) == Error::bad_value);
+  CHECK(encode(Message{LocalJoined{1, 17, RefuseReason::server_full}}, out) == Error::bad_value);
+  // A join with a reason byte, or a refusal without one, does not decode.
+  Bytes joined = must_encode(LocalJoined{1, 5, RefuseReason::server_full});
+  joined.back() = 3;
+  CHECK(decode_bytes(joined) == Error::bad_value);
+  Bytes refused = must_encode(LocalJoined{1, 0, RefuseReason::server_full});
+  refused.back() = 0;
+  CHECK(decode_bytes(refused) == Error::bad_value);
+}
+
+TEST_CASE("local players: an envelope carries only its own kinds, whole, and never another envelope") {
+  PlayerSample sample;
+  sample.time = {5, 1};
+  sample.position = Vec3{1.0f, 2.0f, 3.0f};
+  const auto s = local_envelope(2, sample);
+  REQUIRE(s.has_value());
+  REQUIRE(std::holds_alternative<LocalSample>(*s));
+  CHECK(std::get<LocalSample>(*s).seat == 2);
+  CHECK(local_inner(*s) == Message{sample});
+  const auto m = local_envelope(1, PlayerEquip{0, {}});
+  REQUIRE(m.has_value());
+  CHECK(std::holds_alternative<LocalMessage>(*m));
+  CHECK(local_inner(*m) == Message{PlayerEquip{0, {}}});
+  CHECK_FALSE(local_envelope(1, Chat{0, "hi"}).has_value());          // chat stays the connection's player's
+  CHECK_FALSE(local_envelope(1, FlagSet{0, {}}).has_value());        // the world is the game's, not a seat's
+  CHECK_FALSE(local_envelope(0, sample).has_value());                // no seat 0
+  CHECK_FALSE(local_envelope(1, *s).has_value());                    // no envelope in an envelope
+  CHECK_FALSE(local_inner(Message{Ping{1}}).has_value());
+  // A wrong kind inside, written by hand, is refused on decode.
+  Bytes body{1};
+  const Bytes chat = must_encode(Chat{0, "hi"});
+  body.insert(body.end(), chat.begin(), chat.end());
+  Bytes wire{static_cast<std::uint8_t>(464 & 0xff), static_cast<std::uint8_t>(464 >> 8),
+             static_cast<std::uint8_t>(body.size()), 0};
+  wire.insert(wire.end(), body.begin(), body.end());
+  CHECK(decode_bytes(wire) == Error::bad_value);
+  // The right kind in the wrong envelope too: a sample in LOCAL_MESSAGE.
+  Bytes body2{1};
+  const Bytes sb = must_encode(sample);
+  body2.insert(body2.end(), sb.begin(), sb.end());
+  Bytes wire2{static_cast<std::uint8_t>(464 & 0xff), static_cast<std::uint8_t>(464 >> 8),
+              static_cast<std::uint8_t>(body2.size()), 0};
+  wire2.insert(wire2.end(), body2.begin(), body2.end());
+  CHECK(decode_bytes(wire2) == Error::bad_value);
+}
+
+TEST_CASE("boss cutscene messages: types 520 and 521, on the session channel, both ways") {
+  CHECK(static_cast<int>(MessageType::boss_scene) == 520);
+  CHECK(static_cast<int>(MessageType::boss_heart) == 521);
+  CHECK(channel_of(MessageType::boss_scene) == kChannelSession);
+  CHECK(channel_of(MessageType::boss_heart) == kChannelSession);
+  CHECK_FALSE(allowed_on_channel(MessageType::boss_heart, kChannelOwnership));
+
+  Message scene = BossScene{0, "DodongoCavern", 1, BossSceneKind::intro_end, {24.0f, 73.4f, -77.5f}};
+  CHECK(check_received(scene, Sender::client, kChannelSession) == Error::none);
+  CHECK(set_sender(scene, 3));
+  CHECK(check_received(scene, Sender::server, kChannelSession) == Error::none);
+  Bytes b = must_encode(scene);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == scene);
+
+  Message claim = BossHeart{0, 4, false, 20};
+  CHECK(check_received(claim, Sender::client, kChannelSession) == Error::none);
+  b = must_encode(claim);
+  REQUIRE(b.size() == kHeaderSize + 7);
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == claim);
+  Message given = BossHeart{2, 4, true, 20};
+  CHECK(check_received(given, Sender::server, kChannelSession) == Error::none);
+  CHECK(check_received(given, Sender::client, kChannelSession) == Error::wrong_sender);  // a client names itself 0
+}
+
+TEST_CASE("bad boss cutscene messages are refused") {
+  Bytes out;
+  CHECK(encode(BossScene{0, "", 0, BossSceneKind::intro_start, {}}, out) == Error::bad_value);
+  CHECK(encode(BossScene{0, "X", kMaxSceneBoss + 1, BossSceneKind::intro_start, {}}, out) == Error::bad_value);
+  CHECK(encode(BossScene{0, "X", 0, static_cast<BossSceneKind>(0), {}}, out) == Error::bad_value);
+  CHECK(encode(BossScene{0, "X", 0, static_cast<BossSceneKind>(5), {}}, out) == Error::bad_value);
+  CHECK(encode(BossScene{0, "X", 0, BossSceneKind::intro_start, {std::nanf(""), 0.0f, 0.0f}}, out) ==
+        Error::bad_value);
+  CHECK(encode(BossHeart{0, 0, false, 0}, out) == Error::bad_value);
+  CHECK(encode(BossHeart{0, 0, false, kMaxBossHeartLife + 1}, out) == Error::bad_value);
+  CHECK(encode(BossHeart{0, kMaxSceneBoss + 1, false, 16}, out) == Error::bad_value);
+  CHECK(encode(BossHeart{kMaxPlayers + 1, 0, true, 16}, out) == Error::bad_value);
+  CHECK(out.empty());
+
+  Message back;
+  Bytes b = must_encode(BossScene{0, "X", 0, BossSceneKind::intro_start, {}});
+  b[kHeaderSize + 5] = 9;  // kind: after u8 player, u16 length + "X", u8 boss
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(BossScene{0, "X", 0, BossSceneKind::intro_start, {}});
+  b[kHeaderSize + 4] = kMaxSceneBoss + 1;  // boss
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(BossHeart{0, 0, false, 16});
+  b[kHeaderSize + 2] = 2;  // given
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(BossHeart{0, 0, false, 16});
+  b[kHeaderSize + 3] = 81;  // max life (u32 little end first byte)
+  CHECK(decode(b, back) == Error::bad_value);
 }

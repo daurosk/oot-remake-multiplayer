@@ -677,8 +677,45 @@ void FlagWatcher::add(FlagStore& store, const FlagEntry& delta) {
   restate_.insert(key);
 }
 
+const std::vector<FlagKey>& FlagWatcher::diff_keys() {
+  audit_from_ = static_cast<std::size_t>(-1);
+  const std::vector<FlagKey>& list = shared_.keys();
+  if (!events_) return list;
+  // The whole list: the first time (the baseline), when a flag joined the
+  // list, in a load window (a save load or a room load moves many flags, and
+  // the rules of the window look at each), and when events were lost.
+  if (!baselined_ || wrote_all_ || listed_ != list.size() || window_ || settling()) {
+    baselined_ = true;
+    wrote_all_ = false;
+    listed_ = list.size();
+    wrote_.clear();
+    ++stats_.full_reads;
+    return list;
+  }
+  visit_.clear();
+  for (const FlagKey& key : wrote_) {
+    if (shared_.contains(key)) visit_.push_back(key);
+  }
+  stats_.event_reads += visit_.size();
+  for (const FlagKey& key : restate_) {
+    if (!wrote_.contains(key) && shared_.contains(key)) visit_.push_back(key);
+  }
+  wrote_.clear();
+  audit_from_ = visit_.size();
+  if (!list.empty()) {
+    const std::size_t slice = (list.size() + kAuditFrames - 1) / kAuditFrames;
+    for (std::size_t i = 0; i < slice; ++i) {
+      audit_next_ = audit_next_ >= list.size() ? 0 : audit_next_;
+      visit_.push_back(list[audit_next_++]);
+    }
+  }
+  return visit_;
+}
+
 void FlagWatcher::diff(FlagStore& store, Table& changes) {
-  for (const FlagKey key : shared_.keys()) {
+  const std::vector<FlagKey>& keys = diff_keys();
+  for (std::size_t n = 0; n < keys.size(); ++n) {
+    const FlagKey key = keys[n];
     std::optional<FlagEntry> now = store.read(key);
     if (!now) {
       ++stats_.read_failures;
@@ -688,6 +725,8 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     const auto [it, first] = last_.try_emplace(key, *now);
     if (first) continue;  // the first read is the baseline
     if (it->second == *now && !restate_.contains(key)) continue;
+    // The audit's read of a flag found a change that no event had named.
+    if (n >= audit_from_ && it->second != *now) ++stats_.event_misses;
     if (window_ && loading_ && !moved_ && key.kind == FlagKeyKind::named && !one_way_.contains(key) &&
         went_back(it->second, *now)) {
       // The title screen (no scene) and saved progress going back: a save
@@ -791,6 +830,28 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     }
     if (now->value == 0 && (pickups_.contains(key) || one_way_.contains(key)) && !restate_.contains(key)) {
       ++stats_.pickup_resets;  // the game reset it (a scene change): ours only
+      continue;
+    }
+    if (const auto cap = max_caps_.find(key);
+        cap != max_caps_.end() && !restate_.contains(key) && before.kind == protocol::FlagKind::int32 &&
+        now->kind == protocol::FlagKind::int32 && as_int(now->value) > as_int(before.value) &&
+        as_int(now->value) > cap->second && store.is_max(key)) {
+      // Past the cap (cap_max: a second pickup of a boss's one heart
+      // container): put back, never sent.
+      FlagEntry back = before;
+      back.key = key;
+      back.value = as_bits((std::max)(as_int(before.value), std::int64_t{cap->second}));
+      if (store.write_exact(back)) {  // exact: the max rule would keep the higher
+        ++stats_.max_caps_kept;
+        ++stats_.applied;
+        it->second = back;
+        pending_.erase(key);
+        continue;
+      }
+      // Not put back now: still never sent. The value before stays the one
+      // seen, so the next frame sees the rise again and tries again.
+      ++stats_.write_failures;
+      it->second = before;
       continue;
     }
     if (!restate_.contains(key) && before.kind == protocol::FlagKind::int32 &&

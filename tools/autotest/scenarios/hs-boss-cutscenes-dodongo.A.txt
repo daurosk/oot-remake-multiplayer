@@ -1,0 +1,47 @@
+# hs-boss-cutscenes-dodongo (Hookshot, branch boss-cutscenes): King Dodongo's intro and death for both
+# players, in the boss rush's DodongoStage (as hs-dodongo-native: no kit save is from before him). Both games
+# land in the room together, so both games take the intro themselves: the lower number (A, player 1) leads
+# in both, B's intro ends with A's; then A kills him (test kill) and both play the death together.
+# In a boss rush stage the area is "near the starter" and nobody is moved (coop_boss_scenes.h).
+# NEEDS a hookshot.exe with the event request wrap (patch 0005).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-boss-cutscenes-dodongo
+# PASS (proof lines):
+#  1. A: "Dm_DodongoCave_BossIn: our game started it". If the stage's intro has another name, neither log has
+#     a Dm_DodongoCave_BossIn line: FINDING (note the name from "coop: dungeon:"/"cutscene:" lines), not a FAIL
+#     of the rules; the death check below still counts.
+#  2. B: either "player 1 started it too: theirs leads (lower number)" (both took it) or "playing it here too"
+#     then "playing with player 1's". B never sends cutscene 2 (only A's intro ends it).
+#  3. After A's "ours is over: the others' end too", B: "the starter's intro is over: skipping ours" or B was
+#     already over. Screens a-fight / b-fight: both free, King Dodongo walking on both.
+#  4. After a-kill, A: "Dm_DodongoCave_BossOut: our game started the death"; B: "playing it here too" or
+#     "playing with player 1's". Screens a-death / b-death: the death on both.
+#  5. No "moving in" line in either log (boss rush: nobody moved).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 600
+mark start
+warp DodongoStage DodongoStage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-in
+wait 300
+mark a-intro
+wait 1500
+mark a-fight
+wait 600
+kill Enemy_DungeonBoss_Dodongo
+wait 120
+mark a-kill
+wait 300
+mark a-death
+wait 2400
+mark end

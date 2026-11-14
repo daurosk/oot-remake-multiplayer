@@ -24,6 +24,10 @@ Group N (the Nth [group] in the file) uses the game folders <kit root>\\hookshot
 <kit root>\\shots-hookshot\\groups-<time>\\<group>\\. `prepare` fills those folders: the cached game
 (tools/hookshot/hs.py), plus the base pair's (hookshot-A / -B) autotest-save, mods\\ and coop-options.ini.
 
+With --lane N (tools/autotest/lanes.py) every group runs in that test lane instead, one after another on the lane's
+pair, port and pipes (run.ps1 -Lane N, which holds the lane's lock for each run), run folders under
+<kit root>\\ls\\shots-laneN\\groups-<time>\\. The other lane can run another group file at the same time.
+
 Result of one run (merge): FAILED.txt in the run folder -> FAIL; a FAIL line in counts.txt -> FAIL; run.ps1's exit code
 not 0 -> FAIL; every expect= found -> PASS, one missing -> FAIL; no expect= -> PLAYED (it ran to the end; look at the
 shots). Nothing here starts a game unless `run` is called without --dry-run.
@@ -153,10 +157,28 @@ def quote(cmd):
     return " ".join('"%s"' % c if (" " in c or not c) else c for c in cmd)
 
 
-def plan(groups, kit_root, run_root, server):
-    setups = [group_setup(i, name, kit_root, run_root) for i, (name, _) in enumerate(groups, 1)]
-    check_distinct(setups)
-    return [(s, runs, [run_command(s, r, server) for r in runs]) for s, (_, runs) in zip(setups, groups)]
+def lane_setup(lane, name, kit_root, run_root):
+    """A group run in test lane `lane`: the lane's pair, port and pipe (lanes.py)."""
+    sys.path.insert(0, HERE)
+    import lanes
+    L = lanes.lane(lane, kit_root)
+    return {"name": name, "index": lane, "lane": lane, "a": L["a"], "b": L["b"], "port": L["port"], "pipe": L["pipe"],
+            "shots": os.path.join(run_root, name)}
+
+
+def plan(groups, kit_root, run_root, server, lane=0):
+    if lane:   # every group on the lane's one pair: run_groups plays them one after another
+        setups = [lane_setup(lane, name, kit_root, run_root) for name, _ in groups]
+    else:
+        setups = [group_setup(i, name, kit_root, run_root) for i, (name, _) in enumerate(groups, 1)]
+        check_distinct(setups)
+    planned = []
+    for s, (_, runs) in zip(setups, groups):
+        cmds = [run_command(s, r, server) for r in runs]
+        if lane:
+            cmds = [c + ["-Lane", str(lane)] for c in cmds]
+        planned.append((s, runs, cmds))
+    return planned
 
 
 def print_plan(planned, say=print):
@@ -244,6 +266,10 @@ def run_groups(planned, dry=False, say=print, runner=None):
     if dry:
         print_plan(planned, say)
         return []
+    if any(s.get("lane") for s, _, _ in planned):   # one pair: the groups one after another
+        for g in planned:
+            one_group(*g)
+        return results
     threads = [threading.Thread(target=one_group, args=g, daemon=True) for g in planned]
     for t in threads:
         t.start()
@@ -381,6 +407,7 @@ def main(argv=None):
         p.add_argument("--server", help="coop_server.exe (default: <kit root>\\auto-A\\server\\coop_server.exe)")
         p.add_argument("--run-root", help="default: <kit root>\\shots-hookshot\\groups-<time>")
         p.add_argument("--dry-run", action="store_true")
+        p.add_argument("--lane", type=int, choices=[1, 2], help="run every group in this test lane (lanes.py)")
     m = sub.add_parser("merge")
     m.add_argument("paths", nargs="+")
     m.add_argument("--out", help="write the table here too")
@@ -397,11 +424,15 @@ def main(argv=None):
         if not kit:
             raise Fail("no coop-kit folder found; pass --kit-root")
         server = a.server or os.path.join(kit, "auto-A", "server", "coop_server.exe")
-        run_root = a.run_root or os.path.join(kit, "shots-hookshot",
-                                              "groups-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+        stamp = "groups-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        run_root = a.run_root or (os.path.join(kit, "ls", "shots-lane%d" % a.lane, stamp) if a.lane
+                                  else os.path.join(kit, "shots-hookshot", stamp))
         with open(a.groups, encoding="utf-8") as f:
             groups = parse_groups(f.read())
-        planned = plan(groups, kit, run_root, server)
+        planned = plan(groups, kit, run_root, server, a.lane or 0)
+        if a.cmd == "prepare" and a.lane:
+            raise Fail("a lane's pair is filled by lanes.py setup --lane %d (hard links for read-only files only)"
+                       % a.lane)
         if a.cmd == "plan":
             print_plan(planned)
             return 0

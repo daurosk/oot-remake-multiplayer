@@ -26,8 +26,10 @@
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
+#include "coop_native_player.h"
 #include "coop_ocarina.h"
 #include "coop_snap.h"
+#include "coop_link_sound.h"
 #include "coop_puppet_sound.h"
 
 namespace coop::protocol {
@@ -203,7 +205,7 @@ inline constexpr std::array<int, kGearCount> kGearSlots{0, 4, -1, -1, -1, 3, -1,
 
 // A puppet's memory block, from the game's malloc, kept for the whole run.
 namespace block {
-inline constexpr std::uint64_t kSize = 0x700;
+inline constexpr std::uint64_t kSize = 0x740;  // to 0x738: coop_link_sound.h's handles
 inline constexpr std::uint64_t kCreateArg = 0x000;  // 0x100 bytes
 inline constexpr std::uint64_t kName = 0x100;       // {char*, u32 capacity}
 inline constexpr std::uint64_t kHandles = 0x110;    // kHandleCount slots of 8 bytes
@@ -271,6 +273,9 @@ struct Target {
     std::optional<std::uint32_t> color;
     // The player's newest OCARINA_NOTE, played on the puppet (issue 152).
     CoopPuppetSound::Wanted ocarina;
+    // LINK_SOUNDs received since the last frame, near enough to hear
+    // (coop_link_sound.h): the director takes each one once.
+    std::vector<CoopLinkSound::Sound> sounds;
 };
 
 struct Input {
@@ -426,6 +431,8 @@ private:
         bool meter_skip = false;            // the next read is still the parked spot
         Show shown = Show::show;            // the last `show` acted on (log on change)
         bool model_checked = false;         // a tunic puppet's model (kTunicModelCheckMs)
+        bool native = false;                // a real Player_<Age> (coop_native_player.h): left alone
+        CoopNativePlayer::Probe probe;      // what the game does with it, for the log
         std::uint64_t frame_set_in = 0;     // the cave frame of the last frame set
         std::string play_name;              // the play being made
         float play_frame = 0.0f;
@@ -456,10 +463,11 @@ private:
         std::array<bool, kGearCount> unequip_refused{};        // the take-off call returned 0
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
         CoopPuppetSound::State sound;       // the player's Ocarina on it (issue 152)
+        CoopLinkSound::Player link_sound;   // the player's own sounds on it (issues 131, 152)
     };
     enum class Pending {
         none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold, move,
-        sound
+        sound, link_sound
     };
 
     void NewFrame(Guest& guest, std::uint64_t now_ms);
@@ -509,6 +517,7 @@ private:
     // The calc thread only.
     Input input_;
     std::vector<Slot> slots_;
+    CoopLinkSound::Budget sound_budget_;  // every puppet's sound starts together
     Pending pending_ = Pending::none;
     std::uint8_t pending_slot_ = 0;
     int calls_ = 0;  // this frame
@@ -541,6 +550,7 @@ struct Remote {
     // player's slot colour (coop::protocol::slot_color).
     std::optional<std::uint32_t> color;
     CoopPuppetSound::Wanted ocarina;                 // as Target::ocarina
+    std::vector<CoopLinkSound::Sound> sounds;        // received since the last Collect
 };
 
 struct PlannerSettings {
@@ -555,6 +565,9 @@ struct PlannerSettings {
     // kit when it put that colour's tile over the game's): the plain puppet
     // would wear it too, so a green player gets CoopPuppet_<Age>_Green.
     bool green_puppet = false;
+    // LICHII_COOP_NATIVE_PLAYER (a test, coop_native_player.h): the other
+    // player is the game's own Player_<Age>, made and then left alone.
+    bool native_player = false;
     bool debug = false;           // LICHII_COOP_TEST_PUPPET: one more, beside you,
                                   // wearing your own gear
     std::uint64_t debug_delay_ms = 3000;  // after the scene is known

@@ -10,9 +10,11 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
+#include "coop/protocol/difficulty.hpp"
 #include "coop/protocol/join_password.hpp"
 #include "coop/protocol/traffic_crypto.hpp"
 
@@ -121,7 +123,25 @@ enum class MessageType : std::uint16_t {
   player_ride = 385,  // 385 to 389: riding Epona (docs/protocol.md, "Riding")
   platform_clock = 400,  // 400 to 404: moving platforms' clocks (docs/protocol.md, "Moving platforms")
   platform_counter = 401,  // looping platforms' pause counters (docs/protocol.md, "Moving platforms")
+  dbno_mode = 470,  // 470 to 479: down but not out (docs/protocol.md, "Down but not out")
+  dbno_state = 471,
+  dbno_revive = 472,
+  difficulty = 480,  // 480 to 489: difficulty (docs/protocol.md, "Difficulty")
   voice_frame = 420,  // 420 to 424: proximity voice chat (docs/protocol.md, "Voice")
+  mod_list = 490,  // 490 to 499: mods (docs/protocol.md, "Mods")
+  mod_settings = 491,
+  lobby_action = 510,  // 510 to 519: the Lobby's host moderation (docs/protocol.md, "Lobby")
+  lobby_mutes = 511,
+  lobby_result = 512,
+  local_join = 460,  // 460 to 469: split screen's extra players (docs/protocol.md, "Local players")
+  local_joined = 461,
+  local_leave = 462,
+  local_sample = 463,
+  local_message = 464,
+  player_look = 430,  // 430 to 434: a look of several parts (docs/protocol.md, "Looks")
+  link_sound = 500,  // 500 to 509: the other Links' sounds (docs/protocol.md, "Link sounds")
+  boss_scene = 520,  // 520 to 524: boss intro and death cutscenes (docs/protocol.md, "Boss cutscenes")
+  boss_heart = 521,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -214,6 +234,13 @@ enum class RefuseReason : std::uint8_t {
   name_taken = 4,
   bad_name = 5,  // empty or nothing but spaces
   bad_password = 6,  // the server has a join password and the JOIN_PROOF did not match
+  // Protocol 11, the Lobby (docs/protocol.md "Lobby"): the host took this
+  // player out. Sent after WELCOME too, right before the server closes the
+  // connection; the game then stops and does not join again by itself.
+  kicked = 7,
+  // The host banned this player for the rest of the session: as kicked, and
+  // a HELLO with that name or from that address is refused with this.
+  banned = 8,
   // Never sent: the game's own refusal of a server that did not encrypt
   // although the game has a join password (docs/protocol.md "Encrypted
   // traffic"), so nobody on the path can stand in for a no-password server.
@@ -240,6 +267,9 @@ struct JoinChallenge {
 // this connection's JOIN_CHALLENGE (an empty password when it has none).
 struct JoinProof {
   JoinProofBytes proof{};
+  // Protocol 11 (the Lobby): the player key, sealed (seal_player_key), 32
+  // bytes after the proof.
+  std::optional<SealedPlayerKey> player_key{};
   bool operator==(const JoinProof&) const = default;
 };
 
@@ -723,6 +753,7 @@ enum class ObjectComponent : std::uint16_t {
   fuse = 17,
   state = 18,
   slots = 19,  // protocol 10, issue 150: a boss's other AS slots (below)
+  bsa = 20,    // native boss sync: a boss's brain and action verbs (BossBsa below)
 };
 
 struct ObjectLife {
@@ -748,6 +779,50 @@ struct SlotAnimation {
 inline constexpr std::size_t kMaxObjectSlots = 8;
 inline constexpr std::uint8_t kMaxSlotIndex = 31;
 
+// Native boss sync (docs/dungeons-boss.md, "Native boss sync"): what the
+// owner's game did to a boss's BSA component (the game's brain and action
+// verbs), so the other games do the same to their copy through the game's own
+// functions. An optional component: an older build skips it.
+// - A change is one call of the owner's game: a brain verb set (verb, force)
+//   or an action verb request. seq counts them for this boss, from 1.
+// - recent holds the newest kMaxBossChanges changes, oldest first, in every
+//   sample, so a lost sample loses none and a copy makes every change once,
+//   in the owner's order.
+// - brain_verb and action are the state now (the verb the owner's boss has,
+//   the last action asked): where a copy starts (it joined, the owner
+//   changed, or it missed more than recent holds), and what it is put back
+//   to when it differs for long.
+struct BossAction {
+  std::int32_t verb = 0;
+  std::int32_t slot = 0;
+  std::uint16_t flags = 0;
+  // The request's three places (target, look-at, a third), each optional
+  // (the game marks a missing one NaN), and its pair of extra values.
+  std::array<std::optional<Vec3>, 3> places{};
+  std::optional<std::array<float, 2>> extra;
+  bool changed = true;  // the game's own "the verb changed" argument
+  bool operator==(const BossAction&) const = default;
+};
+struct BossBrain {
+  std::int32_t verb = 0;
+  bool force = false;
+  bool operator==(const BossBrain&) const = default;
+};
+struct BossChange {
+  std::uint32_t seq = 0;
+  std::variant<BossBrain, BossAction> what;
+  bool operator==(const BossChange&) const = default;
+};
+inline constexpr std::size_t kMaxBossChanges = 8;
+struct BossBsa {
+  std::uint32_t seq = 0;  // the owner's changes so far (the newest one's seq)
+  std::int32_t brain_verb = 0;
+  std::optional<BossAction> action;
+  // At most kMaxBossChanges, seqs rising by one or more, none above seq.
+  std::vector<BossChange> recent;
+  bool operator==(const BossBsa&) const = default;
+};
+
 // The components of OBJECT_SAMPLE, OBJECT_SPAWN and HANDOVER_STATE. time is
 // always sent; the others when the sender has them. Floats must be finite.
 struct ObjectState {
@@ -760,6 +835,7 @@ struct ObjectState {
   std::optional<float> fuse;          // seconds left
   std::optional<std::uint8_t> state;  // object_state bits
   std::optional<std::vector<SlotAnimation>> slots;  // issue 150: bosses only
+  std::optional<BossBsa> bsa;                       // native boss sync: bosses only
   bool operator==(const ObjectState&) const = default;
 };
 
@@ -938,6 +1014,43 @@ struct OcarinaNote {
   std::uint8_t note = 0;                     // 0 to kOcarinaNotes
   bool operator==(const OcarinaNote&) const = default;
 };
+
+// LINK_SOUND (500, issues 131 and 152): a sound the game itself started on the
+// sender's own Link (its SLink user), by the asset's name ("Pl_Voice_Attack",
+// "Ocarina_D"), relayed to everyone else, who start the same asset on that
+// player's Link with the game's own call. The name is the game's: letters,
+// digits and '_', 1 to kMaxLinkSoundChars.
+inline constexpr std::size_t kMaxLinkSoundChars = 55;
+// PLAYER_LOOK (430): the colours a player chose for the parts of its Link
+// (docs/protocol.md, "Looks"; hookshot/src/coop_look.h numbers the parts),
+// sent when it changes and again when a player joins; relayed to everyone
+// else. Only the set parts are listed, each once, by number (0 to
+// kMaxLookParts - 1: a part a build does not know is passed over by it).
+inline constexpr std::size_t kMaxLookParts = 64;
+struct LookPart {
+  std::uint8_t part = 0;
+  std::uint32_t colour = 0;   // 0xRRGGBB
+  bool operator==(const LookPart&) const = default;
+};
+struct PlayerLook {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 16 relayed
+  std::vector<LookPart> parts;
+  bool operator==(const PlayerLook&) const = default;
+};
+
+struct LinkSound {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 16 relayed
+  std::string name;                          // the asset's name
+  bool operator==(const LinkSound&) const = default;
+};
+inline bool valid_link_sound_name(std::string_view name) {
+  if (name.empty() || name.size() > kMaxLinkSoundChars) return false;
+  for (const char ch : name) {
+    const bool ok = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+    if (!ok) return false;
+  }
+  return true;
+}
 
 struct TimeOfDay {
   std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 16 relayed
@@ -1207,6 +1320,21 @@ struct PvpMode {
   bool operator==(const PvpMode&) const = default;
 };
 
+// DIFFICULTY (protocol 11): how hard the enemies are in this session
+// (difficulty.hpp). From the server to each player when it joins and to
+// everyone whenever the values in force change: `values` are in force, and
+// `set_by` is 0 while nobody has chosen (the automatic scaler), else the
+// host who chose. From a player: the host's choice (`set_by` 0; `values` are
+// the sliders, read only with the custom preset); the server ignores it from
+// anyone but the host and answers with what is in force.
+struct Difficulty {
+  std::uint8_t set_by = 0;  // 0 nobody, else a player
+  bool auto_scale = true;   // the values follow the number of players
+  DifficultyPreset preset = DifficultyPreset::normal;  // when not automatic
+  DifficultyValues values;  // each within its slider's ends
+  bool operator==(const Difficulty&) const = default;
+};
+
 // PVP_HIT: the sender's attack reached another player's Link on the sender's
 // screen. The server passes it to the victim only, and only while PvP is on;
 // the victim's game decides whether it hurts (PVP_HURT).
@@ -1315,6 +1443,102 @@ struct DungeonEvent {
   bool operator==(const DungeonEvent&) const = default;
 };
 
+// Down but not out (protocol 11; docs/protocol.md, "Down but not out"): a
+// player whose hearts run out is downed, not dead, and a teammate can revive
+// them. On unless the host turns it off.
+
+// The host's rules, as DBNO_MODE carries them. The limits are the codec's.
+inline constexpr std::uint8_t kDbnoMinBleedS = 10;       // bleed-out time, seconds
+inline constexpr std::uint8_t kDbnoMaxBleedS = 240;
+inline constexpr std::uint8_t kDbnoMinReviveTenths = 5;  // how long a revive is held, tenths of a second
+inline constexpr std::uint8_t kDbnoMaxReviveTenths = 100;
+inline constexpr std::uint8_t kDbnoMinReviveLife = 1;    // life a revived player gets, quarter hearts
+inline constexpr std::uint8_t kDbnoMaxReviveLife = 80;
+
+// DBNO_MODE: the session's rules. From the server to each player when it
+// joins and to everyone on a change: `set_by` is 0 when the server's start
+// decided them, else the player (the host) who changed them. From a player:
+// the host asks for a change (`set_by` 0; the server takes it from nobody
+// but the host).
+struct DbnoMode {
+  std::uint8_t set_by = 0;         // 0 the server, 1 to kMaxPlayers a player
+  bool on = true;
+  std::uint8_t bleed_s = 45;       // kDbnoMinBleedS to kDbnoMaxBleedS
+  std::uint8_t revive_tenths = 30; // kDbnoMinReviveTenths to kDbnoMaxReviveTenths
+  std::uint8_t revive_life = 12;   // kDbnoMinReviveLife to kDbnoMaxReviveLife
+  bool operator==(const DbnoMode&) const = default;
+};
+
+// DBNO_STATE states.
+enum class DbnoState : std::uint8_t {
+  up = 0,
+  downed = 1,  // crawling, bleeding out, can be revived
+  out = 2,     // bled out, or nobody was left standing: the game's own death runs
+};
+
+// Most bleed-out time a DBNO_STATE may carry, tenths of a second.
+inline constexpr std::uint16_t kDbnoMaxLeftTenths = 10 * kDbnoMaxBleedS;
+
+// DBNO_STATE: the sender's own state, as its game decided it. Relayed to
+// everyone else; the server keeps the state for its own rules (a downed
+// player's enemies go to a player still up) and nothing else.
+struct DbnoStatus {
+  std::uint8_t player_number = kPlayerSelf;
+  DbnoState state = DbnoState::up;
+  std::uint16_t left_tenths = 0;  // downed: bleed-out time left; else 0
+  std::uint8_t reviver = 0;       // downed: who is reviving (1 to kMaxPlayers, not the player); 0 nobody
+  std::uint8_t progress = 0;      // downed with a reviver: 0 to 255 of the revive; else 0
+  bool operator==(const DbnoStatus&) const = default;
+};
+
+// DBNO_REVIVE: the sender holds (or let go of) the revive button beside a
+// downed player on the sender's screen. The server passes it to that player
+// only, and only while the mode is on; the downed player's game decides.
+struct DbnoRevive {
+  std::uint8_t player_number = kPlayerSelf;  // the reviver
+  std::uint8_t target = 0;                   // 1 to kMaxPlayers, not the reviver
+  bool holding = false;
+  bool operator==(const DbnoRevive&) const = default;
+};
+
+// BOSS_SCENE (boss-cutscenes, docs/dungeons-boss.md "Boss cutscenes"): the
+// sender's game started or ended a boss's intro or death cutscene. Relayed to
+// everyone else; each game decides whether it is in the boss's area (the
+// boss room and its antechamber) and plays it too, or only says so in chat.
+enum class BossSceneKind : std::uint8_t {
+  intro_start = 1,  // the sender's game took the boss's intro event (it is its starter)
+  intro_end = 2,    // the starter's intro ended (played out or skipped): every intro ends
+  outro_start = 3,  // the sender's game took the boss's death event
+  outro_end = 4,
+};
+inline constexpr std::uint8_t kMaxSceneBoss = 15;  // CoopBossScenes::Bosses() index
+
+struct BossScene {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;      // the sender's scene, 1 to 64 characters
+  std::uint8_t boss = 0;  // 0 to kMaxSceneBoss
+  BossSceneKind kind = BossSceneKind::intro_start;
+  Vec3 position{};        // the sender's Link when it sent (finite)
+  bool operator==(const BossScene&) const = default;
+};
+
+// BOSS_HEART: one shared heart container per boss. A client sends a claim
+// (given false) when its own game's maximum life rose in a beaten boss's
+// area; `max_life` is that new maximum. The server takes the first claim of
+// each boss as the winner and sends given true, player_number the winner,
+// to everyone (the sender too); a later claim of that boss is answered to
+// its sender alone with the same winner and value. Every game raises its
+// maximum to max_life (never lowers it), so the container gives one +1 to all.
+inline constexpr std::int32_t kMaxBossHeartLife = 80;  // 20 hearts of 4 quarters
+
+struct BossHeart {
+  std::uint8_t player_number = kPlayerSelf;  // claim: the claimer; given: the winner
+  std::uint8_t boss = 0;                     // 0 to kMaxSceneBoss
+  bool given = false;                        // false: a claim (client); true: the server's answer
+  std::int32_t max_life = 0;                 // 1 to kMaxBossHeartLife
+  bool operator==(const BossHeart&) const = default;
+};
+
 // VOICE_FRAME (protocol 11, branch proximity-voip): 20 ms of the sender's
 // microphone as one Opus packet (48 kHz mono), or an empty packet with
 // voice::end that closes a talk spurt (the gate closed). Channel 5,
@@ -1335,6 +1559,147 @@ struct VoiceFrame {
   bool operator==(const VoiceFrame&) const = default;
 };
 
+// Mods (protocol 11; docs/protocol.md "Mods", docs/mods.md). Every game
+// tells the others which mods it runs, so a player with other mods than the
+// host's is warned; the host's "shared" mod settings (a randomizer's seed)
+// are everyone's.
+inline constexpr std::size_t kMaxModEntries = 32;
+inline constexpr std::size_t kMaxModIdChars = 48;
+inline constexpr std::size_t kMaxModVersionChars = 32;
+inline constexpr std::size_t kMaxModSettingEntries = 32;
+inline constexpr std::size_t kMaxModSettingKeyChars = 32;
+inline constexpr std::size_t kMaxModSettingValueChars = 256;
+using ModHash = std::array<std::uint8_t, 16>;
+
+struct ModEntry {
+  std::string id;       // 1 to kMaxModIdChars, [a-z0-9._-]
+  std::string version;  // 0 to kMaxModVersionChars
+  ModHash hash{};       // the mod's game files and code (all zero: not known yet)
+  bool operator==(const ModEntry&) const = default;
+};
+
+// MOD_LIST: the mods a game runs that every player needs alike (mod.json
+// "coop" not "own"), in its load order. Sent once per connection, when the
+// game has hashed its mods; the server writes the sender's number, keeps the
+// last one of each player and gives a joiner everyone else's.
+struct ModList {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from the sender, 1 to 16 relayed
+  std::vector<ModEntry> mods;                // 0 to kMaxModEntries, ids unique
+  bool operator==(const ModList&) const = default;
+};
+
+struct ModSetting {
+  std::string mod_id;  // as ModEntry::id
+  std::string key;     // 1 to kMaxModSettingKeyChars, [a-z0-9_]
+  std::string value;   // 0 to kMaxModSettingValueChars
+  bool operator==(const ModSetting&) const = default;
+};
+
+// MOD_SETTINGS: the host's values of its mods' "shared" settings, all of them
+// each time. Taken from the host only (anyone else's is dropped); the server
+// keeps the last one, relays it to the others and gives it to each joiner.
+// A new host's own values count from its first MOD_SETTINGS on.
+struct ModSettings {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from the host, its number relayed
+  std::vector<ModSetting> settings;          // 0 to kMaxModSettingEntries
+  bool operator==(const ModSettings&) const = default;
+};
+
+// The Lobby (protocol 11, docs/protocol.md "Lobby"): the host's moderation,
+// all of it carried out by the server, which takes a LOBBY_ACTION from the
+// host only. A player's own (local) mutes never reach the wire.
+enum class LobbyActionKind : std::uint8_t {
+  kick = 1,          // out now; may join again
+  ban = 2,           // out, and the name and address refused until the session ends
+  mute_voice = 3,    // the server stops relaying the player's VOICE_FRAME
+  unmute_voice = 4,
+  mute_chat = 5,     // the server drops the player's CHAT
+  unmute_chat = 6,
+};
+inline constexpr std::uint8_t kMaxLobbyAction = 6;
+
+// LOBBY_ACTION, the host to the server: do `action` to player `target`.
+struct LobbyAction {
+  LobbyActionKind action = LobbyActionKind::kick;
+  std::uint8_t target = 1;  // 1 to kMaxPlayers
+  bool operator==(const LobbyAction&) const = default;
+};
+
+// LOBBY_MUTES bits.
+namespace lobby_mute {
+inline constexpr std::uint8_t voice = 1u << 0;
+inline constexpr std::uint8_t chat = 1u << 1;
+}  // namespace lobby_mute
+
+// LOBBY_MUTES, the server to everyone: what the host has muted of a player
+// now (the Lobby shows it). Sent to all on each change and, for each muted
+// player, to a joiner after WELCOME. Unknown bits are kept.
+struct LobbyMutes {
+  std::uint8_t player = 1;  // 1 to kMaxPlayers
+  std::uint8_t flags = 0;   // lobby_mute bits
+  bool operator==(const LobbyMutes&) const = default;
+};
+
+// What came of a LOBBY_ACTION. Raw value kept on decode.
+enum class LobbyResultCode : std::uint8_t {
+  done = 0,
+  not_host = 1,    // only the host may do it
+  no_player = 2,   // nobody has that number
+  is_host = 3,     // the host cannot do it to itself
+  unchanged = 4,   // it was so already (muted twice)
+};
+
+// LOBBY_RESULT, the server to the player who sent a LOBBY_ACTION.
+struct LobbyResult {
+  LobbyActionKind action = LobbyActionKind::kick;
+  std::uint8_t target = 1;
+  LobbyResultCode result = LobbyResultCode::done;
+  bool operator==(const LobbyResult&) const = default;
+};
+
+// Split screen (docs/protocol.md, "Local players"): the extra players of one
+// game, seats 1 to kMaxLocalSeats (seat 0 is the connection's own player).
+inline constexpr std::uint8_t kMaxLocalSeats = 3;
+
+// LOCAL_JOIN: the game asks for a player number for an extra local player.
+struct LocalJoin {
+  std::uint8_t seat = 1;
+  std::string nickname;  // 1 to kMaxNicknameChars, as HELLO's
+  bool operator==(const LocalJoin&) const = default;
+};
+
+// LOCAL_JOINED: the answer, to that game only: the seat's number, or 0 and
+// why not (server_full, name_taken, bad_name).
+struct LocalJoined {
+  std::uint8_t seat = 1;
+  std::uint8_t player_number = 0;
+  RefuseReason reason = RefuseReason::server_full;  // when player_number is 0
+  bool operator==(const LocalJoined&) const = default;
+};
+
+// LOCAL_LEAVE: the extra local player leaves (the others get PLAYER_LEFT).
+struct LocalLeave {
+  std::uint8_t seat = 1;
+  bool operator==(const LocalLeave&) const = default;
+};
+
+// LOCAL_SAMPLE and LOCAL_MESSAGE: one of an extra local player's own
+// messages, encoded whole, in an envelope naming its seat. The server takes
+// it as that player's (writing its number in the player field). A sample
+// carries PLAYER_SAMPLE, PLAYER_POSE or PLAYER_RIDE (on the samples channel);
+// a message PLAYER_STATUS, PLAYER_EQUIP, PLAYER_LIFE or OCARINA_NOTE (on the
+// session channel). Decoding checks the inner message.
+struct LocalSample {
+  std::uint8_t seat = 1;
+  std::vector<std::uint8_t> inner;
+  bool operator==(const LocalSample&) const = default;
+};
+struct LocalMessage {
+  std::uint8_t seat = 1;
+  std::vector<std::uint8_t> inner;
+  bool operator==(const LocalMessage&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
@@ -1346,9 +1711,23 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin,
                              JoinChallenge, JoinProof, SaveAsk, SavePart, PlayerLife,
                              PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim, DungeonEvent, PlayerRide,
-                             OcarinaNote, PlatformClock, PlatformCounter, VoiceFrame>;
+                             OcarinaNote, PlatformClock, PlatformCounter,
+                             DbnoMode, DbnoStatus, DbnoRevive, Difficulty, VoiceFrame,
+                             ModList, ModSettings, LobbyAction, LobbyMutes, LobbyResult,
+                             LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage, LinkSound,
+                             BossScene, BossHeart, PlayerLook>;
 
 MessageType type_of(const Message& message);
+
+// What an envelope may carry (LOCAL_SAMPLE, LOCAL_MESSAGE).
+bool local_sample_carries(MessageType type);
+bool local_message_carries(MessageType type);
+// An extra local player's message in its envelope (LOCAL_SAMPLE or
+// LOCAL_MESSAGE by the inner type); nullopt when no envelope carries it.
+std::optional<Message> local_envelope(std::uint8_t seat, const Message& inner);
+// The message inside an envelope; nullopt when it is not a LOCAL_SAMPLE or
+// LOCAL_MESSAGE, or what it holds does not decode.
+std::optional<Message> local_inner(const Message& envelope);
 
 // The channel a message is sent on. TEST_PAYLOAD may go on 0 or 3; this
 // returns 3 and the test tool picks for itself.

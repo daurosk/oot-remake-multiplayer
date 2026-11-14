@@ -6,6 +6,7 @@
 #include <random>
 #include <utility>
 
+#include "coop/protocol/messages.hpp"
 #include "nat_net.hpp"
 
 namespace coop::server::nat {
@@ -13,6 +14,7 @@ namespace coop::server::nat {
 namespace {
 
 constexpr std::uint32_t kLoopback = 0x7F000001u;
+constexpr std::uint32_t kBroadcast = 0xFFFFFFFFu;  // this network (255.255.255.255)
 constexpr std::uint64_t kStunWaitMs = 3000;
 
 }  // namespace
@@ -25,7 +27,21 @@ std::string no_way_help() {
          "(\"Without a VPN: port forwarding\").";
 }
 
+std::vector<Addr> nearby_targets(Addr host) {
+  std::vector<Addr> out;
+  for (std::uint32_t ip : {kLoopback, kBroadcast}) {
+    for (std::uint16_t port : {host.port, protocol::kDefaultPort}) {
+      const Addr a{ip, port};
+      if (port != 0 && a != host && std::find(out.begin(), out.end(), a) == out.end()) out.push_back(a);
+    }
+  }
+  return out;
+}
+
 JoinHelper::JoinHelper(JoinConfig config) : config_(std::move(config)) {
+  peer_ = config_.host;
+  nearby_ = config_.nearby.value_or(nearby_targets(config_.host));
+  std::erase(nearby_, config_.host);
   key_ = punch_key(config_.password);
   std::random_device device;
   for (auto& b : nonce_) b = static_cast<std::uint8_t>(device());
@@ -115,6 +131,8 @@ bool JoinHelper::start(std::string& error) {
   enet_socket_set_option(game_socket_, ENET_SOCKOPT_NONBLOCK, 1);
   enet_socket_set_option(public_socket_, ENET_SOCKOPT_RCVBUF, 1 << 20);
   enet_socket_set_option(public_socket_, ENET_SOCKOPT_SNDBUF, 1 << 20);
+  // The probe to the local network goes to its broadcast address.
+  if (!nearby_.empty()) enet_socket_set_option(public_socket_, ENET_SOCKOPT_BROADCAST, 1);
 
   start_ = now_ms();
   next_probe_ = start_;
@@ -123,7 +141,8 @@ bool JoinHelper::start(std::string& error) {
     const auto request = stun_request(ask.id);
     send_public(ask.server, request);
   }
-  say("trying the host at " + show(config_.host) + " directly");
+  say("trying the host at " + show(config_.host) + " directly" +
+      (nearby_.empty() ? std::string() : std::string(" (and on this PC and your local network)")));
   return true;
 }
 
@@ -135,21 +154,32 @@ void JoinHelper::send_public(Addr to, std::span<const std::uint8_t> bytes) {
   enet_socket_send(public_socket_, &address, &buffer, 1);
 }
 
-void JoinHelper::send_punch(PunchType type) {
+void JoinHelper::send_punch(PunchType type, Addr to) {
   Punch p;
   p.type = type;
   p.nonce = nonce_;
   p.time = unix_now();
   p.from = public_.value_or(Addr{});
-  p.to = config_.host;
+  p.to = to;
   const auto bytes = encode_punch(p, key_);
-  send_public(config_.host, bytes);
+  send_public(to, bytes);
 }
 
-void JoinHelper::open(bool direct) {
+// A host on this PC or the local network: it answers from 127.0.0.1 or from
+// its own private address (the broadcast probe reached it).
+bool JoinHelper::from_nearby(Addr from) const {
+  return !nearby_.empty() && from.port != 0 && (from.ip == kLoopback || !is_public(from.ip));
+}
+
+void JoinHelper::open(bool direct, Addr peer) {
   state_ = JoinState::kOpen;
   direct_ = direct;
-  if (direct) {
+  peer_ = peer;
+  if (direct && peer_ != config_.host) {
+    say(std::string("the host's server answered from ") + (peer_.ip == kLoopback ? "this PC" : "your local network") +
+        " (" + show(peer_) + "), so the game goes there without the router. The game connects now; keep this "
+        "window open while you play.");
+  } else if (direct) {
     say("the host's server answered directly (their router lets the game in). The game connects now; "
         "keep this window open while you play.");
   } else {
@@ -157,7 +187,7 @@ void JoinHelper::open(bool direct) {
     // pasted the answer code) were not counted there: one more tells the host's window
     // the friend got through. Signed like every punch; the host answers it at most with
     // a punch toward the answer code's address, which we no longer act on.
-    send_punch(PunchType::kGuestPunch);
+    send_punch(PunchType::kGuestPunch, peer_);
     say("the way through both routers is open. The game connects now; keep this window open while you play.");
   }
 }
@@ -179,7 +209,10 @@ void JoinHelper::on_public(Addr from, std::span<const std::uint8_t> data) {
     }
     return;
   }
-  if (from != config_.host) {
+  // Before the way is open the host may answer from a nearby address too;
+  // after it, only the address that answered counts.
+  const bool from_host = from == peer_ || (state_ != JoinState::kOpen && from_nearby(from));
+  if (!from_host) {
     ++stats_.dropped;
     return;
   }
@@ -191,7 +224,7 @@ void JoinHelper::on_public(Addr from, std::span<const std::uint8_t> data) {
       ++stats_.rejected;
       return;
     }
-    if (state_ != JoinState::kOpen) open(read.punch.type == PunchType::kProbeAck);
+    if (state_ != JoinState::kOpen) open(read.punch.type == PunchType::kProbeAck, from);
     return;
   }
   if (state_ != JoinState::kOpen || !game_) {
@@ -216,7 +249,7 @@ void JoinHelper::on_game(Addr from, std::span<const std::uint8_t> data) {
     ++stats_.dropped;  // ENet sends its connect again by itself
     return;
   }
-  send_public(config_.host, data);
+  send_public(peer_, data);
   ++stats_.to_host;
 }
 
@@ -231,7 +264,8 @@ void JoinHelper::tick(std::uint64_t now) {
     }
   }
   if (config_.probe && now >= next_probe_) {
-    send_punch(PunchType::kProbe);
+    send_punch(PunchType::kProbe, config_.host);
+    for (const Addr& to : nearby_) send_punch(PunchType::kProbe, to);
     next_probe_ = now + (state_ == JoinState::kTrying ? 500 : 1000);
   }
   const bool stun_done =
@@ -262,7 +296,7 @@ void JoinHelper::tick(std::uint64_t now) {
   }
   if (state_ == JoinState::kWaitingForHost) {
     if (public_ && now >= next_punch_) {
-      send_punch(PunchType::kGuestPunch);
+      send_punch(PunchType::kGuestPunch, config_.host);
       next_punch_ = now + 250;
     }
     if (!helped_ && now - waiting_since_ >= config_.punch_ms) {

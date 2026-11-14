@@ -84,6 +84,9 @@ struct Shown {
   // The top of the head, in world units above `position` (the feet). Above
   // 0, the name tag floats just over the head instead of over the marker.
   float head = 0.0f;
+  // The way the player faces (presence's newest rotation), for the map's
+  // arrows (map_icons.hpp); none before a sample carried one.
+  std::optional<presence::Quat> rotation;
 };
 
 // The players presence shows at `server_now_us`, lowest number first.

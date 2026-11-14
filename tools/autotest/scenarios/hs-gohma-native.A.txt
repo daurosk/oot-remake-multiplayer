@@ -1,0 +1,87 @@
+# hs-gohma-native (Hookshot, branch native-boss-gohma): Queen Gohma in the real Deku Tree boss
+# room, with native boss sync (docs/dungeons-boss.md, "Native boss sync"): A owns Gohma, B's copy takes
+# A's brain and action verbs through the game's own functions.
+# NEEDS a hookshot.exe whose hook table has rows 4 and 5 (hookshot/src/hos_coop_bosses.h); without them
+# the log says "native sync off ... not wrapped" and the run is INCONCLUSIVE (it is then hs-gohma-door).
+# BEFORE the run (games closed), as hs-gohma-door: clear the six Deku boss flags in both pairs' baselines
+#   ..\oot-remake-recomp\.venv\Scripts\python.exe tools\autotest\save_flags.py set <pair>\autotest-save\slot_0*\progress.sav bool:0xffde6400=0 bool:0x00c0a2f6=0 bool:0x66b97a4a=0 bool:0xe44433dc=0 bool:0x88b1b922=0 bool:0x3d5c0bad=0
+#   for hookshot-A and hookshot-B, and put them back from <pair>\autotest-save-backup afterwards.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-gohma-native
+# Route: A walks in through the door (hs-gohma-door), B is moved in after it (boss-movein), then the fight
+# of hs-gohma (A under her ceiling spot, seeds into the eye; B's sword on the stunned eye, B's seed).
+# PASS (proof lines):
+#  1. Both: "coop: bosses: native sync on (brain verbs wrapped, action verbs wrapped)".
+#  2. Both: "coop: bosses: Enemy_DungeonBoss_Gohma: native boss sync on (BSA 0x..., ours)" in A, "a copy" in B.
+#  3. B: "Enemy_DungeonBoss_Gohma: the owner's verbs came (brain N): the copy's own brain is skipped from now".
+#  4. A every 10 s: "ours sent N brain + N action verbs" with N growing; B: "N own skipped, N brain + N
+#     action verbs put in" with the put-in counts growing. "waited for a node" stays small.
+#  5. Screenshots at a-stun1..3 and b-hit1..3: Gohma in the same phase (ceiling or floor), the same pose and
+#     the same eye (guarded or open) on both screens; at a-trigger she drops in both games together.
+#  6. Hits: B's sword -> "share damage" in B and A's Gohma life falls (native-actors' Life step).
+#  7. No crash in B after the first "action verbs put in" (the copy's own node is used for the request).
+#  If 4 shows "N by plug" for most actions, the copy's places are its own: note it (next step).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 600
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+wait 120
+place -12.0 48.5 66.5   # the corridor, 11 m before the door (as gohma-door)
+wait 240
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door: the game's own boss trigger
+mark a-in
+wait 1800               # the door's event and the intro
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+mark a-ready
+goto 17.0 67.8 1.5 600  # under Gohma's ceiling spot (18.49 59.97 67.79)
+rstick 0 1 60           # look up at her
+press ZL 10
+wait 900
+mark a-trigger
+goto 0.0 67.5 1.5 600   # gohma-sync's spot, 7.5 m west of the room's centre, facing in
+mark a-placed
+wait 600
+hold ZL 30
+hold ZL+ZR 60
+hold ZL 30
+mark a-stun1
+wait 900
+hold ZL 30
+hold ZL+ZR 60
+hold ZL 30
+mark a-stun2
+wait 900
+hold ZL 30
+hold ZL+ZR 60
+hold ZL 30
+mark a-stun3
+wait 900
+mark a-watch            # B's seed comes now
+wait 1800
+mark eggs
+wait 2400
+mark end

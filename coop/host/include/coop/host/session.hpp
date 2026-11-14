@@ -116,6 +116,8 @@ class Session {
   // started again). The next connected frame() sends the status again and
   // starts velocity afresh, as after a WELCOME; the connection is kept.
   void reset() { reset_sampler_ = true; }
+  // Emulator thread: the player's colour changed (Sampler::set_color).
+  void set_color(std::optional<std::uint32_t> color) { sampler_.set_color(color); }
 
   // Network thread: sends what frame() queued, runs the client once without
   // waiting, and handles every event that came.
@@ -147,6 +149,19 @@ class Session {
   bool share_pickup(FlagKey key) { return watcher_ && watcher_->share_pickup(key); }
   // FlagWatcher::share_one_way. Emulator thread only, like share_pickup.
   bool share_one_way(FlagKey key) { return watcher_ && watcher_->share_one_way(key); }
+  // The game's own flag writes as events (FlagWatcher::use_events,
+  // game_wrote, game_wrote_all). Emulator thread only, before frame().
+  void flag_events(bool on) {
+    if (watcher_ && watcher_->uses_events() != on) watcher_->use_events(on);
+  }
+  void flag_wrote(FlagKey key) {
+    if (watcher_) watcher_->game_wrote(key);
+  }
+  void flag_wrote_all() {
+    if (watcher_) watcher_->game_wrote_all();
+  }
+  // The flag watcher's counters (all 0 when flags are not shared).
+  FlagStats flag_stats() const { return watcher_ ? watcher_->stats() : FlagStats{}; }
   // FlagWatcher::share_pickup_named (a named Bool, the pickup rule).
   bool share_pickup_named(FlagKey key) { return watcher_ && watcher_->share_pickup_named(key); }
   // Emulator thread only: FlagWatcher::take_written_for_others (empty when
@@ -182,6 +197,17 @@ class Session {
   // Emulator thread only: FlagWatcher::end_doubled_gain.
   void end_doubled_gain() {
     if (watcher_) watcher_->end_doubled_gain();
+  }
+  // Emulator thread only: FlagWatcher::cap_max / clear_max_cap (a boss's one
+  // heart container). False when flags are not shared.
+  bool cap_max(FlagKey key, std::optional<std::int32_t> cap) {
+    if (!watcher_) return false;
+    if (cap) {
+      watcher_->cap_max(key, *cap);
+    } else {
+      watcher_->clear_max_cap(key);
+    }
+    return true;
   }
   // Emulator thread only: FlagWatcher::take_counts_guarded.
   std::vector<FlagWatcher::CountGuarded> take_counts_guarded() {

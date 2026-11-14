@@ -27,6 +27,23 @@ bool Start(const HosCoopApi* api);
 void Frame(void* ctx, int site);
 // hos_coop_hold: a BSA component's calc bits (the emulator's hold cave's rule).
 std::uint32_t Hold(std::uint64_t component, std::uint32_t bits);
+// The world hooks (hos_coop_world.h, patch 0005): an event from the game's C, on whichever game thread ran it.
+// 1 when taken; HOS_COOP_WORLD_HELLO: 1 once the module is on. Nothing while off.
+int World(std::uint32_t event, std::uint64_t a, std::uint64_t b);
+// What Hookshot's world hooks have, from its hello (a, b): the first patch 0005 sent 0, 0 and had the flag applier's
+// wrap. 0 until Hookshot said hello: a Hookshot without patch 0005 never does.
+struct WorldLevel {
+    std::uint32_t version = 0;
+    std::uint64_t wraps = 0;  // a bit for each wrap id
+};
+constexpr WorldLevel HelloLevel(std::uint64_t a, std::uint64_t b) {
+    return a == 0 ? WorldLevel{1, 1ull << 1} : WorldLevel{static_cast<std::uint32_t>(a), b};
+}
+WorldLevel WorldHooks();
+// True when Hookshot's hooks have this wrap (hos_coop_world.h's ids).
+bool HasWrap(std::uint32_t id);
+// A wrapped game function (hos_coop_world.h): phase 0 before it (1: do not run it), 1 after; x = its registers.
+int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* ctx);
 // hos_coop_stop: CoopHook::Shutdown.
 void Stop();
 
@@ -95,6 +112,11 @@ inline FrameWork WorkAt(int site, bool present_seen) {
 // is held, the panel after F7 or with LICHII_COOP_DEBUG_PANEL=1).
 CoopDraw::Scene DrawScene();
 
+// The players on the map (Multiplayer > Settings: "Show players on map",
+// "Names on map"; LICHII_COOP_MAP, LICHII_COOP_MAP_NAMES at start): count
+// from the next present. Any thread.
+void SetMapOptions(bool players, bool names);
+
 // hos_coop_draw2: the scene drawn, in the game look when the HUD pack's font
 // and heart pictures load through the table's calls (the first call loads
 // them; coop_draw.h, "The game look"). NoGameLook: hos_coop_draw was called
@@ -112,6 +134,10 @@ bool Mouse(float fx, float fy, int event);
 bool TypeKey(std::uint32_t vk, bool repeat);
 bool TypeChar(std::uint32_t byte);
 bool KeysTaken();
+// The key that opens the chat box from now on (the Multiplayer tab's Settings
+// row): LICHII_COOP_CHAT_KEY's words ("T", "F2", "off"). Takes no lock (the
+// next key press picks it up), so it may be called under CoopPause's mutex.
+void SetChatKey(const std::string& key);
 
 // Whether co-op knows the game whose main has this build id (hex, 16 or more
 // digits; Hookshot gives 32).

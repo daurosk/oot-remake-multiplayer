@@ -50,6 +50,8 @@ class FakeServer {
  public:
   // Set by send_challenge: seals what it sends, opens what it gets.
   std::unique_ptr<proto::TrafficCipher> cipher;
+  // The player key the last JOIN_PROOF sealed, opened with this server's keys.
+  std::optional<proto::PlayerKey> player_key;
   std::optional<proto::TrafficKeys> pending_keys;
   // The two key shares of the last send_challenge, for the proof it expects.
   proto::KeyShare server_share{};
@@ -101,6 +103,9 @@ class FakeServer {
           CHECK(proto::check_received(r.message, proto::Sender::client,
                                       r.channel) == proto::Error::none);
           if (pending_keys && std::holds_alternative<proto::JoinProof>(r.message)) {
+            if (const auto& sealed = std::get<proto::JoinProof>(r.message).player_key) {
+              player_key = proto::open_player_key(pending_keys->receive, *sealed);
+            }
             cipher = std::make_unique<proto::TrafficCipher>(*pending_keys);
             pending_keys.reset();
           }
@@ -610,6 +615,30 @@ TEST_CASE("client: with no join password typed a challenge is still answered (th
         proto::join_proof("", nonce, server.client_share, server.server_share));
 }
 
+TEST_CASE("client: the player key goes sealed in JOIN_PROOF, never in the plain HELLO") {
+  FakeServer server;
+  ClientConfig config = config_for(server);
+  config.join_password = "hunter2";
+  proto::PlayerKey key{};
+  key.fill(0x5a);
+  config.player_key = key;
+  Client client(config);
+  REQUIRE(client.start());
+  REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>().has_value(); }));
+  // Not in the HELLO's bytes.
+  const auto& hello_raw = server.received[*server.find<proto::Hello>()].raw;
+  CHECK(std::search(hello_raw.begin(), hello_raw.end(), key.begin(), key.end()) == hello_raw.end());
+  proto::JoinNonce nonce{};
+  nonce[0] = 4;
+  server.send_challenge(nonce, "hunter2");
+  REQUIRE(pump(client, server, [&] { return server.cipher != nullptr; }));
+  const auto& proof = std::get<proto::JoinProof>(server.received[*server.find<proto::JoinProof>()].message);
+  REQUIRE(proof.player_key.has_value());
+  CHECK(std::search(proof.player_key->begin(), proof.player_key->end(), key.begin(), key.end()) ==
+        proof.player_key->end());
+  CHECK(server.player_key == key);  // opens with this connection's keys
+}
+
 TEST_CASE("client: after the challenge the traffic is encrypted both ways") {
   FakeServer server;
   ClientConfig config = config_for(server);
@@ -674,6 +703,42 @@ TEST_CASE("client: an unknown refusal reason is kept") {
   const Event& refused = events.all[*events.find(EventKind::refused)];
   CHECK(static_cast<int>(refused.refuse_reason) == 9);
   CHECK(refuse_reason_text(refused.refuse_reason) == "unknown reason");
+}
+
+TEST_CASE("client: kicked or banned by the host after WELCOME, it stops and does not join again") {
+  for (const auto reason : {proto::RefuseReason::kicked, proto::RefuseReason::banned}) {
+    CAPTURE(static_cast<int>(reason));
+    FakeServer server;
+    Client client(config_for(server));
+    Events events;
+    REQUIRE(client.start());
+    welcome_client(client, server);
+    REQUIRE(wait_event(client, server, events, EventKind::welcomed));
+    server.send(proto::Refused{reason}, proto::kChannelSession);
+    REQUIRE(wait_event(client, server, events, EventKind::refused));
+    CHECK(events.all[*events.find(EventKind::refused)].refuse_reason == reason);
+    CHECK(client.state() == State::refused);
+    CHECK(client.players().empty());
+    CHECK_FALSE(client.send(proto::Chat{0, "still here?"}));
+    CHECK(refuse_reason_text(reason).find("host") != std::string_view::npos);
+    // Well past the first retry delay: no second attempt.
+    pump(client, server, [] { return false; }, 400);
+    CHECK(server.connects == 1);
+    CHECK(events.count(EventKind::disconnected) == 0);
+  }
+}
+
+TEST_CASE("client: another REFUSED after WELCOME is still ignored") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_client(client, server);
+  REQUIRE(wait_event(client, server, events, EventKind::welcomed));
+  server.send(proto::Refused{proto::RefuseReason::server_full}, proto::kChannelSession);
+  pump(client, server, [] { return false; }, 100);
+  CHECK(client.state() == State::connected);
+  CHECK(events.count(EventKind::refused) == 0);
 }
 
 TEST_CASE("client: comes back after the server drops it") {
@@ -871,7 +936,9 @@ TEST_CASE("client: every refusal reason the protocol has is named") {
   CHECK(refuse_reason_text(proto::RefuseReason::name_taken) == "name taken");
   CHECK(refuse_reason_text(proto::RefuseReason::bad_name) == "bad name");
   CHECK(refuse_reason_text(proto::RefuseReason::bad_password).starts_with("wrong join password"));
-  CHECK(refuse_reason_text(static_cast<proto::RefuseReason>(7)) == "unknown reason");
+  CHECK(refuse_reason_text(proto::RefuseReason::kicked).starts_with("the host took you out"));
+  CHECK(refuse_reason_text(proto::RefuseReason::banned).starts_with("the host banned you"));
+  CHECK(refuse_reason_text(static_cast<proto::RefuseReason>(9)) == "unknown reason");
 }
 
 TEST_CASE("client: send_chat sends CHAT and refuses empty, long or bad text") {

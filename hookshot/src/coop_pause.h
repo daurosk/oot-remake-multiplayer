@@ -19,6 +19,7 @@
 
 #include "coop_pause_menu.h"
 #include "hos_coop_menu.h"
+#include "hos_coop_menu_picture.h"
 
 namespace CoopPause {
 
@@ -36,6 +37,8 @@ void Tick();
 int Tabs();
 const char* TabName(int tab);
 bool Page(int tab, HosCoopMenuPage* out);
+// hos_coop_menu_picture.h's export (patch 0019): the Customize page's picture of Link.
+bool Picture(int tab, HosCoopMenuPicture* out);
 bool Input(int tab, int event, int arg, int arg2);
 int Wanted();
 
@@ -48,10 +51,5 @@ bool KeysTaken();
 // The menu opened on the tab at this page (the title's rows, Minus at the
 // title): Host hosts at once, Join pastes a code already copied.
 void Open(CoopPauseMenu::Page page);
-
-// What co-op does since the tab started it, for the title's prompt:
-// "hosting", "joining" (not connected yet), "joined", or "" (none, or it
-// failed).
-std::string Doing();
 
 }  // namespace CoopPause

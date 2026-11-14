@@ -16,7 +16,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from puppet_pack import build, byml, dumpcheck, dungeon_rooms, nup, rstb, sarc  # noqa: E402
+from puppet_pack import build, byml, dumpcheck, dungeon_rooms, map_captures, nup, rstb, sarc  # noqa: E402
 
 # The co-op HUD's tests run with these (CI runs this file).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -506,7 +506,59 @@ class BuildPackTest(unittest.TestCase):
         self.assertEqual([n for _, n in build.STAND_INS],
                          ["CoopShot_Seed", "CoopShot_Arrow", "CoopShot_Hook", "CoopShot_HookLong",
                           "CoopShot_Lure", "CoopShot_SinkingLure", "CoopShot_Bomb",
-                          "CoopShot_Boomerang", "CoopRide_Epona"])
+                          "CoopShot_Boomerang", "CoopRide_Epona", "CoopShotFx_Seed", "CoopShotFx_Arrow"])
+
+    def test_effect_stand_in_keeps_the_shootables_xlink_users(self):
+        # Issue 166: the hook plays the shootable's hit effect on this copy with the game's own
+        # emit, so the copy keeps the shootable's ELink/SLink/XLink params and user names. No AI.
+        seed = {"Components": {
+            "ModelInfoRef": "?Component/ModelInfo/Seed.engine__component__ModelInfo.bgyml",
+            "PhysicsRef": "?Component/Physics/Seed.engine__component__PhysicsParam.bgyml",
+            "ELinkRef": "?Component/ELink/Seed.engine__component__ELinkParam.bgyml",
+            "SLinkRef": "?Component/SLink/Seed.engine__component__SLinkParam.bgyml",
+            "XLinkRef": "?Component/XLink/Seed.engine__component__XLinkParam.bgyml",
+            "AIInfoRef": "?AI/AIInfo/Seed.engine__actor__AIInfo.bgyml",
+            "AttackRef": "?GameBalance/AttackParam/Seed.game__gamebalance__AttackParam.bgyml",
+            "ShootableRef": "?Component/ShootableParam/Seed.game__component__ShootableParam.bgyml",
+            "SensorRef": "?Component/Sensor/Seed.engine__component__SensorParam.bgyml",
+            "LifeRef": "?Component/Life/Seed.game__component__LifeParam.bgyml",
+        }}
+        members = {
+            "Actor/Shootable_DekuSeed.engine__actor__ActorParam.bgyml": byml.dumps(seed),
+            "Component/ModelInfo/Seed.engine__component__ModelInfo.bgyml": byml.dumps({"FmdbName": "Seed"}),
+            "Component/Physics/Seed.engine__component__PhysicsParam.bgyml": byml.dumps({}),
+            "Component/ELink/Seed.engine__component__ELinkParam.bgyml": byml.dumps({"UserName": "Shootable_DekuSeed"}),
+            "Component/SLink/Seed.engine__component__SLinkParam.bgyml": byml.dumps({"UserName": "Shootable_DekuSeed"}),
+            "Component/XLink/Seed.engine__component__XLinkParam.bgyml": byml.dumps({}),
+        }
+        self.assertEqual(build.STAND_IN_XLINK, ("CoopShotFx_Seed", "CoopShotFx_Arrow"))
+        pack, ap, names = build.build_stand_in(members, "Shootable_DekuSeed", "CoopShotFx_Seed")
+        comps = byml.loads(ap)["Components"]
+        for k in ("ModelInfoRef", "ELinkRef", "SLinkRef", "XLinkRef"):
+            self.assertEqual(comps[k], seed["Components"][k])
+        for k in ("PhysicsRef", "AIInfoRef", "AttackRef", "ShootableRef", "SensorRef", "LifeRef"):
+            self.assertNotIn(k, comps)
+        # Nothing that can hit, be hit, sense or move by itself: only the model, the xlink users and
+        # the shared defaults. (The copy stands where the owner's shot hit an enemy or a switch.)
+        self.assertEqual(set(comps), set(build.STAND_IN_COMPONENTS) & set(seed["Components"])
+                         | set(build.STAND_IN_XLINK_COMPONENTS) | set(build.FIXED_COMPONENTS))
+        files = sarc.read(pack)
+        self.assertIn("Component/ELink/Seed.engine__component__ELinkParam.bgyml", files)
+        self.assertIn("Component/XLink/Seed.engine__component__XLinkParam.bgyml", files)
+        self.assertFalse([n for n in names if n.startswith("AI/")])
+        # The plain stand-in of the same shootable is unchanged: the shared XLink param, no users.
+        _, plain, _ = build.build_stand_in(members, "Shootable_DekuSeed", "CoopShot_Seed")
+        plain = byml.loads(plain)["Components"]
+        self.assertEqual(plain["XLinkRef"], build.FIXED_COMPONENTS["XLinkRef"])
+        self.assertNotIn("ELinkRef", plain)
+        source_row = {"__RowId": "Shootable_DekuSeed", "ActorName": "Item_DekuSeed",
+                      "ELinkUserName": "Shootable_DekuSeed", "SLinkUserName": "Shootable_DekuSeed"}
+        row = build.stand_in_row(source_row, "CoopShotFx_Seed")
+        self.assertEqual(row["ELinkUserName"], "Shootable_DekuSeed")
+        self.assertEqual(row["SLinkUserName"], "Shootable_DekuSeed")
+        self.assertNotIn("ActorName", row)
+        self.assertEqual(row["__RowId"], "CoopShotFx_Seed")
+        self.assertNotIn("ELinkUserName", build.stand_in_row(source_row, "CoopShot_Seed"))
 
     def test_seed_stand_in_plays_its_tail(self):
         # Issue 198: with the impacts' AI template the seed stand-in also plays the seed's Tail.
@@ -700,6 +752,46 @@ def bc1_block(c0, c1, idx=0xE4E4E4E4):
 
 class TunicExtraTest(unittest.TestCase):
     """The adult's other tunic textures (#202): only green parts change, in place."""
+
+    def test_look_file_round_trip(self):
+        from puppet_pack import look_live, tunic
+        a, b = fake_bntx("Angin_Tile_A_Alb"), fake_bntx("Mt_Vest_Player_Adult_Alb", [bc1_block(1, 2)], fmt=0x1A)
+        blob = look_live.pack([("Angin_Tile_A_Alb", a), ("Mt_Vest_Player_Adult_Alb", b)])
+        self.assertEqual(blob[:16], b"COOPLOOK" + struct.pack("<II", 1, 2))
+        self.assertEqual(look_live.unpack(blob), [("Angin_Tile_A_Alb", look_live.texels(a)),
+                                                  ("Mt_Vest_Player_Adult_Alb", bc1_block(1, 2))])
+        self.assertEqual(len(look_live.texels(a)), 9 * 16)
+        # each texture's texels with where they start in its file: the data block's header in front
+        offs = [o for _, o, _ in look_live.unpack_offsets(blob)]
+        self.assertEqual(offs, [look_live.offset(a), look_live.offset(b)])
+        self.assertEqual(a[offs[0] - 16:offs[0] - 12], b"BRTD")
+        with self.assertRaises(tunic.TunicError):
+            look_live.unpack(blob[:-1])
+        with self.assertRaises(tunic.TunicError):
+            look_live.unpack(b"COOPLOOX" + blob[8:])
+        with self.assertRaises(tunic.TunicError):
+            look_live.pack([("n" * 64, a)])
+
+    def test_gear_file(self):
+        from puppet_pack import look_live
+        have = {"Mt_Weapon_Shield_Hylian_Alb": fake_bntx("Mt_Weapon_Shield_Hylian_Alb", [bc1_block(1, 2)], fmt=0x1A),
+                "Mt_Weapon_Sword_Master_Alb": fake_bntx("Mt_Weapon_Sword_Master_Alb")}
+        said = []
+        blob = look_live.gear(have.get, said.append)
+        self.assertEqual([n for n, _ in look_live.unpack(blob)],
+                         ["Mt_Weapon_Shield_Hylian_Alb", "Mt_Weapon_Sword_Master_Alb"])   # GEAR's order
+        self.assertEqual(len(said), 1)
+        self.assertIn("Mt_Weapon_Shield_Mirror_Alb", said[0])
+        self.assertIsNone(look_live.gear(lambda name: None, said.append))
+
+    def test_gear_names_match_the_module(self):
+        """The module's table (hookshot/src/coop_look_parts.cpp) names the same textures."""
+        import re
+        from puppet_pack import look_live
+        src = os.path.join(os.path.dirname(__file__), "..", "..", "..", "hookshot", "src", "coop_look_parts.cpp")
+        with open(src, encoding="utf-8") as f:
+            names = re.findall(r'\{"(Mt_[A-Za-z0-9_.]+)", Format::', f.read())
+        self.assertEqual(tuple(names), look_live.GEAR)
 
     def test_names(self):
         from puppet_pack import tunic_extra as te
@@ -1146,6 +1238,16 @@ class FullBuildTest(unittest.TestCase):
         self.assertEqual([line for line in text.splitlines() if not line.startswith("#")], ["Dun 4 1.00 2.00 3.00"])
         self.assertEqual(m["rooms"], {"scenes": 1, "rooms": 1, "placements": 1})
 
+    def test_build_writes_the_map_table(self):
+        self.write(map_captures.CAPTURE.replace("*", "MapCaptureInfo.game__MapCaptureInfo"),
+                   byml.dumps(MapCapturesTest.CAPTURE))
+        self.write(map_captures.MENU.replace("*", "MapMenuInfo.game__ui__MapMenuInfo"),
+                   byml.dumps(MapCapturesTest.MENU))
+        m = build.build(self.romfs, os.path.join(self.dir, "mod_maps"), log=lambda *_: None)
+        text = build.read(os.path.join(self.dir, "mod_maps", "coop_maps.txt")).decode()
+        self.assertEqual([line for line in text.splitlines() if not line.startswith("#")], MapCapturesTest.ROWS)
+        self.assertEqual(m["maps"], 2)
+
     def test_place_test(self):
         from puppet_pack import place_test, zs
         mod = os.path.join(self.dir, "mod")
@@ -1291,6 +1393,34 @@ class FullBuildTest(unittest.TestCase):
         self.assertNotEqual(vest, game_vest)
         # the game's dark tile's entry holds the BC3 copy the kit puts in its place
         self.assertGreaterEqual(t.get("Tex/Angin_Tile_A_Dark_Alb.bntx"), len(game_tile))
+        # your colour changed while the game runs (look_live): per colour, green too, the texels of
+        # every tunic texture your Link wears, each as long as the game's own (written over them)
+        from puppet_pack import look_live, tunic_extra
+        self.assertEqual(m["look_files"], {c: f"coop_look/{c}.bin" for c in ("red", "blue", "green")})
+        names = ["Angin_Tile_A_Alb", "Angin_Tile_A_Dark_Alb"] + list(tunic_extra.EXTRA)
+        game = {n: look_live.texels(d.decompress(build.read(os.path.join(self.romfs, f"Tex/{n}.bntx.zs"))))
+                for n in names}
+        looks = {c: look_live.unpack(build.read(os.path.join(mod, m["look_files"][c]))) for c in m["look_files"]}
+        self.assertEqual(looks["green"], [(n, game[n]) for n in names])
+        for c in ("red", "blue"):
+            self.assertEqual([n for n, _ in looks[c]], names)
+            for n, data in looks[c]:
+                self.assertEqual(len(data), len(game[n]), n)
+            self.assertNotEqual(looks[c][0][1], game[names[0]])
+        # the tile is your own tile's; the dark tile keeps the game's format (not the BC3 copy)
+        self.assertEqual(looks["red"][0][1], look_live.texels(d.decompress(build.read(
+            os.path.join(mod, m["self_tiles"]["red"])))))
+        self.assertEqual(looks["red"][1][1], look_live.texels(tunic_extra.recolor(game_dark, "red",
+                                                                                  tunic.average_luma(game_tile))))
+
+    def test_build_look_files_without_green(self):
+        from puppet_pack import look_live
+        mod = os.path.join(self.dir, "mod_l")
+        m = build.build(self.romfs, mod, log=lambda *_: None, tunics=["red"])
+        # green is always there: the module finds the textures by the game's own texels
+        self.assertEqual(sorted(m["look_files"]), ["green", "red"])
+        green = look_live.unpack(build.read(os.path.join(mod, "coop_look", "green.bin")))
+        self.assertEqual(green[0][0], "Angin_Tile_A_Alb")
 
     def test_build_no_tile_no_tunics(self):
         os.remove(os.path.join(self.romfs, "Tex", "Angin_Tile_A_Alb.bntx.zs"))
@@ -1649,6 +1779,63 @@ class DumpCheckTest(unittest.TestCase):
             code = build.main(["--romfs", self.romfs, "--mod-dir", os.path.join(self.dir, "mod")])
         self.assertEqual(code, 1)
         self.assertIn("Skeleton", err.getvalue())
+
+
+class MapCapturesTest(unittest.TestCase):
+    # Made-up numbers in the game's shape: entry i of the captures is the map of entry i of the menu.
+    CAPTURE = {"MapCaptureParamArray": [
+        {"CameraPos": {"X": -5.0, "Y": 120.0, "Z": -12.0}, "Height": 300.0,
+         "CaptureParamData": {"01": {"MapCaptureParam": {"Near": -20.0}}, "00": {"MapCaptureParam": {"Near": -95.0}}}},
+        {"CameraPos": {"X": 0.0, "Y": 200.0, "Z": 3.0}, "Height": 214.0, "IsDungeon": True,
+         "CaptureParamData": {"00": {"MapCaptureParam": {}}, "01": {"MapCaptureParam": {"Far": 105.0, "Near": 93.5}}}},
+        {"CaptureParamData": {"00": {"MapCaptureParam": {}}}},   # no camera: left out
+        {"CameraPos": {"X": 1.0, "Y": 1.0, "Z": 1.0}, "Height": 9.0},  # past the menu's entries: left out
+    ]}
+    MENU = {"MapMenuParamArray": [
+        {"LocationName": "Forest", "BancName": ["Forest_Child", "Forest_Adult"],
+         "ChangeBancInfo": [{"BancName": "Forest_Adult_Alternative"}]},
+        {"LocationName": "Temple", "BancName": ["Temple", "Temple"]},
+        {"LocationName": "Nowhere", "BancName": ["Nowhere_Child", "Nowhere_Adult"]},
+    ]}
+    ROWS = ["map Forest -5 -12 120 300 0 Forest_Child,Forest_Adult,Forest_Adult_Alternative -95:- -20:-",
+            "map Temple 0 3 200 214 1 Temple -:- 93.5:105"]
+
+    def test_rows_in_order_with_floors(self):
+        rows = map_captures.render(map_captures.captures(self.CAPTURE, self.MENU)).splitlines()
+        self.assertEqual([r for r in rows if not r.startswith("#")], self.ROWS)
+
+    def test_floors_in_their_number_order(self):
+        cap = {"MapCaptureParamArray": [{"CameraPos": {"X": 0.0, "Y": 200.0, "Z": 0.0}, "Height": 10.0,
+                                         "CaptureParamData": {str(i).zfill(1 if i > 9 else 2): {"MapCaptureParam": {"Near": float(i)}}
+                                                              for i in (10, 2, 0, 1)}}]}
+        menu = {"MapMenuParamArray": [{"LocationName": "Tower", "BancName": ["Tower", "Tower"]}]}
+        c = map_captures.captures(cap, menu)[0]
+        self.assertEqual([n for n, _f in c["floors"]], [0.0, 1.0, 2.0, 10.0])
+
+    def test_missing_files_give_an_empty_table(self):
+        d = tempfile.mkdtemp()
+        try:
+            out = os.path.join(d, "coop_maps.txt")
+            self.assertEqual(map_captures.write_table(d, out), 0)
+            self.assertTrue(all(line.startswith("#") for line in build.read(out).decode().splitlines()))
+            self.assertEqual(map_captures.main(["--romfs", d, "--out", out]), 1)
+        finally:
+            shutil.rmtree(d)
+
+    @unittest.skipUnless(os.environ.get("COOP_TEST_ROMFS"), "set COOP_TEST_ROMFS to the game's romfs")
+    def test_real_romfs_the_field_is_the_biggest_area(self):
+        # Only with the player's own game: checks the order rule (entry i is the map of entry i).
+        d = tempfile.mkdtemp()
+        try:
+            out = os.path.join(d, "coop_maps.txt")
+            self.assertGreater(map_captures.write_table(os.environ["COOP_TEST_ROMFS"], out), 20)
+            caps = map_captures.captures(map_captures._load(os.environ["COOP_TEST_ROMFS"], map_captures.CAPTURE),
+                                         map_captures._load(os.environ["COOP_TEST_ROMFS"], map_captures.MENU))
+            areas = [c for c in caps if not c["dungeon"]]
+            self.assertEqual(max(areas, key=lambda c: c["height"])["location"], "HyruleField")
+            self.assertTrue(all(c["dungeon"] for c in caps if c["location"] in ("InsideTheDekuTree", "FireTemple")))
+        finally:
+            shutil.rmtree(d)
 
 
 class DungeonRoomsTest(unittest.TestCase):

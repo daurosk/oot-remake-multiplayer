@@ -51,8 +51,12 @@
 #include "coop/presence/presence.hpp"
 #include "coop/version.hpp"
 #include "coop_boss.h"
+#include "coop_boss_scenes.h"
 #include "coop_teleport_game.h"
 #include "coop_pvp_game.h"
+#include "coop_lobby_game.h"
+#include "coop_dbno_game.h"
+#include "coop_mod_share.h"
 #include "coop_scene_probe.h"
 #include "coop_camera.h"
 #include "coop_colors.h"
@@ -61,11 +65,15 @@
 #include "coop_cheats.h"
 #include "coop_chests.h"
 #include "coop_flags.h"
+#ifdef COOP_HOOKSHOT
+#include "coop_flag_native.h"
+#endif
 #include "coop_save.h"
 #include "coop_game_build.h"
 #include "coop_game_scan.h"
 #include "coop_pickups.h"
 #include "coop_fairy.h"
+#include "coop_difficulty.h"
 #include "coop_drops.h"
 #include "coop_every.h"
 #include "coop_dungeon.h"
@@ -73,8 +81,12 @@
 #include "coop_story.h"
 #include "coop_quests.h"
 #include "coop_live_events.h"
+#include "coop_local_game.h"
+#include "coop_local_net.h"
 #include "coop_shared_scenes.h"
 #include "coop_objects.h"
+#include "coop_link_sound.h"
+#include "coop_look_share.h"
 #include "coop_ocarina_sound.h"
 #include "coop_pose.h"
 #include "coop_puppet.h"
@@ -217,6 +229,7 @@ struct FrameView {
     std::vector<std::uint8_t> hidden;  // others with no marker (scene.hpp: hide)
     std::optional<Markers> markers;  // none: no camera
     std::string camera_note;         // for the panel, when the game runs
+    bool event = false;              // our own event hides the others (and the game its HUD)
 };
 
 // What the network thread knows, for the window.
@@ -249,6 +262,7 @@ public:
         config.hello.game_build_id = std::string(kGameBuildId);
         config.hello.game_version = std::string(kGameVersion);
         config.hello.nickname = settings_.name;
+        config.player_key = settings_.player_key;
         config.join_password = settings_.password;
         client_ = std::make_unique<coop::net::Client>(std::move(config));
         if (!client_->start()) {
@@ -295,8 +309,12 @@ public:
             CoopBoss::OnEvent(event);  // docs/dungeons-boss.md
             CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
             CoopPvp::OnEvent(event, client);  // PvP (docs/play-online.md "PvP")
+            CoopDbno::OnEvent(event, client);  // down but not out (docs/play-online.md)
+            CoopDifficulty::OnEvent(event, client);  // docs/play-online.md "Difficulty"
+            CoopModShare::OnEvent(event, client);  // mods (docs/mods.md "Mods in co-op")
             CoopSave::OnEvent(event, client);  // the host's save for the guests (issue 167)
             CoopHud::OnEvent(event);  // the others' hearts for the HUD (PLAYER_LIFE)
+            CoopLookShare::OnEvent(event, client);  // looks of several parts (PLAYER_LOOK, coop_look_share.h)
             if (event.kind == coop::net::EventKind::message) {  // deku-dungeon-2
                 if (const auto* e = std::get_if<coop::protocol::DungeonEvent>(&event.message)) {
                     std::lock_guard lock(dungeon_events_mutex_);
@@ -308,7 +326,15 @@ public:
                 }
             }
             CoopRide::OnEvent(event);  // their horses (PLAYER_RIDE, issue 199)
-            CoopVoice::OnEvent(event);  // their voices (VOICE_FRAME, docs/voice.md)
+            CoopLobby::OnEvent(event, client);  // the Lobby's mutes and the host's actions
+            // Their voices (VOICE_FRAME, docs/voice.md), but one we muted ourselves (the Lobby).
+            if (const auto* v = event.kind == coop::net::EventKind::message
+                                    ? std::get_if<coop::protocol::VoiceFrame>(&event.message)
+                                    : nullptr;
+                v == nullptr || !CoopLobby::VoiceHidden(v->player_number)) {
+                CoopVoice::OnEvent(event);
+            }
+            CoopLocalNet::OnEvent(event);  // split screen's seats in the session (coop_local_net.h)
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -524,7 +550,24 @@ public:
         if (memory) {  // docs/flags.md, "Saves": no scene for a while is the title screen
             session_->set_scene_readable(coop::host::PlayerReader(*memory).read_scene().has_value());
         }
+#ifdef COOP_HOOKSHOT
+        // The game's own flag writes since the last frame (the applier's wrap, coop_flag_native.h): the watcher
+        // reads those flags, not the whole list.
+        CoopFlagNative::Feed(*session_);
+        LogFlagEvents();
+#endif
+        if (auto color = TakeColor()) {  // the pause menu's look (hookshot/src/coop_look.h)
+            session_->set_color(*color);
+        }
         const auto report = session_->frame(reading, hold ? &*hold : nullptr);
+        if (memory) {  // split screen: each extra local player is a player of the session (coop_local_net.h)
+            CoopLocalNet::Online(
+                *memory, reading, report.connected, report.server_now_us,
+                [this](const coop::protocol::Message& m) {
+                    return session_->with_client([&m](coop::net::Client& client) { return client.send(m); });
+                },
+                [](const std::string& line) { LOG_INFO(Core, "coop: {}", line); });
+        }
         if (quests) {
             for (const auto& r : quests->take_raised()) {
                 LOG_INFO(Core, "coop: quests: {} {} -> {} (shared Threads of Time; issue 193)", r.quest,
@@ -583,9 +626,15 @@ public:
                         names.push_back(e);
                     }
                 }
-                const auto found = start_watch_.Frame(running_now, [&] {
-                    return CoopLiveEvents::FindRunningEvent(&ReadGuest, &*memory, base_, names);
-                });
+                // Our own start: on Hookshot the game's own request names it (the world hook's wrap); the search
+                // of the event session is the emulator's way, and Hookshot's net.
+                auto& requests = CoopLiveEvents::TheGameRequests();
+                const bool by_request = requests.Live();
+                const auto found = start_source_.Frame(
+                    by_request ? CoopLiveEvents::RequestedOf(requests.Since(start_cursor_), names) : std::nullopt,
+                    by_request, running_now,
+                    [&] { return CoopLiveEvents::FindRunningEvent(&ReadGuest, &*memory, base_, names); });
+                LogScanOnly(start_source_, start_scan_only_, "dungeon");
                 if (found) {
                     live_decider_.Ours(*found, hold_scene_);
                     coop::protocol::DungeonEvent e;
@@ -606,6 +655,15 @@ public:
         }
         if (shared_scenes_) {
             SharedScenes(view, reading, memory, report.server_now_us);
+        }
+        // Boss cutscenes (coop_boss_scenes.h): another player's boss intro or
+        // death, asked of our game by name, as a story cutscene's.
+        if (live_events_) {
+            for (auto& name : CoopBoss::TakeWantedEvents()) {
+                std::lock_guard lock(live_mutex_);
+                live_requester_.Want(std::move(name), view.scene.value_or(std::string()), CoopEvery::NowUs(),
+                                     CoopBossScenes::Director::kJoinUs);
+            }
         }
         // review-p11-interactions: a gimmick or story event still waiting in
         // the requester is dropped when we left its scene, when it waited too
@@ -782,6 +840,21 @@ public:
             CoopObjects::SetMaxLife(max_life && max_life->kind == coop::protocol::FlagKind::int32
                                         ? std::optional<std::int32_t>(static_cast<std::int32_t>(max_life->value))
                                         : std::nullopt);
+            // Boss cutscenes (coop_boss_scenes.h): the one shared heart container sees our maximum and may set it.
+            const bool known = max_life && max_life->kind == coop::protocol::FlagKind::int32;
+            CoopBoss::SetMaxLife(known ? std::optional<std::int32_t>(static_cast<std::int32_t>(max_life->value))
+                                       : std::nullopt);
+            // A second pickup of that container is put back by the flag watcher, never sent.
+            if (session_) {
+                session_->cap_max(coop::protocol::FlagKey{0xfbe01da1u, 0}, CoopBoss::MaxLifeCap());
+            }
+            if (const auto to = CoopBoss::TakeMaxLifeWrite(); to && known) {
+                auto set = *max_life;
+                set.value = static_cast<std::uint32_t>(*to);
+                const bool ok = game_store->write(set);
+                LOG_INFO(Core, "coop: boss: our maximum life {} -> {} (the boss's one heart container){}",
+                         static_cast<std::int32_t>(max_life->value), *to, ok ? "" : ": the write failed");
+            }
         }
         // Issue 144: changes from the others to actors near our Link wait while
         // our Link is in an event (a talk, a cutscene).
@@ -793,6 +866,7 @@ public:
                            reading->event_running.value_or(false),
                            reading->animation ? std::optional<std::string_view>(reading->animation->name)
                                               : std::nullopt);
+        view.event = event;  // (the map icons, CurrentMapView)
         if (report.connected) {
             view.others = session_->with_presence([&](coop::presence::Presence& p) {
                 auto shown = coop::overlay::collect(p, report.server_now_us);
@@ -816,6 +890,9 @@ public:
                 return shown;
             });
         }
+        // Local co-op (coop_local_game.h): the first Link this frame, then its Core's step, before the puppets are planned.
+        CoopLocalGame::Frame({view.game && view.scene.has_value(), view.position,
+                              view.age == coop::protocol::Age::adult});
         CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                             report.connected ? session_.get() : nullptr, report.server_now_us);
         // Proximity voice (docs/voice.md): our microphone out, theirs at their Links.
@@ -827,6 +904,13 @@ public:
                                     ? std::optional<std::string>(reading->animation->name)
                                     : std::nullopt,
                                 report.connected ? session_.get() : nullptr);
+        // Our look of several parts, chosen in the Multiplayer tab (coop_look_share.h).
+        CoopLookShare::Frame(report.connected ? session_.get() : nullptr);
+        // The sounds the game starts on our own Link, for the other games (coop_link_sound.h).
+        CoopLinkSound::Frame(report.connected ? session_.get() : nullptr,
+                             static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                            std::chrono::steady_clock::now().time_since_epoch())
+                                                            .count()));
         CoopFairy::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                            report.connected ? session_.get() : nullptr, report.server_now_us);
         // Issue 199: our horse sent while we ride; a copy of theirs under each
@@ -866,6 +950,9 @@ public:
         // /teleport <player> (docs/setup.md "Chat commands"), after the boss
         // rooms: it reads whether our boss fight runs.
         CoopTeleport::Frame(system, view.game ? base_ : 0, reading, report.connected ? session_.get() : nullptr);
+        for (auto& line : CoopBoss::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
         // LICHII_COOP_SCENE_PROBE=1 only (docs/scenes.md "Free-play scene change").
         CoopSceneProbe::Frame(system, view.game ? base_ : 0, reading);
         for (auto& line : CoopTeleport::TakeLines()) {
@@ -876,6 +963,28 @@ public:
         CoopPvp::Frame(view.scene, reading, report.connected ? session_.get() : nullptr,
                        report.server_now_us);
         for (auto& line : CoopPvp::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
+        // Down but not out (docs/play-online.md), after the walk read our
+        // Link's life and after PvP's hurts.
+        CoopDbno::Frame(view.scene, reading, report.connected ? session_.get() : nullptr,
+                        report.server_now_us);
+        for (auto& line : CoopDbno::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
+        // The Lobby (docs/play-online.md "Lobby"): the tab's host actions go out.
+        CoopLobby::Frame(report.connected ? session_.get() : nullptr);
+        for (auto& line : CoopLobby::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
+        // Difficulty (docs/play-online.md "Difficulty"): the host's choice goes out.
+        CoopDifficulty::Frame(report.connected ? session_.get() : nullptr);
+        for (auto& line : CoopDifficulty::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
+        // Mods (docs/mods.md "Mods in co-op"): our list, the host's shared settings, a warning when they differ.
+        CoopModShare::Frame(report.connected ? session_.get() : nullptr);
+        for (auto& line : CoopModShare::TakeLines()) {
             chat_.Add(std::move(line), true);
         }
         Place(view);
@@ -892,6 +1001,34 @@ public:
         return frame_.markers;
     }
 
+    // CurrentMapView (coop_hook.h): from the last frame, as the markers.
+    bool CurrentMapView(MapView& v) {
+        std::lock_guard lock(view_mutex_);
+        if (Clock::now() - frame_.at >= kFrameStale || !frame_.game || !frame_.scene || !frame_.position) {
+            return false;
+        }
+        v.scene.assign(*frame_.scene);
+        v.self = *frame_.position;
+        v.event = frame_.event;
+        v.others.resize(frame_.others.size());
+        for (std::size_t i = 0; i < frame_.others.size(); ++i) {
+            const auto& s = frame_.others[i];
+            auto& o = v.others[i];
+            o.number = s.number;
+            o.name.assign(s.name);
+            o.position = s.position;
+            o.rotation = s.rotation;
+            if (s.scene) {
+                if (!o.scene) o.scene.emplace();
+                o.scene->assign(*s.scene);
+            } else {
+                o.scene.reset();
+            }
+            o.fade = s.fade;
+        }
+        return true;
+    }
+
     std::vector<OverlayLine> Lines() {
         RoomView room;
         FrameView frame;
@@ -903,6 +1040,12 @@ public:
         return Compose(room, frame);
     }
 
+    // SetColor (coop_hook.h). Any thread; the next Frame sends it.
+    void SetColor(std::optional<std::uint32_t> color) {
+        std::lock_guard lock(color_mutex_);
+        color_change_ = color;
+    }
+
     // Chat and the player list (coop_hook.h). Any thread.
     bool SendChat(const std::string& text) {
         if (CoopTeleport::OnChat(text, *session_)) {
@@ -910,6 +1053,16 @@ public:
         }
         if (CoopPvp::OnChat(text, *session_)) {
             return true;  // /pvp: the same
+        }
+        if (CoopDbno::OnChat(text, *session_)) {
+            return true;  // /dbno: the same
+        }
+        if (CoopLobby::OnChat(text, *session_)) {
+            return true;  // /kick, /ban, /mute, /unmute (the Lobby): the same
+        }
+        if (CoopLobby::OwnChatMuted()) {
+            chat_.Add("the host muted your chat: nobody sees it", true);
+            return true;
         }
         const bool sent =
             session_->with_client([&](coop::net::Client& c) { return c.send_chat(text); });
@@ -992,6 +1145,11 @@ public:
     }
 
 private:
+    std::optional<std::optional<std::uint32_t>> TakeColor() {
+        std::lock_guard lock(color_mutex_);
+        return std::exchange(color_change_, std::nullopt);
+    }
+
     // Projects the players with the camera the renderer found (coop_camera.h).
     // Without one, view.markers stays empty and only the panel shows.
     void Place(FrameView& view) {
@@ -1427,7 +1585,9 @@ private:
             chat_.Add("server " + note_, true);
             break;
         case EventKind::chat:
-            chat_.Add(name(event.player, {}) + ": " + event.text, false);
+            if (!CoopLobby::ChatHidden(event.player)) {  // the Lobby: muted by us
+                chat_.Add(name(event.player, {}) + ": " + event.text, false);
+            }
             break;
         case EventKind::player_joined:
             chat_.Add(name(event.player, event.nickname) + " joined", true);
@@ -1539,6 +1699,27 @@ private:
     static constexpr std::uint64_t kDoubledNoEventMs = 1000;
     std::size_t pickups_given_ = 0;  // CoopPickups keys handed to the session
     bool holding_logged_ = false;  // issue 129: HoldFlagStore held something last frame
+#ifdef COOP_HOOKSHOT
+    // Every 10 s while the flag watcher goes by the game's events (coop_flag_native.h): what it read, and what its
+    // audit found that no event had named (0 when the applier's wrap sees every write).
+    void LogFlagEvents() {
+        if (!session_ || !CoopFlagNative::EventsLive() || !flag_events_log_.Due(CoopEvery::NowUs())) {
+            return;
+        }
+        const coop::host::FlagStats s = session_->flag_stats();
+        if (s.event_reads == flag_event_reads_ && s.event_misses == flag_event_misses_ &&
+            s.full_reads == flag_full_reads_) {
+            return;
+        }
+        flag_event_reads_ = s.event_reads;
+        flag_event_misses_ = s.event_misses;
+        flag_full_reads_ = s.full_reads;
+        LOG_INFO(Core, "coop: flags: by the game's events: {} flag reads for its writes, {} changes only the audit found, "
+                       "{} whole-list reads (loads)", s.event_reads, s.event_misses, s.full_reads);
+    }
+    CoopEvery::Every flag_events_log_{10 * CoopEvery::kSecondUs};
+    std::uint64_t flag_event_reads_ = 0, flag_event_misses_ = 0, flag_full_reads_ = 0;
+#endif
     CoopScrubTalk::Hold scrub_talk_;  // issue 144: scrub destroy flags wait for our event
     bool scrub_talk_on_ = EnvString("LICHII_COOP_SCRUB_TALK_HOLD") != "0";  // =0: off (the old softlock)
     bool live_events_ = false;     // LICHII_COOP_LIVE_EVENTS=1 (issue 129)
@@ -1583,11 +1764,22 @@ private:
     CoopLiveEvents::Decider live_decider_;
     std::mutex live_mutex_;  // the requester runs on the calc thread (CoopSvc caller)
     CoopLiveEvents::Requester live_requester_;
-    CoopLiveEvents::StartWatch start_watch_;
+    CoopLiveEvents::StartSource start_source_;  // our own gimmick event starts
+    std::uint64_t start_cursor_ = 0, start_scan_only_ = 0;
+    // An event start the search found that the game's request had not named, with the wrap there: logged, as the
+    // sign that some event does not start through the wrapped request.
+    static void LogScanOnly(const CoopLiveEvents::StartSource& source, std::uint64_t& said, const char* what) {
+        if (source.ScanOnly() != said) {
+            said = source.ScanOnly();
+            LOG_INFO(Core, "coop: {}: an event start found by the search that no request of the game named ({} so far)",
+                     what, said);
+        }
+    }
     // Shared story cutscenes (coop_shared_scenes.h).
     bool shared_scenes_ = false;  // LICHII_COOP_SHARED_CUTSCENES, needs live events
     CoopSharedScenes::Joiner shared_joiner_;
-    CoopLiveEvents::StartWatch story_watch_;  // our own story cutscene starts
+    CoopLiveEvents::StartSource story_source_;  // our own story cutscene starts
+    std::uint64_t story_cursor_ = 0, story_scan_only_ = 0;
     std::vector<coop::protocol::DungeonEvent> story_events_in_;  // under dungeon_events_mutex_  // deku-dungeon-2: our own gimmick event starts
     std::mutex dungeon_events_mutex_;         // DUNGEON_EVENT from the network thread
     std::vector<coop::protocol::DungeonEvent> dungeon_events_in_;
@@ -1668,9 +1860,13 @@ private:
                 const auto all = CoopSharedScenes::Names();
                 return std::vector<std::string_view>(all.begin(), all.end());
             }();
-            const auto found = story_watch_.Frame(running, [&] {
-                return CoopLiveEvents::FindRunningEvent(&ReadGuest, &*memory, base_, names);
-            });
+            auto& requests = CoopLiveEvents::TheGameRequests();
+            const bool by_request = requests.Live();
+            const auto found = story_source_.Frame(
+                by_request ? CoopLiveEvents::RequestedOf(requests.Since(story_cursor_), names) : std::nullopt,
+                by_request, running,
+                [&] { return CoopLiveEvents::FindRunningEvent(&ReadGuest, &*memory, base_, names); });
+            LogScanOnly(story_source_, story_scan_only_, "cutscene");
             if (found && shared_joiner_.Ours(*found, here.scene)) {
                 proto::DungeonEvent e;
                 e.scene = here.scene;
@@ -1808,6 +2004,8 @@ private:
     std::mutex view_mutex_;
     RoomView room_;
     FrameView frame_;
+    std::mutex color_mutex_;
+    std::optional<std::optional<std::uint32_t>> color_change_;  // guarded: SetColor's, for the next Frame
 };
 
 std::mutex g_mutex;
@@ -1816,6 +2014,8 @@ bool g_shut_down = false;
 std::atomic<bool> g_mod_refused{false};  // a game mod patches where co-op does (Start)
 std::unique_ptr<Coop> g_coop;  // set by Start or Begin, cleared by End or Shutdown
 std::vector<std::unique_ptr<Coop>> g_ended;  // End's: kept until Shutdown (see End)
+// SetColor's colour: a session started after it wears it, not the settings' (guarded).
+std::optional<std::optional<std::uint32_t>> g_chosen_color;
 
 // Joins the thread if the program ends without Shutdown.
 void Stop(bool quiet) {
@@ -1844,6 +2044,21 @@ Coop* Get() {
 }
 
 } // namespace
+
+// The Lobby (docs/protocol.md "Lobby"): the player's own key, from
+// player-key.txt beside coop.ini (made there once), so the host's mutes and
+// bans follow the player and not the name.
+static void WithPlayerKey(Settings& settings) {
+    if (settings.player_key) {
+        return;
+    }
+    std::string note;
+    settings.player_key =
+        LoadPlayerKey(Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "player-key.txt", note);
+    if (!note.empty()) {
+        LOG_INFO(Core, "coop: {}", note);
+    }
+}
 
 void Start() {
     std::lock_guard lock(g_mutex);
@@ -1881,6 +2096,10 @@ void Start() {
     }
     LOG_INFO(Core, "coop: on, server {}:{}, name '{}', join password {}", settings.server,
              settings.port, settings.name, settings.password.empty() ? "none" : "set");
+    if (g_chosen_color) {
+        settings.color = *g_chosen_color;
+    }
+    WithPlayerKey(settings);
     auto coop = std::make_unique<Coop>(std::move(settings));
     if (coop->Begin()) {
         g_coop = std::move(coop);
@@ -1923,6 +2142,10 @@ bool Begin(Settings settings) {
     g_started = true;  // Start() then reads no coop.ini
     LOG_INFO(Core, "coop: on (from the menu), server {}:{}, name '{}', join password {}", settings.server,
              settings.port, settings.name, settings.password.empty() ? "none" : "set");
+    if (g_chosen_color) {
+        settings.color = *g_chosen_color;
+    }
+    WithPlayerKey(settings);
     auto coop = std::make_unique<Coop>(std::move(settings));
     if (!coop->Begin()) {
         return false;
@@ -1946,6 +2169,17 @@ void End() {
     g_ended.push_back(std::move(coop));
 }
 
+void SetColor(std::optional<std::uint32_t> color) {
+    CoopPuppet::SetOwnColor(color);  // the test puppet and your name's colour
+    std::lock_guard lock(g_mutex);
+    g_chosen_color = color;
+    if (g_coop) {
+        g_coop->SetColor(color);
+    }
+    LOG_INFO(Core, "coop: colour changed in the game: {}",
+             color ? CoopColors::Text(*color) : std::string("none chosen (slot colour)"));
+}
+
 std::vector<OverlayLine> OverlayLines() {
     if (g_mod_refused) {
         return {{"Co-op is off: a code mod is installed"}};
@@ -1964,6 +2198,14 @@ std::optional<Markers> CurrentMarkers() {
         return coop->CurrentMarkers();
     }
     return std::nullopt;
+}
+
+bool CurrentMapView(MapView& out) {
+    if (g_mod_refused) {
+        return false;
+    }
+    auto* coop = Get();
+    return coop != nullptr && coop->CurrentMapView(out);
 }
 
 bool SendChat(const std::string& text) {

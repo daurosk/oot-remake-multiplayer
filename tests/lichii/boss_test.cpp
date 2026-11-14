@@ -68,8 +68,16 @@ TEST_CASE("boss: the eight rooms") {
         CHECK(CoopBoss::RoomByIndex(r.index) == &r);
         // The arrival point and every player's spot around it are in the room.
         CHECK(CoopBoss::Inside(r, r.arrive));
-        for (std::uint8_t n = 1; n <= 4; ++n) {
+        for (std::uint8_t n = 1; n <= proto::kMaxPlayers; ++n) {
             CHECK(CoopBoss::Inside(r, CoopBoss::ArrivalFor(r, n)));
+        }
+        // All 16 spots differ, at least a unit apart.
+        for (std::uint8_t a = 1; a <= proto::kMaxPlayers; ++a) {
+            for (std::uint8_t b = a + 1; b <= proto::kMaxPlayers; ++b) {
+                const Vec pa = CoopBoss::ArrivalFor(r, a);
+                const Vec pb = CoopBoss::ArrivalFor(r, b);
+                CHECK(std::hypot(pa.x - pb.x, pa.z - pb.z) > 1.0f);
+            }
         }
         CHECK_FALSE(r.parts.empty());
         CHECK(r.parts[0] == r.boss);
@@ -381,6 +389,32 @@ TEST_CASE("boss: an event that runs 15 s is the death even if the boss is still 
     CHECK(Has(a, proto::BossState::defeated));
     s.Tick(Alive(Forest().arrive, false, true), 60 * kS);
     CHECK(s.phase() == Sync::Phase::done);
+}
+
+TEST_CASE("boss: a long event with the boss at full life is not its death (Gohma's ceiling intro)") {
+    // The Deku Tree: a 2 s event on entry is taken as the intro; Gohma's own intro (on the
+    // ceiling, then three camera shots) starts later and runs over 15 s, Gohma at full life.
+    Sync s;
+    ToFight(s);
+    Local l = Alive(Forest().arrive, true, true);
+    l.boss_hurt = false;
+    s.Tick(l, 30 * kS);
+    REQUIRE(s.phase() == Sync::Phase::outro);
+    auto a = s.Tick(l, 46 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    a = s.Tick(l, 60 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    // The scene ends, Gohma alive: the fight goes on.
+    l.event = false;
+    a = s.Tick(l, 61 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    CHECK(s.phase() == Sync::Phase::fight);
+    // Once hurt, a long event is the death again (a body left with its life unread).
+    l.event = true;
+    l.boss_hurt = true;
+    s.Tick(l, 80 * kS);
+    a = s.Tick(l, 96 * kS);
+    CHECK(Has(a, proto::BossState::defeated));
 }
 
 TEST_CASE("boss: the boss dead when the event starts, or no reading, is the death at once") {

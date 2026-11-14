@@ -116,9 +116,9 @@ const Room* RoomOfScene(std::string_view scene);
 bool Inside(const Room& room, const Vec& p);
 // The room `p` is in, in scene `scene`, or null.
 const Room* RoomAt(std::string_view scene, const Vec& p);
-// Where player `number` (1 to 4) is put in a room: the room's arrival point,
-// moved 1.5 units around it by player number so two moved players do not
-// stand in each other.
+// Where player `number` (1 to 16) is put in a room: the room's arrival point,
+// moved around it by player number (1-8 at 1.5 units, 9-16 at 3) so no two
+// moved players stand in each other.
 Vec ArrivalFor(const Room& room, std::uint8_t number);
 
 // What the game should do now.
@@ -148,6 +148,11 @@ struct Local {
     // ShutInFlag(room) of the scene's boss room as the game has it: nothing
     // when the room has no such flag or it cannot be read (issue 148).
     std::optional<bool> shut_in;
+    // Whether the boss has lost life: true once a body's life is below its
+    // maximum, false while every body is at full life, nothing when unread.
+    // An untouched boss is not dying, so a long event then is not its death
+    // (Gohma's ceiling intro starts well after the room's entry event).
+    std::optional<bool> boss_hurt;
 };
 
 class Sync {
@@ -162,7 +167,8 @@ public:
     // (seen before, for example), so the fight has begun.
     static constexpr std::uint64_t kNoIntroUs = 10'000'000;
     // An event in the fight this long is the boss's death even when the walk
-    // still sees the boss (a dead boss actor may stay with its life unread).
+    // still sees the boss (a dead boss actor may stay with its life unread),
+    // unless the boss is known to be at full life (Local::boss_hurt false).
     static constexpr std::uint64_t kLongEventUs = 15'000'000;
     // An event this soon after the fight began is never the boss's death: the
     // rest of an intro (a skipped one plays its next shot), not an outro
@@ -271,5 +277,17 @@ bool AskSceneChange(Core::System& system, std::uint64_t main_base, std::string_v
                     std::string_view start);
 // - our Link moved to `to` in this scene, the boss pull's free-play move.
 bool MoveLink(Core::System& system, std::uint64_t main_base, const Vec& to);
+
+// Boss cutscenes for the area (coop_boss_scenes.h), present thread, for the hook:
+// - our game's PlayerStatus.MaxLife this frame (nothing: unread);
+void SetMaxLife(std::optional<std::int32_t> max_life);
+// - a maximum life to write in our game (the one shared heart container), once;
+std::optional<std::int32_t> TakeMaxLifeWrite();
+// - the most our own game may raise our maximum life to now (FlagWatcher::cap_max), or nothing;
+std::optional<std::int32_t> MaxLifeCap();
+// - boss events to ask our game for by name (the live-event requester);
+std::vector<std::string> TakeWantedEvents();
+// - lines for the chat box ("<name> entered the boss room of ...").
+std::vector<std::string> TakeLines();
 
 } // namespace CoopBoss

@@ -69,6 +69,8 @@ jobs:
         run: python tools/autotest/tests/test_save_flags.py -v
       - name: Hookshot autotest driver tests
         run: python tools/autotest/tests/test_hookshot.py -v
+      - name: Test lanes tests
+        run: python tools/autotest/tests/test_lanes.py -v
       - name: Bad-connection relay tests
         run: python tools/netsim/tests/test_netsim.py -v
       # The kit's patch applier for Hookshot (hookshot-kit); skipped until that branch is merged.
@@ -252,12 +254,86 @@ jobs:
       - name: Linux kit tests
         if: matrix.job == 'gcc'
         run: bash tools/release/tests/linux_kit_test.sh
+      - name: Linux Longshot kit tests
+        if: matrix.job == 'gcc'
+        run: bash tools/release/tests/linux_longshot_kit_test.sh
       - name: coop_test, 2 clients for 20 seconds
         if: env.COOP_SOAK == '1'
         run: |
           set -o pipefail
           ./build/tools/coop_test/coop_test --clients 2 --seconds 20 --report-every 5 | tee coop_test.log
           grep -q '^result: PASS' coop_test.log
+
+  # Co-op on Longshot for Linux and Steam Deck (docs/setup-linux.md): the module as a .so and
+  # the server, built on Ubuntu 22.04 (glibc 2.35, Longshot's own baseline) and loaded as the patched
+  # game loads it (tests/hookshot/load_module.c); the Linux kit zip (tools/release/make_kit_linux.sh);
+  # then the kit's own scripts/build.sh without a game: Longshot's Linux builder (hookshot/LINUX.txt)
+  # unpacked, our patches applied, Longshot's Linux tools fetched, and the patched renderer compiled.
+  # The game itself needs a player's files: not here. Full tier, plus pushes to linux-longshot.
+  linux-longshot:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/linux-longshot'))
+    runs-on: ubuntu-22.04
+    name: linux-longshot (module, kit, patched renderer)
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: 4
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - name: Compilers and tools
+        run: sudo apt-get update -q && sudo apt-get install -y -q g++-12 zip
+      - name: Build the module and the server
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc-12 -DCMAKE_CXX_COMPILER=g++-12 \
+            -DCOOP_BUILD_HOOKSHOT=ON -DCOOP_BUILD_TESTS=OFF \
+            -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+          cmake --build build --target hookshot_coop coop_server --parallel 4
+      - name: The module loads as the game loads it
+        run: |
+          set -o pipefail
+          module=$(find build -name hookshot_coop.so -type f | head -n1)
+          server=$(find build -name coop_server -type f -perm -u+x | head -n1)
+          test -n "$module" && test -n "$server"
+          echo "MODULE=$module" >> "$GITHUB_ENV"
+          echo "SERVER=$server" >> "$GITHUB_ENV"
+          gcc -O2 -o "$RUNNER_TEMP/load_module" tests/hookshot/load_module.c
+          "$RUNNER_TEMP/load_module" "$module"
+          # (no C++ runtime needed from the system, and nothing newer than glibc 2.35)
+          for f in "$module" "$server"; do
+            if objdump -p "$f" | grep -E 'NEEDED.*(libstdc\+\+|libgcc_s)'; then echo "::error::$f needs the system's C++ runtime"; exit 1; fi
+            newest=$(objdump -T "$f" | grep -oE 'GLIBC_[0-9.]+' | sort -t. -k1,1 -k2,2n -u | tail -n1)
+            echo "$f: newest glibc symbol $newest"
+            [ "$(printf '%s\nGLIBC_2.35\n' "$newest" | sort -V | tail -n1)" = GLIBC_2.35 ] || { echo "::error::$f needs $newest"; exit 1; }
+          done
+      # (also in linux (gcc); here too, so they run when that job is stopped by another target's -Werror)
+      - name: The module's Linux clipboard tests and the kit tests
+        run: |
+          cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc-12 -DCMAKE_CXX_COMPILER=g++-12 -DCOOP_BUILD_TESTS=ON
+          cmake --build build-tests --target coop_tests --parallel 4
+          "$(find build-tests -name coop_tests -type f -perm -u+x | head -n1)" -tc='Linux clipboard*'
+          bash tools/release/tests/linux_longshot_kit_test.sh
+      - name: The Linux kit
+        run: |
+          release=$(if [ "$GITHUB_REF_TYPE" = tag ]; then echo "$GITHUB_REF_NAME"; else echo "ci-${GITHUB_SHA::8}"; fi)
+          bash tools/release/make_kit_linux.sh --module "$MODULE" --server "$SERVER" --licenses build \
+            --release "$release" --out "$RUNNER_TEMP/kit"
+          (cd "$RUNNER_TEMP/kit" && sha256sum -c oot-coop-*-linux.zip.sha256)
+          unzip -l "$RUNNER_TEMP"/kit/oot-coop-*-linux.zip | tail -n +4 | head -n 60
+          echo "KIT=$(ls -d "$RUNNER_TEMP"/kit/oot-coop-*-linux)" >> "$GITHUB_ENV"
+      - name: Longshot's Linux builder with our patches, and the patched renderer (no game)
+        run: bash "$KIT/scripts/build.sh" --renderer-only "$RUNNER_TEMP/vk" --jobs 4
+      - name: A first start without a game stops in plain words
+        run: |
+          set +e
+          out=$(bash "$KIT/start-oot-coop.sh" --no-update </dev/null 2>&1)
+          code=$?
+          printf '%s\n' "$out" | tail -n 15
+          [ $code -ne 0 ] && printf '%s' "$out" | grep -q 'needs your game file' || { echo "::error::expected the no-game message"; exit 1; }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: oot-coop-linux
+          path: |
+            ${{ runner.temp }}/kit/oot-coop-*-linux.zip
+            ${{ runner.temp }}/kit/oot-coop-*-linux.zip.sha256
+          retention-days: 14
 
   # The co-op emulator on Linux (issue 127): Fritchii at lichii/PIN with our patches and the
   # hook, configured as Fritchii's own Linux release is (lichii/build-linux.sh). On every full-tier run

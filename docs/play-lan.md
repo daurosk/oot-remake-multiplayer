@@ -4,18 +4,18 @@ For players on the same home network (the same router, wired or Wi-Fi). Every pl
 
 One player is the **host**: their PC runs the server, and they play on it too. The others **join**.
 
-## On Hookshot's title screen
+## In the game: the Multiplayer tab
 
-With Host and Join on the title screen (no `.bat` file):
+Host and Join are in the game's menu, first tab **Multiplayer** ([setup.md](setup.md) step 5 says how to open it; no `.bat` file):
 
-1. **The host** opens **Host** on the title screen, then chooses **Same network or VPN**. The game shows one line, for example `192.168.1.20:27510 abcdefghijklmnopqrst` (this PC's address and port, a space, the session's join password), and has copied it. With a VPN program running, its address comes first (Radmin VPN `26.x.x.x`, Hamachi `25.x.x.x`, Tailscale `100.x.x.x`).
+1. **The host** opens **Host** in the Multiplayer tab, then chooses **Same network or VPN**. The game shows one line, for example `192.168.1.20:27510 abcdefghijklmnopqrst` (this PC's address and port, a space, the session's join password), and has copied it. With a VPN program running, its address comes first (Radmin VPN `26.x.x.x`, Hamachi `25.x.x.x`, Tailscale `100.x.x.x`).
 2. The host pastes that line into a chat with the friends (Ctrl+V). It holds the join password, so keep it among friends.
-3. **The others** open **Join** on the title screen and paste the line where the invite code goes (A on the field, or Ctrl+V), then **OK**. Nothing else to type.
+3. **The others** open **Join** in the Multiplayer tab and paste the line where the invite code goes (A on the field, or Ctrl+V), then **OK**. Nothing else to type.
 4. If Windows asks about the firewall on the host's PC, allow the game on private networks.
 
 The invite code is for friends over the internet: it holds the host's internet address, which often does not work from inside the same house. **Copy the code again** on the Host screen brings the invite code back.
 
-The rest of this page is for `Host.bat` / `Join.bat` (and `Host-Hookshot.bat` / `Join-Hookshot.bat`).
+Host, Join and Firewall below are for the older emulator kits (0.10.0 and before) with `Host.bat` / `Join.bat`; the firewall rule also applies to `start-server.cmd`.
 
 ## Host
 
@@ -72,11 +72,11 @@ netsh advfirewall firewall delete rule name="OoT co-op server UDP 27510"
 
 ## Two players on one PC
 
-Two games side by side, each with its own controller, or one with a controller and one with the keyboard and mouse. Hookshot only (patch 0015); the emulator gives the keyboard and every pad to the window in front.
+Two games side by side, each with its own controller, or one with a controller and one with the keyboard and mouse.
 
-1. **Two kits.** Unzip the kit twice, into two short folders (for example `C:\oot-coop-1` and `C:\oot-coop-2`), and do [setup.md, "Play on Hookshot"](setup.md#play-on-hookshot-experimental) in each. A Hookshot game takes about 10 GB of RAM, so two need about 20 GB free.
+1. **Two kits.** Unzip the kit twice, into two short folders (for example `C:\OoT-Coop-1` and `C:\OoT-Coop-2`), and do [setup.md](setup.md) in each: double-click `Start OoT Co-op.bat` and give it your game. Or copy a kit folder in Windows (a "- Copy" folder works too). Each kit starts its own game: the second kit copies the game the first one built (a minute or two) instead of building it again (a kit that builds needs 60 GB free while it builds), and the copy starts with the first kit's saves as they are then (from then on each kit keeps its own). A game takes about 10 GB of RAM, so two need about 20 GB free. A 0.10.1 kit copied in Windows starts the first kit's game instead and says "the co-op game of another kit is running": in the copy, open `hookshot\game-folder.txt` and change it to the copy's own `hookshot\game` folder (or update the kit).
 2. **Plug in the controllers** before you start the games. They are numbered in the order they were connected: the first one plugged in is controller 1. A controller that turns off or is unplugged gets its number back when it returns, and the others keep theirs. Steam Controller / Steam Deck pads with Steam Input on show twice (the real pad and Steam's stand-in): choose the stand-in, and the game gets no motion controls from it.
-3. **Choose each game's controller.** In each kit's `coop-options.ini` add one line, or use the **Multiplayer** tab's **Settings > Controller** row in the game, which shows each controller's name and applies at once:
+3. **Choose each game's controller.** In each kit's `coop-options.ini` (beside `Start OoT Co-op.bat`) add one line, or use the **Multiplayer** tab's **Settings > Controller** row in the game, which shows each controller's name and applies at once:
 
    | Setup | Kit 1 (`coop-options.ini`) | Kit 2 (`coop-options.ini`) |
    |---|---|---|
@@ -84,10 +84,25 @@ Two games side by side, each with its own controller, or one with a controller a
    | Controller + keyboard and mouse | `LICHII_COOP_PAD=1` | `LICHII_COOP_PAD=none` |
 
    A game with a controller chosen reads only that one, and keeps reading it while the other game's window is in front. With `none` the game reads no controller, only the keyboard and mouse.
-4. **Start them:** `Play-OoT-Coop.bat` in kit 1, **Host** on its title screen; `Play-OoT-Coop.bat` in kit 2, **Join** with `127.0.0.1` (or `Host-Hookshot.bat` in one and `Join-Hookshot.bat` with `127.0.0.1` in the other).
-5. **The keyboard and mouse** go to the window in front (click it to play there). A controller player does not need their window in front. To keep the keyboard out of the controller game altogether, add `LICHII_COOP_KEYBOARD=off` to its kit; `LICHII_COOP_KEYBOARD=always` makes a game read the keys even behind the other window (no mouse).
+4. **Start them:** double-click `Start OoT Co-op.bat` in kit 1 and open **Host** in the game's menu, first tab **Multiplayer** ([setup.md](setup.md) step 5 says how to open it), then **Same network or VPN**: it copies one line (address, port and join password). Then double-click `Start OoT Co-op.bat` in kit 2 and open **Join** in its **Multiplayer** tab: the line is filled in already (it is on this PC's clipboard), then **OK**. If Windows asks about the firewall, allow the game on private networks.
+5. **The keyboard and mouse** go to the window in front (click it to play there). A controller player does not need their window in front. To keep the keyboard out of the controller game altogether, add `LICHII_COOP_KEYBOARD=off` to its kit's `coop-options.ini`; `LICHII_COOP_KEYBOARD=always` makes a game read the keys even behind the other window (no mouse).
 
-`hookshot_log.txt` beside each `hookshot.exe` says what it chose: `hid: this game's controller: one pad (1)` and `coop: controller 1, keyboard focus`. The default (no line, or `LICHII_COOP_PAD=auto`) is Hookshot's own way: every controller, in the window in front only (the Insert menu's **Controller in background** also lets them in behind). A game built before patch 0015 says `this Hookshot cannot choose a controller`: run `Build-Hookshot-Coop.bat` again.
+`longshot_log.txt` beside each kit's `longshot.exe` (in `hookshot\game\bin\`) says what it chose: `hid: this game's controller: one pad (1)` and `coop: controller 1, keyboard focus`. The default (no line, or `LICHII_COOP_PAD=auto`) is the game's own way: every controller, in the window in front only (the game's menu has **Controller in background** to let them in behind too). A log line `this Hookshot cannot choose a controller` means that kit's game is older than the kit: start `Start OoT Co-op.bat` again and let it update the game.
+
+## Split-screen with Nucleus Co-op
+
+[Nucleus Co-op](https://github.com/SplitScreen-Me/splitscreenme-nucleus) is a free Windows tool. It does what the section above does by hand, in one click, for 2 to 4 players: it starts one copy of the game per player and places the windows to fill the screen (or several screens). Player 1's game hosts on this PC, and the others join it. Longshot only.
+
+It runs a **whole game per player**. Each copy takes about 10 GB of RAM, so 2 players need about 20 GB free and 4 need about 40 GB, plus the graphics card's memory for each copy. The lighter way is the game's own split-screen ([local-coop.md](local-coop.md), from 0.11): one game, one world, every player's view in it.
+
+1. **Once:** install Nucleus and our handler as [tools/nucleus/README.md](../tools/nucleus/README.md) says (unzip Nucleus, copy `OoTCoop.js` into its `handlers` folder, add the `longshot.exe` of your kit's co-op game). The co-op game must be built from this release or a later one. With an older one, every copy reads the same controller: run `Build-Hookshot-Coop.bat` again.
+2. **Plug in the controllers**, start Nucleus and choose **OoT Co-op (Longshot)**. Drag each controller (and the keyboard, for a keyboard-and-mouse player) onto a part of the screen, give each player a name, then press **Play**.
+3. **The first time**, Windows asks to let Nucleus make changes. Nucleus makes the links to the game's files as administrator. Later starts do not ask.
+4. The games start one after another, about 15 seconds apart. Player 1's start also opens the server in a window of its own, for this PC only (port 27590, a new join password each session, nothing to type). Each game joins it by itself. Player 1 hosts and plays their own saves. Players 2 to 4 get the host's save when they join, and their own files stay in `nucleus-players\player2` to `player4` beside the game.
+5. Each controller works in its own window, even while another window is in front. The keyboard and mouse go to the keyboard player's window when it is in front: click it to play there. If a game reads the wrong controller, choose the right one on its **Multiplayer** tab, under **Settings > Controller** (it applies at once).
+6. **To stop**, end the session in Nucleus. It closes the games and the server. It closes **every** `coop_server.exe` on this PC, so do not host with `Host.bat` at the same time.
+
+Friends on other PCs cannot join a Nucleus session: its server is for this PC only. For that, use **Host** in one game instead (above).
 
 ## Something does not work
 

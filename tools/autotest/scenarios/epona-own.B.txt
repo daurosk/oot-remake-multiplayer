@@ -8,14 +8,19 @@ setflag Sequence_IsChildhood 0  # adult (Hookshot: run.ps1 loads the save first)
 warp HyruleField_Adult HyruleField_FrontOfMarket
 wait 1200               # the warp's load
 mark field
-place -99.0 151.0 264.5 # beside Epona (1.5 m east of her)
+press PLUS 12           # probe: the pause menu must open (scripted buttons reach the game)
+wait 60
+mark probe-pause
+press PLUS 12           # close it
+wait 120
+place -95.5 151.0 264.5 # 5 m east of Epona
 wait 240
-toward -100.47 264.55 6 # face her
+goto -99.3 264.55 0.5 180 # walk to her side: Link ends facing her (toward's one push faced him away)
 wait 30
 mark by-horse
 press A 12              # get on
-wait 240
-mark mounted
+wait 40
+mark mounted            # (an unowned Epona throws Link off after about 1.5 s)
 stick 0 0.8 120         # ride forward
 mark riding
 stick 0 0.8 120

@@ -23,6 +23,13 @@ bool same_name(const std::string& a, const std::string& b) {
                     [](char x, char y) { return ascii_lower(x) == ascii_lower(y); });
 }
 
+// A name as the Lobby keeps it: without ASCII case, as same_name compares.
+std::string name_key(const std::string& name) {
+  std::string key = name;
+  for (char& ch : key) ch = ascii_lower(ch);
+  return key;
+}
+
 // The codec already refuses empty names and control characters; a name of
 // nothing but spaces is refused here.
 bool blank_name(const std::string& name) {
@@ -79,10 +86,13 @@ std::uint64_t Stats::dropped() const {
   return total;
 }
 
-Session::Session(SessionConfig config) : config_(std::move(config)), pvp_(config_.pvp) {}
+Session::Session(SessionConfig config) : config_(std::move(config)), pvp_(config_.pvp), dbno_(config_.dbno) {
+  dbno_.set_by = 0;
+}
 
 bool Session::connected(ConnectionId id, std::uint64_t now_us,
                         std::optional<std::uint32_t> address) {
+  if (id >= kLocalPlayerIds) return false;  // (the local players' numbers)
   if (!config_.allowed.empty()) {
     const bool ok = address && std::any_of(config_.allowed.begin(), config_.allowed.end(),
                                            [&](const AddressRange& r) {
@@ -125,9 +135,10 @@ std::size_t Session::half_open_count(std::uint32_t address) const {
 void Session::received(ConnectionId id, std::uint8_t channel,
                        std::span<const std::uint8_t> bytes, std::uint64_t now_us) {
   auto it = connections_.find(id);
-  if (it == connections_.end()) return;  // the transport's mistake, not the peer's
+  if (it == connections_.end() || it->second.parent) return;  // the transport's mistake, not the peer's
   Connection& c = it->second;
   c.last_heard = now_us;
+  for (ConnectionId local : local_players(id)) connections_.at(local).last_heard = now_us;  // (they live by it)
 
   if (c.state == State::closing) {
     ++stats_.after_refused;
@@ -255,10 +266,17 @@ void Session::on_join_proof(ConnectionId id, Connection& c, const JoinProof& pro
     refuse(id, c, RefuseReason::wrong_protocol_version, now_us, "unusable traffic key share");
     return;
   }
+  // The Lobby: the player key, sealed with this connection's keys (none, or
+  // one that does not open: a player without a key, known by name).
+  std::optional<PlayerKey> player_key;
+  if (proof.player_key) {
+    player_key = open_player_key(keys->receive, *proof.player_key);
+    if (!player_key) ++stats_.lobby_bad_key;
+  }
   actions_.push_back(EncryptAction{id, *keys});
   keys->wipe();
   c.state = State::awaiting_hello;  // admit() moves it on to joined or closing
-  admit(id, c, hello, now_us);
+  admit(id, c, hello, now_us, player_key);
 }
 
 void Session::note_wrong_password(std::optional<std::uint32_t> address, std::uint64_t now_us) {
@@ -289,7 +307,7 @@ void Session::note_wrong_password(std::optional<std::uint32_t> address, std::uin
 }
 
 void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
-                    std::uint64_t now_us) {
+                    std::uint64_t now_us, const std::optional<PlayerKey>& player_key) {
   std::string expected = config_.game_build_id;
   if (expected.empty()) {
     expected = player_count() == 0 ? hello.game_build_id : session_game_build_;
@@ -304,6 +322,11 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
     refuse(id, c, RefuseReason::bad_name, now_us);
     return;
   }
+  if (lobby_banned(lobby_id(hello.nickname, player_key, std::nullopt, 0), hello.nickname, c.address)) {
+    ++stats_.lobby_banned;
+    refuse(id, c, RefuseReason::banned, now_us, "banned by the host");
+    return;
+  }
   // A build that lost its connection finds its old self still in until the
   // silence timeout. It takes that place when the old one is quiet, from the
   // same address, and the new connection showed the old one's rejoin token
@@ -313,6 +336,10 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   std::uint8_t preferred = 0;
   if (auto holder = holder_of(hello.nickname)) {
     const Connection& old = connections_.at(*holder);
+    if (old.parent) {  // an extra local player's name: never taken over by a rejoin
+      refuse(id, c, RefuseReason::name_taken, now_us);
+      return;
+    }
     const bool quiet = config_.rejoin_stale_us != 0 && c.address && old.address == c.address &&
                        now_us - old.last_heard >= config_.rejoin_stale_us;
     const bool token = c.rejoin_claim && same_proof(*c.rejoin_claim, old.rejoin_token);
@@ -351,6 +378,29 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   c.state = State::joined;
   c.number = welcome.player_number;
   c.nickname = hello.nickname;
+  c.player_key = player_key;
+  // The Lobby: a key another player in has too (a kit copied to a friend):
+  // this one is known by name, so a mute or ban of one never takes both.
+  if (c.player_key) {
+    for (const auto& [other, oc] : connections_) {
+      if (other != id && oc.state == State::joined && !oc.parent && oc.player_key == c.player_key) {
+        // From the same address (or both relayed): most likely that player's
+        // own game again (killed and restarted while the old connection is
+        // still in, under a new name): it keeps what the host muted of it.
+        const std::uint8_t kept = c.address == oc.address ? lobby_mutes_of(oc) : 0;
+        c.player_key.reset();
+        ++stats_.lobby_shared_key;
+        if (kept != 0) {
+          lobby_mutes_[lobby_id(c)] |= kept;
+          ++stats_.lobby_mutes_kept;
+        }
+        log("player " + std::to_string(c.number) + " (" + c.nickname + ") has the same player key as player " +
+            std::to_string(oc.number) + " (a copied kit?): the Lobby knows it by name" +
+            (kept != 0 ? ", and it keeps that player's mutes (same address)" : ""));
+        break;
+      }
+    }
+  }
   c.last_ping = now_us;
   c.reliable_budget = 2.0 * config_.reliable_per_second;
   c.unreliable_budget = 2.0 * config_.unreliable_per_second;
@@ -372,6 +422,30 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   // PvP on: told at join, after HOST. Off is not told: every
   // game starts each connection with PvP off (docs/protocol.md, "PvP").
   if (pvp_) send(id, kChannelSession, PvpMode{pvp_set_by_, pvp_});
+  // Down but not out: told at join, on or off (a game starts with it off).
+  send(id, kChannelSession, dbno_);
+  // The difficulty in force, always: with this player in, and the others
+  // are told when one more player moved the automatic scaler.
+  send(id, kChannelSession, difficulty());
+  tell_difficulty_change(id);
+  // Mods: everyone else's list and the host's shared mod settings.
+  for (const auto& entry : connections_) {
+    if (entry.first != id && entry.second.state == State::joined && entry.second.mods) {
+      send(id, kChannelSession, *entry.second.mods);
+    }
+  }
+  if (mod_settings_) send(id, kChannelSession, *mod_settings_);
+  // The Lobby: who the host muted (the joiner too, when it was muted before
+  // it left); the others learn it of the joiner.
+  for (const auto& entry : connections_) {
+    if (entry.second.state != State::joined) continue;
+    if (const std::uint8_t flags = lobby_mutes_of(entry.second); flags != 0) {
+      send(id, kChannelSession, LobbyMutes{entry.second.number, flags});
+    }
+  }
+  if (const std::uint8_t flags = lobby_mutes_of(c); flags != 0) {
+    send_to_others(id, kChannelSession, LobbyMutes{c.number, flags});
+  }
   send_snapshot(id);
   log("player " + std::to_string(c.number) + " joined: " + c.nickname);
 }
@@ -385,7 +459,13 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   // the host only (on_save). Outside the host's byte and message budgets: a
   // part dropped here would leave the guest's transfer unfinished.
   const bool host_save = std::holds_alternative<SavePart>(message) && id == host_;
-  if (!host_save && !within_rate(c, channel, bytes, now_us)) {
+  // A split-screen seat's envelope is charged to that seat (on_local), not to
+  // its game as well: two to four players on one connection keep their rates.
+  const bool seat_envelope =
+      (std::holds_alternative<LocalSample>(message) &&
+       local_player(id, std::get<LocalSample>(message).seat)) ||
+      (std::holds_alternative<LocalMessage>(message) && local_player(id, std::get<LocalMessage>(message).seat));
+  if (!host_save && !seat_envelope && !within_rate(c, channel, bytes, now_us)) {
     ++stats_.rate_limited;
     return;
   }
@@ -395,6 +475,11 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   }
   if (std::holds_alternative<Hello>(message)) {
     ++stats_.repeated_hello;
+    return;
+  }
+  if (std::holds_alternative<LocalJoin>(message) || std::holds_alternative<LocalLeave>(message) ||
+      std::holds_alternative<LocalSample>(message) || std::holds_alternative<LocalMessage>(message)) {
+    on_local(id, c, message, now_us);
     return;
   }
   // PLAYER_STATUS, CHAT and PLAYER_SAMPLE carry the sender: the server writes
@@ -433,9 +518,34 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_pvp_mode(id, c, *mode);
     return;
   }
+  if (const auto* wish = std::get_if<Difficulty>(&message)) {
+    on_difficulty(id, c, *wish);
+    return;
+  }
+  if (std::holds_alternative<ModList>(message) || std::holds_alternative<ModSettings>(message)) {
+    on_mods(id, c, message);
+    return;
+  }
   if (std::holds_alternative<PvpHit>(message)) {
     on_pvp_hit(id, c, message);
     return;
+  }
+  // Down but not out (docs/protocol.md): the host's rules, a revive to its
+  // downed player only, and each player's state kept for the owner rules.
+  if (const auto* mode = std::get_if<DbnoMode>(&message)) {
+    on_dbno_mode(id, c, *mode);
+    return;
+  }
+  if (std::holds_alternative<DbnoRevive>(message)) {
+    on_dbno_revive(id, c, message);
+    return;
+  }
+  if (const auto* heart = std::get_if<BossHeart>(&message)) {
+    on_boss_heart(id, c, *heart);
+    return;
+  }
+  if (const auto* st = std::get_if<DbnoStatus>(&message)) {
+    c.dbno = st->state;  // then relayed to everyone, below
   }
   // A PVP_HURT naming its own sender as the attacker is nobody's.
   if (std::holds_alternative<PvpHurt>(message) && !set_sender(message, c.number)) {
@@ -463,7 +573,20 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     ++stats_.relayed;
     return;
   }
+  if (const auto* lobby = std::get_if<LobbyAction>(&message)) {
+    on_lobby(id, *lobby, now_us);
+    return;
+  }
+  // The Lobby: the host muted this player's chat or voice; nothing relayed.
+  if (std::holds_alternative<Chat>(message) && (lobby_mutes_of(c) & lobby_mute::chat) != 0) {
+    ++stats_.chat_muted;
+    return;
+  }
   if (auto* voice = std::get_if<VoiceFrame>(&message)) {
+    if ((lobby_mutes_of(c) & lobby_mute::voice) != 0) {
+      ++stats_.voice_muted;
+      return;
+    }
     on_voice(id, c, *voice, now_us);
     return;
   }
@@ -536,6 +659,69 @@ void Session::on_pvp_mode(ConnectionId id, Connection& c, const PvpMode& m) {
       std::to_string(c.number));
 }
 
+Difficulty Session::difficulty() const {
+  Difficulty d;
+  d.set_by = difficulty_set_by_;
+  d.auto_scale = difficulty_.auto_scale;
+  d.preset = difficulty_.auto_scale ? DifficultyPreset::normal : difficulty_.preset;
+  d.values = difficulty_in_force(difficulty_, player_count());
+  return d;
+}
+
+// The host chooses the difficulty for everyone. Anyone else's is ignored
+// and answered with what is in force, as is a choice that changes nothing.
+// The host's sliders are kept through a preset or the automatic scaler, so
+// custom comes back as it was left.
+void Session::on_difficulty(ConnectionId id, Connection& c, const Difficulty& m) {
+  const bool hosts = host_ && *host_ == id;
+  DifficultyChoice wish = difficulty_;
+  wish.auto_scale = m.auto_scale;
+  if (!m.auto_scale) {
+    wish.preset = m.preset;
+    if (m.preset == DifficultyPreset::custom) wish.custom = clamp_difficulty(m.values);
+  }
+  if (!hosts || wish == difficulty_) {
+    if (!hosts) ++stats_.difficulty_refused;
+    send(id, kChannelSession, difficulty());
+    return;
+  }
+  difficulty_ = wish;
+  difficulty_set_by_ = c.number;
+  const Difficulty now = difficulty();
+  difficulty_told_ = now.values;
+  send(id, kChannelSession, now);
+  send_to_others(id, kChannelSession, now);
+  log("difficulty set by player " + std::to_string(c.number) + ": " +
+      (now.auto_scale ? "automatic" : "fixed") + ", life " + std::to_string(now.values.hp_pct) +
+      "%, damage " + std::to_string(now.values.damage_pct) + "%, enemies " +
+      std::to_string(now.values.count_pct) + "%");
+}
+
+void Session::tell_difficulty_change(ConnectionId except) {
+  const Difficulty now = difficulty();
+  if (now.values == difficulty_told_) return;
+  difficulty_told_ = now.values;
+  send_to_others(except, kChannelSession, now);
+}
+
+// Mods (docs/protocol.md, "Mods"). A MOD_LIST is kept per player and passed
+// on; MOD_SETTINGS only from the host, kept for the joiners.
+void Session::on_mods(ConnectionId id, Connection& c, Message& message) {
+  if (std::holds_alternative<ModSettings>(message) && (!host_ || *host_ != id)) {
+    ++stats_.mod_settings_refused;
+    return;
+  }
+  set_sender(message, c.number);
+  if (const auto* list = std::get_if<ModList>(&message)) {
+    c.mods = *list;
+    log("player " + std::to_string(c.number) + " runs " + std::to_string(list->mods.size()) + " shared mods");
+  } else {
+    mod_settings_ = std::get<ModSettings>(message);
+  }
+  send_to_others(id, kChannelSession, message);
+  ++stats_.relayed;
+}
+
 // To the victim only, and only while PvP is on: a game with PvP off never
 // gets a hit, whatever an attacker's game believes.
 void Session::on_pvp_hit(ConnectionId id, Connection& c, Message& message) {
@@ -548,6 +734,68 @@ void Session::on_pvp_hit(ConnectionId id, Connection& c, Message& message) {
   send(*target, kChannelOwnership, message);
   ++stats_.pvp_hits_relayed;
   ++stats_.relayed;
+}
+
+// The host changes down but not out for everyone, as PVP_MODE.
+void Session::on_dbno_mode(ConnectionId id, Connection& c, const DbnoMode& m) {
+  if (!host_ || *host_ != id) {
+    ++stats_.dbno_mode_refused;
+    send(id, kChannelSession, dbno_);
+    return;
+  }
+  DbnoMode want = m;
+  want.set_by = dbno_.set_by;
+  if (want == dbno_) {
+    send(id, kChannelSession, dbno_);
+    return;
+  }
+  dbno_ = m;
+  dbno_.set_by = c.number;
+  send(id, kChannelSession, dbno_);
+  send_to_others(id, kChannelSession, dbno_);
+  log(std::string("down but not out ") + (dbno_.on ? "on" : "off") + " (bleed " +
+      std::to_string(dbno_.bleed_s) + " s, hold " + std::to_string(dbno_.revive_tenths) +
+      " tenths, " + std::to_string(dbno_.revive_life) + " quarter hearts) by player " +
+      std::to_string(c.number));
+}
+
+// To the downed player only, and only while the mode is on: that game
+// counts the hold and decides.
+void Session::on_dbno_revive(ConnectionId id, Connection& c, Message& message) {
+  const std::uint8_t target = std::get<DbnoRevive>(message).target;
+  const auto to = dbno_.on ? connection_of(target) : std::nullopt;
+  if (!to || *to == id || !set_sender(message, c.number)) {
+    ++stats_.dbno_revives_dropped;
+    return;
+  }
+  send(*to, kChannelOwnership, message);
+  ++stats_.dbno_revives_relayed;
+  ++stats_.relayed;
+}
+
+// One heart container per boss, for everyone (boss-cutscenes): the first
+// claim the server gets wins, whoever sent it and whatever came after. The
+// winner's answer goes to everyone, the claimer too, at once (a winner who
+// leaves right after takes nothing from the others); a later claim of the
+// same boss, from the loser of a race or a game that comes back, gets the
+// same answer for itself alone. Games raise their maximum to max_life and
+// never lower it, so two answers never give two hearts.
+void Session::on_boss_heart(ConnectionId id, Connection& c, const BossHeart& m) {
+  if (m.given) {
+    ++stats_.boss_hearts_refused;
+    return;
+  }
+  const auto [it, first] = boss_hearts_.try_emplace(m.boss, BossHeart{c.number, m.boss, true, m.max_life});
+  if (!first) {
+    ++stats_.boss_hearts_late;
+    send(id, kChannelSession, it->second);
+    return;
+  }
+  ++stats_.boss_hearts_given;
+  send(id, kChannelSession, it->second);
+  send_to_others(id, kChannelSession, it->second);
+  log("boss " + std::to_string(m.boss) + "'s heart container taken by player " + std::to_string(c.number) +
+      ": everyone's maximum life " + std::to_string(m.max_life));
 }
 
 // To the named player only. The codec has made sure the player field is 0
@@ -743,6 +991,12 @@ double metres(const Vec3& a, const Vec3& b) {
 std::uint64_t stamp(std::uint64_t now_us) { return std::max<std::uint64_t>(now_us, 1); }
 
 }  // namespace
+
+// Not to be given an object now: loading, paused, dead, or downed (down but
+// not out: an enemy chases only its owner's Link, so it goes to one still up).
+bool Session::busy(const Connection& c) {
+  return (c.status & kBusy) != 0 || c.dbno != DbnoState::up;
+}
 
 void Session::on_status(Connection& c, std::uint8_t flags, std::uint64_t now_us) {
   auto since = [&](std::uint8_t bit, std::uint64_t& when) {
@@ -1091,7 +1345,7 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
   if ((o.boss || root->boss) && config_.boss_hitter_cooldown_us != 0) {
     // A hit that takes life stays with the owner (gohma-sync): only a stun.
     if ((d.amount == 0 || config_.boss_hit_handover) && root->owner && *root->owner != id &&
-        !root->ask && !(c.status & kBusy) &&
+        !root->ask && !busy(c) &&
         has_loaded(id, *root) &&
         (root->changed_at == 0 || now_us - root->changed_at >= config_.boss_hitter_cooldown_us) &&
         !owner_hit_lately(*root, now_us) && !owner_hit_lately(o, now_us)) {
@@ -1101,7 +1355,7 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
     return;  // a boss is not moved by the distance rule below
   }
 
-  if (o.ask || o.root || o.projectile || o.fish || (c.status & kBusy) || !has_loaded(id, o)) return;
+  if (o.ask || o.root || o.projectile || o.fish || busy(c) || !has_loaded(id, o)) return;
   if (o.changed_at != 0 && now_us - o.changed_at < config_.handover_cooldown_us) return;
   auto owner = connections_.find(*o.owner);
   if (owner == connections_.end()) return;
@@ -1351,6 +1605,9 @@ std::optional<double> Session::distance_to(const Connection& c, const Object& o,
 
 bool Session::unfit_owner(const Connection& c, std::uint64_t now_us) const {
   if (c.status & status::loading) return true;
+  // Downed (or out): its enemies go to a player still up, whose game's AI
+  // then chases that player's Link (an enemy chases only its owner's Link).
+  if (c.dbno != DbnoState::up) return true;
   if (c.paused_since != 0 && now_us - c.paused_since >= config_.owner_paused_us) return true;
   return c.dead_since != 0 && now_us - c.dead_since >= config_.owner_dead_us;
 }
@@ -1364,7 +1621,7 @@ std::optional<ConnectionId> Session::best_other(const Object& o,
   for (ConnectionId other : o.present) {
     if (other == except || !has_loaded(other, o)) continue;
     const Connection& oc = connections_.at(other);
-    if (fit_only && (oc.status & kBusy)) continue;
+    if (fit_only && busy(oc)) continue;
     const auto d = distance_to(oc, o, now_us);
     bool better = !best;
     if (best) {
@@ -1525,7 +1782,7 @@ void Session::fish_owner(const ObjectId& oid, Object& o, ConnectionId owner, boo
   for (ConnectionId other : o.present) {
     if (other == owner || !has_loaded(other, o)) continue;
     const Connection& pc = connections_.at(other);
-    if (pc.status & kBusy) continue;
+    if (busy(pc)) continue;
     const auto theirs = claim(other);
     if (!theirs) continue;
     if (mine) {
@@ -1637,7 +1894,7 @@ void Session::run_ownership(std::uint64_t now_us) {
         for (ConnectionId other : o.present) {
           if (other == owner || !has_loaded(other, o)) continue;
           const Connection& pc = connections_.at(other);
-          if (pc.status & kBusy) continue;
+          if (busy(pc)) continue;
           const auto mine = distance_to(pc, o, now_us);
           if (!mine || *mine > config_.boss_near_m ||
               *mine + config_.boss_near_margin_m > *theirs) {
@@ -1689,7 +1946,7 @@ void Session::run_ownership(std::uint64_t now_us) {
       for (ConnectionId other : o.present) {
         if (other == owner || !has_loaded(other, o)) continue;
         const Connection& pc = connections_.at(other);
-        if (pc.status & kBusy) continue;
+        if (busy(pc)) continue;
         const auto mine = distance_to(pc, o, now_us);
         if (!mine || *mine > config_.handover_near_m ||
             *mine + config_.handover_margin_m > *theirs) {
@@ -1728,7 +1985,7 @@ std::optional<ConnectionId> Session::chased_by(const Object& o, ConnectionId own
       if (other == owner || !has_loaded(other, o)) continue;
       if (now_us < since || now_us - since < config_.handover_chased_us) continue;
       const Connection& pc = connections_.at(other);
-      if (pc.status & kBusy) continue;
+      if (busy(pc)) continue;
       // The longest chase first, then the lower player number.
       if (!best || since < best_since || (since == best_since && pc.number < best_number)) {
         best = other;
@@ -1835,7 +2092,7 @@ void Session::send_to_scene(const std::string& scene, std::optional<ConnectionId
   std::vector<std::uint8_t> bytes;
   if (encode(m, bytes) != Error::none) return;
   for (const auto& [id, c] : connections_) {
-    if (id == except || c.state != State::joined) continue;
+    if ((except && same_game(id, *except)) || c.state != State::joined) continue;
     if (!scene.empty() && c.scene != scene) continue;
     actions_.push_back(SendAction{id, channel, bytes});
   }
@@ -1857,6 +2114,114 @@ std::optional<std::uint32_t> Session::object_group(const ObjectId& id) const {
 bool Session::object_in_fight(const ObjectId& id, std::uint64_t now_us) const {
   auto it = objects_.find(id);
   return it != objects_.end() && in_fight(it->second, now_us);
+}
+
+void Session::on_lobby(ConnectionId id, const LobbyAction& a, std::uint64_t now_us) {
+  const auto answer = [&](LobbyResultCode result) {
+    send(id, kChannelSession, LobbyResult{a.action, a.target, result});
+  };
+  if (!host_ || *host_ != id) {
+    ++stats_.lobby_refused;
+    answer(LobbyResultCode::not_host);
+    return;
+  }
+  const std::optional<ConnectionId> target = connection_of(a.target);
+  if (!target) {
+    answer(LobbyResultCode::no_player);
+    return;
+  }
+  if (same_game(*target, id)) {  // the host, or a split-screen seat of its own game
+    answer(LobbyResultCode::is_host);
+    return;
+  }
+  Connection& t = connections_.at(*target);
+  const std::string key = lobby_id(t);
+  const std::string who = "player " + std::to_string(t.number) + " (" + t.nickname + ")";
+  if (a.action == LobbyActionKind::kick || a.action == LobbyActionKind::ban) {
+    const bool ban = a.action == LobbyActionKind::ban;
+    if (ban) {
+      banned_ids_.insert(key);
+      // Without a key (and so by name): the address too, as a last resort.
+      if (!t.player_key && !t.parent && t.address && (ipv4_of(*t.address) >> 24) != 127) {
+        banned_addresses_.insert(*t.address);
+      }
+    }
+    if (t.parent) {
+      // A split-screen seat: its game stays; it is told its seat left (the
+      // others get PLAYER_LEFT from remove_player).
+      send(*t.parent, kChannelSession, PlayerLeft{t.number, LeaveReason::kicked});
+    } else {
+      // REFUSED first, so the game knows not to join again, then the close;
+      // the others get PLAYER_LEFT, kicked.
+      send(*target, kChannelSession, Refused{ban ? RefuseReason::banned : RefuseReason::kicked});
+      actions_.push_back(DisconnectAction{*target});
+    }
+    remove_player(*target, LeaveReason::kicked, now_us,
+                  ban ? "banned by the host" : "kicked by the host");
+    ++stats_.lobby_done;
+    answer(LobbyResultCode::done);
+    return;
+  }
+  std::uint8_t bit = lobby_mute::voice;
+  bool on = true;
+  switch (a.action) {
+    case LobbyActionKind::mute_voice: break;
+    case LobbyActionKind::unmute_voice: on = false; break;
+    case LobbyActionKind::mute_chat: bit = lobby_mute::chat; break;
+    case LobbyActionKind::unmute_chat: bit = lobby_mute::chat; on = false; break;
+    default: return;  // kick and ban above; the codec takes nothing else
+  }
+  const std::uint8_t before = lobby_mutes_of(t);
+  const std::uint8_t after = on ? static_cast<std::uint8_t>(before | bit)
+                                : static_cast<std::uint8_t>(before & ~bit);
+  if (after == before) {
+    answer(LobbyResultCode::unchanged);
+    return;
+  }
+  if (after == 0) {
+    lobby_mutes_.erase(key);
+  } else {
+    lobby_mutes_[key] = after;
+  }
+  send_to_scene({}, std::nullopt, kChannelSession, LobbyMutes{t.number, after});
+  ++stats_.lobby_done;
+  answer(LobbyResultCode::done);
+  log(who + (on ? " muted" : " unmuted") + (bit == lobby_mute::voice ? " (voice)" : " (chat)") +
+      " by the host");
+}
+
+std::uint8_t Session::lobby_mutes_of(const Connection& c) const {
+  if (lobby_mutes_.empty()) return 0;
+  const auto it = lobby_mutes_.find(lobby_id(c));
+  return it == lobby_mutes_.end() ? 0 : it->second;
+}
+
+std::string Session::lobby_id(const std::string& nickname, const std::optional<PlayerKey>& key,
+                              std::optional<ConnectionId> parent, std::uint8_t seat) const {
+  if (parent) {
+    const auto it = connections_.find(*parent);
+    if (it == connections_.end()) return "n:" + name_key(nickname);
+    const Connection& game = it->second;
+    return lobby_id(game.nickname, game.player_key, std::nullopt, 0) + "/seat" + std::to_string(seat);
+  }
+  if (!key) return "n:" + name_key(nickname);
+  static constexpr char kHex[] = "0123456789abcdef";
+  std::string id = "k:";
+  for (const std::uint8_t b : *key) {
+    id += kHex[b >> 4];
+    id += kHex[b & 15];
+  }
+  return id;
+}
+
+std::string Session::lobby_id(const Connection& c) const {
+  return lobby_id(c.nickname, c.player_key, c.parent, c.seat);
+}
+
+bool Session::lobby_banned(const std::string& id, const std::string& nickname,
+                           std::optional<std::uint32_t> address) const {
+  return banned_ids_.contains(id) || banned_ids_.contains("n:" + name_key(nickname)) ||
+         (address && banned_addresses_.contains(*address));
 }
 
 std::optional<ConnectionId> Session::connection_of(std::uint8_t number) const {
@@ -1965,12 +2330,16 @@ void Session::disconnected(ConnectionId id, std::uint64_t now_us, const std::str
 
 void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t now_us,
                             const std::string& why) {
+  // Its extra local players go with it, before it.
+  for (ConnectionId local : local_players(id)) remove_player(local, reason, now_us, "their game left");
   auto it = connections_.find(id);
   if (it == connections_.end()) return;
+  const ConnectionId game = it->second.parent.value_or(id);
   Connection c = std::move(it->second);
   connections_.erase(it);
   if (c.state != State::joined) return;
-  send_to_others(id, kChannelSession, PlayerLeft{c.number, reason});
+  // A local player's own game knows it left (it asked, or it left itself).
+  send_to_others(game, kChannelSession, PlayerLeft{c.number, reason});
   // After PLAYER_LEFT, so the others learn the owner left before the new
   // owner is announced; the leaver is out of connections_ by now.
   drop_all_objects(id, c.number, c.present, now_us);
@@ -1984,18 +2353,28 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     host_.reset();
     pvp_ = config_.pvp;
     pvp_set_by_ = 0;
+    dbno_ = config_.dbno;
+    dbno_.set_by = 0;
+    difficulty_ = {};
+    difficulty_set_by_ = 0;
+    difficulty_told_ = {};
+    mod_settings_.reset();
+    lobby_mutes_.clear();
+    banned_ids_.clear();
+    banned_addresses_.clear();
     flags_.clear();
     objects_.clear();
     grass_.clear();
     world_.clear();
     dead_.clear();
+    boss_hearts_.clear();  // as the flags: a new group (a new save) has its own containers
   } else if (host_ == id) {
     // The remaining player with the lowest number takes over. Everyone is
     // told on the progress channel, so the new host learns it hosts before
     // any FLAG_SET relayed to it.
     std::optional<ConnectionId> next;
     for (const auto& [other, oc] : connections_) {
-      if (oc.state == State::joined && (!next || oc.number < connections_.at(*next).number)) {
+      if (oc.state == State::joined && !oc.parent && (!next || oc.number < connections_.at(*next).number)) {
         next = other;
       }
     }
@@ -2004,6 +2383,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     send_to_others(id, kChannelProgress, Host{number});
     log("player " + std::to_string(number) + " hosts now");
   }
+  if (player_count() > 0) tell_difficulty_change(id);
 }
 
 void Session::tick(std::uint64_t now_us) {
@@ -2027,6 +2407,7 @@ void Session::tick(std::uint64_t now_us) {
                now_us - c.refused_at >= config_.refused_grace_us) {
       late_hello.push_back(id);  // refused, but the transport never closed it
     } else if (c.state == State::joined) {
+      if (c.parent) continue;  // (a split-screen seat leaves with its game, never on its own)
       if (now_us - c.last_heard >= config_.silence_timeout_us) {
         silent.push_back(id);
       } else if (now_us - c.last_ping >= config_.ping_interval_us) {
@@ -2040,8 +2421,10 @@ void Session::tick(std::uint64_t now_us) {
     remove_player(id, LeaveReason::timed_out, now_us);
   }
   for (ConnectionId id : silent) {
+    auto it = connections_.find(id);
+    if (it == connections_.end()) continue;  // (gone with an earlier one this tick)
     actions_.push_back(DisconnectAction{id});
-    const std::uint64_t quiet_ms = (now_us - connections_.at(id).last_heard) / 1000;
+    const std::uint64_t quiet_ms = (now_us - it->second.last_heard) / 1000;
     remove_player(id, LeaveReason::timed_out, now_us,
                   "timed out: nothing heard for " + std::to_string(quiet_ms) + " ms");
   }
@@ -2083,7 +2466,15 @@ void Session::end_owner_hold(std::uint64_t now_us) {
   }
 }
 
-std::vector<Action> Session::take_actions() { return std::exchange(actions_, {}); }
+std::vector<Action> Session::take_actions() {
+  // A local player has no transport connection: its game gets everything through its own.
+  std::erase_if(actions_, [](const Action& a) {
+    if (const auto* s = std::get_if<SendAction>(&a)) return s->to >= kLocalPlayerIds;
+    if (const auto* d = std::get_if<DisconnectAction>(&a)) return d->who >= kLocalPlayerIds;
+    return std::get<EncryptAction>(a).who >= kLocalPlayerIds;
+  });
+  return std::exchange(actions_, {});
+}
 
 std::size_t Session::player_count() const {
   return static_cast<std::size_t>(std::count_if(
@@ -2100,6 +2491,99 @@ std::optional<std::uint8_t> Session::player_number(ConnectionId id) const {
   auto it = connections_.find(id);
   if (it == connections_.end() || it->second.state != State::joined) return std::nullopt;
   return it->second.number;
+}
+
+// Split screen (docs/protocol.md, "Local players"). The envelopes' inner
+// messages go through on_player_message as the local player's own, with its
+// own rate limits; check_received has let only client messages of the right
+// channel in, and decoding only the types an envelope carries.
+void Session::on_local(ConnectionId id, Connection& c, const Message& message, std::uint64_t now_us) {
+  if (c.parent) return;  // (a local player's envelope: cannot be, nothing it carries is one)
+  if (const auto* j = std::get_if<LocalJoin>(&message)) {
+    local_join(id, c, *j, now_us);
+    return;
+  }
+  if (const auto* leave = std::get_if<LocalLeave>(&message)) {
+    if (auto local = local_player(id, leave->seat)) remove_player(*local, LeaveReason::left, now_us, "left split screen");
+    return;
+  }
+  const std::uint8_t seat = std::holds_alternative<LocalSample>(message) ? std::get<LocalSample>(message).seat
+                                                                          : std::get<LocalMessage>(message).seat;
+  const auto local = local_player(id, seat);
+  std::optional<Message> inner = local_inner(message);
+  if (!local || !inner) {
+    ++stats_.local_no_seat;
+    return;
+  }
+  std::vector<std::uint8_t> bytes;
+  encode(*inner, bytes);
+  on_player_message(*local, connections_.at(*local), channel_of(*inner), *inner, bytes.size(), now_us);
+}
+
+void Session::local_join(ConnectionId id, Connection& c, const LocalJoin& j, std::uint64_t now_us) {
+  LocalJoined answer{j.seat, 0, RefuseReason::server_full};
+  if (auto known = local_player(id, j.seat)) {
+    answer.player_number = connections_.at(*known).number;  // (asked again: the same answer)
+    send(id, kChannelSession, answer);
+    return;
+  }
+  if (blank_name(j.nickname) || hidden_characters(j.nickname)) {
+    answer.reason = RefuseReason::bad_name;
+  } else if (holder_of(j.nickname)) {
+    answer.reason = RefuseReason::name_taken;
+  } else if (lobby_banned(lobby_id(j.nickname, std::nullopt, id, j.seat), j.nickname, std::nullopt)) {
+    ++stats_.lobby_banned;  // the Lobby: this game's seat was banned
+    answer.reason = RefuseReason::banned;
+  } else if (player_count() >= max_players()) {
+    answer.reason = RefuseReason::server_full;
+  } else {
+    Connection local;
+    local.state = State::joined;
+    local.parent = id;
+    local.seat = j.seat;
+    local.number = free_number();
+    local.nickname = j.nickname;
+    local.address = c.address;
+    local.connected_at = local.last_heard = local.last_ping = now_us;
+    local.reliable_budget = 2.0 * config_.reliable_per_second;
+    local.unreliable_budget = 2.0 * config_.unreliable_per_second;
+    local.byte_budget = 2.0 * config_.bytes_per_second;
+    local.budget_time = now_us;
+    answer.player_number = local.number;
+    const ConnectionId local_id = next_local_id_++;
+    connections_[local_id] = std::move(local);
+  }
+  send(id, kChannelSession, answer);
+  if (answer.player_number == 0) {
+    ++stats_.local_refused;
+    return;
+  }
+  ++stats_.local_joined;
+  // Everyone else meets it as any player; its own game knows it from LOCAL_JOINED.
+  send_to_others(id, kChannelSession, PlayerJoined{answer.player_number, j.nickname});
+  log("player " + std::to_string(answer.player_number) + " joined: " + j.nickname + " (split screen with player " +
+      std::to_string(c.number) + ")");
+}
+
+std::optional<ConnectionId> Session::local_player(ConnectionId parent, std::uint8_t seat) const {
+  for (const auto& [id, c] : connections_)
+    if (c.parent == parent && c.seat == seat) return id;
+  return std::nullopt;
+}
+
+std::vector<ConnectionId> Session::local_players(ConnectionId parent) const {
+  std::vector<ConnectionId> out;
+  for (const auto& [id, c] : connections_)
+    if (c.parent == parent) out.push_back(id);
+  return out;
+}
+
+bool Session::same_game(ConnectionId a, ConnectionId b) const {
+  const auto game = [this](ConnectionId x) {
+    auto it = connections_.find(x);
+    return it != connections_.end() && it->second.parent ? *it->second.parent : x;
+  };
+  return game(a) == game(b);
 }
 
 std::optional<ConnectionId> Session::holder_of(const std::string& nickname) const {
@@ -2133,7 +2617,7 @@ void Session::send_to_others(ConnectionId except, std::uint8_t channel, const Me
   std::vector<std::uint8_t> bytes;
   if (encode(m, bytes) != Error::none) return;
   for (const auto& [id, c] : connections_) {
-    if (id != except && c.state == State::joined) {
+    if (!same_game(id, except) && c.state == State::joined) {
       actions_.push_back(SendAction{id, channel, bytes});
     }
   }
@@ -2152,14 +2636,14 @@ void Session::send_streamed(ConnectionId from, const Connection& sender, std::ui
   if (encode(m, bytes) != Error::none) return;
   std::size_t receivers = 0;
   for (const auto& [id, r] : connections_) {
-    if (id != from && r.state == State::joined) ++receivers;
+    if (!same_game(id, from) && !r.parent && r.state == State::joined) ++receivers;
   }
   const double share = receivers == 0 || config_.pose_upload_bytes_per_second == 0
                            ? 0.0
                            : static_cast<double>(config_.pose_upload_bytes_per_second) / receivers;
   const std::size_t n = sender.number <= kMaxPlayers ? sender.number : 0;
   for (auto& [id, r] : connections_) {
-    if (id == from || r.state != State::joined) continue;
+    if (same_game(id, from) || r.parent || r.state != State::joined) continue;
     const bool same = sender.scene.empty() || r.scene.empty() || sender.scene == r.scene;
     bool near = same;
     if (same && sender.position && r.position) {

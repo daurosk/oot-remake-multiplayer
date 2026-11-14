@@ -57,6 +57,8 @@ struct CommandLine {
   std::uint16_t game_port = 27512;
   // --pvp on|off: players hurt each other (docs/play-online.md, "PvP").
   bool pvp = false;
+  // --dbno on|off: down but not out (docs/play-online.md); on by default.
+  bool dbno = true;
   bool help = false;
 };
 

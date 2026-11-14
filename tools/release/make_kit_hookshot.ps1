@@ -54,7 +54,7 @@ function Get-Sha([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SH
 $KitTop = @('Start OoT Co-op.bat', 'README.txt', 'start-server.cmd', 'coop-options.ini')
 $KitScripts = @('start.ps1', 'start-checks.ps1', 'play.ps1', 'coop-ini.ps1', 'kit-paths.ps1', 'hosting.ps1', 'relay-join.ps1',
     'invite.ps1', 'hookshot-build.ps1', 'apply_patch.py', 'update.ps1', 'start-server.ps1', 'collect-logs.ps1', 'collect-logs.cmd',
-    'log-mask.ps1')
+    'log-mask.ps1', 'windows-checks.ps1')
 $KitDocs = @(@('setup.md', 'SETUP.md'), @('known-issues.md', 'KNOWN-ISSUES.md'))
 # Never in this kit (emulator kits only); make_kit_hookshot refuses a kit that has one.
 $EmulatorOnly = '(?i)(^|\\)(emulator\\|lichii|fritchii|.*\.nx2recipe$|Host\.bat$|Join\.bat$|Host-Hookshot\.bat$|Join-Hookshot\.bat$|Play-OoT-Coop\.bat$|Build-Hookshot-Coop\.bat$|play\.cmd$|start-join\.cmd$|start-relay\.cmd$|make-puppet-pack\.cmd$|check-hosting\.cmd$|puppet-pack\.ps1$|qt6|Qt6|SDL2\.dll$)'
@@ -203,12 +203,19 @@ $own = @(Get-ChildItem $kit -Recurse -File | ForEach-Object { $_.FullName.Substr
 $size = (Get-ChildItem $kit -Recurse -File | Measure-Object Length -Sum).Sum
 Write-Host ('Folder: {0:N1} MB, {1} files' -f ($size / 1MB), ($own.Count + 1))
 if (-not $NoZip) {
-    $zip = "$kit.zip"
+    # Two names, the same bytes: oot-coop-<tag>-windows.zip is the one players download (beside the Linux kit's
+    # oot-coop-<tag>-linux.zip); oot-coop-<tag>.zip is the name every updater up to v0.10.1 looks for (its
+    # Select-KitRelease takes nothing else), so those kits still find and install this release. Both go up.
+    $zip = Join-Path $OutRoot "$name-windows.zip"
+    $old = "$kit.zip"
     & "$env:SystemRoot\System32\tar.exe" -a -c -f $zip -C $OutRoot $name
     if ($LASTEXITCODE -ne 0) { throw "Zipping failed (tar $LASTEXITCODE)." }
+    Copy-Item -LiteralPath $zip -Destination $old -Force
     $hash = Get-Sha $zip
-    [System.IO.File]::WriteAllText("$zip.sha256", "$hash  $name.zip`n", [System.Text.Encoding]::ASCII)
+    if ((Get-Sha $old) -ne $hash) { throw "The copy $old does not match $zip." }
+    [System.IO.File]::WriteAllText("$zip.sha256", "$hash  $name-windows.zip`n", [System.Text.Encoding]::ASCII)
+    [System.IO.File]::WriteAllText("$old.sha256", "$hash  $name.zip`n", [System.Text.Encoding]::ASCII)
     Copy-Item -LiteralPath (Join-Path $kit 'Update.bat') -Destination (Join-Path $OutRoot 'Update.bat') -Force
     Write-Host ('Zip: {0} ({1:N1} MB), SHA-256 {2}' -f $zip, ((Get-Item $zip).Length / 1MB), $hash)
-    Write-Host "Release assets: $name.zip, $name.zip.sha256 and Update.bat, all in $OutRoot"
+    Write-Host "Release assets: $name-windows.zip and $name.zip (the same file, the name kits up to v0.10.1 update from), each with its .sha256, and Update.bat, all in $OutRoot"
 }

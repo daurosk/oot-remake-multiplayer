@@ -1,0 +1,158 @@
+From 9043adc781191a88c584e888775c5d040ccd1669 Mon Sep 17 00:00:00 2001
+From: daurosk <354202035+daurosk@users.noreply.github.com>
+Date: Fri, 13 Nov 2026 16:33:05 -0900
+Subject: [PATCH] Co-op menu picture: a module tab may draw coloured shapes
+ beside its page
+
+The optional export hos_coop_menu_picture (gpu/vk/hos_coop_menu_picture.h)
+hands Hookshot's menu a list of coloured convex shapes, drawn in a square
+over the top of the help column of a co-op module's tab, with the help box
+under it. The Multiplayer tab's Customize page draws a preview of Link in
+the colours chosen with it. A module without the export: no picture.
+---
+ gpu/vk/hos_coop_menu_picture.h | 38 ++++++++++++++++++++++++++++++++++
+ gpu/vk/vk_coop.cpp             | 12 +++++++++++
+ gpu/vk/vk_coop.h               |  3 +++
+ gpu/vk/vk_menu.cpp             | 26 +++++++++++++++++++++--
+ 4 files changed, 77 insertions(+), 2 deletions(-)
+ create mode 100644 gpu/vk/hos_coop_menu_picture.h
+
+diff --git a/gpu/vk/hos_coop_menu_picture.h b/gpu/vk/hos_coop_menu_picture.h
+new file mode 100644
+index 0000000..4993ad2
+--- /dev/null
++++ b/gpu/vk/hos_coop_menu_picture.h
+@@ -0,0 +1,38 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later
++   A picture beside a co-op module tab's page (oot-remake-multiplayer, docs/hookshot.md "The Multiplayer tab"; our patch
++   0019): the module may hand Hookshot's menu coloured shapes, drawn in a square over the top of the help column with the
++   help box under it. The Multiplayer tab's Customize page draws Link in the colours chosen with it.
++
++   One optional export, hos_coop_menu_picture, asked right after hos_coop_menu_page on the same thread for the tab shown;
++   the shapes belong to the module and hold until its next call on that thread (Hookshot draws them at once). A module
++   without it, or a page that fills none: no picture, the menu as before (hos_coop_menu.h). Generic: any tab may draw a
++   picture, with no further Hookshot build.
++   The same file is in Hookshot's gpu/vk/ through our patch and in our repository (hookshot/src): keep them equal
++   (tests/hookshot/module_test.cpp checks it). Plain C. */
++#ifndef HOS_COOP_MENU_PICTURE_H
++#define HOS_COOP_MENU_PICTURE_H
++#include <stdint.h>
++
++#define HOS_COOP_MENU_PICTURE_VERSION 1
++#define HOS_COOP_MENU_SHAPE_POINTS 8
++#define HOS_COOP_MENU_MAX_SHAPES 256
++
++/* A convex polygon of 3 to 8 points, x and y from 0 to 1 over the picture's square (y down), filled, or only its outline
++   (`outline` 1). Colour 0xRRGGBBAA. Drawn in order: later shapes lie over earlier ones. */
++typedef struct HosCoopMenuShape {
++    uint32_t rgba;
++    uint8_t n;
++    uint8_t outline;
++    uint8_t pad_[2];
++    float xy[2 * HOS_COOP_MENU_SHAPE_POINTS];
++} HosCoopMenuShape;
++
++typedef struct HosCoopMenuPicture {
++    uint32_t size;                    /* sizeof(HosCoopMenuPicture), set by Hookshot */
++    int32_t shapes_n;                 /* at most HOS_COOP_MENU_MAX_SHAPES are drawn */
++    const HosCoopMenuShape *shapes;
++} HosCoopMenuPicture;
++
++typedef int (*hos_coop_menu_picture_fn)(int tab, HosCoopMenuPicture *out);   /* 1: filled */
++
++#endif
+diff --git a/gpu/vk/vk_coop.cpp b/gpu/vk/vk_coop.cpp
+index 80bdc0d..8559697 100644
+--- a/gpu/vk/vk_coop.cpp
++++ b/gpu/vk/vk_coop.cpp
+@@ -167,6 +167,7 @@ std::atomic<hos_coop_menu_tab_name_fn> menu_tab_name_fn{nullptr};
+ std::atomic<hos_coop_menu_page_fn> menu_page_fn{nullptr};
+ std::atomic<hos_coop_menu_input_fn> menu_input_fn{nullptr};
+ std::atomic<hos_coop_menu_wanted_fn> menu_wanted_fn{nullptr};
++std::atomic<hos_coop_menu_picture_fn> menu_picture_fn{nullptr};   // (patch 0019: optional)
+ 
+ void find_menu() {
+     static std::atomic<int> wait{0};
+@@ -189,6 +190,7 @@ void find_menu() {
+     menu_page_fn.store(p, std::memory_order_release);
+     menu_input_fn.store(i, std::memory_order_release);
+     menu_wanted_fn.store((hos_coop_menu_wanted_fn)look("hos_coop_menu_wanted"), std::memory_order_release);
++    menu_picture_fn.store((hos_coop_menu_picture_fn)look("hos_coop_menu_picture"), std::memory_order_release);
+     menu_tabs_fn.store(t, std::memory_order_release);
+     logf("vk: co-op: the module's menu tabs found");
+ }
+@@ -228,4 +230,14 @@ int menu_wanted() {
+     return w ? w() : HOS_COOP_MENU_WANT_NOTHING;
+ }
+ 
++bool menu_picture(int tab, HosCoopMenuPicture *out) {
++    const auto p = menu_picture_fn.load(std::memory_order_acquire);
++    if (!p || !out) return false;
++    *out = HosCoopMenuPicture{};
++    out->size = sizeof *out;
++    if (!p(tab, out) || out->shapes_n <= 0 || !out->shapes) return false;
++    out->shapes_n = std::min(out->shapes_n, HOS_COOP_MENU_MAX_SHAPES);
++    return true;
++}
++
+ }  // namespace mkwvk::coop
+diff --git a/gpu/vk/vk_coop.h b/gpu/vk/vk_coop.h
+index bd3ff25..b821660 100644
+--- a/gpu/vk/vk_coop.h
++++ b/gpu/vk/vk_coop.h
+@@ -4,6 +4,7 @@
+ #include <cstdint>
+ 
+ #include "hos_coop_menu.h"
++#include "hos_coop_menu_picture.h"
+ 
+ namespace mkwvk {
+ struct Texture;
+@@ -30,5 +31,7 @@ bool menu_page(int tab, HosCoopMenuPage *out);
+ bool menu_input(int tab, int event, int arg = 0, int arg2 = 0);
+ /// What the module wants of the menu now: HOS_COOP_MENU_WANT_NOTHING, _CLOSE, or a tab to open on
+ int menu_wanted();
++/// (patch 0019) The picture beside the tab's page (hos_coop_menu_picture.h); false: none (an older module, or none now)
++bool menu_picture(int tab, HosCoopMenuPicture *out);
+ 
+ }  // namespace mkwvk::coop
+diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
+index 1a6e155..b80563d 100644
+--- a/gpu/vk/vk_menu.cpp
++++ b/gpu/vk/vk_menu.cpp
+@@ -3064,8 +3064,30 @@ void draw_coop_page(ui::Ctx& c, float hh) {
+         help_box(c, hx0, hx1, bottom + 8 * s, said(p.help_title), said(p.help), said(p.hint), said(p.gold), 0, false,
+                  bottom + 8 * s, bar_top - 10 * s);
+     } else {
+-        help_box(c, hx0, hx1, std::max(hh + 26 * s, c.h * 0.30f), said(p.help_title), said(p.help), said(p.hint), said(p.gold),
+-                 0, false, hh + 18 * s, bar_top - 12 * s);
++        // (oot-remake-multiplayer, patch 0019: the page's picture, hos_coop_menu_picture.h, in a square over the help
++        // column's top; the help box under it)
++        float help_top = std::max(hh + 26 * s, c.h * 0.30f), help_min = hh + 18 * s;
++        HosCoopMenuPicture pic{};
++        if (coop::menu_picture(coop_tab, &pic)) {
++            const float px0 = hx0 + 24 * s, px1 = hx1 - 24 * s, py0 = hh + 26 * s;
++            const float side = std::max(0.0f, std::min(px1 - px0, (bar_top - py0) * 0.55f));
++            const float ox = (px0 + px1 - side) * 0.5f;
++            c.d->AddRectFilled(ImVec2(ox, py0), ImVec2(ox + side, py0 + side), ui::rgba(0, 0, 0, 110), 8 * s);
++            for (int i = 0; i < pic.shapes_n; i++) {
++                const HosCoopMenuShape& sh = pic.shapes[i];
++                const int n = std::min<int>(sh.n, HOS_COOP_MENU_SHAPE_POINTS);
++                if (n < 3) continue;
++                ImVec2 pts[HOS_COOP_MENU_SHAPE_POINTS];
++                for (int k = 0; k < n; k++)
++                    pts[k] = ImVec2(ox + std::clamp(sh.xy[2 * k], 0.0f, 1.0f) * side, py0 + std::clamp(sh.xy[2 * k + 1], 0.0f, 1.0f) * side);
++                const ImU32 col = ui::rgba((sh.rgba >> 24) & 0xFF, (sh.rgba >> 16) & 0xFF, (sh.rgba >> 8) & 0xFF, sh.rgba & 0xFF);
++                if (sh.outline) c.d->AddPolyline(pts, n, col, ImDrawFlags_Closed, 2.5f * s);
++                else c.d->AddConvexPolyFilled(pts, n, col);
++            }
++            help_top = help_min = py0 + side + 14 * s;
++        }
++        help_box(c, hx0, hx1, help_top, said(p.help_title), said(p.help), said(p.hint), said(p.gold),
++                 0, false, help_min, bar_top - 12 * s);
+     }
+     const float rh = 40 * s, pitch = 48 * s, top = hh + 24 * s, rx0 = cx0 + 44 * s, rx1 = cx1 - 44 * s,
+                 split = rx0 + (rx1 - rx0) * 0.55f;
+-- 
+2.56.0.windows.4
+

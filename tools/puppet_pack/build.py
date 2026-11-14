@@ -32,7 +32,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import ainb, byml, dumpcheck, dungeon_rooms, hud, nup, rstb, sarc, title_menu, tunic, tunic_extra, zs  # noqa: E402
+from . import ainb, byml, dumpcheck, dungeon_rooms, hud, look_live, map_captures, nup, rstb, sarc, title_menu, tunic, tunic_extra, zs  # noqa: E402
 
 TITLE_ID = "0400486024DEC000"
 DEFAULT_MOD_NAME = "coop-puppet"
@@ -147,8 +147,20 @@ STAND_INS = (
     # made here would run on her own AI; the stand-in is her model and animations only, placed
     # and played by the hook (lichii/hook/coop_ride.h).
     ("Animal_Epona_Adult", "CoopRide_Epona"),
+    # Issue 166: the seed and the arrow once more, as stand-ins that also keep the shootable's own
+    # effect and sound users (STAND_IN_XLINK). The hook asks for these first and plays the
+    # shootable's hit effect on the copy with the game's own xlink search and emit, where the copy
+    # lands; no AI and no extra actor. A game that will not make one gets the plain stand-in above.
+    ("Shootable_DekuSeed", "CoopShotFx_Seed"),
+    ("NormalArrow", "CoopShotFx_Arrow"),
 )
 STAND_IN_COMPONENTS = ("ModelInfoRef", "LODRef")
+# Issue 166: these keep the shootable's ELink, SLink and XLink params (in place of the shared
+# ActorBasic XLink param) and its ELinkUserName / SLinkUserName in the ActorInfo row, as the puppet
+# keeps the player's for its sounds. Still no physics, sensor, attack or AI: nothing plays by
+# itself; the hook's CoopSpawn::EffectStandIn has the same names.
+STAND_IN_XLINK = ("CoopShotFx_Seed", "CoopShotFx_Arrow")
+STAND_IN_XLINK_COMPONENTS = ("ELinkRef", "SLinkRef", "XLinkRef")
 # Components some stand-ins keep beyond the model (by stand-in name): the animation set, so the
 # hook can play the owner's animation on it (the bomb's Bomb_Blink; the hookshot tip's chain, whose
 # length is its animation set's ChainExtend, issue 85).
@@ -157,6 +169,8 @@ STAND_IN_EXTRA_COMPONENTS = {
     "CoopShot_Hook": ("ASRef", "ASInfoRef", "AnimationRef"),
     "CoopShot_HookLong": ("ASRef", "ASInfoRef", "AnimationRef"),
     "CoopRide_Epona": ("ASRef", "ASInfoRef", "AnimationRef"),
+    "CoopShotFx_Seed": STAND_IN_XLINK_COMPONENTS,
+    "CoopShotFx_Arrow": STAND_IN_XLINK_COMPONENTS,
 }
 # ActorInfo fields of the shootable that a model-only actor must not take over.
 STAND_IN_DROP_INFO = ("ActorName", "ELinkUserName", "SLinkUserName")
@@ -407,6 +421,9 @@ def make_stand_in_param(components, extra=()):
         raise BuildError("the shootable's ActorParam has no ModelInfoRef")
     comps = {k: components[k] for k in STAND_IN_COMPONENTS + tuple(extra) if k in components}
     comps.update(FIXED_COMPONENTS)
+    for k in extra:  # a kept component wins over the shared default (the shootable's own XLinkRef)
+        if k in components:
+            comps[k] = components[k]
     return {"Components": comps}
 
 
@@ -476,7 +493,9 @@ def impact_row(source_row, name, elink_user, slink_user):
 def stand_in_row(source_row, name, with_effect=False):
     """The stand-in's ActorInfo row: the shootable's, less its effect, sound and name fields, with
     the puppet's INFO_OVERRIDES (and its STAND_IN_EFFECTS ELink user when `with_effect`)."""
-    row = {k: v for k, v in source_row.items() if k not in STAND_IN_DROP_INFO}
+    # (issue 166: a STAND_IN_XLINK one keeps the shootable's effect and sound user names)
+    drop = ("ActorName",) if name in STAND_IN_XLINK else STAND_IN_DROP_INFO
+    row = {k: v for k, v in source_row.items() if k not in drop}
     if with_effect and name in STAND_IN_EFFECTS:
         row["ELinkUserName"] = STAND_IN_EFFECTS[name][0]
     row.update(INFO_OVERRIDES)  # calculated wherever it is, as the puppet (a far shot)
@@ -539,11 +558,13 @@ def strip_zs(path):
 
 def nup_scene_files(n):
     """RomFS paths of the scene files (Banc/<scene>/*.bcett.byml.zs) in an open Nup, the ones
-    dungeon_rooms.scene_rooms reads from a RomFS folder."""
+    dungeon_rooms.scene_rooms reads from a RomFS folder, and the two map files map_captures reads."""
     out = []
     for scene, (kind, _i) in sorted(n.listdir("Banc").items()):
         if kind == "d":
             out += n.glob(f"Banc/{scene}/*.bcett.byml.zs")
+    for pattern in map_captures.FILES:  # the map pictures' places, for coop_maps.txt
+        out += n.glob(pattern)[:1]
     return out
 
 
@@ -577,12 +598,16 @@ SELF_MODEL_VARIANTS = ("Adult",)
 
 
 def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=None, self_tiles=None,
-                 self_dark_tiles=None, self_files=None):
+                 self_dark_tiles=None, self_files=None, look_dir=None, look_files=None):
     """The recoloured tiles and the model copies that name them (puppet_pack.tunic), with their
     size-table entries (the game's own file's). Returns {colour: [paths]}. With `self_dir`, also
     the game's tile recoloured under its own name per colour (not green) into it, listed in
     `self_tiles` ({colour: file name}): your own Link in your colour; and the dark tile (the child's
-    tunic body, tunic.DARK) the same way in `self_dark_tiles`."""
+    tunic body, tunic.DARK) the same way in `self_dark_tiles`. With `look_dir`, also each colour's
+    texels of your own Link's tunic textures (puppet_pack.look_live), green among them, listed in
+    `look_files` ({colour: file name}): your colour changed while the game runs."""
+    if look_files is None:
+        look_files = {}
     if self_dark_tiles is None:
         self_dark_tiles = {}
     if self_files is None:
@@ -628,10 +653,11 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
         name = tunic.tile_name(c)
         try:
             data = tunic.tile_for(tile, c)
-            own = tunic.self_tile(tile, c) if self_dir and c != "green" else None
+            own = tunic.self_tile(tile, c) if (self_dir or look_dir) and c != "green" else None
         except tunic.TunicError as e:
             raise BuildError(f"{tile_rel}: {e}")
-        if own is not None:
+        look = [(tunic.TILE, tile if own is None else own)]
+        if own is not None and self_dir:
             # Same size as the game's tile once unpacked: its size-table entry stands.
             fname = f"{c}.bntx.zs"
             write(os.path.join(self_dir, fname), recompress(dicts, tile_raw, own))
@@ -654,6 +680,12 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
                 write(os.path.join(self_dir, fname), recompress(dicts, tile_raw, own_dark))
                 self_dark_tiles[c] = f"{tunic.SELF_DIR}/{fname}"
                 self_files.setdefault(c, {})[dark_rel] = self_dark_tiles[c]
+            if look_dir:
+                # In memory the dark tile is the game's ASTC one: recoloured in place, not the BC3 copy.
+                try:
+                    look.append((tunic.DARK, dark if c == "green" else tunic_extra.recolor(dark, c, base)))
+                except tunic.TunicError as e:
+                    raise BuildError(f"{dark_rel}: {e}")
             ddst = f"Tex/{tunic.dark_name(c)}.bntx.zs"
             write(os.path.join(out_romfs, ddst),
                   recompress(dicts, dark_raw if c == "green" else tile_raw, ddata))
@@ -665,6 +697,7 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
                 e_pup = tunic_extra.for_puppet(e_data, e_own, name, c)
             except tunic.TunicError as e:
                 raise BuildError(f"{e_rel}: {e}")
+            look.append((name, e_data if e_own is None else e_own))
             if e_own is not None and self_dir:
                 # Same size and layout as the game's file: its size-table entry stands.
                 fname = f"{c}.{name}.bntx.zs"
@@ -690,8 +723,17 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
                 # replaced in Tex/ did not reach the adult's lower tunic and hood, while the
                 # puppet's renamed ones did. The kit copies it from the pack's romfs, no 2nd copy.
                 self_files.setdefault(c, {})[m_rel] = f"romfs/{dst}"
+        if look_dir:
+            write(os.path.join(look_dir, f"{c}.bin"), look_live.pack(look))
+            look_files[c] = f"{look_live.DIR}/{c}.bin"
         out[c] = paths
-        log(f"tunic {c}: {name} and {len(models)} models")
+        log(f"tunic {c}: {tunic.tile_name(c)} and {len(models)} models")
+    if look_dir and out and "green" not in out:
+        # The game's own texels: what the module finds the textures by, and green to go back to.
+        look = [(tunic.TILE, tile)] + ([(tunic.DARK, dark)] if dark is not None else [])
+        look += [(n, e_data) for n, (_, _, e_data) in extras.items()]
+        write(os.path.join(look_dir, "green.bin"), look_live.pack(look))
+        look_files["green"] = f"{look_live.DIR}/green.bin"
     if self_dark_tiles and dark is not None:
         # The kit puts a BC3 copy (the main tile's size) over the game's ASTC dark tile: its
         # entry must hold the bigger of the two. A bigger entry is fine for the game's own file.
@@ -740,12 +782,24 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     self_tiles = {}
     self_dark_tiles = {}
     self_files = {}
+    look_files = {}
     tunics_off = not tunics  # --tunics none: on purpose, the kit says nothing (kit-paths.ps1)
     tunic_files = write_tunics(romfs, out_romfs, dicts, table, tunics, log,
                                self_dir=os.path.join(mod_dir, tunic.SELF_DIR), self_tiles=self_tiles,
-                               self_dark_tiles=self_dark_tiles, self_files=self_files) if tunics else {}
+                               self_dark_tiles=self_dark_tiles, self_files=self_files,
+                               look_dir=os.path.join(mod_dir, look_live.DIR), look_files=look_files) if tunics else {}
     tunics = [c for c in tunics if c in tunic_files]
     test_tunic = test_tunic if test_tunic in tunic_files else None
+    if tunics:
+        # The gear's own texels, for the Link customizer (look_live.GEAR).
+        def read_tex(name):
+            p = os.path.join(romfs, "Tex", f"{name}.bntx.zs")
+            return dicts.decompress(read(p)) if os.path.isfile(p) else None
+        gear_blob = look_live.gear(read_tex, log)
+        if gear_blob is not None:
+            write(os.path.join(mod_dir, look_live.DIR, look_live.GEAR_FILE), gear_blob)
+            look_files["gear"] = f"{look_live.DIR}/{look_live.GEAR_FILE}"
+            log(f"look: {look_live.DIR}/{look_live.GEAR_FILE} ({len(gear_blob) >> 10} KB of gear textures)")
     jobs = [(v, None) for v in VARIANTS] + [(v, c) for v in VARIANTS for c in tunics]
     for v, color in jobs:
         player = f"Player_{v}"
@@ -893,6 +947,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "self_tiles": self_tiles,
         "self_dark_tiles": self_dark_tiles,
         "self_files": self_files,
+        "look_files": look_files,
         "tunics_off": tunics_off,
         "test_tunic": test_tunic,
         "sound": sound,
@@ -907,6 +962,9 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     scenes, rooms, points = dungeon_rooms.write_table(romfs, os.path.join(mod_dir, "coop_rooms.txt"), dicts)
     log(f"coop_rooms.txt: {points} placements in {rooms} rooms of {scenes} dungeons")
     manifest["rooms"] = {"scenes": scenes, "rooms": rooms, "placements": points}
+    maps = map_captures.write_table(romfs, os.path.join(mod_dir, "coop_maps.txt"))
+    log(f"coop_maps.txt: {maps} maps (players on the minimap and the pause map)")
+    manifest["maps"] = maps
     manifest["tool_sha256"] = tool_hash()  # the kit compares it with its own tool (Get-PuppetPackHint)
     write(os.path.join(mod_dir, "coop_puppet.json"), json.dumps(manifest, indent=1).encode())
     return manifest

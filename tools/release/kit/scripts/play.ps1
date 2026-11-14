@@ -5,7 +5,7 @@
 #        Host.bat (play.ps1 host)  starts this kit's server too and plays on it (127.0.0.1)
 #        Join.bat (play.ps1 join)  asks for the host's address each time
 #        Host-Hookshot.bat, Join-Hookshot.bat (play.ps1 host|join -Hookshot)  the same with the
-#                                  Hookshot game Build-Hookshot-Coop.bat built (coop.ini beside its longshot.exe)
+#                                  Longshot game Build-Hookshot-Coop.bat built (coop.ini beside its longshot.exe)
 # On every start it looks for a newer co-op release and, as auto_update in coop-options.ini
 # says, updates the kit (emulator included) and starts the new kit's play.ps1 with -NoUpdate.
 # Every later play.ps1 must accept -NoUpdate.
@@ -174,7 +174,7 @@ if ($Hookshot) {
         $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
         & $ps -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'hookshot-build.ps1')
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "The Hookshot game could not be brought up to date (above: why). $hsRetry to try again."
+            Write-Host "The co-op game could not be brought up to date (above: why). $hsRetry to try again."
             Wait-AnyKey 60
             exit 1
         }
@@ -182,7 +182,7 @@ if ($Hookshot) {
         $exe = Get-KitHookshotExe $hsGame
     }
     if (-not $exe) {
-        Write-Host "Hookshot isn't set up yet: no Hookshot game in $hsGame. $(if ($hsOnly) { 'Start ""Start OoT Co-op.bat"" again and let it finish (SETUP.md).' } else { 'Run Build-Hookshot-Coop.bat and let it finish (SETUP.md, ""Play on Hookshot"").' })"
+        Write-Host "The co-op game isn't set up yet: none in $hsGame. $(if ($hsOnly) { 'Start ""Start OoT Co-op.bat"" again and let it finish (SETUP.md).' } else { 'Run Build-Hookshot-Coop.bat and let it finish (SETUP.md, ""Play on Hookshot"").' })"
         exit 1
     }
     if (-not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $exe) 'hookshot_coop.dll'))) {
@@ -194,9 +194,9 @@ if ($Hookshot) {
     $ini = Join-Path $emu 'coop.ini'
 }
 if ($Mode -eq 'title') {
-    if (-not $Hookshot) { Write-Host 'play.ps1 title is for Hookshot (Play-OoT-Coop.bat).'; exit 1 }
+    if (-not $Hookshot) { Write-Host 'play.ps1 title is for the Longshot game (Play-OoT-Coop.bat).'; exit 1 }
     $running = Get-Process longshot, hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
-    if ($running) { Write-Host 'This Hookshot game is already running: Host and Join are on its title screen.'; exit 1 }
+    if ($running) { Write-Host 'The co-op game is already running. Host and Join are in its menu, first tab Multiplayer (controller: Minus and Plus together, or Home; keyboard: F1).'; exit 1 }
     # No session from this start: no server and no join password in coop.ini (the name, the colour and the
     # last invite code stay), and none in the variables an earlier start in this window may have left.
     Clear-CoopIniSession $template $ini
@@ -204,11 +204,11 @@ if ($Mode -eq 'title') {
         Remove-Item -Path "env:$v" -ErrorAction SilentlyContinue
     }
     [void](Use-KitPuppetPack (Join-Path $emu 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') (Join-Path $kit 'tools\puppet_pack') @(
-        'Puppet pack: not in the Hookshot game, so the other players show only as markers.',
+        'Puppet pack: not in the co-op game, so the other players show only as markers.',
         $(if ($hsOnly) { '  It is made from your game file (the one hookshot\game-files.txt names): put that file back, then start again.' } else { '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").' })))
     [void](Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru)
-    Write-Host 'The game started. Host or Join in its menu''s Multiplayer tab (F1, or Home on a pad; Minus on the title screen).'
-    Write-Host 'Same house or a VPN: Host, then "Same network or VPN".'
+    Write-Host 'Game started. Host or Join in the game''s menu, first tab Multiplayer (controller: Minus and Plus together, or Home;'
+    Write-Host 'keyboard: F1; on the title screen Minus alone). Same house or a VPN: Host, then "Same network or VPN".'
     if (-not $hsOnly) { Write-Host 'Host-Hookshot.bat and Join-Hookshot.bat still host or join from a window like this one instead.' }
     exit 0
 }
@@ -367,7 +367,7 @@ Write-Host "Co-op: server $Server, port $Port, name $Name, join password $(if ($
 $user = Join-Path $emu 'user'
 if ($Hookshot) {
     $running = Get-Process longshot, hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
-    if ($running) { Write-Host 'This Hookshot game is already running; close it first to use new settings.'; exit 1 }
+    if ($running) { Write-Host 'The co-op game is already running; close it first to use new settings.'; exit 1 }
 }
 elseif (-not (Get-ChildItem (Join-Path $user 'keys') -Filter '*.keys' -ErrorAction SilentlyContinue)) {
     Write-Host "No keys in $user\keys yet. SETUP.md says what goes where."
@@ -460,11 +460,11 @@ if ($Hookshot) {
     # puppets off without a pack. The pack is in mods\contents (Build-Hookshot-Coop.bat installs it), and
     # Hookshot indexes its mod files once at start: this runs before Start-Process.
     [void](Use-KitPuppetPack (Join-Path $emu 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') (Join-Path $kit 'tools\puppet_pack') @(
-        'Puppet pack: not in the Hookshot game, so the other players show only as markers.',
+        'Puppet pack: not in the co-op game, so the other players show only as markers.',
         $(if ($hsOnly) { '  It is made from your game file (the one hookshot\game-files.txt names): put that file back, then start again.' } else { '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").' })))
     $started = Get-Date
     $game = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru
-    Write-Host "The game started. Its longshot_log.txt (beside the game) says 'coop: module loaded', then 'coop: connected'."
+    Write-Host "Game started. Its longshot_log.txt (beside the game) says 'coop: module loaded', then 'coop: connected'."
     exit 0
 }
 # AMD cards: shader libraries off unless the player chose (kit-paths.ps1, issue 118).

@@ -321,8 +321,8 @@ bool Mapping::open() {
 void Mapping::renew_if_due() {
   if (!open_ || !router_) return;
   // Our lease, or the router's when it gives less (one of hours is renewed on our timing).
-  const std::uint32_t lease = std::min(lease_, config_.lease_seconds);
-  const std::uint64_t lease_ms = static_cast<std::uint64_t>(std::max<std::uint32_t>(lease, 60)) * 1000;
+  const std::uint32_t lease = (std::min)(lease_, config_.lease_seconds);
+  const std::uint64_t lease_ms = static_cast<std::uint64_t>((std::max<std::uint32_t>)(lease, 60)) * 1000;
   if (steady_ms() - opened_ms_ < lease_ms / 2) return;
   const std::uint16_t before = external_.port;
   const Try t = natpmp_ ? ask_natpmp(*router_, config_.lease_seconds, config_.renew_waits_ms)

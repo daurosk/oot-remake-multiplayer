@@ -55,7 +55,8 @@ bool SessionLive();
 void NoteTitle(bool title_up);
 
 // A guest's switch to the host's save that has not happened yet waits (the player picked a file on the title):
-// never while that file loads; dropped once Link is in the game (their own file or a new game).
+// never while that file loads. Once Link is in the game the hold ends; the switch still waits (never under a game
+// being played) and goes when the player is back on the title's menu with no file loaded.
 void CancelPendingSwitch(std::string_view why);
 // The player is back on the title's menu with no file loaded (they backed out of their pick): the waiting switch
 // goes again (the host's save, once in, is written and switched to on the title's menu).

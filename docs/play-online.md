@@ -171,6 +171,16 @@ By default anyone who can reach the server's port may join. Three lines in the h
 
 For `server_allow` and `server_bind`: remove the `#` in front of the line, put in the addresses and start `Host.bat` again. The server window then says `listening on port 27510 (only 25.1.2.3, ...)` and `only the N address range(s) given with --allow may connect`. A player who is turned away is counted as `not allowed` when the server stops. More in [SECURITY.md](../SECURITY.md).
 
+## Playing from the host's save
+
+Everyone plays from the host's save: when you join, the host's game sends its newest save to yours, and your game keeps it in its own co-op save folder (your own saves are never touched). Nothing is pressed for you; the chat says when to load:
+
+1. **"Host save loading, don't load a save."** The host's save is on its way. Wait on the title screen (it takes a few seconds).
+2. **"Success, load any save."** It is in: press Continue (or pick any save in Load). At the title every save there is the host's.
+3. During play (you joined while playing, or the host loaded another save) it says **"Success, load any save for changes to occur."**: load a save (Load in the menu) to stand where the host's save starts.
+
+If you load a save before Success, the chat says so: the host's save still comes in while you play, and when you go back to the title screen the chat says Success and you load it from there. A save that comes late is still kept and announced. If the host's game ends before the save came, the title says so and Continue plays your own save. The title's bottom-left line says the same while it waits.
+
 ## Lobby
 
 Hookshot: the **Lobby** tab of the pause menu (F1, Insert or the pad's Home), right after **Multiplayer**. Multiplayer is for starting and stopping a game; the Lobby is the game you are in, so it has its own tab, one press away, instead of a page inside Multiplayer.

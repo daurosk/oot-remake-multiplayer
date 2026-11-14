@@ -922,7 +922,7 @@ constexpr Shape kShapes[] = {
     {"Getting ", "'s save...", "Getting {}'s save...", false},
     {"Loading ", "'s save...", "Loading {}'s save...", false},
     {"Multiplayer: ", "", "Multiplayer: {}", true},
-    // The host's save at the title (coop_title_menu.h AutoLoad::Line).
+    // The host's save at the title (the AutoLoad lines of before 0.11; SaveWait::Line in coop_title_menu.h now).
     {"", "'s save is not here yet (it still loads by itself if it comes): Continue plays your own save, New Game "
          "starts a new one.",
      "{}'s save is not here yet (it still loads by itself if it comes): Continue plays your own save, New Game "

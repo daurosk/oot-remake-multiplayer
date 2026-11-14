@@ -56,14 +56,6 @@ constexpr int kFirstRow = 4;
 constexpr std::array<const char*, 3> kRowLabels{"0100", "0101", "0102"};
 constexpr std::array<CoopPauseMenu::Page, 3> kRowPages{CoopPauseMenu::Page::kHost, CoopPauseMenu::Page::kJoin,
                                                        CoopPauseMenu::Page::kSettings};
-constexpr std::uint64_t kFocus = 0x8088ffc0;   // the screens' focus setter (screen, button, 0): Hookshot's oot_menu.c
-// The title's row count: its layout's BtnNum animation at a frame (frame N shows N rows), as UISystemWindowScreen
-// sets its own (f_83425740 takes it with kAnim, f_83425ad0.. sets it with kAnimFrame and s0).
-constexpr std::uint64_t kAnim = 0x8045c7a0;        // (layout, name): the layout's animation of that name
-constexpr std::uint64_t kAnimFrame = 0x802f2d90;   // (animation, s0 = frame)
-constexpr std::uint64_t kBtnNumName = 0x83e3e439;  // "BtnNum" in the game's read-only data
-constexpr float kRowsWithContinue = 3.0f;          // New Game, Options, Continue
-constexpr int kContinueButton = CoopTitleMenu::AutoLoad::kContinue;
 
 // --- Switch pad bits (nn::hid::NpadButton) ---
 constexpr std::uint64_t kA = 1ull << 0;
@@ -76,14 +68,11 @@ std::atomic<std::uint64_t> g_screen{0};
 std::atomic<std::uint64_t> g_last_step_ms{0};
 std::atomic<bool> g_step_seen{false};
 std::atomic<bool> g_rows{false};
-std::atomic<bool> g_focus_continue{false};
-std::atomic<bool> g_reveal_continue{false};
 
-// Everything below. Never held while calling into CoopPause (it calls in here: StartAutoLoad, StopAutoLoad).
+// Everything below. Never held while calling into CoopPause (it calls in here: StartSaveWait, StopSaveWait).
 std::mutex g_mutex;
-CoopTitleMenu::AutoLoad g_autoload;   // Join -> the host's save loaded in one step
+CoopTitleMenu::SaveWait g_wait;   // Join at the title -> what the title says while the host's save comes
 std::uint64_t g_pad_last = 0;
-bool g_hold_a = false;              // the player's A on Continue held back while the host's save comes (until let go)
 int g_focus_logged = -2;
 
 std::uint64_t NowMs() {
@@ -326,41 +315,6 @@ void OnTitle(void* ctx, std::uint64_t screen, int event) {
                      count, kFirstRow + static_cast<int>(kRowLabels.size()));
         }
     }
-    if (event == HOS_COOP_TITLE_STEP && g_reveal_continue.exchange(false) && ctx != nullptr) {
-        // Continue shown: a joiner with no save of their own got a title without it, and the host's save came after.
-        char name[8] = {};
-        const std::uint64_t layout = Read64(screen + kTitleLayout);
-        if (layout != 0 && CoopRuntime::Read(kBtnNumName, name, 7) && std::strcmp(name, "BtnNum") == 0) {
-            HosCoopCall k{};
-            k.function = kAnim;
-            k.x[0] = layout, k.x[1] = kBtnNumName;
-            std::uint64_t anim = 0;
-            if (g_api->call(ctx, &k, &anim) && anim != 0) {
-                k = HosCoopCall{};
-                k.function = kAnimFrame;
-                k.x[0] = anim;
-                k.s0 = kRowsWithContinue;
-                std::uint64_t x0 = 0;
-                g_api->call(ctx, &k, &x0);
-                LOG_INFO(Core, "coop: title: the title's Continue shown for the host's save");
-            }
-        }
-    }
-    if (event == HOS_COOP_TITLE_STEP && g_focus_continue.exchange(false) && ctx != nullptr) {
-        // The cursor to Continue for the host's save (AutoLoad), as the game's own screens move it.
-        std::int32_t count = 0;
-        CoopRuntime::Read(screen + kTitleCount, &count, sizeof count);
-        const std::uint64_t button =
-            count > kContinueButton ? Read64(Read64(screen + kTitleButtons) + 8ull * kContinueButton) : 0;
-        if (button != 0) {
-            HosCoopCall k{};
-            k.function = kFocus;
-            k.x[0] = screen, k.x[1] = button, k.x[2] = 0;
-            std::uint64_t x0 = 0;
-            g_api->call(ctx, &k, &x0);
-            LOG_INFO(Core, "coop: title: the cursor on Continue for the host's save");
-        }
-    }
     if (event == HOS_COOP_TITLE_STEP) {
         if (!g_step_seen.exchange(true)) {
             LOG_INFO(Core, "coop: title: the title screen's step runs");
@@ -382,49 +336,27 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
         std::lock_guard lock(g_mutex);
         const bool title = TitleUp();
         CoopSave::NoteTitle(title);   // (a guest switches to the host's save only on the title's menu)
-        bool auto_a = false;          // this poll's A is AutoLoad's, not the player's
         const int focused = title ? FocusedIndex(g_screen.load()) : -1;
-        if (g_autoload.waiting() && CoopSave::HostHasNoSave()) {
-            g_autoload.NoSave();
-            LOG_INFO(Core, "coop: title: host's save: {}", g_autoload.Line());
+        if (g_wait.waiting() && CoopSave::HostHasNoSave()) {
+            g_wait.NoSave();
+            LOG_INFO(Core, "coop: title: host's save: {}", g_wait.Line());
         }
-        if (g_autoload.watching()) {
-            const std::string before = g_autoload.Line();
-            CoopTitleMenu::AutoLoad::Input in;
+        if (g_wait.watching()) {
+            // What the title says while the host's save comes. Nothing is pressed: the player loads a save
+            // themselves when the chat says Success (CoopSave, save::GuestNotices).
+            const std::string before = g_wait.Line();
+            CoopTitleMenu::SaveWait::Input in;
             in.host_save_ready = CoopSave::HostSaveReady();
             in.save_coming = CoopSave::HostSaveComing();
             in.title_up = title;
             in.in_game = InGame();
-            in.focused = focused;
             in.session_live = CoopSave::SessionLive();
-            const auto tick = g_autoload.Step(NowMs(), in);
-            if (tick.reveal_continue) {
-                g_reveal_continue = true;   // (made at the title's next step, with its game context)
-            }
-            if (tick.focus_continue) {
-                g_focus_continue = true;   // (made at the title's next step, with its game context)
-            }
-            if (tick.rearm) {
+            if (g_wait.Step(NowMs(), in).rearm) {
                 CoopSave::ResumePendingSwitch();   // (they backed out of their own pick: the host's save again)
             }
-            if (tick.press_a) {   // (Step lets it go in on the title only with the cursor on Continue)
-                buttons |= kA;
-                auto_a = true;
+            if (const std::string now = g_wait.Line(); now != before && !g_wait.chose()) {
+                LOG_INFO(Core, "coop: title: host's save: {}", now.empty() ? "done" : now);
             }
-            if (const std::string now = g_autoload.Line(); now != before && !g_autoload.chose()) {
-                LOG_INFO(Core, "coop: title: host's save: {}", now.empty() ? "loaded" : now);
-            }
-        }
-        // The player's own A on Continue while the host's save is on its way: held back from the game (Continue
-        // would load their own file); the host's save loads by itself when it is here. Held until let go.
-        if ((buttons & kA) == 0) {
-            g_hold_a = false;
-        } else if (!auto_a && (g_hold_a || ((buttons & ~g_pad_last & kA) != 0 && g_autoload.HoldsPlayerA(title, focused)))) {
-            if (!g_hold_a) {
-                LOG_INFO(Core, "coop: title: Continue pressed while the host's save comes: it loads when it is here");
-            }
-            g_hold_a = true;
-            buttons &= ~kA;
         }
         const std::uint64_t down = buttons & ~g_pad_last;
         g_pad_last = buttons;
@@ -433,15 +365,15 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
             // the host's save is still coming (or late). No switch after this: it would change the save folder
             // under the load.
             const bool our_row = g_rows && focused >= kFirstRow && focused < kFirstRow + static_cast<int>(kRowLabels.size());
-            if (CoopTitleMenu::AutoLoad::PlayerPicksFile(true, auto_a, focused, our_row)) {
+            if (CoopTitleMenu::SaveWait::PlayerPicksFile(true, focused, our_row)) {
                 CoopSave::CancelPendingSwitch("the player chose a file on the title");
-                if (g_autoload.waiting()) {
-                    g_autoload.PlayerChose();
+                if (g_wait.waiting()) {
+                    g_wait.PlayerChose();
                     LOG_INFO(Core, "coop: title: host's save: not waited for (the player chose a file)");
                 }
             }
         }
-        if (!HasScratch() || !title || g_autoload.active()) {
+        if (!HasScratch() || !title || g_wait.active()) {
             return buttons;
         }
         const int f = (down & kA) != 0 ? FocusedIndex(g_screen.load()) : -1;
@@ -461,15 +393,15 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
     return buttons;
 }
 
-bool StartAutoLoad(const std::string& host) {
+bool StartSaveWait(const std::string& host) {
     std::lock_guard lock(g_mutex);
-    g_autoload.Start(NowMs(), host);
+    g_wait.Start(NowMs(), host);
     return TitleUp();
 }
 
-void StopAutoLoad() {
+void StopSaveWait() {
     std::lock_guard lock(g_mutex);
-    g_autoload.Stop();
+    g_wait.Stop();
 }
 
 std::string ClientId() {
@@ -502,7 +434,7 @@ std::optional<CoopDraw::TitleView> View() {
     if (!HasScratch() || !TitleUp()) {
         return std::nullopt;
     }
-    if (const std::string line = g_autoload.Line(); !line.empty()) {
+    if (const std::string line = g_wait.Line(); !line.empty()) {
         // ("Loading Saria's save..." in the player's language: the name is data)
         return CoopDraw::TitleView{CoopI18n::Tr(line)};
     }

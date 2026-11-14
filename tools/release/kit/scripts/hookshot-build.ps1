@@ -128,12 +128,10 @@ $downloads = if ($Tools) { Join-Path (Split-Path -Parent $tools) 'downloads' } e
 if (-not $Out) {
     # The game this kit built last (game-folder.txt, written below; a build with -Out puts it elsewhere): an update
     # puts the new co-op into THAT game. Only when that folder is gone does the default folder get a new build.
+    # (Get-KitHookshotGame: a relative name is this kit's; another kit's hookshot\game is never used: kit-copy)
     $Out = Join-Path $hs 'game'
-    $where = Join-Path $hs 'game-folder.txt'
-    if (Test-Path -LiteralPath $where) {
-        $last = "$(Get-Content -LiteralPath $where -TotalCount 1)".Trim()
-        if ($last -and (Test-Path -LiteralPath $last -PathType Container)) { $Out = $last }
-    }
+    $last = Get-KitHookshotGame $kit
+    if ($last -and (Test-Path -LiteralPath $last -PathType Container)) { $Out = $last }
 }
 $Out = [System.IO.Path]::GetFullPath($Out)
 $python = Join-Path $tools 'python\python.exe'

@@ -21,10 +21,12 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <enet/enet.h>
 
+#include "local_net.hpp"
 #include "nat_codes.hpp"
 #include "punch.hpp"
 #include "stun.hpp"
@@ -107,6 +109,9 @@ class JoinHelper {
   JoinConfig config_;
   Addr peer_;
   std::vector<Addr> nearby_;
+  bool lan_ = false;                // the local-network probe is sent
+  std::vector<Addr> lan_answers_;   // local addresses that answered, first first
+  std::uint64_t lan_since_ = 0;
   protocol::Sha256Digest key_{};
   Nonce nonce_{};
   ENetSocket public_socket_ = ENET_SOCKET_NULL;
@@ -127,10 +132,18 @@ class JoinHelper {
   Stats stats_;
 };
 
-// The probe's other targets for a host at `host`: 127.0.0.1 and the local
-// network's broadcast address, each at the invite's port and at 27510 (the
-// server's own port when the router maps another one), without `host`.
-std::vector<Addr> nearby_targets(Addr host);
+// The probe's other targets for a host at `host`: 127.0.0.1, and with
+// `local_network` the broadcast address 255.255.255.255 and each network's
+// own (a PC with a VPN card sends 255.255.255.255 out of one card only), each
+// at the invite's port and at 27510 (the server's own port when the router
+// maps another one), without `host`.
+std::vector<Addr> nearby_targets(Addr host, const std::vector<LocalNet>& networks = {}, bool local_network = true);
+
+// The local-network probe carries a signature everyone there can see, from
+// which a short password could be guessed offline, so it is sent only for a
+// password Host.bat made (100 random bits) or one of 20 bytes or more.
+inline constexpr std::size_t kLanPasswordBytes = 20;
+bool lan_probe_ok(std::string_view password);
 
 // What to do when no way works (both helpers' and the server's windows).
 std::string no_way_help();

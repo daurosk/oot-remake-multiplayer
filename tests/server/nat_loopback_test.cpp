@@ -369,3 +369,19 @@ TEST_CASE("join helper: the probe also goes to this PC and the local network, at
   CHECK(nearby_targets(Addr{0xCB007105u, 27510}) == usual);
   CHECK(nearby_targets(Addr{0x7F000001u, 27510}) == std::vector<Addr>{{0xFFFFFFFFu, 27510}});
 }
+
+TEST_CASE("join helper: the local-network probe only for a long or Host.bat-made password, to each card's broadcast") {
+  CHECK(lan_probe_ok(make_password()));
+  CHECK(lan_probe_ok(std::string(20, 'x')));
+  CHECK_FALSE(lan_probe_ok("hunter2"));
+  CHECK_FALSE(lan_probe_ok(std::string(19, 'x')));
+  const Addr host{0xCB007105u, 27510};
+  // A short password: only this PC.
+  CHECK(nearby_targets(host, {}, false) == std::vector<Addr>{{0x7F000001u, 27510}});
+  // Two cards (the home network and a VPN): each one's broadcast address too; a /32 has none.
+  const std::vector<LocalNet> cards{{0xC0A80105u, 0xFFFFFF00u, 0xC0A80101u},
+                                    {0x1A000002u, 0xFF000000u, 0},
+                                    {0x0A000009u, 0xFFFFFFFFu, 0}};
+  const std::vector<Addr> want{{0x7F000001u, 27510}, {0xFFFFFFFFu, 27510}, {0xC0A801FFu, 27510}, {0x1AFFFFFFu, 27510}};
+  CHECK(nearby_targets(host, cards, true) == want);
+}

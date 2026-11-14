@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "coop/protocol/messages.hpp"
+#include "local_net.hpp"
 #include "nat_net.hpp"
 
 namespace coop::server::nat {
@@ -16,6 +17,9 @@ namespace {
 constexpr std::uint32_t kLoopback = 0x7F000001u;
 constexpr std::uint32_t kBroadcast = 0xFFFFFFFFu;  // this network (255.255.255.255)
 constexpr std::uint64_t kStunWaitMs = 3000;
+// A host answering from another address on the local network waits this long
+// for the invite's address or 127.0.0.1 to answer too (they win).
+constexpr std::uint64_t kLanGraceMs = 300;
 
 }  // namespace
 
@@ -27,9 +31,16 @@ std::string no_way_help() {
          "(\"Without a VPN: port forwarding\").";
 }
 
-std::vector<Addr> nearby_targets(Addr host) {
+std::vector<Addr> nearby_targets(Addr host, const std::vector<LocalNet>& networks, bool local_network) {
+  std::vector<std::uint32_t> ips{kLoopback};
+  if (local_network) {
+    ips.push_back(kBroadcast);
+    for (const LocalNet& net : networks) {
+      if (const std::uint32_t b = broadcast_of(net)) ips.push_back(b);
+    }
+  }
   std::vector<Addr> out;
-  for (std::uint32_t ip : {kLoopback, kBroadcast}) {
+  for (std::uint32_t ip : ips) {
     for (std::uint16_t port : {host.port, protocol::kDefaultPort}) {
       const Addr a{ip, port};
       if (port != 0 && a != host && std::find(out.begin(), out.end(), a) == out.end()) out.push_back(a);
@@ -38,9 +49,21 @@ std::vector<Addr> nearby_targets(Addr host) {
   return out;
 }
 
+bool lan_probe_ok(std::string_view password) {
+  return is_made_password(password) || password.size() >= kLanPasswordBytes;
+}
+
 JoinHelper::JoinHelper(JoinConfig config) : config_(std::move(config)) {
   peer_ = config_.host;
-  nearby_ = config_.nearby.value_or(nearby_targets(config_.host));
+  if (config_.nearby) {
+    nearby_ = *config_.nearby;
+  } else {
+    // Everyone on the local network sees the broadcast probe, and its
+    // signature lets them guess a short password offline; 127.0.0.1 stays on
+    // this PC, so it is always tried.
+    lan_ = lan_probe_ok(config_.password);
+    nearby_ = nearby_targets(config_.host, lan_ ? local_networks() : std::vector<LocalNet>{}, lan_);
+  }
   std::erase(nearby_, config_.host);
   key_ = punch_key(config_.password);
   std::random_device device;
@@ -142,7 +165,10 @@ bool JoinHelper::start(std::string& error) {
     send_public(ask.server, request);
   }
   say("trying the host at " + show(config_.host) + " directly" +
-      (nearby_.empty() ? std::string() : std::string(" (and on this PC and your local network)")));
+      (nearby_.empty() ? std::string()
+       : lan_       ? std::string(" (and on this PC and your local network)")
+                    : std::string(" (and on this PC; not on the local network: the join password is short, so "
+                                  "the probe is not shown to everyone there)")));
   return true;
 }
 
@@ -224,7 +250,21 @@ void JoinHelper::on_public(Addr from, std::span<const std::uint8_t> data) {
       ++stats_.rejected;
       return;
     }
-    if (state_ != JoinState::kOpen) open(read.punch.type == PunchType::kProbeAck, from);
+    if (state_ == JoinState::kOpen) return;
+    // The invite's address and this PC open at once. Another local address
+    // waits a moment (kLanGraceMs), so a device on the network that replays
+    // the host's answer cannot take the way before the host itself answers.
+    if (from == config_.host || from.ip == kLoopback) {
+      open(read.punch.type == PunchType::kProbeAck, from);
+    } else if (read.punch.type == PunchType::kProbeAck) {
+      if (std::find(lan_answers_.begin(), lan_answers_.end(), from) == lan_answers_.end()) {
+        lan_answers_.push_back(from);
+        say("the host's server answered on your local network from " + show(from) +
+            (lan_answers_.size() > 1 ? std::string(" (an address that answered earlier is used)")
+                                     : std::string()));
+        if (lan_answers_.size() == 1) lan_since_ = now_ms();
+      }
+    }
     return;
   }
   if (state_ != JoinState::kOpen || !game_) {
@@ -255,6 +295,10 @@ void JoinHelper::on_game(Addr from, std::span<const std::uint8_t> data) {
 
 void JoinHelper::tick(std::uint64_t now) {
   if (state_ == JoinState::kOpen) return;
+  if (!lan_answers_.empty() && now - lan_since_ >= kLanGraceMs) {
+    open(true, lan_answers_.front());
+    return;
+  }
   const std::uint64_t elapsed = now - start_;
   // STUN: two more tries for the servers that did not answer.
   if ((stun_tries_ == 1 && elapsed >= 700) || (stun_tries_ == 2 && elapsed >= 1600)) {

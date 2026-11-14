@@ -9,9 +9,11 @@ add_library(coop_server_lib STATIC
   relay_link.cpp
   relay_wire.cpp
   upnp.cpp
+  pcp.cpp
   nat_codes.cpp
   stun.cpp
   punch.cpp
+  local_net.cpp
   join_helper.cpp
   host_service.cpp
 )
@@ -20,3 +22,7 @@ target_link_libraries(coop_server_lib PUBLIC coop_protocol coop_net enet PRIVATE
 
 add_executable(coop_server main.cpp)
 target_link_libraries(coop_server PRIVATE coop_server_lib coop_warnings)
+# local_net.cpp: the network cards' addresses and routers (GetAdaptersAddresses).
+if(WIN32)
+  target_link_libraries(coop_server_lib PUBLIC iphlpapi)
+endif()

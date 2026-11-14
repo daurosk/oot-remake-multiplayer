@@ -783,7 +783,9 @@ try {
 # --- "Start OoT Co-op.bat" (start.ps1, start-checks.ps1): the one entry point of the Hookshot-only kit and each
 # thing that could go wrong before the game starts. play.ps1 is a stub here: it writes what it was given.
 . (Join-Path $kitSrc 'scripts\start-checks.ps1')
-$sk = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-start-test-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+# (a short name: the kits made under it are checked against start-checks.ps1's 80-letter limit, and the TEMP of GitHub's
+# runners, C:\Users\runneradmin\AppData\Local\Temp\, is 40 letters already; "oot-start-test-<8>\kits\O'Brien's kit" made 82)
+$sk = Join-Path ([System.IO.Path]::GetTempPath()) ('ost-' + [Guid]::NewGuid().ToString('N').Substring(0, 6))
 try {
     # Still in the zip: Windows' temp copy of an open zip, a folder named like the zip, anywhere under TEMP.
     Check (Test-KitInZip 'C:\Users\x\AppData\Local\Temp\Temp1_oot-coop-v1.zip\oot-coop-v1' '') 'in zip: Temp1_<zip> folder'

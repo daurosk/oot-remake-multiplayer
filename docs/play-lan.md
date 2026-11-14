@@ -13,7 +13,7 @@ Host and Join are in the game's menu, first tab **Multiplayer** ([setup.md](setu
 3. **The others** open **Join** in the Multiplayer tab and paste the line where the invite code goes (A on the field, or Ctrl+V), then **OK**. Nothing else to type.
 4. If Windows asks about the firewall on the host's PC, allow the game on private networks.
 
-The invite code is for friends over the internet: it holds the host's internet address, which often does not work from inside the same house. **Copy the code again** on the Host screen brings the invite code back.
+The invite code is for friends over the internet: it holds the host's internet address, which many routers do not let back into the same house. A joiner on a newer version than 0.10.1 also tries this PC and the home network with it, so the invite code then works in the same house and on the same PC too (with Host.bat's own password, or one of 20 letters or more: a short password is not sent across the home network). On 0.10.1, use the **Same house** address. **Copy the code again** on the Host screen brings the invite code back.
 
 Host, Join and Firewall below are for the older emulator kits (0.10.0 and before) with `Host.bat` / `Join.bat`; the firewall rule also applies to `start-server.cmd`.
 

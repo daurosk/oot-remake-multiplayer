@@ -28,6 +28,9 @@ namespace coop::server {
 namespace upnp {
 class Mapping;
 }
+namespace pcp {
+class Mapping;
+}
 namespace relay {
 class RelayLink;
 }
@@ -45,7 +48,10 @@ struct HostServiceConfig {
   // ENet's connection slots: more than max_players, so one more player can
   // connect and be told the server is full.
   std::size_t max_connections = 20;
-  bool upnp = false;                  // only when the host said yes
+  bool upnp = false;                  // only when the host said yes (UPnP, then PCP / NAT-PMP)
+  // Tests: the routers PCP / NAT-PMP asks (a fake one on 127.0.0.1); empty:
+  // each network card's router.
+  std::vector<nat::Addr> pcp_routers;
   bool invite = false;                // STUN, then the invite code
   bool remember_friends = false;      // nat::HostConfig::remember_friends (the game's own host)
   std::vector<nat::Addr> stun_servers;
@@ -77,8 +83,8 @@ struct HostStatus {
   std::string invite;       // the invite code, once the STUN round is done
   bool invite_done = false; // the STUN round is over (with a code or not)
   std::string relay_code;   // "<code>@<relay>", once the relay gave one
-  bool upnp_open = false;
-  std::string external;     // the router's internet address (UPnP), if known
+  bool upnp_open = false;   // the router forwards the port (UPnP, or PCP / NAT-PMP)
+  std::string external;     // the router's internet address, if known
   std::string message;      // the last problem or hint, plain English
   HostProblem problem = HostProblem::kNone;
   // Other players' samples and poses this server sent in the last second,
@@ -123,6 +129,10 @@ class HostService {
   HostServiceConfig config_;
   std::unique_ptr<EnetServer> server_;
   std::unique_ptr<upnp::Mapping> mapping_;
+  std::unique_ptr<pcp::Mapping> pcp_;  // when UPnP did not open the port
+  // The router's internet address and the port it forwards to the server
+  // (UPnP: the same port; PCP / NAT-PMP: the one the router gave).
+  std::optional<nat::Addr> forwarded_;
   std::unique_ptr<relay::RelayLink> link_;
   std::unique_ptr<nat::HostRendezvous> rendezvous_;
   bool stopped_ = false;

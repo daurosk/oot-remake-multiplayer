@@ -9,6 +9,7 @@ add_executable(coop_server_tests
   upnp_test.cpp
   nat_test.cpp
   nat_loopback_test.cpp
+  pcp_test.cpp
 )
 # upnp_test runs a fake router on its own thread.
 target_link_libraries(coop_server_tests PRIVATE coop_server_lib doctest::doctest coop_warnings Threads::Threads)

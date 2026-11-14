@@ -50,6 +50,30 @@ if ($all.Count) {
     Ok 'skip removes a folder' (($less -notcontains $all[0]) -and $less.Count -eq $all.Count - 1)
 }
 
+# --- install.ps1 against Windows limits (its first run stopped on a 49-character description)
+$inst = Join-Path $PSScriptRoot 'install.ps1'
+$ast = [Management.Automation.Language.Parser]::ParseFile($inst, [ref]$null, [ref]$null)
+$descs = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -in 'New-LocalUser', 'Set-LocalUser' }, $true) | ForEach-Object {
+    $els = $_.CommandElements
+    for ($i = 0; $i -lt $els.Count - 1; $i++) {
+        if ($els[$i] -is [Management.Automation.Language.CommandParameterAst] -and $els[$i].ParameterName -eq 'Description') { $els[$i + 1] }
+    }
+})
+Ok 'install.ps1 gives New-LocalUser a description' ($descs.Count -ge 1)
+Ok 'every local user description is a constant of at most 48 characters' (-not ($descs | Where-Object {
+    $_ -isnot [Management.Automation.Language.StringConstantExpressionAst] -or $_.Value.Length -gt 48 }))
+$userDefault = ($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'User' }).DefaultValue.Value
+Ok 'runner user name is at most 20 characters' ($userDefault -and $userDefault.Length -le 20)
+$src = Get-Content -Raw $inst
+Ok 'deny-logon rights go on after config.cmd checks the password' ($src.IndexOf('Set-OotCiLogonRights -Sid $sid -Add') -gt $src.IndexOf('config.cmd --unattended'))
+$scripts = 'install.ps1', 'deny.ps1', 'uninstall.ps1', 'rights.ps1' | ForEach-Object { Get-Content -Raw (Join-Path $PSScriptRoot $_) }
+Ok 'no Get-LocalGroupMember (throws on 5.1 with orphaned members)' (-not ($scripts | Where-Object { $_ -match '(?m)^[^#]*Get-LocalGroupMember' }))
+
+# --- Test-OotCiInLocalGroup (rights.ps1), on built-in members every PC has
+. (Join-Path $PSScriptRoot 'rights.ps1')
+Ok 'Authenticated Users is in Users'         (Test-OotCiInLocalGroup -GroupSid 'S-1-5-32-545' -MemberSid 'S-1-5-11')
+Ok 'SYSTEM is not in Remote Desktop Users'   (-not (Test-OotCiInLocalGroup -GroupSid 'S-1-5-32-555' -MemberSid 'S-1-5-18'))
+
 # --- The hook as the runner runs it (powershell -command ". 'hook'"), on a copy
 #     laid out like C:\ProgramData\oot-ci. No variable changes what it checks.
 $dep = Join-Path $tmp 'deployed'; New-Item -ItemType Directory $dep | Out-Null

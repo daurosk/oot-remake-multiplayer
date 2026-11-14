@@ -17,6 +17,20 @@ function Get-OotCiDenyTargets {
     return $out | Select-Object -Unique
 }
 
+# True when the account $MemberSid is a direct member of the local group $GroupSid.
+# ADSI, not Get-LocalGroupMember: on Windows PowerShell 5.1 that throws on a group
+# holding a deleted account or an Entra ID member. Group names are looked up from
+# the SID, so this also works on non-English Windows.
+function Test-OotCiInLocalGroup {
+    param([Parameter(Mandatory)][string]$GroupSid, [Parameter(Mandatory)][string]$MemberSid)
+    $name = (New-Object Security.Principal.SecurityIdentifier $GroupSid).Translate([Security.Principal.NTAccount]).Value.Split('\')[-1]
+    $group = [ADSI]"WinNT://$env:COMPUTERNAME/$name,group"
+    foreach ($m in @($group.psbase.Invoke('Members'))) {
+        $bytes = $m.GetType().InvokeMember('objectSid', 'GetProperty', $null, $m, $null)
+        if ($bytes -and (New-Object Security.Principal.SecurityIdentifier ([byte[]]$bytes), 0).Value -eq $MemberSid) { return $true }
+    }
+    return $false
+}
 
 # Adds or removes oot-ci's SID on the deny-logon rights (interactive, RDP,
 # network). -Remove also drops "Log on as a service", which config.cmd granted.

@@ -43,19 +43,24 @@ $bytes = New-Object byte[] 24
 [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
 $plain = [Convert]::ToBase64String($bytes) + 'a1!'
 $secure = ConvertTo-SecureString $plain -AsPlainText -Force
+# Windows limits: user name 20 characters, description 48 (job_started_test.ps1 checks both).
 if (Get-LocalUser -Name $User -ErrorAction SilentlyContinue) {
-    Set-LocalUser -Name $User -Password $secure
+    # Also fixes a user made by hand: its password must not expire under the service.
+    Set-LocalUser -Name $User -Password $secure -PasswordNeverExpires $true -UserMayChangePassword $false -AccountNeverExpires
 } else {
     New-LocalUser -Name $User -Password $secure -PasswordNeverExpires -UserMayNotChangePassword `
-        -AccountNeverExpires -Description 'GitHub Actions runner (oot-remake-multiplayer CI)' | Out-Null
+        -AccountNeverExpires -Description 'oot-remake-multiplayer CI runner' | Out-Null
 }
-Add-LocalGroupMember -Group 'Users' -Member $User -ErrorAction SilentlyContinue
-foreach ($g in 'Administrators', 'Remote Desktop Users') {
-    if (Get-LocalGroupMember -Group $g | Where-Object { $_.Name -like "*\$User" }) { throw "$User is in $g; remove it first." }
-}
+Enable-LocalUser -Name $User
+# Groups by SID (names are translated on non-English Windows). Membership is read
+# through ADSI: Get-LocalGroupMember on Windows PowerShell 5.1 throws on groups
+# that hold a deleted account or an Entra ID member.
+Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $User -ErrorAction SilentlyContinue
 $sid = (Get-LocalUser -Name $User).SID.Value
+foreach ($g in 'S-1-5-32-544', 'S-1-5-32-555') {
+    if (Test-OotCiInLocalGroup -GroupSid $g -MemberSid $sid) { throw "$User is in the group $g (Administrators or Remote Desktop Users); remove it first." }
+}
 $acct = "${env:COMPUTERNAME}\$User"
-Set-OotCiLogonRights -Sid $sid -Add
 
 # 2. Hook folder and denied-folder list: admin-owned, oot-ci read only.
 New-Item -ItemType Directory -Force $HookDir | Out-Null
@@ -85,7 +90,8 @@ function Set-RunnerAcl {
 }
 New-Item -ItemType Directory -Force $Root | Out-Null
 Set-RunnerAcl
-$zip = Join-Path $env:TEMP "actions-runner-win-x64-$Version.zip"
+$ProgressPreference = 'SilentlyContinue'  # the 5.1 progress bar makes a big download crawl
+$zip =Join-Path $env:TEMP "actions-runner-win-x64-$Version.zip"
 Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/actions/runner/releases/download/v$Version/actions-runner-win-x64-$Version.zip" -OutFile $zip
 $got = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($got -ne $Sha256) { Remove-Item $zip; throw "SHA-256 mismatch: got $got, expected $Sha256." }
@@ -105,14 +111,17 @@ Push-Location $Root
 try {
     & .\config.cmd --unattended --url "https://github.com/$Repo" --token $token --name "$env:COMPUTERNAME-ci" `
         --labels daurosk-pc --work _work --replace --disableupdate --runasservice `
-        --windowslogonaccount ".\$User" --windowslogonpassword $plain
+        --windowslogonaccount $acct --windowslogonpassword $plain
     if ($LASTEXITCODE -ne 0) { throw "config.cmd failed ($LASTEXITCODE)." }
 } finally { Pop-Location; $token = $null; $plain = $null }
 
 # 6. config.cmd grants the service account full control of the runner folder;
 #    take that back: oot-ci reads and runs the runner, writes only _work and _diag.
+#    The deny-logon rights go on only now: config.cmd checks the password with a
+#    network logon, which "deny network logon" would make it reject.
 $svc = Get-Service 'actions.runner.*' | Select-Object -First 1
 Stop-Service $svc.Name
+Set-OotCiLogonRights -Sid $sid -Add
 Set-RunnerAcl
 Start-Service $svc.Name
 Start-Sleep -Seconds 5

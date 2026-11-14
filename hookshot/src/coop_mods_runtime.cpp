@@ -15,6 +15,7 @@
 
 #include <monocypher.h>
 
+#include "coop_hook.h"
 #include "coop_mod_plugins.h"
 #include "coop_mod_share.h"
 #include "coop_rando.h"
@@ -208,9 +209,12 @@ void Start() {
     CoopRando::Rando::Hooks rando;
     rando.log = [](const std::string& l) { CoopRuntime::Log("coop: mods: " + l); };
     rando.game_dir = CoopRuntime::GameDir();
-    rando.run = [](const std::wstring& line, const std::filesystem::path& log) {
-        return CoopRando::RunProgram(line, log, kOotrrLimit, &g_stop_ootrr);
+    rando.run = [](const std::filesystem::path& program, const std::vector<std::string>& args,
+                   const std::filesystem::path& log) {
+        return CoopRando::RunProgram(program, args, log, kOotrrLimit, &g_stop_ootrr);
     };
+    // (chat goes to every player: the host's chat shows this guest's name with the line)
+    rando.tell_others = [](const std::string& line) { return CoopHook::SendChat(line); };
     rando.entropy = [] {
         return static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()) * 31 +
                ThisProcess();

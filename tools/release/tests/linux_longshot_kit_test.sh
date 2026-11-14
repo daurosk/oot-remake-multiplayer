@@ -146,6 +146,25 @@ check 'build: the game file is remembered' has "$D/game-files.txt" "Downloads/Oo
 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build2.txt" 2>&1; export CODE=$?
 check 'build: a second start builds nothing' bash -c '[ $CODE -eq 0 ] && grep -q "built already" "$1" && ! grep -q "^make_game" "$2" && grep -q "puppet pack: built already" "$1"' _ "$tmp/build2.txt" "$log"
 
+# The randomizer the kit brings (data/longshot/OOTRR.txt): fetched and unpacked into data/game/tools/ootrr.
+mkdir -p "$tmp/ootrr-rel/ootrr-0.5.0-linux-x86_64"
+printf '#!/bin/sh\necho ootrr\n' >"$tmp/ootrr-rel/ootrr-0.5.0-linux-x86_64/ootrr"
+printf 'GPL\n' >"$tmp/ootrr-rel/ootrr-0.5.0-linux-x86_64/LICENSE"
+tar -czf "$tmp/ootrr-rel/OOTRR-test-linux.tar.gz" -C "$tmp/ootrr-rel" ootrr-0.5.0-linux-x86_64
+o_sha=$(sha256sum "$tmp/ootrr-rel/OOTRR-test-linux.tar.gz" | cut -d' ' -f1)
+printf 'release=v0.5.0\nurl=%s\nlinux=OOTRR-test-linux.tar.gz\nlinux_sha256=%s\n' "$tmp/ootrr-rel" "$o_sha" >"$kit/data/longshot/OOTRR.txt"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-o1.txt" 2>&1; export CODE=$?
+check 'build: the kit'"'"'s OOTRR is put in data/game/tools/ootrr, runnable, with its licence' \
+    bash -c '[ $CODE -eq 0 ] && [ -x "$1/game/tools/ootrr/ootrr" ] && [ -f "$1/game/tools/ootrr/LICENSE" ] && grep -q "randomizer: OOTRR v0.5.0" "$2"' _ "$D" "$tmp/build-o1.txt"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-o2.txt" 2>&1
+check 'build: OOTRR there already is kept' has "$tmp/build-o2.txt" 'there already'
+rm -rf "$D/game/tools/ootrr"
+printf 'release=v0.5.0\nurl=%s\nlinux=OOTRR-test-linux.tar.gz\nlinux_sha256=%s\n' "$tmp/ootrr-rel" "$(printf '0%.0s' {1..64})" >"$kit/data/longshot/OOTRR.txt"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-o3.txt" 2>&1; export CODE=$?
+check 'build: an OOTRR whose SHA-256 differs only warns, and is not put in' \
+    bash -c '[ $CODE -eq 0 ] && grep -q "SHA-256 differs" "$1" && [ ! -e "$2/game/tools/ootrr/ootrr" ]' _ "$tmp/build-o3.txt" "$D"
+rm -f "$kit/data/longshot/OOTRR.txt"
+
 # A new patch set: refreshed in place, the game built again.
 cat >"$kit/data/longshot/patches/0001-test.patch" <<'EOF'
 diff --git a/host/coop_test.c b/host/coop_test.c

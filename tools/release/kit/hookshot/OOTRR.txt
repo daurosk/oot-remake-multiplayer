@@ -1,0 +1,11 @@
+# The randomizer the kit brings (docs/mods.md "The randomizer"): OOTRR by REALAZK, GPL-3.0-or-later since 0.5.0
+# (github.com/REALAZK/ootrr; its source is that release's tag). The kit's game build downloads the file for its
+# system, checks its SHA-256 (the release's own SHA256SUMS.txt) and unpacks ootrr(.exe), LICENSE and NOTICE into
+# the game's tools\ootrr folder, where the co-op module finds it with no setting.
+# Move release= and the four lines below together, to a release (never a prerelease).
+release=v0.5.0
+url=https://github.com/REALAZK/ootrr/releases/download/v0.5.0
+windows=OOTRR-0.5.0-windows-x64.zip
+windows_sha256=14ca4fc218c01da4b3bac406fa6e1eb2335080a5ec837186e9a49a1c37425c05
+linux=OOTRR-0.5.0-linux-x86_64.tar.gz
+linux_sha256=6902f3780836e79a47a5317270479ed7a7794dc9bbc4ce745809622e5b41a613

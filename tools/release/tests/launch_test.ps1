@@ -653,6 +653,17 @@ try {
     Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: a pack the kit would make again -> module'
     Write-File $pack '{"sound": true, "tunics": {"red": ["x"]}}'
     Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: up to date again'
+    # the randomizer the kit brings (hookshot\OOTRR.txt): fetched into the game's tools\ootrr by the module step
+    $osha = 'a' * 64
+    Write-File (Join-Path $hk 'hookshot\OOTRR.txt') "# pin`nrelease=v0.5.0`nurl=https://x`nwindows=OOTRR-0.5.0-windows-x64.zip`nwindows_sha256=$osha`n"
+    Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: the kit''s OOTRR not in the game yet -> module'
+    Write-File (Join-Path $g 'tools\ootrr\ootrr.exe') 'MZ'
+    Write-File (Join-Path $g 'tools\ootrr\coop-ootrr.txt') "v0.4.2 $osha`n"
+    Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: another OOTRR release in the game -> module'
+    Write-File (Join-Path $g 'tools\ootrr\coop-ootrr.txt') "v0.5.0 $osha`n"
+    Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: the kit''s OOTRR in the game -> nothing'
+    Check (-not (Test-KitOotrrStale (Join-Path $hk 'no-kit') $g)) 'OOTRR stale: a kit without OOTRR.txt brings none'
+    Check ((Test-KitOotrrStale $hk (Join-Path $hk 'no-game'))) 'OOTRR stale: a game without tools\ootrr -> yes'
     Check ((Test-KitPuppetPackStale (Join-Path $hk 'none\coop_puppet.json') (Join-Path $hk 'no-tool')) -and
         -not (Test-KitPuppetPackStale $pack (Join-Path $hk 'no-tool'))) 'pack stale: a missing pack yes, a current one no'
     # the game somewhere else (hs.py, -Out): game-folder.txt, and a builder's bin\ layout

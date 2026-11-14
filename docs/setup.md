@@ -97,6 +97,10 @@ Given your Longshot folder (above), the first build copies its save slots (`user
 
 Already set up? Copy by hand: close both games, keep a copy of the kit's `hookshot\game\bin\user\save` if it has slots you want, then copy the `slot_NN` folders (and `account.sav`, `option.sav`) from `<your Longshot>\bin\user\save\<account>\` (or `<your Longshot>\user\save\...`) to the same place under the kit's `hookshot\game\bin\`.
 
+## The randomizer
+
+The kit brings the randomizer, OOTRR: the first build (and an update that moves it) downloads it into `hookshot\game\tools\ootrr\`, and it builds seeds from the game files the build already unpacked. Nothing to download or set. It is off until you, or the host in co-op, turn it on in the Mods tab: [mods.md](mods.md#the-randomizer).
+
 ## In the game, saves, the emulator kit
 
 <a id="co-op-on-hookshot"></a><a id="saves"></a><a id="emulator-setup-for-new-players"></a><a id="4-the-puppet-pack"></a><a id="linux-and-steam-deck"></a>

@@ -3744,7 +3744,7 @@ TEST_CASE("difficulty: automatic by the number of players until the host chooses
   h.clear();
   h.join(2, "Zelda");
   const Difficulty two{0, true, DifficultyPreset::normal, auto_difficulty(2)};
-  CHECK(two.values == DifficultyValues{140, 120, 125});
+  CHECK(two.values == DifficultyValues{140, 120, 125, 200, 120});
   CHECK(h.difficulty_to(1) == std::vector<Difficulty>{two});  // one more player
   CHECK(h.difficulty_to(2) == std::vector<Difficulty>{two});  // once, not twice
   h.clear();
@@ -3777,7 +3777,7 @@ TEST_CASE("difficulty: the host's choice is fixed, whoever joins or leaves") {
   // The host can, for everyone.
   h.clear();
   h.receive(1, Difficulty{0, false, DifficultyPreset::hard, {}}, kChannelSession);
-  const Difficulty hard{1, false, DifficultyPreset::hard, {200, 150, 150}};
+  const Difficulty hard{1, false, DifficultyPreset::hard, {200, 150, 150, 200, 150}};
   CHECK(h.difficulty_to(1) == std::vector<Difficulty>{hard});
   CHECK(h.difficulty_to(2) == std::vector<Difficulty>{hard});
   CHECK(h.session.difficulty() == hard);
@@ -3803,7 +3803,7 @@ TEST_CASE("difficulty: the host's choice is fixed, whoever joins or leaves") {
   // The new host sets the sliders.
   h.clear();
   h.receive(2, Difficulty{0, false, DifficultyPreset::custom, {325, 75, 250}}, kChannelSession);
-  const Difficulty custom{2, false, DifficultyPreset::custom, {325, 75, 250}};
+  const Difficulty custom{2, false, DifficultyPreset::custom, {325, 75, 250, 325, 75}};
   CHECK(h.difficulty_to(2) == std::vector<Difficulty>{custom});
   h.clear();
   h.join(4, "Darunia");
@@ -3823,10 +3823,10 @@ TEST_CASE("difficulty: the host's choice is fixed, whoever joins or leaves") {
   // A preset after the sliders, then custom with new sliders.
   h.clear();
   h.receive(2, Difficulty{0, false, DifficultyPreset::easy, {500, 400, 300}}, kChannelSession);
-  CHECK(h.difficulty_to(5) == std::vector<Difficulty>{Difficulty{2, false, DifficultyPreset::easy, {75, 50, 100}}});
+  CHECK(h.difficulty_to(5) == std::vector<Difficulty>{Difficulty{2, false, DifficultyPreset::easy, {75, 50, 100, 75, 50}}});
   h.clear();
   h.receive(2, Difficulty{0, false, DifficultyPreset::custom, {100, 100, 300}}, kChannelSession);
-  CHECK(h.difficulty_to(5) == std::vector<Difficulty>{Difficulty{2, false, DifficultyPreset::custom, {100, 100, 300}}});
+  CHECK(h.difficulty_to(5) == std::vector<Difficulty>{Difficulty{2, false, DifficultyPreset::custom, {100, 100, 300, 100, 100}}});
   // Everyone leaves: the next session starts automatic again.
   for (ConnectionId id : {2u, 4u, 5u}) h.session.disconnected(id, h.now);
   h.collect();

@@ -1969,7 +1969,7 @@ TEST_CASE("difficulty message: type 480, on the session channel, both ways") {
   Message m = Difficulty{2, false, DifficultyPreset::hard, {200, 150, 150}};
   CHECK_FALSE(sender_of(m));  // no player field: the server says who set it
   Bytes b = must_encode(m);
-  REQUIRE(b.size() == kHeaderSize + 3 + 6);
+  REQUIRE(b.size() == kHeaderSize + 3 + 10);
   Message back;
   REQUIRE(decode(b, back) == Error::none);
   CHECK(back == m);
@@ -1990,9 +1990,19 @@ TEST_CASE("difficulty message: type 480, on the session channel, both ways") {
   b[kHeaderSize + 2] = 4;  // no such preset
   CHECK(decode(b, back) == Error::bad_value);
   b = must_encode(Difficulty{});
-  b[b.size() - 1] = 0;  // enemies 0%: under the slider
+  b[b.size() - 1] = 0;  // boss damage 0%: under its least
   b[b.size() - 2] = 0;
   CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(Difficulty{});
+  b[b.size() - 5] = 0;  // enemies 0%: under the slider
+  b[b.size() - 6] = 0;
+  CHECK(decode(b, back) == Error::bad_value);
+  // The bosses' values: the automatic scaler's at 16 players are the most.
+  m = Difficulty{0, true, DifficultyPreset::normal, auto_difficulty(kMaxPlayers)};
+  REQUIRE(decode(must_encode(m), back) == Error::none);
+  CHECK(back == m);
+  CHECK(encode(Difficulty{0, true, DifficultyPreset::normal, {100, 100, 100, 1601, 100}}, out) == Error::bad_value);
+  CHECK(encode(Difficulty{0, true, DifficultyPreset::normal, {100, 100, 100, 100, 401}}, out) == Error::bad_value);
   b = must_encode(Difficulty{});
   b.pop_back();
   CHECK(decode(b, back) != Error::none);

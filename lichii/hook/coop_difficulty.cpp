@@ -99,6 +99,7 @@ Choice WithSlider(const Choice& now, const Values& in_force, Slider slider, int 
         c.custom.count_pct = Stepped(c.custom.count_pct, steps, proto::kMinCountPct, proto::kMaxCountPct);
         break;
     }
+    c.custom = proto::bosses_as_enemies(c.custom);  // the host's sliders: bosses as the other enemies
     return c;
 }
 
@@ -109,8 +110,13 @@ std::string Describe(const Choice& choice, const Values& values, std::size_t pla
     } else {
         line = std::string(PresetName(choice.preset));
     }
-    return line + ": life " + std::to_string(values.hp_pct) + "%, damage " +
-           std::to_string(values.damage_pct) + "%, enemies " + std::to_string(values.count_pct) + "%";
+    line += ": life " + std::to_string(values.hp_pct) + "%, damage " + std::to_string(values.damage_pct) +
+            "%, enemies " + std::to_string(values.count_pct) + "%";
+    if (choice.auto_scale) {  // (the host's own choice: bosses as the other enemies)
+        line += "; bosses: life " + std::to_string(values.boss_hp_pct) + "%, damage " +
+                std::to_string(values.boss_damage_pct) + "%";
+    }
+    return line;
 }
 
 std::string FormatChoice(const Choice& choice) {
@@ -235,7 +241,7 @@ bool Kinds::Mark(std::uint64_t address, Kind kind) noexcept {
 void Kinds::Forget(std::uint64_t address) noexcept {
     const Kind kind = Of(address);
     if (kind == Kind::enemy || kind == Kind::enemy_life || kind == Kind::folded_enemy ||
-        kind == Kind::folded_enemy_life) {
+        kind == Kind::folded_enemy_life || kind == Kind::boss || kind == Kind::boss_life) {
         Mark(address, Kind::none);  // (it has a slot: never refused)
     }
 }
@@ -478,6 +484,25 @@ std::uint16_t Folded(std::uint16_t pct, std::uint16_t count_pct) {
     return static_cast<std::uint16_t>(std::min<std::uint32_t>(folded, 0xffff));
 }
 
+bool ScalesAsBoss(std::string_view name) {
+    const KindRule* rule = name.starts_with("Enemy_") ? KindRuleOf(name) : nullptr;
+    return rule != nullptr && (rule->why == "boss" || rule->why == "mini-boss");
+}
+
+Kind AttackerKind(std::string_view name, std::uint64_t hash) {
+    if (ScalesAsBoss(name)) {
+        return Kind::boss;
+    }
+    return TreatmentOf(name, hash) == Treatment::fold ? Kind::folded_enemy : Kind::enemy;
+}
+
+Kind LifeKind(std::string_view name, std::uint64_t hash) {
+    if (ScalesAsBoss(name)) {
+        return Kind::boss_life;
+    }
+    return TreatmentOf(name, hash) == Treatment::fold ? Kind::folded_enemy_life : Kind::enemy_life;
+}
+
 Treatment TreatmentOf(std::string_view name, std::uint64_t hash) {
     if (!name.starts_with("Enemy_")) {
         return Treatment::as_placed;
@@ -635,16 +660,54 @@ std::size_t Horde::Plan(std::string_view scene, const std::vector<Roll>& rolls, 
         scene_ = std::string(scene);
     }
     std::size_t pending = 0;  // asked for, not made yet: they count as alive
-    for (const Made& m : made_) {
-        pending += m.address == 0 && !m.gone ? 1 : 0;
+    for (Made& m : made_) {
+        if (m.address != 0 || m.gone) {
+            continue;
+        }
+        if (now_ms - m.asked_ms >= kBindWaitMs) {
+            m.gone = true;  // the game refused it
+        } else {
+            ++pending;
+        }
+    }
+    // Ours whose roll died follow a living roll of ours; with none for kOrphanMs they go.
+    const Roll* living = nullptr;
+    for (const Roll& roll : rolls) {
+        const auto known = rolls_.find(roll.address);
+        if (roll.address != 0 && !roll.dead && !Ours(roll.address) && known != rolls_.end() &&
+            now_ms - known->second.first_ms >= kSettleMs) {
+            living = &roll;  // (settled: the game's own, never one of ours not bound yet)
+            break;
+        }
+    }
+    bool orphans = false;
+    for (Made& m : made_) {
+        if (m.roll == 0 && !m.gone && !m.retired) {
+            if (living != nullptr) {
+                m.roll = living->address;
+            } else {
+                orphans = true;
+            }
+        }
+    }
+    if (!orphans) {
+        orphan_since_ = 0;
+    } else if (orphan_since_ == 0) {
+        orphan_since_ = now_ms;
+    } else if (now_ms - orphan_since_ >= kOrphanMs) {
+        for (Made& m : made_) {
+            m.retired = m.retired || (m.roll == 0 && !m.gone);
+        }
+        orphan_since_ = 0;
     }
     std::size_t added = 0;
     for (const Roll& roll : rolls) {
         if (roll.address == 0 || Ours(roll.address)) {
             continue;
         }
-        const std::uint64_t seen = first_seen_.emplace(roll.address, now_ms).first->second;
-        if (now_ms - seen < kSettleMs) {
+        Seen& seen = rolls_.emplace(roll.address, Seen{now_ms, roll.dead}).first->second;
+        seen.dead = roll.dead;
+        if (roll.dead || now_ms - seen.first_ms < kSettleMs) {
             continue;
         }
         unsigned& made = planned_[roll.address];
@@ -654,6 +717,8 @@ std::size_t Horde::Plan(std::string_view scene, const std::vector<Roll>& rolls, 
             m.key = next_key_++;
             m.name = roll.name;
             m.position = ExtraPlace(roll.position, ExtraHash(roll.address, made));
+            m.roll = roll.address;
+            m.asked_ms = now_ms;
             made_.push_back(std::move(m));
             ++made;
             ++pending;
@@ -676,24 +741,54 @@ void Horde::Bind(const std::map<std::uint64_t, std::uint64_t>& live) {
     }
 }
 
-void Horde::Keep(const std::vector<std::uint64_t>& actors) {
-    const auto here = [&actors](std::uint64_t a) { return std::find(actors.begin(), actors.end(), a) != actors.end(); };
-    std::erase_if(first_seen_, [&](const auto& e) { return !here(e.first); });
-    std::erase_if(planned_, [&](const auto& e) { return !here(e.first); });
+void Horde::Keep(std::vector<std::uint64_t> actors) {
+    std::sort(actors.begin(), actors.end());
+    const auto here = [&actors](std::uint64_t a) { return std::binary_search(actors.begin(), actors.end(), a); };
+    for (auto it = rolls_.begin(); it != rolls_.end();) {
+        if (here(it->first)) {
+            ++it;
+            continue;
+        }
+        for (Made& m : made_) {
+            if (m.roll != it->first || m.gone) {
+                continue;
+            }
+            if (it->second.dead) {
+                m.roll = 0;  // killed: ours fight on, and join another roll (Plan)
+            } else {
+                m.retired = true;  // taken away alive (dawn, the area off, sunk): ours go too
+            }
+        }
+        planned_.erase(it->first);
+        it = rolls_.erase(it);
+    }
     for (Made& m : made_) {
         if (m.address != 0 && !m.gone && !here(m.address)) {
             m.gone = true;
             by_address_.erase(m.address);
+        } else if (m.address == 0 && m.retired) {
+            m.gone = true;  // not made yet: never made
         }
     }
+}
+
+std::vector<std::uint64_t> Horde::Removes() const {
+    std::vector<std::uint64_t> out;
+    for (const Made& m : made_) {
+        if (m.retired && !m.gone && m.address != 0) {
+            out.push_back(m.address);
+        }
+    }
+    return out;
 }
 
 void Horde::Reset() {
     scene_.clear();
     made_.clear();
-    first_seen_.clear();
+    rolls_.clear();
     planned_.clear();
     by_address_.clear();
+    orphan_since_ = 0;
 }
 
 } // namespace CoopDifficulty

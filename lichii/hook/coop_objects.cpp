@@ -2529,11 +2529,8 @@ private:
             const bool extra_unbound = (known.second == 0 || known.second == ~u64{0}) &&
                                        extras_.Holds(known.first, now_ms);
             if (CoopDifficulty::IsEnemy(known.first, CoopEnemyShots::IsEnemyShot(known.first))) {
-                // Difficulty: an attacker; one that gets no extra copies has their weight instead.
-                const bool folded = CoopDifficulty::TreatmentOf(known.first, known.second) ==
-                                    CoopDifficulty::Treatment::fold;
-                CoopDifficulty::TheKinds().Mark(
-                    a, folded ? CoopDifficulty::Kind::folded_enemy : CoopDifficulty::Kind::enemy);
+                // Difficulty: an attacker (a boss, one with its copies' weight folded in, or plain).
+                CoopDifficulty::TheKinds().Mark(a, CoopDifficulty::AttackerKind(known.first, known.second));
             } else {
                 CoopDifficulty::TheKinds().Forget(a);  // difficulty: a reused address (our bomb where a Keese was)
             }
@@ -2666,11 +2663,8 @@ private:
                         if (const auto component = table ? r.Ptr(*table + kComponentLife) : std::nullopt) {
                             life_components.emplace(*component, a);  // (whose Life step is whose: StepHits)
                             if (CoopDifficulty::IsEnemy(s.name, false)) {  // difficulty: its hits are scaled
-                                const bool folded = CoopDifficulty::TreatmentOf(s.name, s.hash) ==
-                                                    CoopDifficulty::Treatment::fold;  // (as for its attacks)
                                 CoopDifficulty::TheKinds().Mark(*component,
-                                                                folded ? CoopDifficulty::Kind::folded_enemy_life
-                                                                       : CoopDifficulty::Kind::enemy_life);
+                                                                CoopDifficulty::LifeKind(s.name, s.hash));
                             } else {
                                 CoopDifficulty::TheKinds().Forget(*component);  // (a reused address)
                             }
@@ -2920,8 +2914,9 @@ private:
             if (!id || id->kind != coop::protocol::ObjectKind::made || id->maker != self || horde_.Ours(s.address)) {
                 continue;  // another game's roll (a copy here), or one we made: no horde of its own
             }
+            const bool dead = s.life && s.life->life <= 0;
             rolls.push_back({s.address, s.name, {s.position[0], s.position[1], s.position[2]},
-                             sync_.PlayersNear(s.position, server_now_us)});
+                             sync_.PlayersNear(s.position, server_now_us), dead});
         }
         const std::uint16_t count = CoopDifficulty::Now().count_pct;
         if (const std::size_t added = horde_.Plan(scene, rolls, alive, count, SteadyNowMs())) {
@@ -2933,6 +2928,9 @@ private:
             c.key = kHordeKey | m.key;
             c.actor = m.name;
             c.position = {m.position[0], m.position[1], m.position[2]};
+            if (m.gone) {
+                continue;  // (one never made: off the director's list, so it is not made)
+            }
             c.act = m.address != 0 ? CoopSpawn::Act::release : CoopSpawn::Act::show;
             c.place = false;  // its own AI; the roll sync shares it as one of our rolls
             c.remakes = 0;
@@ -3305,6 +3303,9 @@ private:
             TheMover().Release(ours);
         }
         std::vector<u64> removes = sync_.Removes();
+        for (const u64 a : horde_.Removes()) {
+            removes.push_back(a);  // difficulty: night horde beside a roll the spawner took away
+        }
         for (const u64 a : world_.Removes()) {
             removes.push_back(a);
         }

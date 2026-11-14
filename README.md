@@ -70,7 +70,7 @@ To test co-op on two PCs with the test kit, see [docs/testing.md](docs/testing.m
 
 ## Contributing
 
-Anyone can contribute: fork, branch, pull request. Every pull request is reviewed before it is merged. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Questions go to [Discussions](https://github.com/daurosk/oot-remake-multiplayer/discussions) or [Discord](https://discord.gg/GwtRKAqng5).
+Anyone can contribute: fork, branch, pull request. Every pull request is reviewed before it is merged. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Using an AI coding agent? It reads [AGENTS.md](AGENTS.md). Questions go to [Discussions](https://github.com/daurosk/oot-remake-multiplayer/discussions) or [Discord](https://discord.gg/GwtRKAqng5).
 
 ## Rules for this repository
 
@@ -85,6 +85,14 @@ Anyone can contribute: fork, branch, pull request. Every pull request is reviewe
 - Other code and libraries we use, and their licences: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 Thanks to zizerak and Hot Onion for development tips (Hot Onion's tip, sharing each moving platform's clock with the server's time, is how the platforms are kept in step), and to everyone who play-tested.
+
+## Contributors
+
+People who contributed code:
+
+- bmitch87 (Linux Longshot: GCC module build and clean-PC kit test, PR #221).
+
+Every contributor whose pull request is merged is added here. GitHub's list: [contributors](https://github.com/daurosk/oot-remake-multiplayer/graphs/contributors).
 
 ## Licence
 

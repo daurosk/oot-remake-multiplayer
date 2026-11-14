@@ -42,7 +42,11 @@ import time
 WINDOWS = os.name == "nt"
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-LOCK_NAMES = {"emu": "build-emu.lock", "hs": "build-hs.lock"}
+# build-game.lock: a game build (a cache miss) is running; it stops both test lanes (tools/autotest/lanes.py), whose
+# runs hold lane1.lock / lane2.lock. A module build (build-hs.lock alone) stops no lane.
+LOCK_NAMES = {"emu": "build-emu.lock", "hs": "build-hs.lock", "game": "build-game.lock", "lane1": "lane1.lock",
+              "lane2": "lane2.lock"}
+LANE_LOCKS = ("lane1", "lane2")
 OLD_LOCK = "build.lock"
 # What is per player or per run in a game folder: never cached, never overwritten in a pair.
 PER_PLAYER = {"hookshot_coop.dll", "coop.ini", "coop-options.ini", "user", "save", "autotest-save", "mods",
@@ -208,6 +212,8 @@ def copy_tree(src, dst, skip_top=PER_PLAYER, dry=False, say=print, runtime_too=F
             copied += 1
             if not dry:
                 os.makedirs(dst, exist_ok=True)
+                if os.path.isfile(d) and os.stat(d).st_nlink > 1:
+                    os.unlink(d)   # a hard link shared with another folder (a test lane): never written into
                 shutil.copy2(s, d)
     return copied, links
 
@@ -545,6 +551,20 @@ def lock_acquire(root, which, owner, wait=0.0, max_age_h=4.0, alive=pid_alive, s
         sleep(min(10.0, max(0.1, end - clock())))
 
 
+def wait_free(folder, wait, say=print, alive=pid_alive, sleep=time.sleep, clock=time.time):
+    """Waits up to `wait` s until the lock folder is gone or stale. True when free."""
+    end = clock() + wait
+    told = False
+    while os.path.isdir(folder) and not lock_stale(folder, now=clock(), alive=alive):
+        if clock() >= end:
+            return False
+        if not told:
+            say("lock: waiting for %s (%s)" % (os.path.basename(folder), lock_info(folder).get("owner", "?")))
+            told = True
+        sleep(min(10.0, max(0.1, end - clock())))
+    return True
+
+
 def lock_release(root, which, owner=None, say=print):
     """Removes build-<which>.lock if `owner` holds it (any owner when None). False when held by someone else."""
     path = os.path.join(root, LOCK_NAMES[which])
@@ -690,8 +710,17 @@ def build(pairs, build_dir, kit=None, game=None, jobs=0, keep=3, repo=REPO, dry=
     hit = os.path.isfile(os.path.join(cache_root(), k, "stamp.txt"))
     if not dry and not lock_acquire(root, "hs", owner, wait=1800, say=say):
         return False
+    game_lock = False
     try:
         if not hit:
+            if not dry:
+                # A game build takes the whole PC: no lane starts a game while it runs, and it waits for running ones.
+                if not lock_acquire(root, "game", owner, wait=1800, say=say):
+                    raise Fail("build-game.lock is held")
+                game_lock = True
+                for ln in LANE_LOCKS:
+                    if not wait_free(os.path.join(root, LOCK_NAMES[ln]), 1800, say=say):
+                        raise Fail("%s is still held after 30 min: a test lane is running" % LOCK_NAMES[ln])
             if not kit:
                 raise Fail("cache miss for %s: pass --kit <a made kit> --game <your .nup/.xci> to build the game once,"
                            " or `cache store --from <a game folder built from this stamp>`" % k)
@@ -747,6 +776,8 @@ def build(pairs, build_dir, kit=None, game=None, jobs=0, keep=3, repo=REPO, dry=
         return False
     finally:
         if not dry:
+            if game_lock:
+                lock_release(root, "game", owner, say=say)
             lock_release(root, "hs", owner, say=say)
 
 

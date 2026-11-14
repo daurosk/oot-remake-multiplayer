@@ -27,7 +27,8 @@ wait 900                 # B is put near him and owns him for well over 3 s
 mark before-talk
 place -14.80 100.90 21.20 # 2.5 m from his placed spot (B is 2.9 m: never 10 m nearer)
 wait 60
-toward -12.55 20.01 10
+goto -13.65 20.60 0.3 90 # walk the last metre to him: Link ends face to him (a one-push toward
+                         # faced the desk: Longshot run 2026-11-13 14:57, shot A-talk-A)
 mark a-near
 press ZL 10              # lock on him
 press A 12               # talk: the event starts

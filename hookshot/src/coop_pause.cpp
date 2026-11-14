@@ -488,6 +488,33 @@ const char* KeepWords(const std::string& text) {
     return text.empty() ? nullptr : Keep(text);
 }
 
+// Another tab's page (Mods, Lobby) in the player's language: its rows copied
+// with their words looked up, as the Multiplayer page's (a null stays null;
+// the hint, a code or a path, as it is).
+bool Translated(bool filled, HosCoopMenuPage* out) {
+    if (!filled || out == nullptr || CoopI18n::Current() == nullptr) {
+        return filled;
+    }
+    thread_local std::vector<HosCoopMenuRow> rows;
+    const int n = out->rows != nullptr && out->rows_n > 0 ? out->rows_n : 0;
+    rows.assign(out->rows, out->rows + n);
+    g_page_text.clear();
+    g_page_text.reserve(std::size_t(n) * 2 + 16);
+    const auto keep = [](const char* text) { return text == nullptr ? nullptr : Keep(text); };
+    for (HosCoopMenuRow& r : rows) {
+        r.name = keep(r.name);
+        r.value = keep(r.value);
+    }
+    out->rows = n > 0 ? rows.data() : out->rows;
+    out->help_title = keep(out->help_title);
+    out->help = keep(out->help);
+    out->gold = keep(out->gold);
+    out->change = keep(out->change);
+    out->confirm = keep(out->confirm);
+    out->back = keep(out->back);
+    return true;
+}
+
 }  // namespace
 
 void Init(bool coop_on) {
@@ -517,23 +544,30 @@ int Tabs() {
 }
 
 const char* TabName(int tab) {
+    const char* en = nullptr;
     if (tab == kModsTab && CoopModsTab::Available()) {
-        return CoopModsTab::TabName();
+        en = CoopModsTab::TabName();
+    } else if (tab == kLobbyTab) {
+        en = CoopLobbyTab::TabName();
+    } else if (tab == kMultiplayerTab) {
+        en = "Multiplayer";
     }
-    if (tab == kLobbyTab) {
-        return CoopLobbyTab::TabName();
+    if (en == nullptr) {
+        return nullptr;
     }
-    // The tab's own name, in the game's language (coop_i18n.h).
-    static const std::string name = CoopI18n::Tr("Multiplayer");
-    return tab == kMultiplayerTab ? name.c_str() : nullptr;
+    // The strip's name in the menu's language now (coop_i18n.h). Hookshot
+    // copies it at once, so this thread's copy holds until the next call.
+    thread_local std::string name;
+    name = CoopI18n::Tr(en);
+    return name.c_str();
 }
 
 bool Page(int tab, HosCoopMenuPage* out) {
     if (tab == kModsTab) {
-        return CoopModsTab::Page(out);
+        return Translated(CoopModsTab::Page(out), out);
     }
     if (tab == kLobbyTab) {
-        return CoopLobbyTab::Page(out);
+        return Translated(CoopLobbyTab::Page(out), out);
     }
     if (tab != kMultiplayerTab || out == nullptr || out->size < sizeof(HosCoopMenuPage)) {
         return false;

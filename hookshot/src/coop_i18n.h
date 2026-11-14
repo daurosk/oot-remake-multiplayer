@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The Multiplayer tab's own words, in the game's language: one table per
-// language, as Longshot's own menu does it (gpu/vk/menu_i18n.h) and picked the
-// same way (language.txt, or HOS_LANGUAGE when set). A text that is not in the
-// table stays English, so a language can grow one line at a time.
+// The Multiplayer tab's own words, in the menu's language: one table per
+// language, as Longshot's own menu does it (gpu/vk/menu_i18n.h). The language
+// is the one that menu shows now (its Menu language row, Auto the game's own:
+// patch 0021's hos_coop_menu_lang), so the tabs match the menu they are drawn
+// in and its glyphs; a Longshot without that export: language.txt (or
+// HOS_LANGUAGE when set). A text that is not in the table stays English, so a
+// language can grow one line at a time.
 //
 // Tr() also knows the lines the tab builds around a number, a name or a code
 // ("Hosting: 3 players", "Join Saria again", "Copied: abc"): those are looked
@@ -29,11 +32,18 @@ struct Lang {
 extern const Lang kLangs[];
 extern const int kLangCount;
 
-// The table the game's language picks, or nullptr for English.
+// The table the menu's language picks now, or nullptr for English (asked
+// each time: a change of the Menu language row shows at once).
 const Lang* Current();
+
+// The table for a language code (any case; "zh-Hans-CN" takes "zh-Hans"), or
+// nullptr for English and codes with no table.
+const Lang* ForCode(std::string_view code);
 
 // `en` in that language; `en` itself when the table has no line for it, and
 // when `en` is built around something the table's shapes do not know.
 std::string Tr(std::string_view en);
+// The same in `lang` (nullptr: English).
+std::string Tr(const Lang* lang, std::string_view en);
 
 }  // namespace CoopI18n

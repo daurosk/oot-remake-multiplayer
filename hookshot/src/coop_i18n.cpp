@@ -16,11 +16,11 @@
 // this table does not know stay English.
 #include "coop_i18n.h"
 
+#include <atomic>
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <string>
-#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -100,17 +100,16 @@ constexpr Entry kzh_Hans[] = {
      "你正在开房。想加入朋友的房间，先停止自己的：创建房间 → 停止房间。"},
     {"The game you joined, and Leave the game.", "你加入的房间，以及离开房间。"},
     {"Two players on this PC.", "同一台电脑两人游玩。"},
-    {"Your name, Link's look, how many players can join your game, and voice chat.",
-     "名字、林克外观、房间人数上限、语音聊天。"},
+    {"Your name, Link's look, how many players can join your game, voice chat, the chat key, which controller this game reads, and players on the map.",
+     "名字、林克外观、房间人数上限、语音聊天、聊天键、本游戏读取哪个手柄，以及地图上的玩家。"},
     {"The chat's commands, and the key that opens the chat.", "聊天命令，以及打开聊天的按键。"},
     {"Puts your code on the clipboard again, to paste into your chat with your friends.",
      "把邀请码再放进剪贴板，方便发给朋友。"},
     {"Only when a friend's game shows an answer code (their way in was blocked): copy the code they "
      "send you, then press this.",
      "仅当朋友的游戏显示「应答码」（他被路由器挡住）时：复制他发来的码，再按这里。"},
-    {"For friends on your home network or on a VPN with you (Radmin VPN, Hamachi, Tailscale): copies "
-     "one line with this PC's address. They paste it in Join a game instead of the code.",
-     "给同屋或同一 VPN（Radmin VPN、Hamachi、Tailscale）的朋友：复制含本机地址的一行，他加入时粘贴这一行而不是邀请码。"},
+    {"For friends in the same house, on your home network: copies one line with this PC's address. They paste it in Join a game instead of the code.",
+     "给同屋、同一家庭网络的朋友：复制含本机地址的一行，他在「加入房间」粘贴这一行而不是邀请码。"},
     {"Ends your game for everyone in it.", "结束房间，所有人都退出。"},
     {"Starts a game on this PC and makes a code for your friends.", "在本机开房并生成邀请码。"},
     {"The most players in your game, you included.", "房间人数上限（含你自己）。"},
@@ -121,17 +120,13 @@ constexpr Entry kzh_Hans[] = {
     {"Joins the last game you were in, with the same code. It works while your friend is still "
      "hosting that game.",
      "用同一邀请码回到上次的房间（朋友仍在开房时有效）。"},
-    {"Copy the code from your friend's message, then press this: it is pasted. On the same home "
-     "network or VPN as your friend? Paste the line from Same network or VPN on their Host page "
-     "instead (address and password). You can also type it.",
-     "复制朋友发来的邀请码后按这里即可粘贴。同屋或同 VPN？改为粘贴他「同一网络或 VPN」那一行（地址+密码）。也可以手动输入。"},
+    {"Copy the code from your friend's message, then press this: it is pasted. On the same home network or a VPN with your friend? Paste the line from Same network or from VPN on their Host page instead (address and password). You can also type it.",
+     "复制朋友发来的邀请码后按这里即可粘贴。同屋或同 VPN？改为粘贴他「创建房间」页上「同一网络」或「VPN」那一行（地址+密码）。也可以手动输入。"},
     {"Paste your friend's code first.", "请先粘贴朋友的邀请码。"},
     {"Joins your friend's game.", "加入朋友的房间。"},
     {"Split screen: two players on this PC.", "分屏：同一台电脑两人游玩。"},
     {"Coming in the next test release.", "下个测试版提供。"},
-    {"The chat key is off (LICHII_COOP_CHAT_KEY=off in coop-options.ini): set a key "
-     "there (a letter, a digit, or F1 to F12) to chat.",
-     "聊天键已关闭（coop-options.ini 里 LICHII_COOP_CHAT_KEY=off）：在那里设一个键（字母、数字或 F1–F12）即可聊天。"},
+    {"The chat key is off. To chat, choose a key in Settings, Chat key.", "聊天键已关闭。要聊天，请在「设置 → 聊天键」里选一个键。"},
 
     // ---- The Commands page -----------------------------------------------
     {"Lists the other players, with their numbers.", "列出其他玩家及编号。"},
@@ -172,18 +167,18 @@ constexpr Entry kzh_Hans[] = {
      "本局联机已经在跑了：先停止，或者重开游戏。"},
     {"Co-op stopped. You play on alone.", "联机已停止，你独自游玩。"},
     {"The server is not running yet.", "服务器还没起来。"},
-    {"Copy your friend's answer code first (they send it to you), then press this again.",
-     "请先复制朋友发来的应答码（他会发给你），再按一次这里。"},
-    {"That code didn't work: ask your friend to copy it again.", "这个码无效：请朋友再复制一次。"},
+    {"Your clipboard is empty: copy your friend's answer code first, then press this again.",
+     "剪贴板是空的：请先复制朋友发来的应答码，再按一次这里。"},
+    {"That answer code could not be used: host again and ask your friend to join again.", "这个应答码用不了：请重新开房，并让朋友重新加入。"},
     {"The clipboard could not be used: write the code down instead.", "剪贴板用不了：请把码记下来。"},
-    {"Answer code taken: connecting your friend...", "已接受应答码：正在连接朋友…"},
+    {"answer code taken: connecting to your friend", "已接受应答码：正在连接朋友"},
     {"Connected!", "已连接！"},
     {"A settings file could not be written.", "有一个设置文件写不进去。"},
     {"No co-op kit found with this game: only your name was saved (coop.ini).",
      "这个游戏旁边没找到联机套件：只保存了你的名字（coop.ini）。"},
     {"Saved. Co-op is on: some settings count the next time you host or join.",
      "已保存。本局联机在跑：部分设置下次开房/加入时才生效。"},
-    {"Link wears it the next time the game starts.", "林克下次启动游戏时换上这个颜色。"},
+    {"Link wears it when this menu closes.", "关闭此菜单后林克就会换上。"},
 
     // ---- Lines built around a code, a name or a number -------------------
     // Tr()'s shapes fill in the middle where the {} is: "Hosting: 3 players"
@@ -199,14 +194,13 @@ constexpr Entry kzh_Hans[] = {
      "同属{}的朋友把这一行粘贴到「加入房间」（地址+密码）："},
     {"Getting {}'s save...", "正在获取 {} 的存档…"},
     {"Loading {}'s save...", "正在载入 {} 的存档…"},
-    {"{}'s save did not arrive: Continue plays your own save, New Game starts a new one.",
-     "{} 的存档没有送到：继续游戏用自己的存档，新游戏开一个新的。"},
+    {"{}'s save is not here yet (it still loads by itself if it comes): Continue plays your own save, New Game starts a new one.",
+     "{} 的存档还没到（到了仍会自动载入）：继续游戏用自己的存档，新游戏开一个新的。"},
     {"{} has no save yet: New Game starts one, Continue plays your own.",
      "{} 还没有存档：新游戏开一个，继续游戏用自己的。"},
     {"Press Continue to play {}'s save.", "按「继续游戏」玩 {} 的存档。"},
-    {"Press {} in the game to open the chat box; Enter sends, Esc closes. A line that starts with / is a command, "
-     "not chat. Another key: LICHII_COOP_CHAT_KEY in coop-options.ini.",
-     "游戏中按 {} 打开聊天框；回车发送，Esc 关闭；以 / 开头的行是命令。改键：coop-options.ini 的 LICHII_COOP_CHAT_KEY。"},
+    {"Press {} in the game to open the chat box; Enter sends, Esc closes. A line that starts with / is a command, not chat. To use another key: Settings, Chat key.",
+     "游戏中按 {} 打开聊天框；回车发送，Esc 关闭；以 / 开头的行是命令。改键：「设置 → 聊天键」。"},
     {"invite code", "邀请码"},
     {"answer code", "应答码"},
 
@@ -227,11 +221,11 @@ constexpr Entry kzh_Hans[] = {
      "先确认这台电脑联网，再试一次。一直失败就重启游戏。"},
     {"Your name is too long.", "你的名字太长。"},
     {"Pick a shorter one in Multiplayer, Settings.", "在「联机 → 设置」里换一个短一点的。"},
-    {"Send this code to your friends:", "把这个邀请码发给朋友："},
+    {"Invite code copied to your clipboard. Send it to your friends, or pick another way to host below.",
+     "邀请码已复制到剪贴板。发给朋友，或在下面选其他开房方式。"},
     {"It is copied: paste it into your chat with them (Ctrl+V).",
      "已复制：粘贴到和朋友的聊天里（Ctrl+V）。"},
-    {"Press \"Copy the code again\", then paste it into your chat with them.",
-     "按「再复制一次邀请码」，再粘贴到和朋友的聊天里。"},
+    {"Press \"Copy the code again\" to put it on the clipboard.", "按「再复制一次邀请码」把它放进剪贴板。"},
     {"Waiting for your friends to join...", "正在等朋友加入…"},
     {"Making your code...", "正在生成邀请码…"},
     {"No code could be made: your internet connection blocks it.",
@@ -253,17 +247,17 @@ constexpr Entry kzh_Hans[] = {
     {"Your friend could not be reached.", "联系不上你的朋友。"},
     {"Check that they are hosting right now and that the code is their newest one.",
      "确认他此刻正在开房，而且这个码是他最新的。"},
-    {"Same home network or VPN as them? Ask for the line from \"Same network or VPN\" on their Host page.",
-     "和他同屋或同一 VPN？让他给你「同一网络或 VPN」那一行。"},
+    {"Same home network or VPN as them? Ask for the line from \"Same network\" or \"VPN\" on their Host page.",
+     "和他同屋或同一 VPN？让他给你「同一网络」或「VPN」那一行。"},
 
     // ---- Same network or VPN (LanLines) ----------------------------------
     {"No home-network or VPN address was found on this PC.",
      "这台电脑上没找到内网或 VPN 地址。"},
     {"On a VPN? Start your VPN program (Radmin VPN, Hamachi), then press this again.",
-     "已复制：粘贴到和朋友的聊天里（Ctrl+V）。"},
+     "在用 VPN？先启动 VPN 程序（Radmin VPN、Hamachi），再按一次这里。"},
     {"Type it into your chat with them, exactly as it is.",
      "原样敲进和朋友的聊天里。"},
-    {"Or with another address in front:", "或者用另一个地址开头："},
+    {"If that does not work, try another of this PC's addresses in its place:", "如果不行，换用本机的另一个地址："},
     {"If Windows asks about the firewall, allow the game on private networks.",
      "如果 Windows 问防火墙，允许游戏在专用网络上通行。"},
     {"home network", "内网"},
@@ -306,6 +300,58 @@ constexpr Entry kzh_Hans[] = {
     {"Small key, Forest Temple (+1)", "小钥匙，森之神殿（+1）"},
     {"Hookshot", "钩索"},
     {"Song of Storms", "暴风之歌"},
+
+    // ---- 0.11: the rows and lines added since (pr224 merge) -------------
+    {"Same network", "同一网络"},
+    {"Paste friend's answer (or Ctrl+V)", "粘贴朋友的应答码（或 Ctrl+V）"},
+    {"For friends on a VPN with you (Radmin VPN, Hamachi, ZeroTier, Tailscale, WireGuard): copies one line with this PC's VPN address. They paste it in Join a game instead of the code.",
+     "给同一 VPN（Radmin VPN、Hamachi、ZeroTier、Tailscale、WireGuard）的朋友：复制含本机 VPN 地址的一行，他在「加入房间」粘贴这一行而不是邀请码。"},
+    {"Your invite code is below. Send it to your friends, or pick another way to host below.",
+     "你的邀请码在下面。发给朋友，或在下面选其他开房方式。"},
+    {"Customize Link", "自定义林克"},
+    {"A colour for each part of your tunics, shields, swords, boots and gauntlets, with a picture of the result. Your Link wears it when you close the menu; the other players see your tunic's colour.",
+     "为束衣、盾、剑、靴子和护手的每个部位选颜色，附效果图。关闭菜单时林克换上；其他玩家能看到你束衣的颜色。"},
+    {"Chat key", "聊天键"},
+    {"The key that opens the chat box in the game. Off: no chat box.", "游戏中打开聊天框的键。关闭：没有聊天框。"},
+    {"Controller", "手柄"},
+    {"Which controller this game reads: all of them (only while its window is in front), one of them (also behind another window: two games on one PC, each with its own), or none.",
+     "本游戏读取哪个手柄：全部（仅当窗口在前台时）、其中一个（窗口在后台也读：一台电脑两个游戏各用各的），或不读。"},
+    {"Keyboard and mouse", "键盘和鼠标"},
+    {"Window in front: the keyboard and mouse count while this game's window is in front. Also in background: the keys count behind other windows too. Off: neither (a controller only).",
+     "窗口在前台：本游戏窗口在前台时键盘和鼠标有效。后台也有效：在其他窗口后面按键也有效。关闭：都不用（只用手柄）。"},
+    {"Show players on map", "在地图上显示玩家"},
+    {"The other players as arrows in their colours on the minimap and on the Map page's area and dungeon maps (not the world map). Off: neither shows them.",
+     "其他玩家以各自颜色的箭头显示在小地图和地图页的区域图、迷宫图上（世界地图不显示）。关闭：都不显示。"},
+    {"Names on map", "地图上的名字"},
+    {"Each player's name beside their arrow on the maps. Off: the arrows only.", "地图上每个箭头旁显示玩家名字。关闭：只显示箭头。"},
+    {"Two players on one PC, the screen split in two. It is not in this test release yet: for now, play together from two PCs with Host a game and Join a game.",
+     "一台电脑两人游玩，画面分成两半。本测试版还没有：目前请用两台电脑，通过「创建房间」和「加入房间」一起玩。"},
+    {"No home-network address was found on this PC.", "这台电脑上没找到家庭网络地址。"},
+    {"Friends somewhere else join with your invite code; on a VPN with you, they use the VPN row.",
+     "不在同屋的朋友用邀请码加入；和你同一 VPN 的朋友用「VPN」那一行。"},
+    {"No VPN found.", "没找到 VPN。"},
+    {"Using one (Radmin VPN, Hamachi, ZeroTier, Tailscale, WireGuard)? Start it, then press this again.",
+     "在用 VPN（Radmin VPN、Hamachi、ZeroTier、Tailscale、WireGuard）？先启动它，再按一次这里。"},
+    {"Host a game first: a friend's answer code is pasted while you host.", "请先开房：朋友的应答码要在开房时粘贴。"},
+    {"There is no invite code this time, so no answer code: friends on the same network or a VPN use the Same network or the VPN row.",
+     "这次没有邀请码，所以也没有应答码：同屋或同 VPN 的朋友请用「同一网络」或「VPN」那一行。"},
+    {"No co-op kit found with this game: the choice counts until the game closes.", "这个游戏旁边没找到联机套件：这个选择到游戏关闭前有效。"},
+    {"A settings file could not be written: the choice counts until the game closes.", "有一个设置文件写不进去：这个选择到游戏关闭前有效。"},
+    {"The clipboard could not be read (another program had it open): press this again.", "剪贴板读不了（被别的程序占用）：再按一次这里。"},
+    {"That is your own invite code: copy the answer code your friend sends back to you.", "这是你自己的邀请码：请复制朋友回传给你的应答码。"},
+    {"Getting {}'s save: it loads by itself when it is here...", "正在获取 {} 的存档：到了会自动载入…"},
+    {"{}'s game ended before the save came: Continue plays your own save, New Game starts a new one.",
+     "{} 的游戏在存档送到前结束了：继续游戏用自己的存档，新游戏开一个新的。"},
+    {"Host save loading, don't load a save.", "房主存档载入中，先别载入存档。"},
+    {"Success, load any save.", "成功，载入任意存档。"},
+    {"Success, load any save for changes to occur.", "成功，载入任意存档以生效。"},
+    {"That save loaded before the host's save was in: go back to the title and load a save after Success.",
+     "这个存档在房主存档送到前就载入了：回到标题画面，等「成功」后再载入存档。"},
+    {"The host has no save yet: New Game starts one, Continue plays your own.", "房主还没有存档：新游戏开一个，继续游戏用自己的。"},
+    {"Getting {}'s save: don't load a save yet...", "正在获取 {} 的存档：先别载入存档…"},
+    {"{}'s save is in: load any save.", "{} 的存档已到：载入任意存档。"},
+    {"{}'s save is not here yet (the chat says Success when it is): Continue plays your own save, New Game starts a new one.",
+     "{} 的存档还没到（到了聊天会显示「成功」）：继续游戏用自己的存档，新游戏开一个新的。"},
 };
 
 // ---------------------------------------------------------------------------
@@ -373,17 +419,16 @@ constexpr Entry kzh_Hant[] = {
      "你正在開房。想加入朋友的房間，先停止自己的：建立房間 → 停止房間。"},
     {"The game you joined, and Leave the game.", "你加入的房間，以及離開房間。"},
     {"Two players on this PC.", "同一台電腦兩人遊玩。"},
-    {"Your name, Link's look, how many players can join your game, and voice chat.",
-     "名字、林克外觀、房間人數上限、語音聊天。"},
+    {"Your name, Link's look, how many players can join your game, voice chat, the chat key, which controller this game reads, and players on the map.",
+     "名字、林克外觀、房間人數上限、語音聊天、聊天鍵、本遊戲讀取哪個手把，以及地圖上的玩家。"},
     {"The chat's commands, and the key that opens the chat.", "聊天指令，以及開啟聊天的按鍵。"},
     {"Puts your code on the clipboard again, to paste into your chat with your friends.",
      "把邀請碼再放進剪貼簿，方便傳給朋友。"},
     {"Only when a friend's game shows an answer code (their way in was blocked): copy the code they "
      "send you, then press this.",
      "僅當朋友的遊戲顯示「應答碼」（他被路由器擋住）時：複製他傳來的碼，再按這裡。"},
-    {"For friends on your home network or on a VPN with you (Radmin VPN, Hamachi, Tailscale): copies "
-     "one line with this PC's address. They paste it in Join a game instead of the code.",
-     "給同屋或同一 VPN（Radmin VPN、Hamachi、Tailscale）的朋友：複製含本機位址的一行，他加入時貼上這一行而不是邀請碼。"},
+    {"For friends in the same house, on your home network: copies one line with this PC's address. They paste it in Join a game instead of the code.",
+     "給同屋、同一家用網路的朋友：複製含本機位址的一行，他在「加入房間」貼上這一行而不是邀請碼。"},
     {"Ends your game for everyone in it.", "結束房間，所有人都退出。"},
     {"Starts a game on this PC and makes a code for your friends.", "在本機開房並產生邀請碼。"},
     {"The most players in your game, you included.", "房間人數上限（含你自己）。"},
@@ -394,17 +439,13 @@ constexpr Entry kzh_Hant[] = {
     {"Joins the last game you were in, with the same code. It works while your friend is still "
      "hosting that game.",
      "用同一邀請碼回到上次的房間（朋友仍在開房時有效）。"},
-    {"Copy the code from your friend's message, then press this: it is pasted. On the same home "
-     "network or VPN as your friend? Paste the line from Same network or VPN on their Host page "
-     "instead (address and password). You can also type it.",
-     "複製朋友傳來的邀請碼後按這裡即可貼上。同屋或同 VPN？改為貼上他「同一網路或 VPN」那一行（位址+密碼）。也可以手動輸入。"},
+    {"Copy the code from your friend's message, then press this: it is pasted. On the same home network or a VPN with your friend? Paste the line from Same network or from VPN on their Host page instead (address and password). You can also type it.",
+     "複製朋友傳來的邀請碼後按這裡即可貼上。同屋或同 VPN？改為貼上他「建立房間」頁上「同一網路」或「VPN」那一行（位址+密碼）。也可以手動輸入。"},
     {"Paste your friend's code first.", "請先貼上朋友的邀請碼。"},
     {"Joins your friend's game.", "加入朋友的房間。"},
     {"Split screen: two players on this PC.", "分割畫面：同一台電腦兩人遊玩。"},
     {"Coming in the next test release.", "下個測試版提供。"},
-    {"The chat key is off (LICHII_COOP_CHAT_KEY=off in coop-options.ini): set a key "
-     "there (a letter, a digit, or F1 to F12) to chat.",
-     "聊天鍵已關閉（coop-options.ini 裡 LICHII_COOP_CHAT_KEY=off）：在那裡設一個鍵（字母、數字或 F1–F12）即可聊天。"},
+    {"The chat key is off. To chat, choose a key in Settings, Chat key.", "聊天鍵已關閉。要聊天，請在「設定 → 聊天鍵」裡選一個鍵。"},
 
     {"Lists the other players, with their numbers.", "列出其他玩家及編號。"},
     {"Takes you to that player: the whole name, the start of it, or the player's number (/teleport 2). In another "
@@ -441,18 +482,18 @@ constexpr Entry kzh_Hant[] = {
      "本局連線已經在跑了：先停止，或者重開遊戲。"},
     {"Co-op stopped. You play on alone.", "連線已停止，你獨自遊玩。"},
     {"The server is not running yet.", "伺服器還沒起來。"},
-    {"Copy your friend's answer code first (they send it to you), then press this again.",
-     "請先複製朋友傳來的應答碼（他會傳給你），再按一次這裡。"},
-    {"That code didn't work: ask your friend to copy it again.", "這個碼無效：請朋友再複製一次。"},
+    {"Your clipboard is empty: copy your friend's answer code first, then press this again.",
+     "剪貼簿是空的：請先複製朋友傳來的應答碼，再按一次這裡。"},
+    {"That answer code could not be used: host again and ask your friend to join again.", "這個應答碼用不了：請重新開房，並讓朋友重新加入。"},
     {"The clipboard could not be used: write the code down instead.", "剪貼簿用不了：請把碼記下來。"},
-    {"Answer code taken: connecting your friend...", "已接受應答碼：正在連線朋友…"},
+    {"answer code taken: connecting to your friend", "已接受應答碼：正在連線朋友"},
     {"Connected!", "已連線！"},
     {"A settings file could not be written.", "有一個設定檔寫不進去。"},
     {"No co-op kit found with this game: only your name was saved (coop.ini).",
      "這個遊戲旁邊沒找到連線套件：只儲存了你的名字（coop.ini）。"},
     {"Saved. Co-op is on: some settings count the next time you host or join.",
      "已儲存。本局連線在跑：部分設定下次開房/加入時才生效。"},
-    {"Link wears it the next time the game starts.", "林克下次啟動遊戲時換上這個顏色。"},
+    {"Link wears it when this menu closes.", "關閉此選單後林克就會換上。"},
 
     {"No {} yet.", "還沒有{}。"},
     {"Copied: {}", "已複製：{}"},
@@ -464,14 +505,13 @@ constexpr Entry kzh_Hant[] = {
      "同屬{}的朋友把這一行貼到「加入房間」（位址+密碼）："},
     {"Getting {}'s save...", "正在取得 {} 的存檔…"},
     {"Loading {}'s save...", "正在載入 {} 的存檔…"},
-    {"{}'s save did not arrive: Continue plays your own save, New Game starts a new one.",
-     "{} 的存檔沒有送到：繼續遊戲用自己的存檔，新遊戲開一個新的。"},
+    {"{}'s save is not here yet (it still loads by itself if it comes): Continue plays your own save, New Game starts a new one.",
+     "{} 的存檔還沒到（到了仍會自動載入）：繼續遊戲用自己的存檔，新遊戲開一個新的。"},
     {"{} has no save yet: New Game starts one, Continue plays your own.",
      "{} 還沒有存檔：新遊戲開一個，繼續遊戲用自己的。"},
     {"Press Continue to play {}'s save.", "按「繼續遊戲」玩 {} 的存檔。"},
-    {"Press {} in the game to open the chat box; Enter sends, Esc closes. A line that starts with / is a command, "
-     "not chat. Another key: LICHII_COOP_CHAT_KEY in coop-options.ini.",
-     "遊戲中按 {} 開啟聊天框；Enter 傳送，Esc 關閉；以 / 開頭的行是指令。改鍵：coop-options.ini 的 LICHII_COOP_CHAT_KEY。"},
+    {"Press {} in the game to open the chat box; Enter sends, Esc closes. A line that starts with / is a command, not chat. To use another key: Settings, Chat key.",
+     "遊戲中按 {} 打開聊天框；Enter 傳送，Esc 關閉；以 / 開頭的行是指令。改鍵：「設定 → 聊天鍵」。"},
     {"invite code", "邀請碼"},
     {"answer code", "應答碼"},
     {"Multiplayer: {}", "連線：{}"},
@@ -492,11 +532,11 @@ constexpr Entry kzh_Hant[] = {
      "先確認這台電腦連網，再試一次。一直失敗就重開遊戲。"},
     {"Your name is too long.", "你的名字太長。"},
     {"Pick a shorter one in Multiplayer, Settings.", "在「連線 → 設定」裡換一個短一點的。"},
-    {"Send this code to your friends:", "把這個邀請碼傳給朋友："},
+    {"Invite code copied to your clipboard. Send it to your friends, or pick another way to host below.",
+     "邀請碼已複製到剪貼簿。傳給朋友，或在下面選其他開房方式。"},
     {"It is copied: paste it into your chat with them (Ctrl+V).",
      "已複製：貼到和朋友的聊天裡（Ctrl+V）。"},
-    {"Press \"Copy the code again\", then paste it into your chat with them.",
-     "按「再複製一次邀請碼」，再貼到和朋友的聊天裡。"},
+    {"Press \"Copy the code again\" to put it on the clipboard.", "按「再複製一次邀請碼」把它放進剪貼簿。"},
     {"Waiting for your friends to join...", "{} 位朋友已加入。"},
     {"Making your code...", "正在產生邀請碼…"},
     {"No code could be made: your internet connection blocks it.",
@@ -518,16 +558,16 @@ constexpr Entry kzh_Hant[] = {
     {"Your friend could not be reached.", "聯絡不上你的朋友。"},
     {"Check that they are hosting right now and that the code is their newest one.",
      "確認他此刻正在開房，而且這個碼是他最新的。"},
-    {"Same home network or VPN as them? Ask for the line from \"Same network or VPN\" on their Host page.",
-     "和他同屋或同一 VPN？讓他給你「同一網路或 VPN」那一行。"},
+    {"Same home network or VPN as them? Ask for the line from \"Same network\" or \"VPN\" on their Host page.",
+     "和他同屋或同一 VPN？請他給你「同一網路」或「VPN」那一行。"},
 
     {"No home-network or VPN address was found on this PC.",
      "這台電腦上沒找到內網或 VPN 位址。"},
     {"On a VPN? Start your VPN program (Radmin VPN, Hamachi), then press this again.",
-     "已複製：貼到和朋友的聊天裡（Ctrl+V）。"},
+     "在用 VPN？先啟動 VPN 程式（Radmin VPN、Hamachi），再按一次這裡。"},
     {"Type it into your chat with them, exactly as it is.",
      "原樣打進和朋友的聊天裡。"},
-    {"Or with another address in front:", "或者用另一個位址開頭："},
+    {"If that does not work, try another of this PC's addresses in its place:", "如果不行，換用本機的另一個位址："},
     {"If Windows asks about the firewall, allow the game on private networks.",
      "如果 Windows 問防火牆，允許遊戲在專用網路上通行。"},
     {"home network", "內網"},
@@ -564,6 +604,58 @@ constexpr Entry kzh_Hant[] = {
     {"Small key, Forest Temple (+1)", "小鑰匙，森之神殿（+1）"},
     {"Hookshot", "鉤索"},
     {"Song of Storms", "暴風之歌"},
+
+    // ---- 0.11: the rows and lines added since (pr224 merge) -------------
+    {"Same network", "同一網路"},
+    {"Paste friend's answer (or Ctrl+V)", "貼上朋友的應答碼（或 Ctrl+V）"},
+    {"For friends on a VPN with you (Radmin VPN, Hamachi, ZeroTier, Tailscale, WireGuard): copies one line with this PC's VPN address. They paste it in Join a game instead of the code.",
+     "給同一 VPN（Radmin VPN、Hamachi、ZeroTier、Tailscale、WireGuard）的朋友：複製含本機 VPN 位址的一行，他在「加入房間」貼上這一行而不是邀請碼。"},
+    {"Your invite code is below. Send it to your friends, or pick another way to host below.",
+     "你的邀請碼在下面。傳給朋友，或在下面選其他開房方式。"},
+    {"Customize Link", "自訂林克"},
+    {"A colour for each part of your tunics, shields, swords, boots and gauntlets, with a picture of the result. Your Link wears it when you close the menu; the other players see your tunic's colour.",
+     "為束衣、盾、劍、靴子和護手的每個部位選顏色，附效果圖。關閉選單時林克換上；其他玩家能看到你束衣的顏色。"},
+    {"Chat key", "聊天鍵"},
+    {"The key that opens the chat box in the game. Off: no chat box.", "遊戲中打開聊天框的鍵。關閉：沒有聊天框。"},
+    {"Controller", "手把"},
+    {"Which controller this game reads: all of them (only while its window is in front), one of them (also behind another window: two games on one PC, each with its own), or none.",
+     "本遊戲讀取哪個手把：全部（僅當視窗在前景時）、其中一個（視窗在背景也讀：一台電腦兩個遊戲各用各的），或不讀。"},
+    {"Keyboard and mouse", "鍵盤和滑鼠"},
+    {"Window in front: the keyboard and mouse count while this game's window is in front. Also in background: the keys count behind other windows too. Off: neither (a controller only).",
+     "視窗在前景：本遊戲視窗在前景時鍵盤和滑鼠有效。背景也有效：在其他視窗後面按鍵也有效。關閉：都不用（只用手把）。"},
+    {"Show players on map", "在地圖上顯示玩家"},
+    {"The other players as arrows in their colours on the minimap and on the Map page's area and dungeon maps (not the world map). Off: neither shows them.",
+     "其他玩家以各自顏色的箭頭顯示在小地圖和地圖頁的區域圖、迷宮圖上（世界地圖不顯示）。關閉：都不顯示。"},
+    {"Names on map", "地圖上的名字"},
+    {"Each player's name beside their arrow on the maps. Off: the arrows only.", "地圖上每個箭頭旁顯示玩家名字。關閉：只顯示箭頭。"},
+    {"Two players on one PC, the screen split in two. It is not in this test release yet: for now, play together from two PCs with Host a game and Join a game.",
+     "一台電腦兩人遊玩，畫面分成兩半。本測試版還沒有：目前請用兩台電腦，透過「建立房間」和「加入房間」一起玩。"},
+    {"No home-network address was found on this PC.", "這台電腦上沒找到家用網路位址。"},
+    {"Friends somewhere else join with your invite code; on a VPN with you, they use the VPN row.",
+     "不在同屋的朋友用邀請碼加入；和你同一 VPN 的朋友用「VPN」那一行。"},
+    {"No VPN found.", "沒找到 VPN。"},
+    {"Using one (Radmin VPN, Hamachi, ZeroTier, Tailscale, WireGuard)? Start it, then press this again.",
+     "在用 VPN（Radmin VPN、Hamachi、ZeroTier、Tailscale、WireGuard）？先啟動它，再按一次這裡。"},
+    {"Host a game first: a friend's answer code is pasted while you host.", "請先開房：朋友的應答碼要在開房時貼上。"},
+    {"There is no invite code this time, so no answer code: friends on the same network or a VPN use the Same network or the VPN row.",
+     "這次沒有邀請碼，所以也沒有應答碼：同屋或同 VPN 的朋友請用「同一網路」或「VPN」那一行。"},
+    {"No co-op kit found with this game: the choice counts until the game closes.", "這個遊戲旁邊沒找到連線套件：這個選擇到遊戲關閉前有效。"},
+    {"A settings file could not be written: the choice counts until the game closes.", "有一個設定檔寫不進去：這個選擇到遊戲關閉前有效。"},
+    {"The clipboard could not be read (another program had it open): press this again.", "剪貼簿讀不了（被別的程式占用）：再按一次這裡。"},
+    {"That is your own invite code: copy the answer code your friend sends back to you.", "這是你自己的邀請碼：請複製朋友回傳給你的應答碼。"},
+    {"Getting {}'s save: it loads by itself when it is here...", "正在取得 {} 的存檔：到了會自動載入…"},
+    {"{}'s game ended before the save came: Continue plays your own save, New Game starts a new one.",
+     "{} 的遊戲在存檔送到前結束了：繼續遊戲用自己的存檔，新遊戲開一個新的。"},
+    {"Host save loading, don't load a save.", "房主存檔載入中，先別載入存檔。"},
+    {"Success, load any save.", "成功，載入任意存檔。"},
+    {"Success, load any save for changes to occur.", "成功，載入任意存檔以生效。"},
+    {"That save loaded before the host's save was in: go back to the title and load a save after Success.",
+     "這個存檔在房主存檔送到前就載入了：回到標題畫面，等「成功」後再載入存檔。"},
+    {"The host has no save yet: New Game starts one, Continue plays your own.", "房主還沒有存檔：新遊戲開一個，繼續遊戲用自己的。"},
+    {"Getting {}'s save: don't load a save yet...", "正在取得 {} 的存檔：先別載入存檔…"},
+    {"{}'s save is in: load any save.", "{} 的存檔已到：載入任意存檔。"},
+    {"{}'s save is not here yet (the chat says Success when it is): Continue plays your own save, New Game starts a new one.",
+     "{} 的存檔還沒到（到了聊天會顯示「成功」）：繼續遊戲用自己的存檔，新遊戲開一個新的。"},
 };
 
 std::string Trim(std::string s) {
@@ -576,12 +668,13 @@ std::string Trim(std::string s) {
     return s;
 }
 
-// language.txt beside the game (the file Longshot itself reads), then
-// HOS_LANGUAGE when the game was started with it.
+// The game's language when the menu cannot say (a Longshot without patch
+// 0021): HOS_LANGUAGE when the game was started with it, else language.txt's
+// first line that is not a comment (as host/nn_applet.c reads it: a UTF-8
+// mark at its start skipped). Read once: the game reads it at its start too.
 std::string ReadLanguage() {
-    std::vector<std::string> sources;
-    if (const char* env = std::getenv("HOS_LANGUAGE")) {
-        sources.emplace_back(env);
+    if (const char* env = std::getenv("HOS_LANGUAGE"); env != nullptr && *env != '\0') {
+        return Trim(env);
     }
 #ifdef _WIN32
     char exe[MAX_PATH] = {};
@@ -591,25 +684,54 @@ std::string ReadLanguage() {
         if (cut != std::string::npos) {
             std::ifstream file(path.substr(0, cut) + "\\language.txt");
             std::string line;
+            bool first = true;
             while (std::getline(file, line)) {
-                if (!line.empty() && line.back() == '\r') {
-                    line.pop_back();
+                if (first && line.rfind("\xEF\xBB\xBF", 0) == 0) {
+                    line.erase(0, 3);
                 }
+                first = false;
                 const std::string text = Trim(line);
                 if (!text.empty() && text.front() != '#') {
-                    sources.push_back(text);
-                    break;
+                    return text;
                 }
             }
         }
     }
 #endif
-    for (const std::string& code : sources) {
-        if (!code.empty()) {
-            return code;
+    return "en";
+}
+
+// The language Longshot's own menu shows now (patch 0021's export in
+// longshot_vk: the Menu language row, Auto the game's own), or nullptr when
+// this renderer has none. The tabs are drawn in that menu, with the glyphs it
+// merged for that language (vk_imgui.cpp script_fonts), so they follow it.
+const char* MenuLanguage() {
+#ifdef _WIN32
+    using Fn = const char* (*)();
+    static std::atomic<Fn> found{nullptr};
+    Fn fn = found.load(std::memory_order_acquire);
+    if (fn == nullptr) {   // (asked again until the renderer is loaded)
+        if (HMODULE vk = GetModuleHandleW(L"longshot_vk.dll")) {
+            fn = reinterpret_cast<Fn>(reinterpret_cast<void*>(GetProcAddress(vk, "hos_coop_menu_lang")));
+            found.store(fn, std::memory_order_release);
         }
     }
-    return "en";
+    return fn != nullptr ? fn() : nullptr;
+#else
+    return nullptr;
+#endif
+}
+
+bool SameCode(std::string_view a, std::string_view b) {   // (pt-br is pt-BR, as Longshot's same_code)
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
 }
 
 const Entry* Find(const Lang& lang, std::string_view en) {
@@ -638,22 +760,6 @@ std::string Fill(const char* text, std::string_view middle) {
     return out;
 }
 
-// The spaces at the text's ends: how much of Around()'s middle is data.
-std::size_t LeftTrim(std::string_view s) {
-    std::size_t n = 0;
-    while (n < s.size() && s[n] == ' ') {
-        ++n;
-    }
-    return n;
-}
-std::size_t RightTrim(std::string_view s) {
-    std::size_t n = 0;
-    while (n < s.size() && s[s.size() - 1 - n] == ' ') {
-        ++n;
-    }
-    return n;
-}
-
 }  // namespace
 
 const Lang kLangs[] = {
@@ -663,19 +769,28 @@ const Lang kLangs[] = {
 };
 const int kLangCount = int(sizeof kLangs / sizeof kLangs[0]);
 
-const Lang* Current() {
-    static const Lang* const lang = [] {
-        const std::string code = ReadLanguage();
+const Lang* ForCode(std::string_view code) {
+    // The code itself, else its first part (zh-Hans-CN: zh-Hans; as the
+    // menu's Auto does it), any case. English and unknown codes: nullptr.
+    for (int pass = 0; pass < 2; ++pass) {
         for (int i = 0; i < kLangCount; ++i) {
-            const std::string entry = kLangs[i].code;
-            // "zh-Hans" matches "zh-Hans" and "zh-Hans-CN"; "zh" matches "zh-Hant".
-            if (code == entry || code.rfind(entry + "-", 0) == 0) {
-                return &kLangs[i];
+            const std::string_view entry = kLangs[i].code;
+            if (SameCode(code, entry) ||
+                (pass == 1 && code.size() > entry.size() && code[entry.size()] == '-' &&
+                 SameCode(code.substr(0, entry.size()), entry))) {
+                return kLangs[i].entries != nullptr ? &kLangs[i] : nullptr;
             }
         }
-        return static_cast<const Lang*>(nullptr);
-    }();
-    return lang;
+    }
+    return nullptr;
+}
+
+const Lang* Current() {
+    if (const char* menu = MenuLanguage()) {
+        return ForCode(menu);   // (asked each time: a change of the Menu language row shows at once)
+    }
+    static const Lang* const game = ForCode(ReadLanguage());
+    return game;
 }
 
 namespace {
@@ -695,9 +810,9 @@ constexpr Shape kShapes[] = {
     {"Friends on your ", " paste this line in Join (address and password):",
      "Friends on your {} paste this line in Join (address and password):", true},
     {"Press ", " in the game to open the chat box; Enter sends, Esc closes. A line that starts with / is a command, "
-               "not chat. Another key: LICHII_COOP_CHAT_KEY in coop-options.ini.",
+               "not chat. To use another key: Settings, Chat key.",
      "Press {} in the game to open the chat box; Enter sends, Esc closes. A line that starts with / is a command, "
-     "not chat. Another key: LICHII_COOP_CHAT_KEY in coop-options.ini.", false},
+     "not chat. To use another key: Settings, Chat key.", false},
     {"Co-op is on: ", " players", "Co-op is on: {} players", false},
     {"Hosting: ", " players", "Hosting: {} players", false},
     {"Join ", " again", "Join {} again", false},
@@ -708,8 +823,21 @@ constexpr Shape kShapes[] = {
     {"Loading ", "'s save...", "Loading {}'s save...", false},
     {"Multiplayer: ", "", "Multiplayer: {}", true},
     // The host's save at the title (coop_title_menu.h AutoLoad::Line).
-    {"", "'s save did not arrive: Continue plays your own save, New Game starts a new one.",
-     "{}'s save did not arrive: Continue plays your own save, New Game starts a new one.", false},
+    {"", "'s save is not here yet (it still loads by itself if it comes): Continue plays your own save, New Game "
+         "starts a new one.",
+     "{}'s save is not here yet (it still loads by itself if it comes): Continue plays your own save, New Game "
+     "starts a new one.", false},
+    {"", "'s game ended before the save came: Continue plays your own save, New Game starts a new one.",
+     "{}'s game ended before the save came: Continue plays your own save, New Game starts a new one.", false},
+    {"Getting ", "'s save: it loads by itself when it is here...",
+     "Getting {}'s save: it loads by itself when it is here...", false},
+    // (branch join-continue's lines, 0.11)
+    {"", "'s save is not here yet (the chat says Success when it is): Continue plays your own save, New Game "
+         "starts a new one.",
+     "{}'s save is not here yet (the chat says Success when it is): Continue plays your own save, New Game "
+     "starts a new one.", false},
+    {"Getting ", "'s save: don't load a save yet...", "Getting {}'s save: don't load a save yet...", false},
+    {"", "'s save is in: load any save.", "{}'s save is in: load any save.", false},
     {"", " has no save yet: New Game starts one, Continue plays your own.",
      "{} has no save yet: New Game starts one, Continue plays your own.", false},
     {"Press Continue to play ", "'s save.", "Press Continue to play {}'s save.", false},
@@ -734,7 +862,10 @@ bool Split(const std::string_view text, const Shape& shape, std::string_view* mi
 }  // namespace
 
 std::string Tr(std::string_view en) {
-    const Lang* lang = Current();
+    return Tr(Current(), en);
+}
+
+std::string Tr(const Lang* lang, std::string_view en) {
     if (lang == nullptr || lang->entries == nullptr) {
         return std::string(en);
     }
@@ -760,7 +891,7 @@ std::string Tr(std::string_view en) {
         }
         // (the table knows the ends but not the whole line: the ends in that
         // language, the middle as it is)
-        return std::string(Tr(shape.before)) + std::string(text) + std::string(Tr(shape.after));
+        return Tr(lang, shape.before) + std::string(text) + Tr(lang, shape.after);
     }
     return std::string(en);
 }

@@ -595,7 +595,8 @@ std::vector<ChatShown> ShownChat(const std::vector<CoopHook::ChatLine>& lines, b
             alpha = 1.0f - static_cast<float>(l.age_ms - kChatShowMs) / static_cast<float>(kChatFadeMs);
         }
         if (alpha > 0.0f) {
-            out.push_back({l.text, l.notice, alpha});
+            // (a notice is the module's own words: in the player's language; chat is as typed)
+            out.push_back({l.notice ? CoopI18n::Tr(l.text) : l.text, l.notice, alpha});
         }
     }
     return out;

@@ -106,6 +106,7 @@ eval "$tools_env"
 # unset keeps the game in one folder (no bin/), LONGSHOT_VK_PREBUILT unset compiles the patched
 # renderer. Its lift key hashes every A64_/OOT_/RX_ variable: co-op's OOT_COOP_* ones go.
 language=${OOT_COOP_LANGUAGE:-en-US}   # (read before the OOT_COOP_* variables go below)
+fetch_local=${OOT_COOP_FETCH_LOCAL-}   # (tests: a local OOTRR in step 5, after they go)
 unset LONGSHOT_TOOLS LONGSHOT_VK_PREBUILT LONGSHOT_BUILDER_EXE LONGSHOT_NGX_SDK LONGSHOT_FFX_SDK
 while IFS='=' read -r v _; do [[ $v == OOT_COOP_* ]] && unset "$v"; done < <(env)
 export PYTHONIOENCODING=utf-8
@@ -233,7 +234,7 @@ if [[ -f $ootrr_pin ]]; then
         o_tgz=$B/$o_file o_why=''
         if [[ ! -f $o_tgz || $(sha256_of "$o_tgz") != "$o_sha" ]]; then
             say "  downloading $o_file ..."
-            if ! fetch "$o_url/$o_file" "$o_tgz.part"; then o_why='the download failed (no network?)'
+            if ! OOT_COOP_FETCH_LOCAL=$fetch_local fetch "$o_url/$o_file" "$o_tgz.part"; then o_why='the download failed (no network?)'
             elif [[ $(sha256_of "$o_tgz.part") != "$o_sha" ]]; then o_why='its SHA-256 differs from the one this kit was made with'
             else mv -f "$o_tgz.part" "$o_tgz"; fi
             rm -f "$o_tgz.part"

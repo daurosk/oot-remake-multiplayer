@@ -12,10 +12,12 @@
      at most `max` (out may be NULL with max 0), returns how many there are; *generation (when not NULL) = a number that
      changes whenever a texture is made or finalized, so a caller asks again only then.
    - hos_coop_texture_override: from now on the renderer reads `n` bytes from `bytes` (copied: the caller may free
-     them) in place of guest memory [address, address + n); bytes NULL takes away every override that overlaps that
-     range. 1 when done; 0 when the range is not inside a texture's storage the game has (nothing set). An override
-     lies on the storage of one texture: when the game finalizes that texture, the override goes with it (the memory
-     may hold something else next).
+     them) in place of guest memory [address, address + n), for the texture of that serial (from hos_coop_textures);
+     bytes NULL takes away that texture's overrides that overlap the range. 1 when done; 0 when the game no longer has
+     a texture of that serial or the range is not inside its storage (nothing set): a texture made again over the same
+     storage has another serial, so a module's late call never lands on it. When the game finalizes that texture (or
+     makes it again), its overrides go with it (the memory may hold something else next). One texture's override:
+     another texture over the same storage (an alias) shows it too while it lasts, and loses it with that texture.
    For the renderers (host/coop_texture.c): hos_coop_texture_overridden(address, n), whether any override overlaps that
    range, and hos_coop_texture_overlay(address, data, n), the overrides laid over `data` (guest memory of that range).
    Generic: any module, any texture, with no further Longshot build. Both renderers take them (Vulkan, WebGPU).
@@ -36,6 +38,6 @@ typedef struct HosCoopTexture {
 
 typedef int (*hos_coop_textures_fn)(uint64_t size_min, uint64_t size_max, HosCoopTexture *out, int max,
                                     uint64_t *generation);
-typedef int (*hos_coop_texture_override_fn)(uint64_t address, const void *bytes, uint64_t n);
+typedef int (*hos_coop_texture_override_fn)(uint64_t address, uint64_t serial, const void *bytes, uint64_t n);
 
 #endif

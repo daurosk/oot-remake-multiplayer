@@ -158,6 +158,7 @@ target_sources(coop_tests PRIVATE hookshot/module_test.cpp hookshot/draw_test.cp
   ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_look_parts.cpp
   hookshot/look_menu_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_look_menu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_look_tunic.cpp
+  hookshot/texture_override_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_texture.c
   hookshot/lobby_tab_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_lobby_tab.cpp)
 target_include_directories(coop_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src)
 target_link_libraries(coop_tests PRIVATE coop coop_presence coop_host coop_overlay coop_voice monocypher doctest::doctest coop_warnings)

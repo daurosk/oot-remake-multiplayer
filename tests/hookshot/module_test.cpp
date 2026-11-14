@@ -551,9 +551,12 @@ TEST_CASE("hookshot: a module may have a texture drawn with other texels (patch 
     const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0020-coop-texture-override.patch");
     REQUIRE_FALSE(patch.empty());
     CHECK(NewFile(patch, "host/hos_coop_texture.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_texture.h"));
+    // The exe's side is the file the unit tests build (texture_override_test.cpp).
+    CHECK(NewFile(patch, "host/coop_texture.c") == ReadFile(kRepo / "hookshot" / "src" / "coop_texture.c"));
     // The exe's exports, the textures it is told of, and both renderers reading through the overlay.
-    CHECK(patch.find("+__declspec(dllexport) int hos_coop_textures(") != std::string::npos);
-    CHECK(patch.find("+__declspec(dllexport) int hos_coop_texture_override(") != std::string::npos);
+    CHECK(patch.find("+COOP_TEXTURE_EXPORT int hos_coop_textures(") != std::string::npos);
+    CHECK(patch.find("+COOP_TEXTURE_EXPORT int hos_coop_texture_override(uint64_t address, uint64_t serial,") !=
+          std::string::npos);
     CHECK(patch.find("+        hos_coop_texture_made(o, o->gpu, o->L.size,") != std::string::npos);
     CHECK(patch.find("+    hos_coop_texture_gone(o);") != std::string::npos);
     CHECK(patch.find("+        x.overlay = (overlay_fn)look(\"hos_coop_texture_overlay\");") != std::string::npos);

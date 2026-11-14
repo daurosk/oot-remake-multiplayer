@@ -178,12 +178,12 @@ bool Draw(Textures& textures, Place& place, const std::shared_ptr<const Texels>&
         return false;
     }
     if (to.texels == held.texels) {   // the game's memory holds it: no override
-        if (place.overridden && !textures.Override(place.address, nullptr, held.texels.size())) {
+        if (place.overridden && !textures.Override(place.address, place.serial, nullptr, held.texels.size())) {
             return false;
         }
         place.overridden = false;
     } else {
-        if (!textures.Override(place.address, to.texels.data(), to.texels.size())) {
+        if (!textures.Override(place.address, place.serial, to.texels.data(), to.texels.size())) {
             return false;
         }
         place.overridden = true;
@@ -208,6 +208,20 @@ void Wardrobe::Kick() {
 bool Wardrobe::Busy() const {
     std::lock_guard lock(mutex_);
     return busy_;
+}
+
+void Wardrobe::Clear() {
+    for (Place& p : places_) {
+        if (p.overridden) {
+            host_.textures->Override(p.address, p.serial, nullptr, (*p.held)[p.texture].texels.size());
+            p.overridden = false;
+            p.drawn = p.held;
+        }
+    }
+    places_.clear();
+    looked_ = false;
+    target_name_.clear();
+    asked_.clear();
 }
 
 std::shared_ptr<const Texels> Wardrobe::Load(const std::string& colour) {

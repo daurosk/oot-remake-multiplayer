@@ -91,8 +91,8 @@ public:
     bool Read(std::uint64_t address, void* out, std::size_t size) const override {
         return CoopRuntime::Read(address, out, size);
     }
-    bool Override(std::uint64_t address, const void* bytes, std::size_t size) override {
-        return override_ != nullptr && override_(address, bytes, size) == 1;
+    bool Override(std::uint64_t address, std::uint64_t serial, const void* bytes, std::size_t size) override {
+        return override_ != nullptr && override_(address, serial, bytes, size) == 1;
     }
 
 private:
@@ -270,6 +270,8 @@ void StopModule() {
     }
     g_wake.notify_one();
     g_worker.join();
+    g_wardrobe->Clear();   // the colours worn back to the game's own: no override left behind
+    g_gear->Clear();
     g_wardrobe.reset();   // a later StartModule starts a new worker
     g_gear.reset();
     g_textures.reset();

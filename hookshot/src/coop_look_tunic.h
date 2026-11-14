@@ -71,9 +71,10 @@ public:
     virtual std::vector<Live> List(std::uint64_t size_min, std::uint64_t size_max, std::uint64_t* generation) const = 0;
     // The game's memory, read only. False when any byte is not there.
     virtual bool Read(std::uint64_t address, void* out, std::size_t size) const = 0;
-    // The renderer draws these bytes in place of [address, address + size);
-    // `bytes` null: as the game's memory holds them again.
-    virtual bool Override(std::uint64_t address, const void* bytes, std::size_t size) = 0;
+    // The renderer draws these bytes in place of [address, address + size)
+    // of the texture of that serial; `bytes` null: as the game's memory
+    // holds them again. False when the game no longer has that texture.
+    virtual bool Override(std::uint64_t address, std::uint64_t serial, const void* bytes, std::size_t size) = 0;
 };
 
 // A texture of your Link's, the colour the game's memory holds there and the
@@ -126,6 +127,9 @@ public:
     // Whether Step has anything to do (a colour other than the game's was
     // asked for at some time). Any thread.
     bool Busy() const;
+    // Takes away every override this wardrobe set (the module stops). Step's
+    // thread, or once it no longer runs.
+    void Clear();
 
     const std::vector<Place>& places() const { return places_; }   // Step's thread
 

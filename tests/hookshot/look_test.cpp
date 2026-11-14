@@ -55,17 +55,18 @@ public:
         std::memcpy(out, bytes_.data() + (a - base_), n);
         return true;
     }
-    bool Override(std::uint64_t a, const void* in, std::size_t n) override {
-        Drop(a, n);
+    bool Override(std::uint64_t a, std::uint64_t serial, const void* in, std::size_t n) override {
         if (in == nullptr) {
+            Drop(a, n);
             return true;
         }
         const bool inside = std::any_of(made_.begin(), made_.end(), [&](const auto& t) {
-            return t.address <= a && a + n <= t.address + t.size;
+            return t.serial == serial && t.address <= a && a + n <= t.address + t.size;
         });
         if (!inside) {
             return false;
         }
+        Drop(a, n);
         const auto* p = static_cast<const std::uint8_t*>(in);
         overrides_[a] = std::vector<std::uint8_t>(p, p + n);
         ++overridden;
@@ -353,6 +354,10 @@ TEST_CASE("look tunic: your Link's textures are found and drawn over, the game's
     m.Finalize(place.address);
     CHECK_FALSE(CoopLookTunic::Draw(m, place, red));
     CHECK(m.overrides() == 0);
+    // Another texture made over the same storage after the place was found (a late Draw): refused too.
+    m.Make(place.address, kTexels);
+    CHECK_FALSE(CoopLookTunic::Draw(m, place, red));
+    CHECK(m.overrides() == 0);
 }
 
 TEST_CASE("look tunic: the wardrobe keeps your Link in the colour worn") {
@@ -404,6 +409,16 @@ TEST_CASE("look tunic: the wardrobe keeps your Link in the colour worn") {
     CHECK(Drawn(m, at, 1));
     CHECK(m.overrides() == 0);
     CHECK_FALSE(w.Busy());
+    // The module stops while red is worn: its override goes.
+    w.Wear("red");
+    w.Step(6000);
+    CHECK(m.overrides() == 1);
+    w.Clear();
+    CHECK(m.overrides() == 0);
+    CHECK(Drawn(m, at, 1));
+    // A later start wears red again.
+    w.Step(7000);
+    CHECK(Drawn(m, at, 9));
 }
 
 // ---------------------------------------------------------------------------

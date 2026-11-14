@@ -1,4 +1,4 @@
-From b6342574397280e40501614218fbb61492ce9360 Mon Sep 17 00:00:00 2001
+From 47071154b380820ebbd22a6083c4f45bbca5d376 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 20:38:47 -0900
 Subject: [PATCH] Co-op texture overrides: a module may have a texture drawn
@@ -19,11 +19,11 @@ uploaded again. A texture finalized takes its overrides with it.
 The Link customizer paints Link's gear with it.
 ---
  gpu/render/rx_texture.cpp |   8 ++
- gpu/vk/vk_texture.cpp     |  55 ++++++++++++-
- host/coop_texture.c       | 158 ++++++++++++++++++++++++++++++++++++++
- host/hos_coop_texture.h   |  41 ++++++++++
- host/nvn_native.c         |   9 +++
- 5 files changed, 267 insertions(+), 4 deletions(-)
+ gpu/vk/vk_texture.cpp     |  55 ++++++++++-
+ host/coop_texture.c       | 190 ++++++++++++++++++++++++++++++++++++++
+ host/hos_coop_texture.h   |  43 +++++++++
+ host/nvn_native.c         |   9 ++
+ 5 files changed, 301 insertions(+), 4 deletions(-)
  create mode 100644 host/coop_texture.c
  create mode 100644 host/hos_coop_texture.h
 
@@ -161,23 +161,47 @@ index b687ee21..1b897e59 100644
                      const auto u0 = std::chrono::steady_clock::now();
 diff --git a/host/coop_texture.c b/host/coop_texture.c
 new file mode 100644
-index 00000000..5cf91518
+index 00000000..dc9bcdd0
 --- /dev/null
 +++ b/host/coop_texture.c
-@@ -0,0 +1,158 @@
+@@ -0,0 +1,190 @@
 +/* SPDX-License-Identifier: GPL-3.0-or-later
 +   (oot-remake-multiplayer, our patch 0020) Texture overrides for the co-op module: hos_coop_texture.h.
 +   nvn_native.c tells this file each texture the game makes and finalizes (hos_coop_texture_made / _gone); the module
-+   asks for them (hos_coop_textures) and sets overrides on their storage (hos_coop_texture_override); the renderers read
-+   a texture's storage through hos_coop_texture_overlay, which lays the overrides over the guest's bytes. Guest memory
-+   is never written here: setting or taking an override marks its pages written (the soft write watch), so the
-+   renderers upload the texture again, from the overlay. */
-+#include <stddef.h>
++   asks for them (hos_coop_textures) and sets overrides on their storage (hos_coop_texture_override), each for one
++   texture by its serial; the renderers read a texture's storage through hos_coop_texture_overlay, which lays the
++   overrides over the guest's bytes. Guest memory is never written here: setting or taking an override marks its pages
++   written (the soft write watch), so the renderers upload the texture again, from the overlay.
++   The same file is in Longshot's host/ through our patch and in our repository (hookshot/src, where the unit tests
++   build it with stand-ins for the two functions below): keep them equal (tests/hookshot/module_test.cpp checks it). */
 +#include "hos_coop_texture.h"
++#include <stddef.h>
 +#include <stdlib.h>
 +#include <string.h>
++#ifdef _WIN32
 +#define WIN32_LEAN_AND_MEAN
 +#include <windows.h>
++typedef SRWLOCK coop_lock;
++#define COOP_LOCK_INIT SRWLOCK_INIT
++#define coop_write_lock(l) AcquireSRWLockExclusive(l)
++#define coop_write_unlock(l) ReleaseSRWLockExclusive(l)
++#define coop_read_lock(l) AcquireSRWLockShared(l)
++#define coop_read_unlock(l) ReleaseSRWLockShared(l)
++#define coop_count_set(p, v) InterlockedExchange((p), (v))
++#define coop_count_get(p) InterlockedCompareExchange((p), 0, 0)
++#define COOP_TEXTURE_EXPORT __declspec(dllexport)
++#else
++#include <pthread.h>
++typedef pthread_rwlock_t coop_lock;
++#define COOP_LOCK_INIT PTHREAD_RWLOCK_INITIALIZER
++#define coop_write_lock(l) pthread_rwlock_wrlock(l)
++#define coop_write_unlock(l) pthread_rwlock_unlock(l)
++#define coop_read_lock(l) pthread_rwlock_rdlock(l)
++#define coop_read_unlock(l) pthread_rwlock_unlock(l)
++#define coop_count_set(p, v) __atomic_store_n((p), (v), __ATOMIC_SEQ_CST)
++#define coop_count_get(p) __atomic_load_n((p), __ATOMIC_SEQ_CST)
++#define COOP_TEXTURE_EXPORT __attribute__((visibility("default")))
++#endif
 +
 +void hos_mark_written(const void *p, size_t n);   /* (hos_mem.c: the GPU mirror picks the pages up) */
 +uint8_t *hos_guest_base(void);                    /* (hos_main.c) */
@@ -187,36 +211,42 @@ index 00000000..5cf91518
 +    HosCoopTexture t;
 +} Made;
 +typedef struct {
-+    uint64_t address, n;
++    uint64_t address, n, serial;   /* serial: the texture it lies on */
 +    uint8_t *bytes;
 +} Override;
 +
-+static SRWLOCK lock = SRWLOCK_INIT;
++static coop_lock lock = COOP_LOCK_INIT;
 +static Made *made;
 +static size_t made_n, made_cap;
 +static Override *over;
 +static size_t over_n, over_cap;
-+static volatile uint64_t generation;
-+static uint64_t serials;   /* (lock held) */
-+static volatile long overrides;   /* over_n, read without the lock (the renderers' fast path) */
++static uint64_t generation, serials;   /* (lock held) */
++static volatile long overrides;        /* over_n, read without the lock (the renderers' fast path) */
 +
 +static void drop_at(size_t i) {   /* (lock held) */
 +    const Override o = over[i];
 +    free(o.bytes);
 +    over[i] = over[--over_n];
-+    InterlockedExchange(&overrides, (long)over_n);
++    coop_count_set(&overrides, (long)over_n);
 +    hos_mark_written(hos_guest_base() + o.address, (size_t)o.n);   /* (the game's own texels uploaded again) */
 +}
 +
-+static void drop_overlapping(uint64_t a, uint64_t n) {   /* (lock held) */
++/* (lock held) every override of that texture (serial), or of any texture (0), that overlaps [a, a + n) */
++static void drop_overlapping(uint64_t a, uint64_t n, uint64_t serial) {
 +    for (size_t i = over_n; i-- > 0;)
-+        if (over[i].address < a + n && a < over[i].address + over[i].n) drop_at(i);
++        if ((!serial || over[i].serial == serial) && over[i].address < a + n && a < over[i].address + over[i].n)
++            drop_at(i);
++}
++
++static void drop_serial(uint64_t serial) {   /* (lock held) */
++    for (size_t i = over_n; i-- > 0;)
++        if (over[i].serial == serial) drop_at(i);
 +}
 +
 +void hos_coop_texture_made(const void *tex, uint64_t address, uint64_t size, uint32_t width, uint32_t height,
 +                           uint32_t levels, uint32_t format) {
 +    if (!tex || !address || !size) return;
-+    AcquireSRWLockExclusive(&lock);
++    coop_write_lock(&lock);
 +    size_t i = 0;
 +    while (i < made_n && made[i].tex != tex) i++;
 +    if (i == made_n) {
@@ -224,59 +254,60 @@ index 00000000..5cf91518
 +            const size_t cap = made_cap ? made_cap * 2 : 1024;
 +            Made *m = (Made *)realloc(made, cap * sizeof *m);
 +            if (!m) {
-+                ReleaseSRWLockExclusive(&lock);
++                coop_write_unlock(&lock);
 +                return;
 +            }
 +            made = m, made_cap = cap;
 +        }
 +        made_n++;
 +    } else {
-+        drop_overlapping(made[i].t.address, made[i].t.size);   /* (made again without a finalize) */
++        drop_serial(made[i].t.serial);   /* (made again without a finalize: another texture now) */
 +    }
 +    made[i].tex = tex;
 +    made[i].t.address = address, made[i].t.size = size, made[i].t.serial = ++serials;
 +    made[i].t.width = width, made[i].t.height = height, made[i].t.levels = levels, made[i].t.format = format;
 +    generation++;
-+    ReleaseSRWLockExclusive(&lock);
++    coop_write_unlock(&lock);
 +}
 +
 +void hos_coop_texture_gone(const void *tex) {
-+    AcquireSRWLockExclusive(&lock);
++    coop_write_lock(&lock);
 +    for (size_t i = 0; i < made_n; i++) {
 +        if (made[i].tex != tex) continue;
-+        drop_overlapping(made[i].t.address, made[i].t.size);
++        drop_serial(made[i].t.serial);
 +        made[i] = made[--made_n];
 +        generation++;
 +        break;
 +    }
-+    ReleaseSRWLockExclusive(&lock);
++    coop_write_unlock(&lock);
 +}
 +
-+__declspec(dllexport) int hos_coop_textures(uint64_t size_min, uint64_t size_max, HosCoopTexture *out, int max,
-+                                            uint64_t *gen) {
++COOP_TEXTURE_EXPORT int hos_coop_textures(uint64_t size_min, uint64_t size_max, HosCoopTexture *out, int max,
++                                          uint64_t *gen) {
 +    int count = 0;
-+    AcquireSRWLockShared(&lock);
++    coop_read_lock(&lock);
 +    for (size_t i = 0; i < made_n; i++) {
 +        if (made[i].t.size < size_min || made[i].t.size > size_max) continue;
 +        if (out && count < max) out[count] = made[i].t;
 +        count++;
 +    }
 +    if (gen) *gen = generation;
-+    ReleaseSRWLockShared(&lock);
++    coop_read_unlock(&lock);
 +    return count;
 +}
 +
-+__declspec(dllexport) int hos_coop_texture_override(uint64_t address, const void *bytes, uint64_t n) {
-+    if (!n) return 0;
++COOP_TEXTURE_EXPORT int hos_coop_texture_override(uint64_t address, uint64_t serial, const void *bytes, uint64_t n) {
++    if (!n || !serial) return 0;
 +    int ok = 0;
-+    AcquireSRWLockExclusive(&lock);
++    coop_write_lock(&lock);
 +    if (!bytes) {
-+        drop_overlapping(address, n);
++        drop_overlapping(address, n, serial);
 +        ok = 1;
 +    } else {
-+        size_t i = 0;   /* only inside one texture's storage */
-+        while (i < made_n && !(made[i].t.address <= address && address + n <= made[i].t.address + made[i].t.size)) i++;
-+        uint8_t *copy = i < made_n ? (uint8_t *)malloc((size_t)n) : NULL;
++        size_t i = 0;   /* only inside the storage of the texture of that serial, while the game has it */
++        while (i < made_n && made[i].t.serial != serial) i++;
++        const int inside = i < made_n && made[i].t.address <= address && address + n <= made[i].t.address + made[i].t.size;
++        uint8_t *copy = inside ? (uint8_t *)malloc((size_t)n) : NULL;
 +        if (copy && over_n == over_cap) {
 +            const size_t cap = over_cap ? over_cap * 2 : 64;
 +            Override *o = (Override *)realloc(over, cap * sizeof *o);
@@ -284,34 +315,35 @@ index 00000000..5cf91518
 +        }
 +        if (copy && over_n < over_cap) {
 +            memcpy(copy, bytes, (size_t)n);
-+            drop_overlapping(address, n);
-+            over[over_n++] = (Override){address, n, copy};
-+            InterlockedExchange(&overrides, (long)over_n);
++            drop_overlapping(address, n, 0);
++            over[over_n].address = address, over[over_n].n = n, over[over_n].serial = serial, over[over_n].bytes = copy;
++            over_n++;
++            coop_count_set(&overrides, (long)over_n);
 +            hos_mark_written(hos_guest_base() + address, (size_t)n);   /* (uploaded again, from the overlay) */
 +            ok = 1;
 +        } else {
 +            free(copy);
 +        }
 +    }
-+    ReleaseSRWLockExclusive(&lock);
++    coop_write_unlock(&lock);
 +    return ok;
 +}
 +
 +/* For the renderers (the Vulkan one finds it in the exe by name): whether any override overlaps [address, address+n) */
-+__declspec(dllexport) int hos_coop_texture_overridden(uint64_t address, uint64_t n) {
-+    if (!overrides) return 0;
++COOP_TEXTURE_EXPORT int hos_coop_texture_overridden(uint64_t address, uint64_t n) {
++    if (!coop_count_get(&overrides)) return 0;
 +    int hit = 0;
-+    AcquireSRWLockShared(&lock);
++    coop_read_lock(&lock);
 +    for (size_t i = 0; i < over_n && !hit; i++) hit = over[i].address < address + n && address < over[i].address + over[i].n;
-+    ReleaseSRWLockShared(&lock);
++    coop_read_unlock(&lock);
 +    return hit;
 +}
 +
 +/* The overrides over `data`, which holds guest memory [address, address + n): how many lay on it */
-+__declspec(dllexport) int hos_coop_texture_overlay(uint64_t address, uint8_t *data, uint64_t n) {
-+    if (!overrides || !data) return 0;
++COOP_TEXTURE_EXPORT int hos_coop_texture_overlay(uint64_t address, uint8_t *data, uint64_t n) {
++    if (!coop_count_get(&overrides) || !data) return 0;
 +    int laid = 0;
-+    AcquireSRWLockShared(&lock);
++    coop_read_lock(&lock);
 +    for (size_t i = 0; i < over_n; i++) {
 +        const Override *o = &over[i];
 +        const uint64_t lo = o->address > address ? o->address : address;
@@ -320,15 +352,15 @@ index 00000000..5cf91518
 +        memcpy(data + (lo - address), o->bytes + (lo - o->address), (size_t)(hi - lo));
 +        laid++;
 +    }
-+    ReleaseSRWLockShared(&lock);
++    coop_read_unlock(&lock);
 +    return laid;
 +}
 diff --git a/host/hos_coop_texture.h b/host/hos_coop_texture.h
 new file mode 100644
-index 00000000..71fbbcaa
+index 00000000..182391d8
 --- /dev/null
 +++ b/host/hos_coop_texture.h
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,43 @@
 +/* SPDX-License-Identifier: GPL-3.0-or-later
 +   Texture overrides (oot-remake-multiplayer, docs/hookshot.md "Texture overrides"; our patch 0020): a module may have
 +   Longshot's renderer draw a texture with other texels, while the game's memory keeps the game's own. Nothing of the
@@ -343,10 +375,12 @@ index 00000000..71fbbcaa
 +     at most `max` (out may be NULL with max 0), returns how many there are; *generation (when not NULL) = a number that
 +     changes whenever a texture is made or finalized, so a caller asks again only then.
 +   - hos_coop_texture_override: from now on the renderer reads `n` bytes from `bytes` (copied: the caller may free
-+     them) in place of guest memory [address, address + n); bytes NULL takes away every override that overlaps that
-+     range. 1 when done; 0 when the range is not inside a texture's storage the game has (nothing set). An override
-+     lies on the storage of one texture: when the game finalizes that texture, the override goes with it (the memory
-+     may hold something else next).
++     them) in place of guest memory [address, address + n), for the texture of that serial (from hos_coop_textures);
++     bytes NULL takes away that texture's overrides that overlap the range. 1 when done; 0 when the game no longer has
++     a texture of that serial or the range is not inside its storage (nothing set): a texture made again over the same
++     storage has another serial, so a module's late call never lands on it. When the game finalizes that texture (or
++     makes it again), its overrides go with it (the memory may hold something else next). One texture's override:
++     another texture over the same storage (an alias) shows it too while it lasts, and loses it with that texture.
 +   For the renderers (host/coop_texture.c): hos_coop_texture_overridden(address, n), whether any override overlaps that
 +   range, and hos_coop_texture_overlay(address, data, n), the overrides laid over `data` (guest memory of that range).
 +   Generic: any module, any texture, with no further Longshot build. Both renderers take them (Vulkan, WebGPU).
@@ -367,7 +401,7 @@ index 00000000..71fbbcaa
 +
 +typedef int (*hos_coop_textures_fn)(uint64_t size_min, uint64_t size_max, HosCoopTexture *out, int max,
 +                                    uint64_t *generation);
-+typedef int (*hos_coop_texture_override_fn)(uint64_t address, const void *bytes, uint64_t n);
++typedef int (*hos_coop_texture_override_fn)(uint64_t address, uint64_t serial, const void *bytes, uint64_t n);
 +
 +#endif
 diff --git a/host/nvn_native.c b/host/nvn_native.c

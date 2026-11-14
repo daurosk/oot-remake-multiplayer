@@ -581,3 +581,146 @@ TEST_CASE("difficulty: every game plans the same extras whatever order its walk 
     CHECK(a.All()[i].hash == b.All()[i].hash);
   }
 }
+
+TEST_CASE("difficulty: the game's placement data keeps copies off designed encounters") {
+  using CoopDifficulty::Treatment;
+  using CoopDifficulty::TreatmentOf;
+  using CoopDifficulty::TreatmentWhy;
+  // From coop_difficulty_placements.inc (the game's Banc placements).
+  constexpr std::uint64_t kMeadowMoblin = 0x1671480c27778737ULL;    // on a rail: a patrol
+  constexpr std::uint64_t kCastleStalfos = 0x42e984907f639cadULL;   // a shutter waits for it
+  constexpr std::uint64_t kSpiritDinolfos = 0x0df91796e703e5bbULL;  // linked with another Dinolfos
+  constexpr std::uint64_t kStageWolfos = 0x173a1753b8898689ULL;     // drops a key
+  constexpr std::uint64_t kBongoHand = 0x032aee3737186d25ULL;       // listed, but a boss's part
+  constexpr std::uint64_t kPlain = 0x1234'5678'9abc'def0ULL;
+  CHECK(TreatmentOf("Enemy_Moblin", kMeadowMoblin) == Treatment::fold);
+  CHECK(TreatmentWhy("Enemy_Moblin", kMeadowMoblin).starts_with("rail"));
+  CHECK(TreatmentOf("Enemy_Stalfos", kCastleStalfos) == Treatment::fold);
+  CHECK(TreatmentWhy("Enemy_Stalfos", kCastleStalfos).starts_with("shutter"));
+  CHECK(TreatmentOf("Enemy_Dinolfos", kSpiritDinolfos) == Treatment::fold);
+  CHECK(TreatmentWhy("Enemy_Dinolfos", kSpiritDinolfos).starts_with("group"));
+  CHECK(TreatmentOf("Enemy_Wolfos", kStageWolfos) == Treatment::fold);
+  CHECK(TreatmentWhy("Enemy_Wolfos", kStageWolfos).starts_with("drop"));
+  // A boss or a part stays as placed whatever its links say.
+  CHECK(TreatmentOf("Enemy_DungeonBoss_BongoBongo_RightHand", kBongoHand) == Treatment::as_placed);
+  CHECK(TreatmentWhy("Enemy_DungeonBoss_BongoBongo_RightHand", kBongoHand) == "boss");
+  // The same kinds elsewhere, with no such links, get copies (a beat-them-all room's
+  // Obj_EnemyCounter counts only its own linked placements, never a copy).
+  CHECK(TreatmentOf("Enemy_Moblin", kPlain) == Treatment::copies);
+  CHECK(TreatmentOf("Enemy_Stalfos", kPlain) == Treatment::copies);
+  CHECK(TreatmentWhy("Enemy_Stalfos", kPlain).empty());
+  CHECK_FALSE(CoopDifficulty::GetsExtras("Enemy_Moblin", kMeadowMoblin, true, false));
+  CHECK(CoopDifficulty::GetsExtras("Enemy_Moblin", kPlain, true, false));
+}
+
+TEST_CASE("difficulty: puzzle and set-piece kinds get their weight, never copies") {
+  using CoopDifficulty::Treatment;
+  using CoopDifficulty::TreatmentOf;
+  constexpr std::uint64_t kPlain = 0x1234'5678'9abc'def0ULL;
+  for (const char* fold :
+       {"Enemy_Amos", "Enemy_Amos_AlwaysRespawn", "Enemy_Beamos", "Enemy_Beamos_For_High_Place", "Enemy_LikeLike",
+        "Enemy_Wallmaster", "Enemy_Floormaster", "Enemy_Floormaster_Little", "Enemy_Floormaster_Truth",
+        "Enemy_DeadHand", "Enemy_Poe_Big", "Enemy_Poe_Amy", "Enemy_Poe_Beth", "Enemy_Poe_Joelle", "Enemy_Poe_Meg",
+        "Enemy_Poe_Sharp", "Enemy_Poe_Flat", "Enemy_Shabom", "Enemy_Shabom_AlwaysRespawn", "Enemy_ReDead",
+        "Enemy_ReDead_ClimaxOnly", "Enemy_TorchSlug", "Enemy_Anubis", "Enemy_IronKnuckle_Black", "Enemy_Keese_Truth",
+        "Enemy_Skulltula_Truth", "Enemy_Stalfos_AlwaysRespawn", "Enemy_Guay_Boss", "Enemy_Moblin_Club",
+        "Enemy_FlyingPot_ShadowTemple"}) {
+    CHECK_MESSAGE(TreatmentOf(fold, kPlain) == Treatment::fold, std::string(fold));
+    CHECK_MESSAGE(!CoopDifficulty::TreatmentWhy(fold, kPlain).empty(), std::string(fold));
+  }
+  for (const char* placed :
+       {"Enemy_DungeonBoss_Gohma", "Enemy_MiddleBoss_DarkLink", "Enemy_KotakeKoumeBattleManager",
+        "Enemy_DeadHand_Hand", "Enemy_Anubis_MagicField", "Enemy_Shabom_BigOctoChild", "Enemy_Skullwalltula",
+        "Enemy_Skulltula_Gold", "Enemy_Scrub_Business", "Enemy_Stalfos_Haribote", "Enemy_Amos_Dictionary",
+        "Enemy_GhostPicturePerformer_Poe_Meg", "Enemy_CrazyFloorTile", "Enemy_TrickyDoor", "Enemy_SkullKid",
+        "Enemy_Peahat_Larva_Independent", "Npc_Gerudo_FortressGuard", "Animal_Cucco"}) {
+    CHECK_MESSAGE(TreatmentOf(placed, kPlain) == Treatment::as_placed, std::string(placed));
+  }
+  for (const char* copies : {"Enemy_Keese", "Enemy_Keese_Fire", "Enemy_Octorok", "Enemy_Stalfos", "Enemy_Wolfos",
+                             "Enemy_Tektite_Red", "Enemy_Lizalfos", "Enemy_Dekubaba", "Enemy_Gibdo", "Enemy_Leever"}) {
+    CHECK_MESSAGE(TreatmentOf(copies, kPlain) == Treatment::copies, std::string(copies));
+  }
+}
+
+TEST_CASE("difficulty: an enemy that gets no copies has the enemy count folded into its life and damage") {
+  using CoopDifficulty::Folded;
+  using CoopDifficulty::Kind;
+  CHECK(Folded(100, 100) == 100);
+  CHECK(Folded(150, 80) == 150);  // a count at or below 100% leaves it as it is
+  CHECK(Folded(100, 200) == 200);
+  CHECK(Folded(200, 150) == 300);
+  CHECK(Folded(500, 300) == 1500);
+  CHECK(Folded(60000, 300) == 0xffff);
+
+  constexpr std::uint64_t kNow = 1000;
+  auto kinds = std::make_unique<CoopDifficulty::Kinds>();
+  constexpr std::uint64_t kPoeLife = 0x20'0000'1000, kPoe = 0x20'0000'2000;
+  constexpr std::uint64_t kKeese = 0x20'0000'3000, kLinkLife = 0x20'0000'4000;
+  CHECK(kinds->Mark(kPoeLife, Kind::folded_enemy_life));
+  CHECK(kinds->Mark(kPoe, Kind::folded_enemy));
+  CHECK(kinds->Mark(kKeese, Kind::enemy));
+  CHECK(kinds->Mark(kLinkLife, Kind::our_link_life));
+  std::uint64_t attacker = kPoe;
+  auto attacker_of = [&] { return attacker; };
+  // Enemies at 200%, life and damage as the game has them: the folded one takes half and hits twice as hard.
+  const Values count_only{100, 100, 200};
+  CHECK(kinds->Step(kPoeLife, 4, count_only, kNow, attacker_of) == 2);
+  CHECK(kinds->Step(kLinkLife, 4, count_only, kNow, attacker_of) == 8);
+  attacker = kKeese;  // an enemy with copies keeps the plain damage
+  CHECK(kinds->Step(kLinkLife, 4, count_only, kNow, attacker_of) == 4);
+  // On top of life and damage: life 200% and enemies 200% make 400% for it.
+  const Values hard{200, 150, 200};
+  CHECK(kinds->Step(kPoeLife, 4, hard, kNow, attacker_of) == 1);
+  attacker = kPoe;
+  CHECK(kinds->Step(kLinkLife, 2, hard, kNow, attacker_of) == 6);  // 150% * 2
+  // A reused address is forgotten as for any enemy.
+  kinds->Forget(kPoe);
+  CHECK(kinds->Of(kPoe) == Kind::none);
+}
+
+TEST_CASE("difficulty: the night horde grows with the players near a roll") {
+  using CoopDifficulty::Horde;
+  CHECK(Horde::PerRoll(4, 100) == 0);  // the game as it is
+  CHECK(Horde::PerRoll(1, 300) == 0);  // alone at the roll: the game's own
+  CHECK(Horde::PerRoll(2, 125) == 1);
+  CHECK(Horde::PerRoll(3, 150) == 2);
+  CHECK(Horde::PerRoll(8, 200) == Horde::kPerRollMost);
+
+  Horde h;
+  using Roll = Horde::Roll;
+  std::vector<Roll> rolls{{0xa000, "Enemy_Stalchild", {10.0f, 0.0f, 10.0f}, 2}};
+  // A roll is ours to grow only once it has settled (never one the director is still making).
+  CHECK(h.Plan("HyruleField_Child", rolls, 1, 150, 0) == 0);
+  CHECK(h.Plan("HyruleField_Child", rolls, 1, 150, Horde::kSettleMs - 1) == 0);
+  CHECK(h.Plan("HyruleField_Child", rolls, 1, 150, Horde::kSettleMs) == 1);
+  CHECK(h.Plan("HyruleField_Child", rolls, 1, 150, Horde::kSettleMs + 100) == 0);  // once
+  REQUIRE(h.All().size() == 1);
+  CHECK(h.All()[0].name == "Enemy_Stalchild");
+  const auto& at = h.All()[0].position;
+  CHECK(std::hypot(at[0] - 10.0f, at[2] - 10.0f) == doctest::Approx(CoopDifficulty::kExtraOffsetM));
+  // A third player comes near: one more for the same roll.
+  rolls[0].players_near = 3;
+  CHECK(h.Plan("HyruleField_Child", rolls, 2, 150, 2000) == 1);
+  CHECK(h.All().size() == 2);
+  // Made and bound: ours, never grown itself.
+  h.Bind({{h.All()[0].key, 0xb000}, {h.All()[1].key, 0xb100}});
+  CHECK(h.Ours(0xb000));
+  rolls.push_back({0xb000, "Enemy_Stalchild", {}, 4});
+  CHECK(h.Plan("HyruleField_Child", rolls, 3, 150, 5000) == 0);
+  // Gone from the walk: no longer ours, never made again.
+  h.Keep({0xa000, 0xb100});
+  CHECK_FALSE(h.Ours(0xb000));
+  CHECK(h.All()[0].gone);
+  // The cap: never more than kMostAlive rolled enemies in our walk at once.
+  std::vector<Roll> many;
+  for (std::uint64_t i = 0; i < 20; ++i) {
+    many.push_back({0xc000 + i, "Enemy_Stalchild", {}, 8});
+  }
+  CHECK(h.Plan("HyruleField_Child", many, 16, 300, 10000) == 0);  // (settling)
+  CHECK(h.Plan("HyruleField_Child", many, 16, 300, 12000) == 2);  // 16 alive: two more fill it
+  CHECK(h.Plan("HyruleField_Child", many, 16, 300, 12100) == 0);  // those two still being made count
+  CHECK(h.All().size() <= Horde::kMost);
+  // Another scene forgets them.
+  CHECK(h.Plan("Graveyard", {}, 0, 300, 13000) == 0);
+  CHECK(h.All().empty());
+}

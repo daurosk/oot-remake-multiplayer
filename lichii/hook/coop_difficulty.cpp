@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 
 namespace CoopDifficulty {
 namespace {
@@ -233,7 +234,8 @@ bool Kinds::Mark(std::uint64_t address, Kind kind) noexcept {
 
 void Kinds::Forget(std::uint64_t address) noexcept {
     const Kind kind = Of(address);
-    if (kind == Kind::enemy || kind == Kind::enemy_life) {
+    if (kind == Kind::enemy || kind == Kind::enemy_life || kind == Kind::folded_enemy ||
+        kind == Kind::folded_enemy_life) {
         Mark(address, Kind::none);  // (it has a slot: never refused)
     }
 }
@@ -352,23 +354,163 @@ std::uint64_t Mix(std::uint64_t x) {
 
 } // namespace
 
-bool GetsExtras(std::string_view name, std::uint64_t hash, bool has_life, bool special) {
-    if (special || !has_life || hash == 0 || hash == ~std::uint64_t{0} || !name.starts_with("Enemy_")) {
-        return false;
+namespace {
+
+// The game's own placement data (tools/puppet_pack/designed_enemies.py reads
+// the Banc placements): placed enemies an extra copy beside them could spoil.
+enum class Designed : std::uint8_t { rail, shutter, event, group, drop };
+struct DesignedPlacement {
+    std::uint64_t hash;
+    Designed why;
+};
+constexpr DesignedPlacement kDesigned[] = {
+#include "coop_difficulty_placements.inc"
+};
+
+std::string_view DesignedWhy(Designed why) {
+    switch (why) {
+        case Designed::rail: return "rail: a patrol on its path";
+        case Designed::shutter: return "shutter: a shutter or door waits for it";
+        case Designed::event: return "event: an event or a manager uses it";
+        case Designed::group: return "group: linked with another enemy";
+        case Designed::drop: return "drop: a set item (a key)";
     }
-    if (name.starts_with("Enemy_DungeonBoss_") || name.starts_with("Enemy_MiddleBoss_")) {
-        return false;
-    }
-    // Parts, helpers and enemies whose place is their whole point.
-    for (const std::string_view word : {"Attention", "Manager", "Flock", "Dictionary", "Prefab", "Open_",
-                                        "Wall", "walltula", "Hand", "Larva", "Baby", "Egg", "Spawn", "Skulltula_Gold",
-                                        "Scrub", "WipedOut", "Shabom", "Horse", "AircraftCarrier", "Bullet",
-                                        "ShockWave", "Beam", "Battle"}) {
-        if (name.find(word) != std::string_view::npos) {
-            return false;
+    return {};
+}
+
+const DesignedPlacement* DesignedOf(std::uint64_t hash) {
+    // Sorted by the generator: a binary search.
+    const auto* end = std::end(kDesigned);
+    const auto* it = std::lower_bound(std::begin(kDesigned), end, hash,
+                                      [](const DesignedPlacement& p, std::uint64_t h) { return p.hash < h; });
+    return it != end && it->hash == hash ? it : nullptr;
+}
+
+// The rules by actor name, first match wins: one table, a reason each.
+enum class Match : std::uint8_t { prefix, contains };
+struct KindRule {
+    Match match;
+    std::string_view text;
+    Treatment treatment;
+    std::string_view why;
+};
+constexpr KindRule kKindRules[] = {
+    // Nothing more: bosses scale already; parts, stand-ins and no fights.
+    {Match::contains, "Dictionary", Treatment::as_placed, "picture book"},
+    {Match::prefix, "Enemy_DungeonBoss_", Treatment::as_placed, "boss"},
+    {Match::prefix, "Enemy_MiddleBoss_", Treatment::as_placed, "mini-boss"},
+    {Match::contains, "BattleManager", Treatment::as_placed, "boss"},
+    {Match::contains, "Haribote", Treatment::as_placed, "cutscene stand-in"},
+    {Match::prefix, "Enemy_GhostPicturePerformer_", Treatment::as_placed, "painting show"},
+    {Match::contains, "BigOctoChild", Treatment::as_placed, "part of a mini-boss"},
+    {Match::contains, "_Hand", Treatment::as_placed, "part of a bigger enemy"},
+    {Match::contains, "Attention", Treatment::as_placed, "part of a bigger enemy"},
+    {Match::contains, "MagicField", Treatment::as_placed, "part of a bigger enemy"},
+    {Match::contains, "FireBody", Treatment::as_placed, "part of a bigger enemy"},
+    {Match::contains, "AircraftCarrier", Treatment::as_placed, "part of a bigger enemy"},
+    {Match::contains, "Larva", Treatment::as_placed, "made by a bigger enemy"},
+    {Match::contains, "Egg", Treatment::as_placed, "made by a bigger enemy"},
+    {Match::contains, "Baby", Treatment::as_placed, "made by a bigger enemy"},
+    {Match::contains, "SpawnBaby", Treatment::as_placed, "made by a bigger enemy"},
+    {Match::contains, "Manager", Treatment::as_placed, "a manager, no fighter"},
+    {Match::contains, "Flock", Treatment::as_placed, "a flock's manager"},
+    {Match::contains, "Prefab", Treatment::as_placed, "a helper"},
+    {Match::contains, "Open_", Treatment::as_placed, "a helper"},
+    {Match::contains, "WipedOut", Treatment::as_placed, "a helper"},
+    {Match::contains, "Horse", Treatment::as_placed, "a boss's horse"},
+    {Match::contains, "Bullet", Treatment::as_placed, "a shot"},
+    {Match::contains, "ShockWave", Treatment::as_placed, "a shot"},
+    {Match::contains, "Battle", Treatment::as_placed, "a helper"},
+    {Match::contains, "Scrub", Treatment::as_placed, "scrub: a talk, a shop or an order puzzle"},
+    {Match::contains, "Skulltula_Gold", Treatment::as_placed, "Gold Skulltula: a counted token"},
+    {Match::prefix, "Enemy_SkullKid", Treatment::as_placed, "story character"},
+    {Match::prefix, "Enemy_CrazyFloorTile", Treatment::as_placed, "flying floor tile: part of its room"},
+    {Match::prefix, "Enemy_TrickyDoor", Treatment::as_placed, "fake door: part of its room"},
+    // Before "Wall": the Wallmaster falls from a ceiling, it is no wall enemy.
+    {Match::prefix, "Enemy_Wallmaster", Treatment::fold, "puzzle: falls from the ceiling at a set spot"},
+    {Match::contains, "Wall", Treatment::as_placed, "on a wall"},
+    {Match::contains, "walltula", Treatment::as_placed, "on a wall"},
+    // The puzzle and set-piece kinds: no copies, their weight instead.
+    {Match::contains, "_Truth", Treatment::fold, "puzzle: hidden for the Lens of Truth"},
+    {Match::contains, "AlwaysRespawn", Treatment::fold, "set piece: comes back at its spot"},
+    {Match::contains, "ClimaxOnly", Treatment::fold, "set piece: an event's"},
+    {Match::prefix, "Enemy_Amos", Treatment::fold, "puzzle: Armos statues"},
+    {Match::prefix, "Enemy_Beamos", Treatment::fold, "puzzle: a turret at a set spot"},
+    {Match::prefix, "Enemy_LikeLike", Treatment::fold, "set piece: guards a spot"},
+    {Match::prefix, "Enemy_Floormaster", Treatment::fold, "set piece: splits in three"},
+    {Match::prefix, "Enemy_DeadHand", Treatment::fold, "set piece: one in its room"},
+    {Match::prefix, "Enemy_Poe_Big", Treatment::fold, "set piece: a Big Poe, counted for the collector"},
+    {Match::prefix, "Enemy_Poe_Amy", Treatment::fold, "puzzle: a Poe sister"},
+    {Match::prefix, "Enemy_Poe_Beth", Treatment::fold, "puzzle: a Poe sister"},
+    {Match::prefix, "Enemy_Poe_Joelle", Treatment::fold, "puzzle: a Poe sister"},
+    {Match::prefix, "Enemy_Poe_Meg", Treatment::fold, "puzzle: a Poe sister"},
+    {Match::prefix, "Enemy_Poe_SistersBase", Treatment::fold, "puzzle: a Poe sister"},
+    {Match::prefix, "Enemy_Poe_Sharp", Treatment::fold, "set piece: a composer brother"},
+    {Match::prefix, "Enemy_Poe_Flat", Treatment::fold, "set piece: a composer brother"},
+    {Match::prefix, "Enemy_Shabom", Treatment::fold, "puzzle: the bubbles of a room"},
+    {Match::prefix, "Enemy_ReDead", Treatment::fold, "set piece: stands at a set spot"},
+    {Match::prefix, "Enemy_TorchSlug", Treatment::fold, "puzzle: relights the torches"},
+    {Match::prefix, "Enemy_Anubis", Treatment::fold, "puzzle: follows Link, beaten with fire"},
+    {Match::prefix, "Enemy_IronKnuckle", Treatment::fold, "set piece: a one-on-one fight"},
+    {Match::prefix, "Enemy_Guay_Boss", Treatment::fold, "set piece: one big Guay"},
+    {Match::prefix, "Enemy_Moblin_Club", Treatment::fold, "set piece: the meadow's gatekeeper"},
+    {Match::prefix, "Enemy_FlyingPot", Treatment::fold, "set piece: the room's own pots"},
+};
+
+const KindRule* KindRuleOf(std::string_view name) {
+    for (const KindRule& rule : kKindRules) {
+        const bool hit = rule.match == Match::prefix ? name.starts_with(rule.text)
+                                                     : name.find(rule.text) != std::string_view::npos;
+        if (hit) {
+            return &rule;
         }
     }
-    return true;
+    return nullptr;
+}
+
+}  // namespace
+
+std::uint16_t Folded(std::uint16_t pct, std::uint16_t count_pct) {
+    if (count_pct <= 100) {
+        return pct;
+    }
+    const std::uint32_t folded = static_cast<std::uint32_t>(pct) * count_pct / 100u;
+    return static_cast<std::uint16_t>(std::min<std::uint32_t>(folded, 0xffff));
+}
+
+Treatment TreatmentOf(std::string_view name, std::uint64_t hash) {
+    if (!name.starts_with("Enemy_")) {
+        return Treatment::as_placed;
+    }
+    const KindRule* rule = KindRuleOf(name);
+    if (rule != nullptr && rule->treatment == Treatment::as_placed) {
+        return Treatment::as_placed;  // a boss or a part stays so, whatever its links
+    }
+    if (rule != nullptr || DesignedOf(hash) != nullptr) {
+        return Treatment::fold;
+    }
+    return Treatment::copies;
+}
+
+std::string_view TreatmentWhy(std::string_view name, std::uint64_t hash) {
+    if (!name.starts_with("Enemy_")) {
+        return "not an enemy";
+    }
+    const KindRule* rule = KindRuleOf(name);
+    if (rule != nullptr && rule->treatment == Treatment::as_placed) {
+        return rule->why;
+    }
+    if (const DesignedPlacement* placed = DesignedOf(hash)) {
+        return DesignedWhy(placed->why);
+    }
+    return rule != nullptr ? rule->why : std::string_view{};
+}
+
+bool GetsExtras(std::string_view name, std::uint64_t hash, bool has_life, bool special) {
+    if (special || !has_life || hash == 0 || hash == ~std::uint64_t{0}) {
+        return false;
+    }
+    return TreatmentOf(name, hash) == Treatment::copies;
 }
 
 std::uint64_t ExtraHash(std::uint64_t hash, unsigned index) {
@@ -474,6 +616,82 @@ bool Extras::Holds(std::string_view name, std::uint64_t now_ms) const {
 void Extras::Reset() {
     scene_.clear();
     extras_.clear();
+    planned_.clear();
+    by_address_.clear();
+}
+
+
+unsigned Horde::PerRoll(std::size_t players_near, std::uint16_t count_pct) {
+    if (count_pct <= 100 || players_near <= 1) {
+        return 0;
+    }
+    return static_cast<unsigned>(std::min<std::size_t>(players_near - 1, kPerRollMost));
+}
+
+std::size_t Horde::Plan(std::string_view scene, const std::vector<Roll>& rolls, std::size_t alive,
+                        std::uint16_t count_pct, std::uint64_t now_ms) {
+    if (scene != scene_) {
+        Reset();
+        scene_ = std::string(scene);
+    }
+    std::size_t pending = 0;  // asked for, not made yet: they count as alive
+    for (const Made& m : made_) {
+        pending += m.address == 0 && !m.gone ? 1 : 0;
+    }
+    std::size_t added = 0;
+    for (const Roll& roll : rolls) {
+        if (roll.address == 0 || Ours(roll.address)) {
+            continue;
+        }
+        const std::uint64_t seen = first_seen_.emplace(roll.address, now_ms).first->second;
+        if (now_ms - seen < kSettleMs) {
+            continue;
+        }
+        unsigned& made = planned_[roll.address];
+        const unsigned want = PerRoll(roll.players_near, count_pct);
+        while (made < want && alive + pending < kMostAlive && made_.size() < kMost) {
+            Made m;
+            m.key = next_key_++;
+            m.name = roll.name;
+            m.position = ExtraPlace(roll.position, ExtraHash(roll.address, made));
+            made_.push_back(std::move(m));
+            ++made;
+            ++pending;
+            ++added;
+        }
+    }
+    return added;
+}
+
+void Horde::Bind(const std::map<std::uint64_t, std::uint64_t>& live) {
+    for (Made& m : made_) {
+        if (m.address != 0 || m.gone) {
+            continue;
+        }
+        const auto it = live.find(m.key);
+        if (it != live.end() && it->second != 0) {
+            m.address = it->second;
+            by_address_[m.address] = m.key;
+        }
+    }
+}
+
+void Horde::Keep(const std::vector<std::uint64_t>& actors) {
+    const auto here = [&actors](std::uint64_t a) { return std::find(actors.begin(), actors.end(), a) != actors.end(); };
+    std::erase_if(first_seen_, [&](const auto& e) { return !here(e.first); });
+    std::erase_if(planned_, [&](const auto& e) { return !here(e.first); });
+    for (Made& m : made_) {
+        if (m.address != 0 && !m.gone && !here(m.address)) {
+            m.gone = true;
+            by_address_.erase(m.address);
+        }
+    }
+}
+
+void Horde::Reset() {
+    scene_.clear();
+    made_.clear();
+    first_seen_.clear();
     planned_.clear();
     by_address_.clear();
 }

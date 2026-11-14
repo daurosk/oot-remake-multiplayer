@@ -626,6 +626,10 @@ public:
     // lines; taken (and cleared) by the caller.
     std::vector<std::string> TakeNotes() { return std::exchange(notes_, {}); }
     std::optional<coop::protocol::ObjectId> IdOf(std::uint64_t address) const;
+    // Difficulty's night horde (coop_difficulty.h Horde): how many players'
+    // Links stand within kRollNearM of `at`, we among them: the others in our
+    // scene whose last place (under kSceneStaleUs old) is that near.
+    std::size_t PlayersNear(const coop::protocol::Vec3& at, std::uint64_t now_us) const;
     // Native boss sync: each copy's latest owner's boss verbs, by the
     // copy's address (coop_boss_native.h puts them into the game).
     std::vector<std::pair<std::uint64_t, coop::protocol::BossBsa>> BossVerbsIn() const;

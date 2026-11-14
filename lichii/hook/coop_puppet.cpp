@@ -1096,18 +1096,24 @@ void Director::LeftBehind(Slot& slot, Guest& guest, std::uint64_t now_ms) {
 // One change of an equipment slot's state for a live puppet: a worn piece
 // its player holds in the hand while the puppet's is put away, or the other
 // way round. A piece just worn is put away, so only "in hand" is asked then.
+// While the puppet plays the Ocarina (their command, as CoopOcarina::HandBind
+// follows it) both hands hold the Ocarina, as on the player's own Link: every
+// hand-slot piece is put away then, whatever their drawn bits say
+// (held-ocarina-b: players saw a shield in the hand of an Ocarina player).
 std::optional<Call> Director::Hold(Slot& slot, const Target& target, Guest& guest,
                                    std::uint64_t now_ms) {
     if (!target.drawn || now_ms < slot.hold_retry_ms || target.show == Show::hide) {
         return std::nullopt;
     }
+    const bool ocarina = target.anim && CoopOcarina::HandBind::Playing(target.anim->name);
     for (std::size_t i = 0; i < kGearSlots.size(); ++i) {
         const int s = kGearSlots[i];
         if (s < 0 || slot.worn[i].empty()) {
             continue;
         }
         const auto bit = static_cast<std::uint8_t>(1u << s);
-        const bool want = (*target.drawn & bit) != 0;
+        const bool drawn = (*target.drawn & bit) != 0;
+        const bool want = drawn && !ocarina;
         std::uint64_t parts = 0;
         std::uint64_t eu = 0;
         std::uint32_t id = 0;
@@ -1134,6 +1140,10 @@ std::optional<Call> Director::Hold(Slot& slot, const Target& target, Guest& gues
             // Worn put away, as wanted: nothing to ask.
             slot.hold_known = static_cast<std::uint8_t>(slot.hold_known | bit);
             continue;
+        }
+        if (drawn && ocarina) {
+            Say("P" + std::to_string(slot.number) + " " + kGearNames[i] + " '" + slot.worn[i] +
+                "' put away while the Ocarina plays ('" + target.anim->name + "')");
         }
         slot.hold_slot = s;
         slot.hold_in_hand = want;

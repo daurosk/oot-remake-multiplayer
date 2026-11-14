@@ -171,8 +171,15 @@ inline constexpr std::uint64_t kSetMatrix = 0x4c6580;
 // accessories on the belt (Item_Ocarina_Fairy_Holder and Item_Ocarina_Fairy,
 // or _Time; both packs have an AccessoryParam, and the player's
 // EquipmentUserParam binds Accessory1 and Accessory4 to the bone Pod_B), and
-// its playing animations take it in hand. The puppet wears the same two, as
-// Accessory1 (kind 13) and Accessory4 (kind 16), from PLAYER_EQUIP's ocarina.
+// its playing animations take it in hand. The puppet wears the same two from
+// PLAYER_EQUIP's ocarina, in the player's own slots: the Ocarina as
+// Accessory1 (kind 13) and the holder as Accessory4 (kind 16). Seen in two
+// Hookshot runs (held-ocarina-b, 2026-11-14): the player's EquipmentUser has
+// the Ocarina in armor link 8 and the holder in link 12, and a puppet that
+// wore them the other way round (holder kind 13, Ocarina kind 16) had the
+// holder in link 8 and the Ocarina in link 12, so the link follows the kind.
+// Worn swapped, the puppet's Ocarina sat in the holder's slot, and players
+// saw it vanish (or something else in the hand) while it played.
 inline constexpr std::size_t kGearCount = 13;
 inline constexpr std::size_t kGearHeld = 5;  // index of the held item
 inline constexpr std::size_t kGearHand = 6;  // the gauntlets
@@ -184,7 +191,7 @@ inline constexpr std::size_t kGearOcarinaHolder = 11;
 inline constexpr std::size_t kGearOcarina = 12;
 using Gear = std::array<std::optional<std::string>, kGearCount>;
 inline constexpr std::array<std::uint32_t, kGearCount> kGearKinds{0, 6, 7, 8, 9, 5,
-                                                                  10, 1, 2, 11, 12, 13, 16};
+                                                                  10, 1, 2, 11, 12, 16, 13};
 inline constexpr std::array<const char*, kGearCount> kGearNames{
     "weapon", "shield",     "head",         "armor", "boots",   "held",
     "hand",   "sub weapon", "third weapon", "tool",  "sub tool", "ocarina holder", "ocarina"};

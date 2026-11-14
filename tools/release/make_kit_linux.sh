@@ -73,7 +73,22 @@ install -m 644 "$module" "$kit/data/longshot/hookshot_coop.so"
 text "$pin" "$kit/data/longshot/PIN"
 text "$linux_pin" "$kit/data/longshot/LINUX.txt"
 text "$repo/tools/release/kit/hookshot/OOTRR.txt" "$kit/data/longshot/OOTRR.txt"   # (the randomizer build.sh fetches)
-for p in "$repo"/hookshot/patches/*.patch; do cp -- "$p" "$kit/data/longshot/patches/"; done   # (byte for byte)
+# (byte for byte) Every patch but those for the WebGPU renderer (gpu/render's .cpp files): Longshot's Linux builder
+# carries gpu/render's headers only and builds the Vulkan renderer, so those patches have nothing to apply to. The list
+# is explicit: a patch not on it that changes a gpu/render .cpp stops the kit, as does a name on it that is gone.
+webgpu_only=(0021-coop-texture-override-webgpu.patch)
+for w in "${webgpu_only[@]}"; do [[ -f $repo/hookshot/patches/$w ]] || die "hookshot/patches/$w (webgpu_only) is not in the repo"; done
+for p in "$repo"/hookshot/patches/*.patch; do
+    n=${p##*/}
+    if printf '%s\n' "${webgpu_only[@]}" | grep -qxF -- "$n"; then
+        if grep -E '^diff --git ' "$p" | grep -vqE '^diff --git a/gpu/render/'; then die "hookshot/patches/$n (webgpu_only) changes more than gpu/render"; fi
+        continue
+    fi
+    if grep -qE '^diff --git a/gpu/render/[^ ]*\.cpp ' "$p"; then
+        die "hookshot/patches/$n changes gpu/render (the WebGPU renderer, not in Longshot's Linux source): split that part into a patch of its own and add it to webgpu_only"
+    fi
+    cp -- "$p" "$kit/data/longshot/patches/"
+done
 # The puppet pack tool: make_kit_hookshot.ps1's list, plus every module build.py imports.
 pack=$repo/tools/puppet_pack
 files=(ainb.py build.py __init__.py byml.py dumpcheck.py dungeon_rooms.py hud.py nup.py rstb.py sarc.py texture.py
@@ -103,7 +118,7 @@ The co-op code (the module, the server, the puppet pack tool, these scripts), GP
 Longshot: Team MagicBean's static recompilation (it continues Hookshot), GPL-3.0. Not in this kit: start-oot-coop.sh
 downloads Longshot $ls_tag's own Linux builder (data/longshot/LINUX.txt) and builds the game on your PC from your own game:
   https://git.magicbean.dev/MagicBeanDev/Longshot/src/commit/$ls_commit
-  with the patches in data/longshot/patches (also hookshot/patches in the co-op repo).
+  with the patches in data/longshot/patches (hookshot/patches in the co-op repo, less the WebGPU renderer's).
 
 If a link stops working, open an issue on the co-op repo and the source will be sent to you.
 EOF

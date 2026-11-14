@@ -41,6 +41,7 @@ param(
     [ValidateRange(0, 256)][int]$Jobs = 0,
     [string]$Tools = '',
     [string]$Work = '',
+    [string]$DlssSdk = '',
     [switch]$Rebuild,
     [switch]$CheckOnly
 )
@@ -106,6 +107,33 @@ $toolsPin = Read-KeyFile (Join-Path $hs 'TOOLS.txt')
 foreach ($k in 'repo', 'commit') { if (-not $pin[$k]) { Fail "hookshot\PIN has no $k=." } }
 foreach ($k in 'release', 'lock_sha256', 'source_commit', 'source_sha256') { if (-not $toolsPin[$k]) { Fail "hookshot\TOOLS.txt has no $k=." } }
 if ($pin.commit -notmatch '^[0-9a-f]{40}$') { Fail "hookshot\PIN: commit=$($pin.commit) is not a full commit id." }
+
+# NVIDIA's DLSS SDK, when this PC has one already: the build then has DLSS (and DLSS Frame Generation)
+# on the menu's Upscaler row. -DlssSdk names one; otherwise the folders a Longshot Builder or the
+# Longshot Launcher fetches into are looked for, then hookshot\tools\work\ngx-sdk. NVIDIA never ships
+# it with Longshot (NVIDIA's license: it is never committed or bundled), so a PC without one builds as
+# before, and vk_dlss.cpp compiles its stubs ("this build has no DLSS").
+function Find-NgxSdk([string]$Wanted) {
+    $lib = 'nvsdk_ngx_s.lib'
+    $tries = if ($Wanted) { @($Wanted) } else {
+        @(
+            $env:LONGSHOT_NGX_SDK,
+            (Join-Path $hs 'tools\work\ngx-sdk'),
+            (Join-Path $env:LOCALAPPDATA 'LongshotBuilder\ngx-sdk'),
+            (Join-Path $env:LOCALAPPDATA 'LongshotLauncher\ngx-sdk'),
+            (Join-Path $env:LOCALAPPDATA 'HookshotBuilder\ngx-sdk')
+        )
+    }
+    foreach ($t in $tries) {
+        if (-not $t -or -not (Test-Path -LiteralPath $t -PathType Container)) { continue }
+        if (Test-Path -LiteralPath (Join-Path $t "lib\$lib")) { return (Resolve-Path -LiteralPath $t).Path }
+    }
+    return ''
+}
+$ngxSdk = Find-NgxSdk $DlssSdk
+if ($DlssSdk -and -not $ngxSdk) {
+    Fail "No NVIDIA DLSS SDK at ${DlssSdk}: it needs lib\$('nvsdk_ngx_s.lib'). Longshot Builder's NVIDIA DLSS tick or the Longshot Launcher fetches one."
+}
 # (Longshot lives on Team MagicBean's Forgejo; its release files and source archive come from there)
 if ($pin.repo -notmatch '^(https://git\.magicbean\.dev)/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(\.git)?$') { Fail "hookshot\PIN: repo=$($pin.repo) is not a git.magicbean.dev repository." }
 $repoUrl = "$($Matches[1])/$($Matches[2])"
@@ -227,8 +255,16 @@ function Find-HookshotExe([string]$Folder) {
     return $null
 }
 $gameStamp = Join-Path $Out 'coop-built-from.txt'
+# Whether the back end was compiled with NVIDIA's SDK, as a marker beside the stamp (make_game.py's
+# .longshot_fsr, for the same reason): a build without DLSS leaves vk_dlss.cpp's stubs, and a game whose
+# marker says otherwise is built again -- the back end only, which the object cache makes quick. The
+# stamp's own lines stay the three tools/hookshot/hs.py builds (same lines, same order: its cache key).
+$dlssMark = Join-Path $Out '.longshot_dlss'
 $exe = Find-HookshotExe $Out
-$gameReady = $exe -and (Test-Path -LiteralPath $gameStamp) -and ([System.IO.File]::ReadAllText($gameStamp) -eq $stamp)
+$dlssNow = if ($ngxSdk) { 'yes' } else { '' }
+$dlssWas = if (Test-Path -LiteralPath $dlssMark) { ([System.IO.File]::ReadAllText($dlssMark)).Trim() } else { '' }
+$gameReady = $exe -and (Test-Path -LiteralPath $gameStamp) -and ([System.IO.File]::ReadAllText($gameStamp) -eq $stamp) -and
+    ($dlssWas -eq $dlssNow)
 
 if (-not $Game -and (-not $gameReady -or $Rebuild -or $CheckOnly)) {
     # As make-puppet-pack.cmd: the .nup in a folder of the emulator's game list.
@@ -280,9 +316,14 @@ function Invoke-MakeGame([string[]]$MoreArgs, [string]$Log = '') {
     $env:RX_CPM = Join-Path $tools 'cpm'
     $env:WGPU_NATIVE = Join-Path $tools 'wgpu-native'
     $env:LONGSHOT_MINGW = Join-Path $tools 'llvm-mingw'
-    foreach ($v in 'LONGSHOT_NGX_SDK', 'LONGSHOT_FFX_SDK', 'LONGSHOT_MSVC', 'EMSDK', 'LONGSHOT_BUILDER_EXE', 'LONGSHOT_TOOLS') {
+    foreach ($v in 'LONGSHOT_FFX_SDK', 'LONGSHOT_MSVC', 'EMSDK', 'LONGSHOT_BUILDER_EXE', 'LONGSHOT_TOOLS') {
         Remove-Item "Env:\$v" -ErrorAction SilentlyContinue
     }
+    # (Longshot Builder's Runner.cs removes this too: a folder set on the PC is not one the player asked
+    # for there. Here it is the other way round -- Find-NgxSdk found it, so the build is asked for it. A PC
+    # without one sets nothing, and the back end is built with vk_dlss.cpp's stubs.)
+    if ($ngxSdk) { $env:LONGSHOT_NGX_SDK = $ngxSdk }
+    else { Remove-Item 'Env:\LONGSHOT_NGX_SDK' -ErrorAction SilentlyContinue }
     # (a shared work folder keeps all its build files, the translated C too: the next build of this pin
     # skips the translation unless a lift file changed. A kit's own folder keeps Longshot's default.)
     if ($sharedWork) { $env:LONGSHOT_KEEP_BUILD_FILES = '1' }
@@ -329,6 +370,8 @@ if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
     $exe = Find-HookshotExe $Out
     if (-not $exe) { Fail "The build finished but there is no longshot.exe in $Out. Its log: $buildLog" }
     [System.IO.File]::WriteAllText($gameStamp, $stamp)
+    if ($dlssNow) { [System.IO.File]::WriteAllText($dlssMark, "yes`n") }
+    else { Remove-Item -LiteralPath $dlssMark -Force -ErrorAction SilentlyContinue }
 }
 # Where the game is, for Host-Hookshot.bat and Join-Hookshot.bat (play.ps1 -Hookshot).
 [System.IO.File]::WriteAllText((Join-Path $hs 'game-folder.txt'), "$Out`n")

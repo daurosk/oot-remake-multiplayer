@@ -95,49 +95,74 @@ def sext(v: int, bits: int) -> int:
 
 
 def decode(insn: int, pc: int):
-    """('adrp', rd, page) | ('ldr', rt, rn, imm) | ('blr'|'br', rn) | ('end',) | None."""
+    """('adrp', rd, page) | ('ldr', rt, rn, imm) | ('addi', rd, rn) | ('blr'|'br', rn) | None."""
     if insn & 0x9F000000 == 0x90000000:
         imm = sext(((insn >> 5) & 0x7FFFF) << 2 | (insn >> 29) & 3, 21)
         return ("adrp", insn & 31, (pc & ~0xFFF) + (imm << 12))
     if insn & 0xFFC00000 == 0xF9400000:  # LDR Xt, [Xn, #imm12*8]
         return ("ldr", insn & 31, (insn >> 5) & 31, ((insn >> 10) & 0xFFF) * 8)
+    if insn & 0xFF800000 == 0x91000000:  # ADD Xd, Xn, #imm (64-bit, no flags)
+        return ("addi", insn & 31, (insn >> 5) & 31)
     if insn & 0xFFFFFC1F == 0xD63F0000:
         return ("blr", (insn >> 5) & 31)
     if insn & 0xFFFFFC1F == 0xD61F0000:
         return ("br", (insn >> 5) & 31)
-    if insn == 0xD65F03C0 or insn & 0xFC000000 == 0x14000000:  # ret, b
-        return ("end",)
+    return None
+
+
+def branch_target(insn: int, pc: int) -> int | None:
+    """Target of a direct branch (b, bl, b.cond, cbz/cbnz, tbz/tbnz), else None."""
+    if insn & 0x7C000000 == 0x14000000:  # b, bl
+        return pc + sext(insn & 0x3FFFFFF, 26) * 4
+    if insn & 0xFF000010 == 0x54000000:  # b.cond
+        return pc + sext((insn >> 5) & 0x7FFFF, 19) * 4
+    if insn & 0x7E000000 == 0x34000000:  # cbz, cbnz
+        return pc + sext((insn >> 5) & 0x7FFFF, 19) * 4
+    if insn & 0x7E000000 == 0x36000000:  # tbz, tbnz
+        return pc + sext((insn >> 5) & 0x3FFF, 14) * 4
     return None
 
 
 def indirect_calls(code: bytes, base: int):
-    """Yield (pc, kind, loaded_from) for every blr/br; loaded_from is the address the target
-    register was loaded from by an adrp+ldr pair just before, or None if unknown."""
-    page: dict[int, int] = {}
-    loaded: dict[int, int] = {}
-    for off in range(0, len(code) - 3, 4):
-        pc = base + off
-        d = decode(struct.unpack_from("<I", code, off)[0], pc)
-        if d is None:
+    """Yield (pc, kind, loaded_from) for every blr/br.
+
+    Conservative: loaded_from is set only for the two exact shapes a lifter can resolve,
+        adrp Xm, page ; ldr Xn, [Xm, #off] ; blr|br Xn                       (slot call)
+        adrp Xm, page ; ldr Xn, [Xm, #off] ; add Xm, Xm, #off ; br Xn  (Xm != Xn, PLT)
+    with no direct branch landing inside the shape (after its adrp). Anything else
+    (register-offset loads, ldur, mov, a load through a loaded pointer, a join point
+    between the load and the branch) gives None, which the check reports.
+    """
+    words = [struct.unpack_from("<I", code, off)[0] for off in range(0, len(code) - 3, 4)]
+    targets = {t for i, w in enumerate(words) if (t := branch_target(w, base + 4 * i)) is not None}
+
+    def at(i: int):
+        return decode(words[i], base + 4 * i) if 0 <= i < len(words) else None
+
+    def shape(i: int, reg: int):
+        """loaded_from if words[..i] end in `adrp; ldr reg` (no join after the adrp)."""
+        ldr, adrp = at(i), at(i - 1)
+        if not (ldr and ldr[0] == "ldr" and ldr[1] == reg and adrp and adrp[0] == "adrp" and adrp[1] == ldr[2]):
+            return None
+        return ldr, adrp
+
+    for i, w in enumerate(words):
+        pc = base + 4 * i
+        d = decode(w, pc)
+        if d is None or d[0] not in ("blr", "br"):
             continue
-        if d[0] == "adrp":
-            page[d[1]] = d[2]
-            loaded.pop(d[1], None)
-        elif d[0] == "ldr":
-            _, rt, rn, imm = d
-            src = page.get(rn)
-            page.pop(rt, None)
-            if src is None:
-                loaded.pop(rt, None)
-            else:
-                loaded[rt] = src + imm
-        elif d[0] in ("blr", "br"):
-            yield pc, d[0], loaded.get(d[1])
-            page.clear()
-            loaded.clear()
-        else:  # end of a straight run
-            page.clear()
-            loaded.clear()
+        reg, src, first = d[1], None, None
+        m = shape(i - 1, reg)
+        if m:
+            src, first = m[1][2] + m[0][3], i - 2
+        elif d[0] == "br":
+            add = at(i - 1)
+            m = shape(i - 2, reg)
+            if m and add and add[0] == "addi" and add[1] == add[2] == m[0][2] and add[1] != reg:
+                src, first = m[1][2] + m[0][3], i - 3
+        if first is not None and any(base + 4 * k in targets for k in range(first + 1, i + 1)):
+            src = None  # something jumps into the middle: the register may come from elsewhere
+        yield pc, d[0], src
 
 
 def hook_table(elf: Elf, table_addr: int) -> list[tuple[int, int, int, int, int]]:
@@ -173,6 +198,8 @@ def check(elf: Elf) -> tuple[list[str], list[tuple[int, str]]]:
                     problems.append(f"hook {i}: unknown kind {kind}")
                 if slot not in slots:
                     problems.append(f"hook {i} (main+{main_off:#x}): slot {slot:#x} is not an exported coop_slot_*")
+                if kind == 3 and repl != 0:
+                    problems.append(f"hook {i} (main+{main_off:#x}): a game_fn entry has no replacement")
                 if kind in (1, 2) and repl not in {s.value for s in dyn.values() if s.type == STT_FUNC}:
                     problems.append(f"hook {i} (main+{main_off:#x}): replacement {repl:#x} is not an exported function")
         except LiftError as e:

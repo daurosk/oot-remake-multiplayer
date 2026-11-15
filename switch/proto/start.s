@@ -26,22 +26,22 @@ coop_frame_entry:
     stp     x2, x3, [sp, #0x10]
     stp     x4, x5, [sp, #0x20]
     stp     x6, x7, [sp, #0x30]
-    stp     x8, x29, [sp, #0x40]
-    str     x30, [sp, #0x50]
+    stp     x29, x30, [sp, #0x40]       // frame record {x29, x30} where x29 will point
+    str     x8, [sp, #0x50]
     stp     q0, q1, [sp, #0x60]
     stp     q2, q3, [sp, #0x80]
     stp     q4, q5, [sp, #0xa0]
     stp     q6, q7, [sp, #0xc0]
-    .cfi_offset x29, -0xd8
-    .cfi_offset x30, -0xd0
+    .cfi_offset x29, -0xe0
+    .cfi_offset x30, -0xd8
     add     x29, sp, #0x40
     bl      coop_proto_frame
     ldp     q6, q7, [sp, #0xc0]
     ldp     q4, q5, [sp, #0xa0]
     ldp     q2, q3, [sp, #0x80]
     ldp     q0, q1, [sp, #0x60]
-    ldr     x30, [sp, #0x50]
-    ldp     x8, x29, [sp, #0x40]
+    ldr     x8, [sp, #0x50]
+    ldp     x29, x30, [sp, #0x40]
     ldp     x6, x7, [sp, #0x30]
     ldp     x4, x5, [sp, #0x20]
     ldp     x2, x3, [sp, #0x10]

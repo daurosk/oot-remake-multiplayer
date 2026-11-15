@@ -7,6 +7,10 @@
 
 namespace svc {
 
+// Out-of-line SDK/libnx wrappers let the kernel clobber the scratch registers; say so here
+// too, so the calls stay correct on a console, not just under an emulator's HLE.
+#define SVC_CLOBBERS "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17"
+
 struct MemoryInfo {
     uint64_t addr;
     uint64_t size;
@@ -28,7 +32,7 @@ inline uint32_t QueryMemory(MemoryInfo* out, uint64_t addr) {
     register uint64_t x0 __asm__("x0") = reinterpret_cast<uint64_t>(out);
     register uint64_t x1 __asm__("x1");
     register uint64_t x2 __asm__("x2") = addr;
-    __asm__ volatile("svc 0x06" : "+r"(x0), "=r"(x1), "+r"(x2) : : "memory");
+    __asm__ volatile("svc 0x06" : "+r"(x0), "=r"(x1), "+r"(x2) : : "memory", SVC_CLOBBERS);
     return static_cast<uint32_t>(x0);
 }
 
@@ -36,7 +40,7 @@ inline uint32_t QueryMemory(MemoryInfo* out, uint64_t addr) {
 inline uint32_t OutputDebugString(const char* s, size_t len) {
     register uint64_t x0 __asm__("x0") = reinterpret_cast<uint64_t>(s);
     register uint64_t x1 __asm__("x1") = len;
-    __asm__ volatile("svc 0x27" : "+r"(x0), "+r"(x1) : : "memory");
+    __asm__ volatile("svc 0x27" : "+r"(x0), "+r"(x1) : : "memory", SVC_CLOBBERS);
     return static_cast<uint32_t>(x0);
 }
 
@@ -47,7 +51,7 @@ inline uint32_t SetProcessMemoryPermission(uint32_t handle, uint64_t addr, uint6
     register uint64_t x1 __asm__("x1") = addr;
     register uint64_t x2 __asm__("x2") = size;
     register uint64_t x3 __asm__("x3") = perm;
-    __asm__ volatile("svc 0x73" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3) : : "memory");
+    __asm__ volatile("svc 0x73" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3) : : "memory", SVC_CLOBBERS);
     return static_cast<uint32_t>(x0);
 }
 

@@ -28,7 +28,7 @@ import lift_check  # noqa: E402
 CFLAGS = [
     "--target=aarch64-none-elf", "-march=armv8-a", "-O2", "-std=c++20",
     "-fPIC", "-ffreestanding", "-fno-exceptions", "-fno-rtti", "-fno-stack-protector",
-    "-funwind-tables", "-fno-jump-tables", "-fvisibility=hidden",
+    "-funwind-tables", "-fno-jump-tables", "-fvisibility=hidden", "-ffixed-x18",
     "-nostdlib", "-Wall", "-Wextra", "-Werror",
 ]
 LDFLAGS = [

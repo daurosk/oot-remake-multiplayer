@@ -235,6 +235,18 @@ jobs:
         run: python tools/puppet_pack/tests/test_msbt.py -v
       - name: ExeFS prototype NSO converter tests
         run: python tools/switch_mod/elf2nso_test.py -v
+      - name: ExeFS module lift check tests
+        run: python tools/switch_mod/lift_check_test.py -v
+      # Builds the ExeFS module with stock LLVM; build.py refuses it if a recomp could not lift it.
+      - name: ExeFS module build + lift check
+        if: runner.os == 'Linux'
+        run: |
+          if ! command -v clang >/dev/null || ! command -v ld.lld >/dev/null; then
+            sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends clang lld
+          fi
+          clang --version | head -1
+          python tools/switch_mod/build.py
+          cat build/switch-proto/subsdk1.entries
       # The kit's patch applier for Hookshot (hookshot-kit); skipped until that branch is merged.
       - name: Kit patch applier tests
         if: hashFiles('tools/release/tests/test_apply_patch.py') != ''

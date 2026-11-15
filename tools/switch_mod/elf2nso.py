@@ -5,7 +5,7 @@ Our own small converter, so the prototype needs only LLVM (clang + ld.lld). The 
 uncompressed and without segment hash checks (flags 0), which emulators load as is
 (Fritchii src/core/loader/nso.cpp). Layout of the header: switchbrew.org/wiki/NSO.
 
-    elf2nso.py module.elf subsdk9
+    elf2nso.py module.elf subsdk1
 """
 from __future__ import annotations
 

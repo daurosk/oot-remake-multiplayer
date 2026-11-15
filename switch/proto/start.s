@@ -16,9 +16,12 @@ __module_start:
 // tick runs, then we jump on to the real frame step as if the game had called it.
     .section .text, "ax"
     .global coop_frame_entry
+    .protected coop_frame_entry
     .type coop_frame_entry, %function
 coop_frame_entry:
+    .cfi_startproc
     sub     sp, sp, #0x120
+    .cfi_def_cfa_offset 0x120
     stp     x0, x1, [sp, #0x00]
     stp     x2, x3, [sp, #0x10]
     stp     x4, x5, [sp, #0x20]
@@ -29,6 +32,8 @@ coop_frame_entry:
     stp     q2, q3, [sp, #0x80]
     stp     q4, q5, [sp, #0xa0]
     stp     q6, q7, [sp, #0xc0]
+    .cfi_offset x29, -0xd8
+    .cfi_offset x30, -0xd0
     add     x29, sp, #0x40
     bl      coop_proto_frame
     ldp     q6, q7, [sp, #0xc0]
@@ -42,9 +47,14 @@ coop_frame_entry:
     ldp     x2, x3, [sp, #0x10]
     ldp     x0, x1, [sp, #0x00]
     add     sp, sp, #0x120
-    adrp    x16, g_frame_step
-    ldr     x16, [x16, :lo12:g_frame_step]
+    .cfi_def_cfa_offset 0
+    .cfi_restore x29
+    .cfi_restore x30
+    // Continue through the hook table's slot (a lifting recomp makes this a direct branch).
+    adrp    x16, coop_slot_frame_step
+    ldr     x16, [x16, :lo12:coop_slot_frame_step]
     br      x16
+    .cfi_endproc
     .size coop_frame_entry, . - coop_frame_entry
 
     .section .rodata.mod0, "a"
@@ -55,8 +65,8 @@ __mod0:
     .word   _DYNAMIC - __mod0
     .word   __bss_start__ - __mod0
     .word   __bss_end__ - __mod0
-    .word   0                           // no eh_frame_hdr
-    .word   0
+    .word   __eh_frame_hdr_start - __mod0   // unwind tables, for a lifter's function spans
+    .word   __eh_frame_hdr_end - __mod0
     .word   __module_object - __mod0
 
     .section .bss.module_object, "aw", %nobits

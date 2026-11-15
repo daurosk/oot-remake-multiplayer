@@ -4,8 +4,10 @@
     build.py [--llvm <LLVM bin folder>] [--out <folder>]
 
 Needs clang and ld.lld with the AArch64 target (any stock LLVM build). Writes
-<out>/module.elf and <out>/subsdk9 (default out: build/switch-proto). Install by
-copying subsdk9 into the emulator's <user>/load/0400486024DEC000/<mod>/exefs/.
+<out>/module.elf, <out>/subsdk1 and <out>/subsdk1.entries (default out:
+build/switch-proto), after lift_check.py has passed (the module stays liftable by a
+recomp). Install by copying subsdk1 into the emulator's
+<user>/load/0400486024DEC000/<mod>/exefs/.
 """
 from __future__ import annotations
 
@@ -21,16 +23,17 @@ REPO = HERE.parent.parent
 SRC = REPO / "switch" / "proto"
 sys.path.insert(0, str(HERE))
 import elf2nso  # noqa: E402
+import lift_check  # noqa: E402
 
 CFLAGS = [
     "--target=aarch64-none-elf", "-march=armv8-a", "-O2", "-std=c++20",
     "-fPIC", "-ffreestanding", "-fno-exceptions", "-fno-rtti", "-fno-stack-protector",
-    "-fno-asynchronous-unwind-tables", "-fno-unwind-tables", "-fvisibility=hidden",
+    "-funwind-tables", "-fno-jump-tables", "-fvisibility=hidden",
     "-nostdlib", "-Wall", "-Wextra", "-Werror",
 ]
 LDFLAGS = [
     "-shared", "-z", "now", "--hash-style=sysv", "--build-id=sha1", "-z", "noexecstack",
-    "-e", "__module_start",
+    "-e", "__module_start", "--eh-frame-hdr", "--apply-dynamic-relocs",
 ]
 
 
@@ -72,9 +75,18 @@ def main() -> int:
     elf = out / "module.elf"
     run([lld, *LDFLAGS, "-T", str(SRC / "module.ld"), "--version-script", str(SRC / "exports.map"),
          *objs, "-o", str(elf)])
+    try:
+        problems, entries = lift_check.check(lift_check.Elf(elf.read_bytes()))
+    except lift_check.LiftError as e:
+        problems, entries = [str(e)], []
+    if problems:
+        sys.exit("build: the module would not lift:
+  " + "
+  ".join(problems))
+    lift_check.write_entries(str(out / "subsdk1.entries"), entries)
     nso = elf2nso.build_nso(elf.read_bytes())
-    (out / "subsdk9").write_bytes(nso)
-    print(f"build: {out / 'subsdk9'} ({len(nso)} bytes)")
+    (out / "subsdk1").write_bytes(nso)
+    print(f"build: {out / 'subsdk1'} ({len(nso)} bytes), {len(entries)} entries")
     return 0
 
 

@@ -80,9 +80,7 @@ def main() -> int:
     except lift_check.LiftError as e:
         problems, entries = [str(e)], []
     if problems:
-        sys.exit("build: the module would not lift:
-  " + "
-  ".join(problems))
+        sys.exit("build: the module would not lift:\n  " + "\n  ".join(problems))
     lift_check.write_entries(str(out / "subsdk1.entries"), entries)
     nso = elf2nso.build_nso(elf.read_bytes())
     (out / "subsdk1").write_bytes(nso)

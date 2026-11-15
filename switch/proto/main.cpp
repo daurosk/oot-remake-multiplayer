@@ -58,6 +58,7 @@ extern "C" {
 COOP_EXPORT uint64_t coop_slot_frame_step = 0;  // the game's frame step; start.s continues there
 COOP_EXPORT uint64_t coop_slot_set_time = 0;    // void set_time(world, seconds)
 COOP_EXPORT void coop_frame_entry();            // start.s
+COOP_EXPORT void coop_call_set_time(uint64_t world, uint64_t seconds);  // start.s, via coop_slot_set_time
 }
 
 extern "C" COOP_EXPORT constinit __attribute__((section(".coop_hooks"), used)) hooks::Table coop_hooks = {
@@ -205,9 +206,8 @@ void TrySetTime() {
     if (coop_slot_set_time == 0) return;
     if (!ReadU64(g_main + game::kWorldMgrPtr, world) || world == 0) return;
     if (!ReadU64(world + game::kTimeObject, time) || time == 0) return;
-    using SetTime = void (*)(uint64_t world, uint64_t seconds);
     Log().s("game call: set_time(world ").hex(world).s(", ").dec(kNoon).s(") at frame ").dec(g_frames);
-    reinterpret_cast<SetTime>(coop_slot_set_time)(world, kNoon);
+    coop_call_set_time(world, kNoon);
     Log().s("game call: set_time returned");
     g_time_done = true;
 }

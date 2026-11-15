@@ -57,6 +57,25 @@ coop_frame_entry:
     .cfi_endproc
     .size coop_frame_entry, . - coop_frame_entry
 
+// Calls into the game: one thunk per game-function slot of the hook table (hooks.h).
+// C++ calls the thunk with a plain `bl`; the thunk's tail jump through the slot is the
+// only indirect branch, in one fixed shape a lifting recomp turns into a direct call.
+    .macro game_fn name, slot
+    .section .text, "ax"
+    .global \name
+    .protected \name
+    .type \name, %function
+\name:
+    .cfi_startproc
+    adrp    x16, \slot
+    ldr     x16, [x16, :lo12:\slot]
+    br      x16
+    .cfi_endproc
+    .size \name, . - \name
+    .endm
+
+    game_fn coop_call_set_time, coop_slot_set_time
+
     .section .rodata.mod0, "a"
     .balign 4
     .global __mod0

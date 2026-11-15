@@ -233,6 +233,8 @@ jobs:
         run: python tools/game_scan/tests/test_game_names.py -v
       - name: MSBT reader tests
         run: python tools/puppet_pack/tests/test_msbt.py -v
+      - name: ExeFS prototype NSO converter tests
+        run: python tools/switch_mod/elf2nso_test.py -v
       # The kit's patch applier for Hookshot (hookshot-kit); skipped until that branch is merged.
       - name: Kit patch applier tests
         if: hashFiles('tools/release/tests/test_apply_patch.py') != ''

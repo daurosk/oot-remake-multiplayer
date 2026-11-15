@@ -1,0 +1,65 @@
+// Module start and the frame hook's entry (AArch64).
+//
+// A Switch module starts with a branch and the offset of its MOD0 header;
+// rtld finds MOD0 through it, relocates the module from its .dynamic and
+// keeps its module object at MOD0 + 0x18 (inside our bss).
+
+    .section .text.start, "ax"
+    .global __module_start
+__module_start:
+    b       1f
+    .word   __mod0 - __module_start
+1:  ret                                 // never entered: rtld calls _init
+
+// The game's `bl frame_step` at main+0x6e70f8 is turned into `bl coop_frame_entry`.
+// x30 holds the game's return address; every argument register is kept, our
+// tick runs, then we jump on to the real frame step as if the game had called it.
+    .section .text, "ax"
+    .global coop_frame_entry
+    .type coop_frame_entry, %function
+coop_frame_entry:
+    sub     sp, sp, #0x120
+    stp     x0, x1, [sp, #0x00]
+    stp     x2, x3, [sp, #0x10]
+    stp     x4, x5, [sp, #0x20]
+    stp     x6, x7, [sp, #0x30]
+    stp     x8, x29, [sp, #0x40]
+    str     x30, [sp, #0x50]
+    stp     q0, q1, [sp, #0x60]
+    stp     q2, q3, [sp, #0x80]
+    stp     q4, q5, [sp, #0xa0]
+    stp     q6, q7, [sp, #0xc0]
+    add     x29, sp, #0x40
+    bl      coop_proto_frame
+    ldp     q6, q7, [sp, #0xc0]
+    ldp     q4, q5, [sp, #0xa0]
+    ldp     q2, q3, [sp, #0x80]
+    ldp     q0, q1, [sp, #0x60]
+    ldr     x30, [sp, #0x50]
+    ldp     x8, x29, [sp, #0x40]
+    ldp     x6, x7, [sp, #0x30]
+    ldp     x4, x5, [sp, #0x20]
+    ldp     x2, x3, [sp, #0x10]
+    ldp     x0, x1, [sp, #0x00]
+    add     sp, sp, #0x120
+    adrp    x16, g_frame_step
+    ldr     x16, [x16, :lo12:g_frame_step]
+    br      x16
+    .size coop_frame_entry, . - coop_frame_entry
+
+    .section .rodata.mod0, "a"
+    .balign 4
+    .global __mod0
+__mod0:
+    .ascii  "MOD0"
+    .word   _DYNAMIC - __mod0
+    .word   __bss_start__ - __mod0
+    .word   __bss_end__ - __mod0
+    .word   0                           // no eh_frame_hdr
+    .word   0
+    .word   __module_object - __mod0
+
+    .section .bss.module_object, "aw", %nobits
+    .balign 8
+__module_object:
+    .space  0x200

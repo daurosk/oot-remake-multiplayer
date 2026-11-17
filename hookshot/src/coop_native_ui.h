@@ -46,8 +46,9 @@ inline constexpr std::uint64_t kInGameTime = 0x408;    // f32: game frames left 
 inline constexpr float kFramesPerSecond = 30.0f;        // its step (f_802f12b0) is one per 30 fps frame
 inline constexpr std::uint64_t kScreenOpenA = 0x1a5;   // s8 and u8: the game sets kInGameShow only when
 inline constexpr std::uint64_t kScreenOpenB = 0x1a6;   //   A >= 1 and B == 0 (f_833d25c0)
-// The banner (UISimpleInfoScreen, vtable 0x84c0d7d8).
-inline constexpr std::uint64_t kInfoVtable = 0x84c0d7d8;
+// The banner (UISimpleInfoScreen, vtable 0x84c0d7c8: what its constructor at 0x8069c778 stores in the object; 0x84c0d7d8
+// is that vtable's slot 2, which no object holds).
+inline constexpr std::uint64_t kInfoVtable = 0x84c0d7c8;
 // The balloons (UIBalloonMessageScreen, vtable 0x84c042e8): 16 parts.
 inline constexpr std::uint64_t kBalloonVtable = 0x84c042e8;
 inline constexpr std::size_t kBalloonParts = 16;

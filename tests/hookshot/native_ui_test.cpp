@@ -111,6 +111,16 @@ void BannerScreen(FakeGame& g) {
 
 }  // namespace
 
+TEST_CASE("native ui: the screens' vtables are their starts, as the constructors store them") {
+    // The tests above use the constants, so they pass with any value: these pin the game's. Each is a vtable's start
+    // (two zero words before it, slot 5 the screens' shared open 0x804d6100); the banner's is what UISimpleInfoScreen's
+    // constructor stores (0x8069c778: adrp x8, 0x84c0d000; add x8, x8, #0x7c8; str x8, [x19]). 0x84c0d7d8 was its
+    // slot 2, which no object holds, so ScreenByVtable never found a banner (reported by Geno, DrHammer79).
+    CHECK(ui::addr::kInfoVtable == 0x84c0d7c8);
+    CHECK(ui::addr::kInGameVtable == 0x84c09678);
+    CHECK(ui::addr::kBalloonVtable == 0x84c042e8);
+}
+
 TEST_CASE("native ui: Clean drops message tags and controls, keeps UTF-8 whole") {
     // A tag a player could type: 0x0E, group 0, type 3 (colour), size 2, index 0.
     const std::string tagged = std::string("red\x0e\x00\x00\x03\x00\x02\x00\x00\x00text", 16);

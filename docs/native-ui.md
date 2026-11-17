@@ -35,7 +35,7 @@ functions (`f_<address>`).
 - Lines show one at a time, 3 s plus 60 ms a character (at most 8 s). At most 8 wait; with many players the oldest
   go first.
 - A notice: the banner screen is found in the UI manager's list (`**0x84c9e098`, count `+8`, screens `+0x10`) by its
-  vtable (`0x84c0d7d8`); our text goes into `T_Text_00`, then its open call.
+  vtable (`0x84c0d7c8`); our text goes into `T_Text_00`, then its open call.
 - Typing: while the chat box is open the typed line is on the message window; a change swaps only the text (no
   opening animation again), closing the box ends it at once, and lines that come meanwhile go to the banner.
 - Tags: one balloon part per tag, from part 15 down (the game takes its own balloons from part 0), the nearest players

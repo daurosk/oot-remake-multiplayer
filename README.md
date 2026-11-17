@@ -7,7 +7,7 @@ Squadala! - online co-op for the Ocarina of Time remake on PC. (The repository k
 The goal of this project is working multiplayer in two stages:
 
 1. **Emulator first.** Add co-op to the Lichii emulator (Frizti's build), where the game already runs well. Up to 16 players see each other in the world, share progress, and fight the same enemies.
-2. **Then a recomp.** Carry the same co-op design into a native PC recompilation of the game. This is where releases are now: since 0.10.1 they run on [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot) (Team MagicBean's recompilation of the game, whose changes are being merged into [Hookshot](https://git.notrexed.dev/Hookshot/Hookshot)), with the same code, protocol and server. For 1.0, co-op is meant to ship as an add-on mod for the recomp rather than a patched build of our own.
+2. **Then a recomp.** Carry the same co-op design into a native PC recompilation of the game. This is where releases are now: since 0.10.1 they run on [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot) (Team MagicBean's recompilation of the game, whose changes are being merged into [Hookshot](https://git.notrexed.dev/Hookshot/Hookshot)) or [nxnative](https://github.com/seedds/nxnative), with the same code, protocol and server. For 1.0, co-op is meant to ship as an add-on mod for the recomp rather than a patched build of our own.
 
 Both stages share one design, one wire protocol and one server, so what is learned on the emulator carries straight over to the recomp.
 

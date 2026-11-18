@@ -30,6 +30,13 @@ enum class Kind : std::uint32_t {
 inline constexpr std::uint32_t kOwn = 1;      // asked inside one of the module's own game calls (a copy, a remove)
 inline constexpr std::uint32_t kStopped = 2;  // Create: the module had the game refuse it (a copy enemy's own shot)
 
+// Whether a create or delete the game asks for is the module's own (kOwn: a copy, a remove; never stopped): asked
+// inside one of the module's game calls, unless that call runs a copy's own game code (CoopPuppet::Call::copy_game:
+// issue 189, the owner's shoot action put into a copy makes the copy's own shot, which the owner's copy doubles).
+inline bool Ours(bool in_call, bool copy_game) {
+    return in_call && !copy_game;
+}
+
 struct Event {
     Kind kind = Kind::None;
     std::uint32_t flags = 0;

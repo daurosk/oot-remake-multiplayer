@@ -92,6 +92,7 @@ std::vector<Made> RunFrame(Crawl& c, Guest& g, std::uint64_t now_ms, std::uint64
             CHECK(call->x[0] == addr::kBlockSize);
             r = kBlock;
         } else if (m.function == bn::addr::kRequestActionVerb) {
+            CHECK_FALSE(call->copy_game);  // our own downed Link: what it makes is ours (#189 is copies only)
             CHECK(m.x0 == kBsa);
             CHECK(m.x1 == kBlock);
             g.Read(kBlock + bn::addr::kReqVerb, &m.verb, sizeof m.verb);

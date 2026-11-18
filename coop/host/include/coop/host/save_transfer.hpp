@@ -403,6 +403,15 @@ struct GuestSession {
 // save, or answered again) starts fresh: gave_up ends, so it can give up (and say so) again if it stalls too.
 void note_part(GuestSession& s, std::uint32_t transfer_id, std::uint64_t now_us);
 
+// The host's save came but could not be written or switched to: the ask is over (nothing is on its way), so the
+// request state is cleared. Without this "asked && !ready" read as "coming" for the rest of the session (Resync
+// then said "already on its way" for good). A later ask (Resync from host) starts a fresh GuestSession.
+void note_write_failed(GuestSession& s);
+
+// Is the host's save on its way: a slot waiting for the title, a transfer with a part in the last `stuck_us`, or an
+// ask still waiting for its answer (not given up, not refused, not failed).
+bool save_coming(const GuestSession& s, std::uint64_t now_us, std::uint64_t stuck_us);
+
 // A guest asks again kGuestReaskUs after its last ask when nothing at all came (the ask or the whole answer was
 // lost, or the host refused it as too soon), or when a transfer stopped part way and no part came for
 // kGuestReaskUs (a part lost: the host sends the whole save again, under a new transfer id); at most

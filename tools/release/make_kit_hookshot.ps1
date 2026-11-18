@@ -150,12 +150,31 @@ $packTool = Join-Path $repo 'tools\puppet_pack'
 # (make_kit.ps1's list: its tests and the scene-placing test helper stay out), plus every module build.py imports.
 $packFiles = @('ainb.py', 'build.py', '__init__.py', 'byml.py', 'dumpcheck.py', 'dungeon_rooms.py', 'hud.py', 'nup.py', 'rstb.py',
     'sarc.py', 'texture.py', 'title_menu.py', 'tunic.py', 'tunic_extra.py', 'zs.py', 'merge_tables.py')   # (merge_tables.py: play.ps1, #48)
-foreach ($line in (Get-Content (Join-Path $packTool 'build.py') | Where-Object { $_ -match '^\s*from \. import ' })) {
-    $packFiles += (($line -replace '#.*$', '') -replace '^\s*from \. import ', '').Split(',') | ForEach-Object { "$($_.Trim()).py" } | Where-Object { $_ -ne '.py' }
-}
-foreach ($f in ($packFiles | Sort-Object -Unique)) {
+# And every module those import, and theirs (title_menu.py -> ui_pack.py -> msbt.py): one missing from the kit stops
+# build.py at its first import, and the pack is never made on the players' PCs.
+$packSeen = @{}
+$packQueue = [System.Collections.Generic.Queue[string]]::new()
+foreach ($f in $packFiles) { $packQueue.Enqueue($f) }
+while ($packQueue.Count -gt 0) {
+    $f = $packQueue.Dequeue()
+    if ($packSeen.ContainsKey($f)) { continue }
+    $packSeen[$f] = $true
     if (-not (Test-Path (Join-Path $packTool $f))) { throw "tools\puppet_pack\$f (needed by build.py) is not in the repo" }
-    Copy-Text (Join-Path $packTool $f) (Join-Path $kit "tools\puppet_pack\$f")
+    foreach ($line in (Get-Content (Join-Path $packTool $f))) {
+        $code = $line -replace '#.*$', ''
+        if ($code -match '^\s*from \.(\w+) import ') { $packQueue.Enqueue("$($Matches[1]).py") }
+        elseif ($code -match '^\s*from \. import (.+)$') {
+            foreach ($m in $Matches[1].Split(',')) {
+                $packModule = ($m.Trim() -split '\s+')[0]   # (from . import texture as tx; not $name: the kit's own)
+                if ($packModule) { $packQueue.Enqueue("$packModule.py") }
+            }
+        }
+    }
+}
+foreach ($f in ($packSeen.Keys | Sort-Object)) { Copy-Text (Join-Path $packTool $f) (Join-Path $kit "tools\puppet_pack\$f") }
+# ui_pack.py's words for the game's menus (strings\en.txt and its translations), read where the module is
+foreach ($s in (Get-ChildItem -LiteralPath (Join-Path $packTool 'strings') -Filter '*.txt')) {
+    Copy-Text $s.FullName (Join-Path $kit "tools\puppet_pack\strings\$($s.Name)")
 }
 
 # The Nucleus Co-op handler (split screen on one PC; docs/play-lan.md) and its few steps.

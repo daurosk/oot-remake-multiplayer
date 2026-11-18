@@ -2945,6 +2945,93 @@ TEST_CASE("report 37: an enemy is not handed back to the player who just gave it
   CHECK(messages_to<HandoverAsk>(h, 2)[0] == HandoverAsk{placed(7), 1, 1});
 }
 
+// Report 138 (Revirie's 4-player log): players 1, 2 and 3 in the Field with
+// enemy 7, which player 1 owns at x = 0 with life 12.
+struct ThreeOwnerHarness : OwnerHarness {
+  ThreeOwnerHarness() {
+    join(3, "Saria");
+    receive(3, present_in("Field", {placed(7)}), kChannelOwnership);
+    clear();
+  }
+
+  // 1 gives 7 to 2 by a chase; returns the time of the change.
+  std::uint64_t give_to_2() {
+    receive(2, chasing_in("Field", {placed(7)}), kChannelOwnership);
+    run(750'000);
+    REQUIRE(messages_to<HandoverAsk>(*this, 1).size() == 1);
+    receive(1, HandoverState{0, placed(7), 0, state_at(0, 12)}, kChannelOwnership);
+    REQUIRE(session.object_owner(placed(7)) == owned(2, 1));
+    receive(2, present_in("Field", {placed(7)}), kChannelOwnership);  // present, not chasing
+    clear();
+    return now;
+  }
+};
+
+TEST_CASE("report 138: an enemy that changed owner lately stays with its owner while it stands by it") {
+  ThreeOwnerHarness h;
+  h.stand(1, 50);
+  h.stand(2, 5);  // the new owner fights it
+  h.stand(3, 8);
+  const auto changed = h.give_to_2();
+
+  // 3's copy chases 3: once the 5 s cooldown is over this used to turn it to
+  // 3 (and the next chase to another). Its owner stands by it: it stays.
+  h.receive(3, chasing_in("Field", {placed(7)}), kChannelOwnership);
+  h.run(10 * kSecond);
+  CHECK(messages_to<HandoverAsk>(h, 2).empty());
+  CHECK(h.session.stats().handover_back_held > 0);
+
+  // Its owner walks off: it is no longer the target, the chase moves it.
+  h.stand(2, 45);
+  h.run(kSecond);
+  REQUIRE(messages_to<HandoverAsk>(h, 2).size() == 1);
+  CHECK(messages_to<HandoverAsk>(h, 2)[0] == HandoverAsk{placed(7), 1, 3});
+  CHECK(h.now - changed < quiet_config().handover_back_us);
+}
+
+TEST_CASE("report 138: an enemy is not handed back to any player who gave it up lately, not only the last") {
+  ThreeOwnerHarness h;
+  h.stand(1, 50);
+  h.stand(2, 45);  // far from it: no sticky owner
+  h.stand(3, 8);
+  const auto first = h.give_to_2();
+
+  h.receive(3, chasing_in("Field", {placed(7)}), kChannelOwnership);
+  h.run(6 * kSecond);
+  REQUIRE(messages_to<HandoverAsk>(h, 2).size() == 1);
+  h.receive(2, HandoverState{0, placed(7), 1, state_at(0, 12)}, kChannelOwnership);
+  REQUIRE(h.session.object_owner(placed(7)) == owned(3, 2));
+  h.receive(3, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.stand(3, 45);  // 3 walks off too
+
+  // 1's copy chases 1: 1 gave it up less than handover_back_us ago (it went
+  // 1, 2, 3, 1 ... in the 4-player log). Not before handover_back_us.
+  h.receive(1, chasing_in("Field", {placed(7)}), kChannelOwnership);
+  h.clear();
+  const std::uint64_t back = quiet_config().handover_back_us;
+  h.run(back - (h.now - first) - kSecond);
+  CHECK(messages_to<HandoverAsk>(h, 3).empty());
+  h.run(2 * kSecond);
+  REQUIRE(messages_to<HandoverAsk>(h, 3).size() == 1);
+  CHECK(messages_to<HandoverAsk>(h, 3)[0] == HandoverAsk{placed(7), 2, 1});
+}
+
+TEST_CASE("report 138: an owner that lets go gives the enemy to a player who can play, not a paused one") {
+  ThreeOwnerHarness h;
+  h.stand(1, 0);
+  h.stand(2, 3);  // the nearest, but paused
+  h.stand(3, 20);
+  h.receive(2, PlayerStatus{0, status::paused}, kChannelSession);
+  h.clear();
+  h.receive(1, present_in("Field", {}), kChannelOwnership);  // 1's game unloads it
+  CHECK(h.session.object_owner(placed(7)) == owned(3, 1));
+
+  // Nobody fit left: a paused player still takes it rather than nobody.
+  h.receive(3, PlayerStatus{0, status::paused}, kChannelSession);
+  h.receive(3, present_in("Field", {}), kChannelOwnership);
+  CHECK(h.session.object_owner(placed(7)) == owned(2, 2));
+}
+
 TEST_CASE("issue 101: a chase shorter than 500 ms, or one the owner's enemy shares, moves nothing") {
   {
     OwnerHarness h;

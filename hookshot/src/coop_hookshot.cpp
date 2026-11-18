@@ -251,7 +251,17 @@ bool Refused(const CoopPuppet::Call& c) {
     if (actor.rfind("Coop", 0) == 0) {
         if (const CoopRando::Rando* r = CoopModsRuntime::Rando(); r != nullptr && r->HoldPack()) {
             static bool held_said = false;
-            if (!held_said) {
+            static bool rows_said = false;
+            if (r->RowsMissing()) {
+                // (player report 144/145: the game would refuse it for ever, the body never shown)
+                if (!rows_said) {
+                    rows_said = true;
+                    LOG_WARNING(Core, "coop: {} not made: the game's actor table comes from a mod without the "
+                                      "puppet pack's rows, so the game would refuse it (see the randomizer line at the "
+                                      "start, coop-rows.txt); other players show as their fairy",
+                                actor);
+                }
+            } else if (!held_said) {
                 held_said = true;
                 LOG_WARNING(Core, "coop: {} not made: the randomizer seed's size table is being checked or was made "
                                   "again (restart the game); other players show as their fairy until then",
@@ -276,11 +286,19 @@ bool Refused(const CoopPuppet::Call& c) {
 
 // True while this thread runs one of the module's own game calls: a create
 // or a delete the game asks for inside it is ours (a copy, a remove), not
-// the game's own doing.
+// the game's own doing, unless the call runs a copy's own game code
+// (t_copy_game; CoopActorEvents::Ours).
 thread_local bool t_own_call = false;
+thread_local bool t_copy_game = false;
 struct OwnCall {
-    OwnCall() { t_own_call = true; }
-    ~OwnCall() { t_own_call = false; }
+    explicit OwnCall(bool copy_game) {
+        t_own_call = true;
+        t_copy_game = copy_game;
+    }
+    ~OwnCall() {
+        t_own_call = false;
+        t_copy_game = false;
+    }
     OwnCall(const OwnCall&) = delete;
     OwnCall& operator=(const OwnCall&) = delete;
 };
@@ -405,19 +423,24 @@ void LogBossNative() {
     const CoopBossNative::Counts c = CoopBossNative::TheTable().Totals();
     if (c.owner_brain == said.owner_brain && c.owner_action == said.owner_action && c.copy_skipped == said.copy_skipped &&
         c.brain_applied == said.brain_applied && c.action_applied == said.action_applied &&
+        c.brain_came == said.brain_came && c.brain_already == said.brain_already &&
         c.copy_own_run == said.copy_own_run && c.copy_own_late == said.copy_own_late &&
         c.copy_life_held == said.copy_life_held && c.copy_killed == said.copy_killed &&
-        c.copy_finished == said.copy_finished) {
+        c.copy_finished == said.copy_finished && c.plain_wakes == said.plain_wakes &&
+        c.plain_deaths == said.plain_deaths) {
         return;
     }
     said_ms = now;
     said = c;
     LOG_INFO(Core, "coop: bosses: ours sent {} brain + {} action verbs ({} by plug); copies: {} own skipped, {} brain + "
                    "{} action verbs put in ({} waited for a node), {} own run in our event or after our hit ({} late), "
-                   "{} own minions not made, {} busy; {} own Life steps held at 1, {} let die after the owner's, {} ended in their death",
+                   "{} own minions not made, {} busy; {} own Life steps held at 1, {} let die after the owner's, {} ended in their death; "
+                   "plain enemies: {} own other phases told, {} own wakes run, {} deaths begun; "
+                   "owner's brain verbs given to copies {} ({} the copy was in already)",
              c.owner_brain, c.owner_action, c.plug_actions, c.copy_skipped, c.brain_applied, c.action_applied,
              c.action_waiting, c.copy_own_run, c.copy_own_late, c.minions_stopped, c.busy, c.copy_life_held,
-             c.copy_killed, c.copy_finished);
+             c.copy_killed, c.copy_finished, c.plain_wants, c.plain_wakes, c.plain_deaths, c.brain_came,
+             c.brain_already);
 }
 
 void RunCalls(void* ctx) {
@@ -432,7 +455,7 @@ void RunCalls(void* ctx) {
         std::memcpy(k.stack, c.stack.data(), sizeof k.stack);
         k.s0 = c.s0;
         std::uint64_t x0 = 0;
-        const OwnCall own;  // (what the game asks inside it is our own asking: World())
+        const OwnCall own(c.copy_game);  // (what the game asks inside it is our own asking: World())
         if (!g_api->call(ctx, &k, &x0)) {
             LOG_WARNING(Core, "coop: no game function at {:#x}", c.function);
             return std::optional<std::uint64_t>();
@@ -1299,7 +1322,7 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
     case HOS_COOP_WORLD_CREATE_REQUEST: {
         CoopActorEvents::Event e;
         e.kind = CoopActorEvents::Kind::Create;
-        e.flags = t_own_call ? CoopActorEvents::kOwn : 0;
+        e.flags = CoopActorEvents::Ours(t_own_call, t_copy_game) ? CoopActorEvents::kOwn : 0;
         e.a = a;
         e.b = b;
         e.from = std::exchange(t_create_from, 0);
@@ -1323,7 +1346,7 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         // that code's own create; any other create is judged by its place.
         const std::uint64_t shooter = std::exchange(t_shooter, 0);
         const bool shot = e.from != 0 && e.from == CoopRuntime::MainBase() + kShootCreateReturn;
-        t_create_stop = !t_own_call && name[0] != 0 &&
+        t_create_stop = !CoopActorEvents::Ours(t_own_call, t_copy_game) && name[0] != 0 &&
                         (CoopEnemyShots::StopAtCreate(name, {place[0], place[1], place[2]}, shot ? shooter : 0) ||
                          // Native boss sync: a copy boss's own minion (the owner's comes as a copy).
                          CoopBossNative::TheTable().CopyMakes(CoopObjects::MinionMaker(name)));
@@ -1343,7 +1366,7 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
     case HOS_COOP_WORLD_DELETE_REQUEST: {
         CoopActorEvents::Event e;
         e.kind = CoopActorEvents::Kind::Delete;
-        e.flags = t_own_call ? CoopActorEvents::kOwn : 0;
+        e.flags = CoopActorEvents::Ours(t_own_call, t_copy_game) ? CoopActorEvents::kOwn : 0;
         e.a = a;
         e.b = b;
         CoopActorEvents::TheRing().Push(e);

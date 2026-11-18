@@ -16,7 +16,7 @@ The randomizer is **off** until the host turns it on. Each game builds the seed 
 3. Choose the world:
    - **Seed**: leave it empty for a new one, or type a seed word to play a seed again.
    - **Settings**: **default** or **keysanity** (the two presets the kit's OOTRR builds).
-   - Or **Settings string**: paste a string from OOTRR's page (it starts with `OOTRR1-`). It replaces Settings.
+   - Or **Settings string**: copy a string from OOTRR's page (it starts with `OOTRR1-`), select the **Settings string** row, and press **Left** or **Right** on a pad (the hint at the bottom says **Paste**) or click the sides of the row. The row takes the whole clipboard at once (line breaks and spaces at the ends are dropped; a string longer than the row takes is refused, never cut). On a keyboard you can also press Enter on the row and **Ctrl+V** (or Shift+Insert) while typing. A long string shows its start and its end (`OOTRR1-EYAQ...HIHE`); while typing it shows the end and a line under it counts the characters, so you can check it. It replaces Settings.
 4. The chat says "Randomizer on: keep the game open until this chat says the seed is ready ...". **Keep the game open** for about a minute.
 5. The chat says "Randomizer seed X is ready: RESTART the game now and start a NEW save". Close the game and start it again.
 6. Host the session (Multiplayer tab), then start a **New Game**. An old save plays on, but its chests are not this seed's.

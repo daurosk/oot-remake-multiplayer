@@ -419,6 +419,17 @@ const GroupPart* PartOf(std::string_view name);
 // A boss or mini-boss on its own (Enemy_DungeonBoss_*, Enemy_MiddleBoss_*,
 // and the roots of boss groups); never a picture book _Dictionary actor.
 bool IsBoss(std::string_view name);
+// A plain enemy whose copy takes its owner's brain and action verbs as a boss's does (CoopBossNative,
+// Boss::plain; fable-g4-enemies): every Enemy_ that is no boss, except the ones each game runs of its own
+// (IsOwnPuzzle: the scrub puzzles and shops), an enemy's shot (CoopEnemyShots: made by the shooter's game) and
+// the picture book's _Dictionary actors. Never an Npc_ (a guard is handed over on its own reaction, issue 191;
+// a townsperson has its own sync), a fish or a world object. Of these, only one with a BSA component is
+// published (a part with none follows its root as before).
+bool OnBrainPath(std::string_view name);
+// LICHII_COOP_ENEMY_BRAIN's text (empty when unset): the brain path is opt-in, on only for a value other than
+// "0". Unset or empty leaves every plain enemy on the old path (the first g4-enemies probe ran it on everywhere,
+// its switch read as on-unless-0).
+bool EnemyBrainSwitch(std::string_view value);
 
 // enemy-anim-b: an actor whose slot 0 is sent and set by its playing frame
 // (AS slot +0x10c, what the game's getter 0x37b5e70 reads): townspeople
@@ -427,6 +438,10 @@ bool IsBoss(std::string_view name);
 // their frame was never corrected (owner's Deku Tree run, 2026-11-14).
 // Bosses keep +0xe8 for all their slots (issue 150, tested that way).
 bool PlaysByFrame(std::string_view name);
+// jitter-b / issue 239: a copy whose place the Mover follows each game frame (coop_follow.h) by the
+// velocity it came with: townspeople (Npc_) and every enemy (Enemy_: plain, mid-boss, boss and their parts),
+// never a picture book _Dictionary actor. Everything else is written where it is, as before.
+bool FollowedEachFrame(std::string_view name);
 
 // An actor whose life is never written (the owner's native rule): an enemy or a boss, and any actor whose name
 // we do not know (fail safe).
@@ -792,6 +807,12 @@ public:
     // `name` is what the copy's own AI played (a guard is taken only for an
     // IsGuardReaction one).
     void NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string_view name = {});
+    // Issue 101 on the enemies' brain path (CoopBossNative::Table::TakeOwnWants): a plain enemy copy whose own
+    // brain asked for another phase than its owner's (skipped: the copy plays the owner's, so neither its
+    // animation nor a pull towards our Link shows it). Near our Link (kWakeM) it chases us as a put-back one
+    // does (kWakeLatchUs): OBJECT_PRESENT flags it targeting and the server hands it over, never while its
+    // owner's game fights it (in_fight, the owner's Link nearer). Present thread.
+    void NoteOwnBrainWant(std::uint64_t address, std::uint64_t now_us);
     static constexpr std::uint64_t kWakeLatchUs = 1'200'000;
     // Player report 109 (Deku Babas slow to come out, then stuck upright): a
     // copy's own AI that wakes for our Link (it rises out of the ground) had
@@ -811,6 +832,10 @@ public:
     // Present thread: copies whose own wake play the Mover put back, with
     // that play, to give back once at the next game frame.
     std::vector<std::pair<std::uint64_t, std::string>> TakeOwnWakes() { return std::exchange(own_wakes_, {}); }
+    // Present thread: the copies whose own wake began since the last call (every one, also those with no play
+    // to give back). With the enemies' brain path (CoopBossNative, Boss::plain) the copy's own brain is let
+    // run for the wake (NoteOwnWake): the rise is its brain's, not a play put back.
+    std::vector<std::uint64_t> TakeOwnWakeStarts() { return std::exchange(own_wake_starts_, {}); }
     // The owner side flags a woken enemy only this long after it left its
     // rest animation, so an enemy that patrols or flies near its owner's
     // Link is not held in a fight for good (that would stop the chase rule).
@@ -1053,6 +1078,7 @@ private:
         std::uint64_t woke_at = 0;  // left its rest animation (0 = resting)
         std::uint64_t took_over_at = 0;  // issue 157: its own AI's play put back (NoteTakeover)
         std::string took_over_name;      // ... and what it was (a guard's, issue 191)
+        std::uint64_t brain_want_at = 0; // issue 101: its own brain asked for another phase (NoteOwnBrainWant)
         // Report 109: its own wake (kOwnWakeUs) began then, over the owner's animation `own_wake_over`.
         std::uint64_t own_wake_at = 0;
         std::string own_wake_over;
@@ -1198,6 +1224,7 @@ private:
     std::map<std::uint64_t, Object> objects_;  // by actor address
     std::vector<std::uint64_t> ours_now_;     // copies that became ours (TakeOursNow)
     std::vector<std::pair<std::uint64_t, std::string>> own_wakes_;  // report 109 (TakeOwnWakes)
+    std::vector<std::uint64_t> own_wake_starts_;                    // (TakeOwnWakeStarts)
     std::map<std::uint64_t, Decided> decided_;  // by director key
     // Report 99: late encounters other games announced that we lack, held
     // until our Link is near (IsLateEncounter). By id; first heard at got_us,

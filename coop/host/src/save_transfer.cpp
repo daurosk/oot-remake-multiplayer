@@ -291,6 +291,18 @@ void note_part(GuestSession& s, std::uint32_t transfer_id, std::uint64_t now_us)
   s.said_stuck = false;
 }
 
+void note_write_failed(GuestSession& s) {
+  s.unwritten.reset();
+  s.ready = false;
+  s.gave_up = true;   // stops give_up_due and "coming"; a new transfer (note_part) clears it
+}
+
+bool save_coming(const GuestSession& s, std::uint64_t now_us, std::uint64_t stuck_us) {
+  const auto& a = s.assembler;
+  return s.unwritten.has_value() || (a.received() != 0 && a.received() < a.count() && now_us - s.last_part_us < stuck_us) ||
+         (s.asked && !s.ready && !s.no_save && !s.gave_up);
+}
+
 bool give_up_due(const GuestSession& s, std::uint64_t now_us) {
   return !s.gave_up && s.asks >= kGuestMaxAsks && ask_again(s, now_us);
 }

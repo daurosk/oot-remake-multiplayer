@@ -613,6 +613,9 @@ class Session {
     std::uint8_t last_owner = 0;  // the player who owned it before, 0: none
     // The owner before the last change, for a kill that crossed it.
     std::optional<ConnectionId> previous_owner;
+    // Every player who gave it up, and when (report 138: with 3 or 4 players
+    // an enemy went round P2, P3, P4, P2 ... when only the last one was kept).
+    std::map<ConnectionId, std::uint64_t> gave_up;
     std::uint64_t changed_at = 0;  // the last change of owner; 0: never
     // The last state relayed from its owner, for a hand-over with no answer
     // and for a player who enters the scene later.
@@ -791,6 +794,10 @@ class Session {
   // dead.
   std::optional<ConnectionId> best_other(const Object& o, std::optional<ConnectionId> except,
                                          bool fit_only, std::uint64_t now_us) const;
+  // Who takes `o` when its owner `except` lets go: best_other, a fit player
+  // first (report 138).
+  std::optional<ConnectionId> next_owner(const Object& o, ConnectionId except,
+                                         std::uint64_t now_us) const;
   // Joined, in the object's scene and with it loaded.
   bool has_loaded(ConnectionId id, const Object& o) const;
   // Metres from the player's Link to the object; none when either place is
@@ -802,7 +809,10 @@ class Session {
   bool in_fight(const Object& o, std::uint64_t now_us) const;
   // The owner hit it itself within boss_owner_hit_hold_us (issue 150).
   bool owner_hit_lately(const Object& o, std::uint64_t now_us) const;
-  // `to` gave `o` up less than handover_back_us ago: not handed back yet (counted).
+  // Not handed to `to` yet (counted): `to` gave `o` up less than
+  // handover_back_us ago (any player who did, report 138), or `o` changed
+  // owner that lately and its owner still stands within handover_chase_m of
+  // it (the sticky target, report 138 / row 71).
   bool hands_back_soon(const Object& o, ConnectionId to, std::uint64_t now_us);
   // The game that has said longest (at least handover_chased_us) that its
   // copy of `o`, or of one of its members, chases its Link; not the owner.

@@ -257,13 +257,30 @@ foreach ($f in 'ainb.py', 'build.py', '__init__.py', 'byml.py', 'dumpcheck.py', 
 }
 # Every module build.py imports must be in the kit, or the pack is never made on the players' PCs: one the list
 # above misses is copied too (a new import never breaks the kit), and one not in the repo stops the build.
-foreach ($line in (Get-Content (Join-Path $packTool 'build.py') | Where-Object { $_ -match '^\s*from \. import ' })) {
-    foreach ($m in (($line -replace '#.*$', '') -replace '^\s*from \. import ', '').Split(',')) {
-        $m = $m.Trim()
-        if (-not $m -or (Test-Path (Join-Path $kit "tools\puppet_pack\$m.py"))) { continue }
-        if (-not (Test-Path (Join-Path $packTool "$m.py"))) { throw "make_kit: tools\puppet_pack\$m.py (imported by build.py) is not in the repo" }
-        Copy-Text (Join-Path $packTool "$m.py") (Join-Path $kit "tools\puppet_pack\$m.py")
+# Followed through the modules they import too (title_menu.py -> ui_pack.py -> msbt.py).
+$packQueue = [System.Collections.Generic.Queue[string]]::new()
+$packQueue.Enqueue('build.py')
+$packQueue.Enqueue('title_menu.py')
+$packSeen = @{}
+while ($packQueue.Count -gt 0) {
+    $f = $packQueue.Dequeue()
+    if ($packSeen.ContainsKey($f)) { continue }
+    $packSeen[$f] = $true
+    if (-not (Test-Path (Join-Path $packTool $f))) { throw "make_kit: tools\puppet_pack\$f (imported by build.py's modules) is not in the repo" }
+    if (-not (Test-Path (Join-Path $kit "tools\puppet_pack\$f"))) { Copy-Text (Join-Path $packTool $f) (Join-Path $kit "tools\puppet_pack\$f") }
+    foreach ($line in (Get-Content (Join-Path $packTool $f))) {
+        $code = $line -replace '#.*$', ''
+        if ($code -match '^\s*from \.(\w+) import ') { $packQueue.Enqueue("$($Matches[1]).py") }
+        elseif ($code -match '^\s*from \. import (.+)$') {
+            foreach ($m in $Matches[1].Split(',')) {
+                $packModule = ($m.Trim() -split '\s+')[0]   # (from . import texture as tx; not $name: the kit's own)
+                if ($packModule) { $packQueue.Enqueue("$packModule.py") }
+            }
+        }
     }
+}
+foreach ($s in (Get-ChildItem -LiteralPath (Join-Path $packTool 'strings') -Filter '*.txt')) {
+    Copy-Text $s.FullName (Join-Path $kit "tools\puppet_pack\strings\$($s.Name)")
 }
 
 # Optionally a Python for it.

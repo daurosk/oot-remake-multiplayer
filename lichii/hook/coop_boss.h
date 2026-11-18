@@ -136,6 +136,10 @@ struct Actions {
     std::vector<std::string> log;
     // Our own game's event in the boss room, as these rules read it (no name needed): the intro began here, or
     // the boss was beaten here (only when the walk read the boss gone, not a guess from a long event). The area rules (coop_boss_scenes) take them when no request named the event.
+    // intro_here comes only once we are past the door (issue 148): the room's shut-in flag where it has one,
+    // else our event in the room still running after kMinIntroUs, or moved in; never at the first event in
+    // the room's circle (that circle takes in the way to the door, so a door's event there pulled the others
+    // in through the area rules while the leader still stood outside).
     const Room* intro_here = nullptr;
     const Room* beaten_here = nullptr;
     // Chat lines for the players left in a boss room (player report #50): another player who was past
@@ -262,6 +266,8 @@ private:
     std::uint64_t skip_since_ = 0;
     bool event_ = false;  // last Tick's event
     bool committed_ = false;  // we are past the door: shut in, or our intro is over (issue 148)
+    // Our intro was told to the area rules (Actions::intro_here): only once past the door (issue 148).
+    bool intro_told_ = false;
     std::uint64_t last_now_ = 0;  // the clock never goes back (server time can)
     std::optional<std::string> scene_;  // the scene of the last Tick with one
     std::vector<std::uint8_t> defeated_;  // rooms beaten while we were in this scene

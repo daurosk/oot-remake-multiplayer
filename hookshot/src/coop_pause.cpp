@@ -836,9 +836,21 @@ bool Picture(int tab, HosCoopMenuPicture* out) {
     return !shapes.empty();
 }
 
+// The Mods tab's paste: the clipboard (PasteThen: on Linux it may come a few frames later, then on Tick) goes to
+// the field that asked, if the player is still on it (Tab::Paste drops it otherwise). Under g_mutex, as the
+// Multiplayer tab's own paste is; the tab's own lock is taken inside, never the other way round.
+static void ModsPaste(bool into_typing) {
+    std::lock_guard lock(g_mutex);
+    PasteThen([into_typing](std::optional<std::string> clip) { CoopModsTab::Paste(clip, into_typing); });
+}
+
 bool Input(int tab, int event, int arg, int arg2) {
     if (tab == kModsTab) {
-        return CoopModsTab::MenuInput(event, arg, arg2);
+        const bool taken = CoopModsTab::MenuInput(event, arg, arg2);
+        if (CoopModsTab::TakePasteRequest()) {   // a text row's Paste (pad: Left / Right; mouse: its sides)
+            ModsPaste(false);
+        }
+        return taken;
     }
     if (tab == kLobbyTab) {
         return CoopLobbyTab::MenuInput(event, arg, arg2);
@@ -899,6 +911,15 @@ static std::pair<bool, bool> Modifiers() {
 }
 
 bool Key(std::uint32_t vk, bool repeat) {
+    if (CoopModsTab::KeysTaken()) {   // Ctrl+V / Shift+Insert into the Mods tab's text field, as on the Join page
+        const auto [ctrl_down, shift_down] = Modifiers();
+        if ((vk == 'V' && ctrl_down) || (vk == 0x2D && shift_down && !ctrl_down)) {
+            if (!repeat) {
+                ModsPaste(true);
+            }
+            return true;
+        }
+    }
     if (CoopModsTab::Key(vk, repeat)) {  // the Mods tab's text field, while it is typed into
         return true;
     }

@@ -1592,3 +1592,93 @@ TEST_CASE("rando: a settings string seed's settings.txt is that string, and an O
         CHECK(w.runs.size() == 2);  // settings.txt is there: nothing made again
     }
 }
+
+namespace {
+const fs::path kActors = fs::path("romfs") / "RSDB" / "ActorInfo.Product.111.rstbl.byml.zs";
+
+void MarkRows(const fs::path& mods, const std::string& mod) {
+    Put(mods / mod / kRowsFile, "coop-rows 1\r\ntable " + kActors.filename().string() + " " +
+                                    Fnv64Hex(Get(mods / mod / kActors)) + " " +
+                                    Fnv64Hex(Get(mods / kPackFolder / kActors)) + "\r\n");
+}
+}  // namespace
+
+TEST_CASE("rando: a mod whose actor table wins without the pack's rows is found (player report 144/145)") {
+    World w;
+    Put(w.mods / kPackFolder / kActors, "game rows + CoopPuppet rows");
+    Put(w.mods / "randomizer-S1" / kActors, "game rows, the seed's changes");
+    Put(w.mods / "aaa-textures" / kActors, "early");
+    CHECK(PackActorTables(w.mods) == std::vector<std::string>{kActors.filename().string()});
+    using Order = std::vector<std::string>;
+    const std::string pack = "contents\\0400486024DEC000\\coop-puppet";
+    // Our seeds count too: OOTRR builds their actor tables from the game's, not the pack's.
+    const Order seed_last{pack, "randomizer-S1"};
+    const auto missing = OutsideActorRows(w.mods, {}, &seed_last);
+    REQUIRE(missing);
+    CHECK(missing->first == "randomizer-S1");
+    CHECK(missing->second == kActors.filename().string());
+    const Order pack_last{"randomizer-S1", pack};
+    CHECK_FALSE(OutsideActorRows(w.mods, {}, &pack_last));
+    const Order only_pack{pack};
+    CHECK_FALSE(OutsideActorRows(w.mods, {}, &only_pack));
+    // Hookshot's own order (no list): by name, the last wins; under the pack the pack's wins.
+    CHECK(OutsideActorRows(w.mods, {Indexed("randomizer-S1")}, nullptr));
+    CHECK_FALSE(OutsideActorRows(w.mods, {Indexed("aaa-textures")}, nullptr));
+    // The kit's start merged the rows in: trusted while both files are still those bytes.
+    MarkRows(w.mods, "randomizer-S1");
+    CHECK(RowsMergedByKit(w.mods, "randomizer-S1", kActors.filename().string()));
+    CHECK_FALSE(OutsideActorRows(w.mods, {}, &seed_last));
+    Put(w.mods / kPackFolder / kActors, "the pack made again");
+    CHECK_FALSE(RowsMergedByKit(w.mods, "randomizer-S1", kActors.filename().string()));
+    CHECK(OutsideActorRows(w.mods, {}, &seed_last));
+    MarkRows(w.mods, "randomizer-S1");
+    Put(w.mods / "randomizer-S1" / kActors, "a new seed put in");
+    CHECK(OutsideActorRows(w.mods, {}, &seed_last));
+    // No pack table of that kind: nothing to carry.
+    fs::remove(w.mods / kPackFolder / kActors);
+    CHECK_FALSE(OutsideActorRows(w.mods, {}, &seed_last));
+}
+
+TEST_CASE("rando: a run whose actor table lacks the pack's rows holds the pack and says why in the chat") {
+    World w;
+    Put(w.mods / kPackFolder / kActors, "game rows + CoopPuppet rows");
+    Put(w.mods / "randomizer-S1" / kActors, "game rows, the seed's changes");
+    PlaysSeed(w, "randomizer-S1", 7);
+    {
+        CoopMods::Loader loader(w.mods, {nullptr, 7, nullptr});
+        loader.Start();
+        Rando rando(loader, w.Hooks());
+        rando.Start();
+        rando.Wait();
+        CHECK(rando.RowsMissing());
+        CHECK(rando.HoldPack());  // (the others show as fairies, not as nothing)
+        const std::string line = ChatSafe(RowsLine("randomizer-S1", kActors.filename().string()), 300);
+        CHECK(line.find("\"randomizer-S1\" has its own ActorInfo table") != std::string::npos);
+        CHECK(Count(rando.TakeLines(), line) == 1);
+        CHECK(RowsLine(std::string(80, 'x'), "ActorInfo.Product.111.rstbl.byml.zs").size() <= 300);
+    }
+    MarkRows(w.mods, "randomizer-S1");
+    {
+        CoopMods::Loader loader(w.mods, {nullptr, 7, nullptr});
+        loader.Start();
+        Rando rando(loader, w.Hooks());
+        rando.Start();
+        rando.Wait();
+        CHECK_FALSE(rando.RowsMissing());
+    }
+}
+
+TEST_CASE("rando: a refreshed seed gets its own actor tables back and loses the kit mark") {
+    World w;
+    const fs::path seed = w.mods / "randomizer-S1";
+    Put(seed / kActors, "merged by the kit");
+    Put(seed / "_coop-rows" / kActors.filename(), "the seed own");
+    Put(seed / "_coop-rows" / (kActors.filename().string() + ".txt"), "coop-rows 1");
+    Put(seed / kRowsFile, "coop-rows 1");
+    CHECK(PutBackKeptRows(seed) == 1);
+    CHECK(Get(seed / kActors) == "the seed own");
+    CHECK_FALSE(fs::exists(seed / kRowsFile));
+    CHECK_FALSE(fs::exists(seed / "_coop-rows"));
+    CHECK(PutBackKeptRows(seed) == 0);  // (nothing kept: nothing to do)
+    CHECK(Get(seed / kActors) == "the seed own");
+}

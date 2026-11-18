@@ -214,6 +214,7 @@ void Sync::Reset() {
     phase_ = Phase::none;
     entered_at_ = sent_at_ = intro_at_ = skip_at_ = skip_since_ = 0;
     committed_ = false;
+    intro_told_ = false;
     skip_asked_ = false;
     event_ = false;
     last_now_ = 0;
@@ -306,7 +307,8 @@ void Sync::Commit(Actions& out, const char* why) {
     committed_ = true;
     const bool fight = phase_ == Phase::fight || phase_ == Phase::outro;
     Say(out, *here_, fight ? proto::BossState::intro_end : proto::BossState::intro_start);
-    if (!fight) {
+    if (!fight && !intro_told_) {
+        intro_told_ = true;
         out.intro_here = here_;  // past the door during our intro: it is the boss's (a door before it is not)
     }
     out.log.push_back(std::string("past the door (") + why + "): the others are moved in");
@@ -420,6 +422,7 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
         intro_at_ = 0;
         skip_asked_ = false;
         committed_ = false;
+        intro_told_ = false;
         phase_ = Phase::none;
         if (here_ != nullptr) {
             pulls_ = 0;
@@ -436,7 +439,6 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
                 if (local.event) {  // came in with an event running: that is the intro
                     phase_ = Phase::intro;
                     intro_at_ = now_us;
-                    out.intro_here = here_;
                     out.log.push_back("intro started (" + std::string(here_->intro) + ")");
                     if (moved_in) {
                         Commit(out, "moved in");
@@ -479,6 +481,15 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
             }
             break;
         case Phase::intro:
+            // A room with no shut-in flag: our event, still running after kMinIntroUs, is the intro (a door's
+            // event is shorter). Told to the area rules while it runs, so they see it end (issue 148). A room
+            // with the flag tells it at Commit("shut in") instead.
+            if (local.event && !intro_told_ && !local.shut_in.has_value() && now_us - intro_at_ >= kMinIntroUs) {
+                intro_told_ = true;
+                out.intro_here = here_;
+                out.log.push_back("our event here ran " + std::to_string(kMinIntroUs / 1'000'000) +
+                                  " s: the intro (" + std::string(here_->intro) + ")");
+            }
             if (fell) {
                 // Past the door? The game's shut-in flag where the room has
                 // one; else an intro long enough (or skipped to follow).
@@ -515,7 +526,6 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
                 // boss's death).
                 phase_ = Phase::intro;
                 intro_at_ = now_us;
-                out.intro_here = here_;
                 out.log.push_back("intro started (" + std::string(here_->intro) + ", after the wait)");
             } else if (rose && now_us - fight_at_ < kMinFightUs) {
                 out.log.push_back("an event right after the intro: the rest of it, not the boss's death");

@@ -298,6 +298,10 @@ struct Call {
     std::array<std::uint64_t, 8> x{};    // x0 to x7
     std::array<std::uint64_t, 4> stack{};// what the function sees at sp
     float s0 = 0.0f;                     // the first float argument
+    // The call runs a copy's own game code (its AI: the native boss sync's brain and action calls): what the game
+    // creates or deletes inside it is the game's own doing, judged as any (a copy enemy's own shot or minion is
+    // stopped), not the module's own (CoopActorEvents::Ours).
+    bool copy_game = false;
 };
 
 // A remote player's animation, as PLAYER_SAMPLE field 7 carries it.

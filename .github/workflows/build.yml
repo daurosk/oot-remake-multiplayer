@@ -130,6 +130,10 @@ jobs:
         run: python tools/puppet_pack/tests/test_puppet_pack.py -v
       - name: Title menu rows tests
         run: python tools/puppet_pack/tests/test_title_menu.py -v
+      - name: UI pack library tests (parts, labels, strings files)
+        run: python tools/puppet_pack/tests/test_ui_pack.py -v
+      - name: Pause menu Multiplayer tab and page tests
+        run: python tools/puppet_pack/tests/test_pause_menu.py -v
       - name: Difficulty designed enemies tests
         run: python tools/puppet_pack/tests/test_designed_enemies.py -v
       - name: Difficulty extra enemy spots tests

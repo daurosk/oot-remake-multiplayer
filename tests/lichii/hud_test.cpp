@@ -74,3 +74,93 @@ TEST_CASE("layout: player blocks start below the game's own top-left HUD") {
     CHECK(BlocksTop(1280, 1000) == doctest::Approx(140 + 0.38 * 720));
     CHECK(BlocksTop(0, 720) == 0.0);
 }
+
+namespace {
+// A pane at (tx, ty) in the layout's units (y up from the middle) at `scale`, as the game's global matrix holds it.
+CoopHudLayout::HudPiece PaneAt(float tx, float ty, float w, float h, float alpha = 1.0f, float scale = 1.0f) {
+    float m[12] = {};
+    m[0] = scale, m[4] = scale, m[8] = 1.0f, m[9] = tx, m[10] = ty;
+    return CoopHudLayout::Centred(m, alpha, w, h);
+}
+// The d-pad's bottom slot (257.387 square at -1764,166 in Pa_GuideCross_00), the part at (tx, ty).
+CoopHudLayout::HudPiece DpadAt(float tx, float ty, float alpha = 1.0f, float scale = 1.0f) {
+    auto p = PaneAt(tx, ty, 257.387f, 257.387f, alpha, scale);
+    p.x0 += -1764, p.x1 += -1764, p.y0 += 166, p.y1 += 166;
+    return p;
+}
+// The bottom of a slot's box from the top of the 2160-unit layout, as a fraction.
+double SlotBottom(double ty, double scale = 1.0) {
+    return (1080.0 - (ty + scale * (166.0 - 257.387 / 2))) / 2160.0;
+}
+}  // namespace
+
+TEST_CASE("layout row 141: the game's HUD bottom from its panes, the d-pad's bottom slot the lowest") {
+    using CoopHudLayout::HudBottom;
+    // PlayerStatus_00 as laid out with one heart row and no magic bar: hearts at -1140,896 (1300 x 212), the d-pad
+    // part at 132,318: its bottom slot ends at 0.336 of the height, the hearts at 0.134.
+    const auto hearts = PaneAt(-1140, 896, 1300, 212);
+    const auto one_row = HudBottom({hearts, DpadAt(132, 318)});
+    REQUIRE(one_row);
+    CHECK(*one_row == doctest::Approx(SlotBottom(318)));
+    CHECK(*one_row == doctest::Approx(0.3355).epsilon(0.002));
+    // Two heart rows and the magic bar push N_HeartPos_00 / N_MpGauge_00 down: the d-pad with them. The fixed top
+    // (0.38) would be over its bottom slot: the owner's screenshot. The blocks now start under it.
+    const auto lower = HudBottom({hearts, PaneAt(-1560, 760, 1256, 155.2f), DpadAt(132, 180)});
+    REQUIRE(lower);
+    CHECK(*lower == doctest::Approx(SlotBottom(180)));
+    CHECK(*lower > CoopHudLayout::kBlocksTop);
+    CHECK(CoopHudLayout::TopFraction(lower) == doctest::Approx(*lower + CoopHudLayout::kGap));
+    // The Stone of Agony's icon under the d-pad counts while shown, not while faded out.
+    CHECK(*HudBottom({DpadAt(132, 318), PaneAt(-1632, 294, 200, 200)}) == doctest::Approx((1080.0 - 194.0) / 2160.0));
+    CHECK(*HudBottom({DpadAt(132, 318), PaneAt(-1632, 294, 200, 200, 0.0f)}) == doctest::Approx(SlotBottom(318)));
+    // The d-pad hidden (alpha 0): the magic bar's bottom.
+    CHECK(*HudBottom({hearts, PaneAt(-1560, 760, 1256, 155.2f), DpadAt(132, 180, 0.0f)}) ==
+          doctest::Approx((1080.0 - (760.0 - 77.6)) / 2160.0));
+    // A smaller HUD (its scale nodes at 0.75): the slot's offset and size scale with it.
+    CHECK(*HudBottom({DpadAt(100, 300, 1.0f, 0.75f)}) == doctest::Approx(SlotBottom(300, 0.75)));
+}
+
+TEST_CASE("layout row 141: no HUD reading (all faded, nothing found, a bad matrix) keeps the fixed top") {
+    using CoopHudLayout::HudBottom;
+    using CoopHudLayout::TopFraction;
+    CHECK_FALSE(HudBottom({}));
+    CHECK_FALSE(HudBottom({DpadAt(132, 318, 0.0f), PaneAt(-1140, 896, 1300, 212, 0.0f)}));   // a cutscene: faded out
+    auto nan = DpadAt(132, 318);
+    nan.m[10] = std::nanf("");
+    CHECK_FALSE(HudBottom({nan}));
+    CHECK_FALSE(HudBottom({DpadAt(132, 318, 1.0f, 0.0f)}));   // a scale of 0: not placed yet
+    CHECK(TopFraction(std::nullopt) == CoopHudLayout::kBlocksTop);
+    CHECK(TopFraction(0.95) == CoopHudLayout::kBlocksTop);    // not a believable HUD
+    CHECK(TopFraction(0.01) == CoopHudLayout::kBlocksTop);
+    CHECK(TopFraction(0.30) == doctest::Approx(0.32));
+}
+
+TEST_CASE("layout row 141: the last reading holds while the HUD cannot be read") {
+    CoopHudLayout::Hold hold;
+    CHECK_FALSE(hold.Update(std::nullopt));          // nothing read yet: the fixed top
+    CHECK(*hold.Update(0.34) == doctest::Approx(0.34));
+    CHECK(*hold.Update(std::nullopt) == doctest::Approx(0.34));   // a menu or cutscene: the blocks stay
+    CHECK(*hold.Update(0.44) == doctest::Approx(0.44));           // a heart container later: the new bottom
+}
+
+TEST_CASE("layout row 141: the HUD's top in any window: 16:9, ultrawide, 4:3, small") {
+    using CoopHudLayout::BlocksTop;
+    const double top = 0.44 + CoopHudLayout::kGap;
+    CHECK(BlocksTop(1280, 720, 0.44) == doctest::Approx(top * 720));
+    CHECK(BlocksTop(1920, 1080, 0.44) == doctest::Approx(top * 1080));
+    CHECK(BlocksTop(2560, 1080, 0.44) == doctest::Approx(top * 1080));          // ultrawide: pillarboxed
+    CHECK(BlocksTop(1024, 768, 0.44) == doctest::Approx(96 + top * 576));       // 4:3: letterboxed
+    CHECK(BlocksTop(320, 180, 0.44) == doctest::Approx(top * 180));             // a small window
+    CHECK(BlocksTop(1280, 720, std::nullopt) == doctest::Approx(0.38 * 720));   // unknown: as before
+}
+
+TEST_CASE("layout row 141: blocks that would run into the chat are left out, room kept for the '+N' line") {
+    using CoopHudLayout::BlocksThatFit;
+    const std::vector<double> h{100, 100, 100};
+    CHECK(BlocksThatFit(300, h, 700, 25) == 3);    // all fit (no '+N' line needed)
+    CHECK(BlocksThatFit(300, h, 600, 25) == 3);    // ending at the floor exactly: fits
+    CHECK(BlocksThatFit(300, h, 599, 25) == 2);    // 2 and the '+1' line: 525
+    CHECK(BlocksThatFit(300, h, 520, 25) == 1);    // 2 + the line would pass 520
+    CHECK(BlocksThatFit(300, h, 320, 25) == 0);    // only the '+3' line
+    CHECK(BlocksThatFit(300, {}, 100, 25) == 0);
+}

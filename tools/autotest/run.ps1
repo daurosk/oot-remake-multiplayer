@@ -273,7 +273,14 @@ if ($Runtime -eq 'hookshot') {
             foreach ($e in $switchList) { if ($e -match "^${x}:(.+?)=(.*)$") { $sw[$Matches[1]] = $Matches[2] } }
             $pack = Join-Path $pair 'mods\contents\0400486024DEC000\coop-puppet'
             if (-not (Test-Path -LiteralPath (Join-Path $pack 'coop_puppet.json'))) { continue }
-            $selfArgs = @('-I', (Join-Path (Split-Path $here) 'puppet_pack\self_tunic.py'), '--pack', $pack,
+            $selfTool = Join-Path (Split-Path $here) 'puppet_pack\self_tunic.py'
+            if (-not (Test-Path -LiteralPath $selfTool)) {
+                # bigrun-0115 ran a copy of tools\autotest alone: the tool was missing, the game kept the green files
+                # and hs-tunic's own colour failed with "the puppet pack's tunic files are green, your colour is blue".
+                Write-Warning "hookshot: game $x's own tunic files NOT set: $selfTool is missing (copy tools\puppet_pack beside tools\autotest)"
+                continue
+            }
+            $selfArgs = @('-I', $selfTool, '--pack', $pack,
                 "--color=$($sw['LICHII_COOP_COLOR'])", "--tunics=$($sw['LICHII_COOP_TUNICS'])",   # (=: PowerShell drops an empty argument)
                 '--options', (Join-Path $pair 'coop-options.ini'), '--coop-ini', (Join-Path $pair 'coop.ini'))
             $got = (& $py[0] @pyArgs @selfArgs | Out-String).Trim()

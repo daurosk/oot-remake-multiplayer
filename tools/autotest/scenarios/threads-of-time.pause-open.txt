@@ -1,6 +1,9 @@
-# threads-of-time: opens the pause menu (PLUS), steps right through the tabs (R) with a shot of
-# each, then back (L) and closes it. Threads of Time is one of the tabs.
-press PLUS
+# threads-of-time: opens the Minus menu, where Threads of Time lives (category 1 ChallengeLog, with the map
+# and the Important page: docs/game-ui.md "the categories"; the game's own notice says "Open Threads of Time
+# [M]"), and takes a shot of every page. Before big-run-0115 this opened the PLUS menu (Collection,
+# Equipment, Items, System), which never holds the Threads of Time page, so no shot could show it.
+# Pages: R twice to the right end, then L to the left end (no wrap), a shot on each step.
+press MINUS
 wait 240
 mark tot-b-open-0
 press R
@@ -9,19 +12,15 @@ mark tot-b-open-1
 press R
 wait 90
 mark tot-b-open-2
-press R
+press L
+wait 90
+press L
 wait 90
 mark tot-b-open-3
-press R
+press L
 wait 90
 mark tot-b-open-4
-press L
-wait 30
-press L
-wait 30
-press L
-wait 30
-press L
-wait 60
-press PLUS
+press MINUS             # close it
+wait 120
+press B                 # in case Minus did not close it
 wait 120

@@ -160,6 +160,7 @@ void Table::Publish(const std::vector<Boss>& bosses) {
                 }
                 e.wanted.reset();
                 e.due.clear();
+                e.asking = Entry::Asking::none;
                 e.queued_seq = 0;
                 e.drift = 0;
                 e.drift_fixes = 0;
@@ -181,10 +182,22 @@ void Table::Publish(const std::vector<Boss>& bosses) {
         e.role = b.role;
         e.name = b.name;
         e.owner = b.owner;
-        e.life_component = b.life_component;
-        e.dying = Dying(b.name);
-        if (e.dying && b.role == Role::copy) {
-            AddDyingLife(b.life_component);
+        e.life_component = b.plain ? 0 : b.life_component;
+        e.plain = b.plain;
+        if (b.plain) {
+            // A plain enemy's death is its own game's from its first frame: no boss glue names it.
+            if (b.own_death && !e.dying && b.role == Role::copy) {
+                if (e.wanted && !event_ && steps_ >= e.react_until) {
+                    MakeLate(e);  // its death's first changes, skipped a moment ago
+                }
+                ++counts_.plain_deaths;
+            }
+            e.dying = b.own_death;
+        } else {
+            e.dying = Dying(b.name);
+            if (e.dying && b.role == Role::copy) {
+                AddDyingLife(b.life_component);
+            }
         }
         next.emplace(b.bsa, std::move(e));
     }
@@ -196,8 +209,9 @@ void Table::Publish(const std::vector<Boss>& bosses) {
     std::array<std::uint64_t, kMaxHeld> want{};
     std::size_t n = 0;
     for (const Boss& b : bosses) {
-        if (b.role != Role::copy || b.life_component == 0 || (b.life_component & kReleased) != 0 || n == kMaxHeld) {
-            continue;
+        if (b.plain || b.role != Role::copy || b.life_component == 0 || (b.life_component & kReleased) != 0 ||
+            n == kMaxHeld) {
+            continue;  // (a plain enemy's Life is never held: the Sync shares its kills)
         }
         want[n++] = b.life_component | (b.owner_dead || Dying(b.name) ? kReleased : 0);
     }
@@ -317,6 +331,12 @@ bool Table::OnBrainVerb(std::uint64_t bsa, std::int32_t verb, bool force, bool o
     }
     Keep(*e, BossBrain{verb, force});
     ++counts_.copy_skipped;
+    if (e->plain && verb != e->wanted->brain_verb) {
+        ++counts_.plain_wants;
+        if (wants_.size() < kMaxWants && std::find(wants_.begin(), wants_.end(), e->actor) == wants_.end()) {
+            wants_.push_back(e->actor);
+        }
+    }
     return true;
 }
 
@@ -378,6 +398,10 @@ bool RunsOwnStart(std::string_view name) {
     return name.starts_with("Enemy_MiddleBoss_");
 }
 
+bool PlainDeath(std::optional<std::int32_t> life, bool owner_dead) {
+    return owner_dead || (life && *life <= 0);
+}
+
 bool Table::OwnTime(const Entry& e) const {
     return event_ || e.dying || steps_ < e.react_until;
 }
@@ -428,8 +452,8 @@ void Table::SetDying(std::vector<std::string> bodies) {
     }
     for (auto& [bsa, e] : by_bsa_) {
         const bool now = Dying(e.name);
-        if (now == e.dying) {
-            continue;
+        if (e.plain || now == e.dying) {
+            continue;  // (a plain enemy's death is Publish's own_death)
         }
         e.dying = now;
         if (e.role != Role::copy) {
@@ -499,6 +523,34 @@ void Table::NoteOwnHit(std::uint64_t actor) {
     e->react_until = std::max(e->react_until, steps_ + kReactSteps);
 }
 
+void Table::NoteOwnWake(std::uint64_t actor) {
+    std::lock_guard lock(mutex_);
+    Entry* e = FindActor(actor);
+    if (e == nullptr || !e->plain || e->role != Role::copy || !e->wanted) {
+        return;
+    }
+    if (!OwnTime(*e)) {
+        MakeLate(*e);
+        ++counts_.plain_wakes;
+        Note(e->name + ": its own wake for our Link: the copy's own brain runs for a moment");
+    }
+    e->react_until = std::max(e->react_until, steps_ + kWakeSteps);
+}
+
+bool Table::WakesOwnBrain(std::uint64_t actor) const {
+    std::lock_guard lock(mutex_);
+    if (!brain_on_) {
+        return false;
+    }
+    const Entry* e = FindActor(actor);
+    return e != nullptr && e->plain && e->role == Role::copy && e->wanted.has_value();
+}
+
+std::vector<std::uint64_t> Table::TakeOwnWants() {
+    std::lock_guard lock(mutex_);
+    return std::exchange(wants_, {});
+}
+
 void Table::Record(Entry& e, std::variant<BossBrain, BossAction> what) {
     ++e.mine.seq;
     e.mine.recent.push_back(BossChange{e.mine.seq, std::move(what)});
@@ -514,6 +566,9 @@ void Table::Resync(Entry& e, const BossBsa& state) {
     // again: a joiner or a resync starts the owner's current move over
     // (the game holds no "action now" we could compare with).
     e.due.clear();
+    if (e.asking == Entry::Asking::due) {
+        e.asking = Entry::Asking::none;  // (its asked change is gone: the call, if made, takes nothing out)
+    }
     e.due.push_back({BossChange{state.seq, BossBrain{state.brain_verb, true}}, true});
     if (actions_on_ && state.action) {
         e.due.push_back({BossChange{state.seq, *state.action}, true});
@@ -608,6 +663,139 @@ void Table::Receive(std::uint64_t actor, const BossBsa& state) {
     }
 }
 
+bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::uint64_t main_base,
+                    std::optional<CoopPuppet::Call>& call) {
+    if (e.role == Role::owner) {
+        // What we send as the brain now is what our game's boss is in
+        // (also right after we took the boss over from a copy).
+        // Not during our event: its verbs are the cutscene's; once it is
+        // over the verb it left goes out as a change.
+        std::int32_t own = 0;
+        if (!event_ && guest.Read(bsa + addr::kBsaBrainVerb, &own, sizeof own)) {
+            e.mine.brain_verb = own;
+            if (std::exchange(e.record_after_event, false)) {
+                Record(e, BossBrain{own, true});
+                ++counts_.owner_brain;
+            }
+        }
+        return false;
+    }
+    if (!e.wanted) {
+        return false;
+    }
+    if (OwnTime(e)) {
+        // Our event or our hit: the copy's own changes run; the ones it
+        // made a moment before we knew are made now, late.
+        e.held = true;
+        e.drift = 0;
+        if (!e.own_late.empty()) {
+            bool made = false;
+            auto c = Ask(guest, e, bsa, e.own_late.front(), main_base, &made);
+            if (made && !c) {
+                e.own_late.pop_front();  // (nothing to call: dropped)
+            } else if (made) {
+                e.asking = Entry::Asking::late;  // out of own_late once the call is made
+                pending_ = Pending::late;
+                pending_bsa_ = bsa;
+            }
+            if (c) {
+                call = std::move(c);
+                return true;
+            }
+        }
+        return false;
+    }
+    if (std::exchange(e.held, false)) {
+        // Its own time is over: from the owner's state now.
+        e.own_late.clear();
+        if (e.asking == Entry::Asking::late) {
+            e.asking = Entry::Asking::none;
+        }
+        Resync(e, *e.wanted);
+        Note(e.name + ": the copy takes the owner's state again");
+    }
+    std::int32_t now = 0;
+    const bool read = guest.Read(bsa + addr::kBsaBrainVerb, &now, sizeof now);
+    while (!e.due.empty()) {
+        Entry::Due& d = e.due.front();
+        if (const auto* brain = std::get_if<BossBrain>(&d.change.what)) {
+            if (!std::exchange(d.counted, true)) {
+                ++counts_.brain_came;
+            }
+            if (d.resync && read && now == brain->verb) {
+                ++counts_.brain_already;
+                e.due.pop_front();  // already so
+                continue;
+            }
+            CoopPuppet::Call c;
+            c.function = main_base + addr::kSetBrainVerb;
+            c.x[0] = bsa;
+            c.x[1] = static_cast<std::uint32_t>(brain->verb);
+            c.x[2] = 1;  // force: the change is the owner's, already decided
+            c.x[3] = 0;  // (the asking node: not read by the function)
+            c.copy_game = true;
+            e.asking = Entry::Asking::due;  // out of due once the call is made
+            pending_ = Pending::brain;
+            pending_bsa_ = bsa;
+            call = std::move(c);
+            return true;
+        }
+        const BossAction& action = std::get<BossAction>(d.change.what);
+        if (e.own_node == 0) {
+            ++counts_.action_waiting;  // (asked again next frame; the changes after it wait too)
+            break;
+        }
+        if (block_ == 0) {
+            if (allocating_) {
+                call.reset();  // (the block is being asked: nothing more this frame)
+                return true;
+            }
+            CoopPuppet::Call c;
+            c.function = main_base + addr::kMalloc;
+            c.x[0] = addr::kRequestSize;
+            allocating_ = true;
+            pending_ = Pending::malloc;
+            call = std::move(c);
+            return true;
+        }
+        const Request r = RequestFromAction(action, e.own_node);
+        if (!guest.Write(block_, r.data(), r.size())) {
+            break;
+        }
+        CoopPuppet::Call c;
+        c.function = main_base + addr::kRequestActionVerb;
+        c.x[0] = bsa;
+        c.x[1] = block_;
+        c.x[2] = action.changed ? 1 : 0;
+        c.copy_game = true;
+        e.asking = Entry::Asking::due;  // out of due once the call is made
+        pending_ = Pending::action;
+        pending_bsa_ = bsa;
+        call = std::move(c);
+        return true;
+    }
+    if (!e.due.empty() || !read || now == e.wanted->brain_verb) {
+        e.drift = 0;
+        return false;
+    }
+    // Nothing queued and the copy's phase is not the owner's: put back
+    // after kDriftSteps (a change of its own that the game made where no
+    // wrap sees it, or one of ours it refused).
+    if (e.drift_fixes >= kMaxDriftFixes) {
+        return false;  // the game keeps refusing it: left alone until the owner's next state
+    }
+    if (++e.drift >= kDriftSteps) {
+        e.drift = 0;
+        if (++e.drift_fixes == kMaxDriftFixes) {
+            Note(e.name + ": brain verb " + std::to_string(e.wanted->brain_verb) +
+                 " put back " + std::to_string(kMaxDriftFixes) + " times, refused: left until the owner's next state");
+        }
+        ++counts_.drift_fixes;
+        e.due.push_back({BossChange{e.wanted->seq, BossBrain{e.wanted->brain_verb, true}}, true});
+    }
+    return false;
+}
+
 std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                             std::uint64_t main_base) {
     std::unique_lock lock(mutex_);
@@ -615,9 +803,12 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
         ++steps_;  // once a frame (coop_callers.h)
     }
     if (!after_call && pending_ != Pending::none) {
-        // Last frame's call was not made (the runtime could not): ask again.
+        // Last frame's call was not made (the runtime could not, or the
+        // frame's calls ran out): its change stays queued and is asked again.
         if (pending_ == Pending::malloc) {
             allocating_ = false;
+        } else {
+            Made(false);
         }
         pending_ = Pending::none;
     }
@@ -632,9 +823,15 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
             break;
         case Pending::brain:
             ++counts_.brain_applied;
+            Made(true);
             break;
         case Pending::action:
             ++counts_.action_applied;
+            Made(true);
+            break;
+        case Pending::late:
+            ++counts_.copy_own_late;
+            Made(true);
             break;
         case Pending::none:
             break;
@@ -649,118 +846,42 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
     if (!brain_on_ || main_base == 0) {
         return std::nullopt;
     }
-    for (auto& [bsa, e] : by_bsa_) {
-        if (e.role == Role::owner) {
-            // What we send as the brain now is what our game's boss is in
-            // (also right after we took the boss over from a copy).
-            // Not during our event: its verbs are the cutscene's; once it is
-            // over the verb it left goes out as a change.
-            std::int32_t own = 0;
-            if (!event_ && guest.Read(bsa + addr::kBsaBrainVerb, &own, sizeof own)) {
-                e.mine.brain_verb = own;
-                if (std::exchange(e.record_after_event, false)) {
-                    Record(e, BossBrain{own, true});
-                    ++counts_.owner_brain;
-                }
+    // From the copy after the one served last, round the table once.
+    std::optional<CoopPuppet::Call> call;
+    const auto first = by_bsa_.upper_bound(served_);
+    for (auto it = first; it != by_bsa_.end(); ++it) {
+        if (StepOne(guest, it->first, it->second, main_base, call)) {
+            if (call && pending_ != Pending::malloc) {
+                served_ = it->first;  // (the block's allocation is nobody's turn)
             }
-            continue;
+            return call;
         }
-        if (!e.wanted) {
-            continue;
-        }
-        if (OwnTime(e)) {
-            // Our event or our hit: the copy's own changes run; the ones it
-            // made a moment before we knew are made now, late.
-            e.held = true;
-            e.drift = 0;
-            if (!e.own_late.empty()) {
-                bool made = false;
-                auto c = Ask(guest, e, bsa, e.own_late.front(), main_base, &made);
-                if (made) {
-                    e.own_late.pop_front();
-                    ++counts_.copy_own_late;
-                }
-                if (c) {
-                    return c;
-                }
+    }
+    for (auto it = by_bsa_.begin(); it != first; ++it) {
+        if (StepOne(guest, it->first, it->second, main_base, call)) {
+            if (call && pending_ != Pending::malloc) {
+                served_ = it->first;  // (the block's allocation is nobody's turn)
             }
-            continue;
-        }
-        if (std::exchange(e.held, false)) {
-            // Its own time is over: from the owner's state now.
-            e.own_late.clear();
-            Resync(e, *e.wanted);
-            Note(e.name + ": the copy takes the owner's state again");
-        }
-        std::int32_t now = 0;
-        const bool read = guest.Read(bsa + addr::kBsaBrainVerb, &now, sizeof now);
-        while (!e.due.empty()) {
-            const Entry::Due& d = e.due.front();
-            if (const auto* brain = std::get_if<BossBrain>(&d.change.what)) {
-                if (d.resync && read && now == brain->verb) {
-                    e.due.pop_front();  // already so
-                    continue;
-                }
-                CoopPuppet::Call c;
-                c.function = main_base + addr::kSetBrainVerb;
-                c.x[0] = bsa;
-                c.x[1] = static_cast<std::uint32_t>(brain->verb);
-                c.x[2] = 1;  // force: the change is the owner's, already decided
-                c.x[3] = 0;  // (the asking node: not read by the function)
-                e.due.pop_front();
-                pending_ = Pending::brain;
-                return c;
-            }
-            const BossAction& action = std::get<BossAction>(d.change.what);
-            if (e.own_node == 0) {
-                ++counts_.action_waiting;  // (asked again next frame; the changes after it wait too)
-                break;
-            }
-            if (block_ == 0) {
-                if (allocating_) {
-                    return std::nullopt;
-                }
-                CoopPuppet::Call c;
-                c.function = main_base + addr::kMalloc;
-                c.x[0] = addr::kRequestSize;
-                allocating_ = true;
-                pending_ = Pending::malloc;
-                return c;
-            }
-            const Request r = RequestFromAction(action, e.own_node);
-            if (!guest.Write(block_, r.data(), r.size())) {
-                break;
-            }
-            CoopPuppet::Call c;
-            c.function = main_base + addr::kRequestActionVerb;
-            c.x[0] = bsa;
-            c.x[1] = block_;
-            c.x[2] = action.changed ? 1 : 0;
-            e.due.pop_front();
-            pending_ = Pending::action;
-            return c;
-        }
-        if (!e.due.empty() || !read || now == e.wanted->brain_verb) {
-            e.drift = 0;
-            continue;
-        }
-        // Nothing queued and the copy's phase is not the owner's: put back
-        // after kDriftSteps (a change of its own that the game made where no
-        // wrap sees it, or one of ours it refused).
-        if (e.drift_fixes >= kMaxDriftFixes) {
-            continue;  // the game keeps refusing it: left alone until the owner's next state
-        }
-        if (++e.drift >= kDriftSteps) {
-            e.drift = 0;
-            if (++e.drift_fixes == kMaxDriftFixes) {
-                Note(e.name + ": brain verb " + std::to_string(e.wanted->brain_verb) +
-                     " put back " + std::to_string(kMaxDriftFixes) + " times, refused: left until the owner's next state");
-            }
-            ++counts_.drift_fixes;
-            e.due.push_back({BossChange{e.wanted->seq, BossBrain{e.wanted->brain_verb, true}}, true});
+            return call;
         }
     }
     return std::nullopt;
+}
+
+void Table::Made(bool made) {
+    Entry* e = Find(std::exchange(pending_bsa_, 0));
+    if (e == nullptr) {
+        return;  // (gone from the walk meanwhile)
+    }
+    const Entry::Asking asking = std::exchange(e->asking, Entry::Asking::none);
+    if (!made) {
+        return;  // the change is still at the front of its queue
+    }
+    if (asking == Entry::Asking::due && !e->due.empty()) {
+        e->due.pop_front();
+    } else if (asking == Entry::Asking::late && !e->own_late.empty()) {
+        e->own_late.pop_front();
+    }
 }
 
 std::optional<CoopPuppet::Call> Table::Ask(CoopPuppet::Guest& guest, Entry& e, std::uint64_t bsa, const std::variant<BossBrain, BossAction>& what,
@@ -775,6 +896,7 @@ std::optional<CoopPuppet::Call> Table::Ask(CoopPuppet::Guest& guest, Entry& e, s
         c.x[1] = static_cast<std::uint32_t>(brain->verb);
         c.x[2] = brain->force ? 1 : 0;
         c.x[3] = 0;  // (the asking node: not read by the function)
+        c.copy_game = true;
         *made = true;
         return c;
     }
@@ -804,6 +926,7 @@ std::optional<CoopPuppet::Call> Table::Ask(CoopPuppet::Guest& guest, Entry& e, s
     c.x[0] = bsa;
     c.x[1] = block_;
     c.x[2] = action.changed ? 1 : 0;
+    c.copy_game = true;
     return c;
 }
 
@@ -824,6 +947,8 @@ std::vector<std::string> Table::TakeNotes() {
 void Table::Reset() {
     std::lock_guard lock(mutex_);
     by_bsa_.clear();
+    wants_.clear();
+    served_ = 0;
     counts_ = {};
     for (auto& slot : held_life_) {
         slot.store(0, std::memory_order_relaxed);

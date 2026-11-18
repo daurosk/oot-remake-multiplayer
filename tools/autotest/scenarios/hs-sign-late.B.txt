@@ -18,11 +18,16 @@ mark b-graveyard
 stick 0 -1 300          # back down the path, out of the Graveyard (Kakariko_GraveYardSide)
 wait 600                # Kakariko loads; the title card shows
 mark b-in
-toward -7.46 71.12 10
+# big-run-0115: B arrived at -2.43 68.75 but still faced the Graveyard tunnel at b-facing and b-end (a 10-tick
+# toward right after the load did not turn Link), so the sign was never on B's screen. B is now put on the
+# watch spot of sign.B and turns for 30 ticks (a short walk towards the post), then the camera goes behind.
+place -1.73 101.54 68.8
+wait 60
+toward -7.46 71.12 30
 press ZL 10
 mark b-facing
 wait 300
-toward -7.46 71.12 6
+toward -7.46 71.12 20
 press ZL 10
 mark b-end
 wait 300

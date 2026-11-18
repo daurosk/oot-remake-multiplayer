@@ -1938,6 +1938,336 @@ class FullBuildTest(unittest.TestCase):
         manifest = json.loads(build.read(os.path.join(mod, "coop_puppet.json")))
         self.assertEqual(manifest["rooms"], {"scenes": 1, "rooms": 1, "placements": 1})
 
+    def make_model_mod(self, name="model_mod", exefs=False, change=True):
+        """A made-up character model mod (skin.py): the adult player pointed at a model of its own,
+        the child left as the game's, an AS root replaced in place, new files and an in-place one."""
+        from puppet_pack import zs
+        d = zs.Dicts.from_romfs(self.romfs)
+        plain = zstandard.ZstdCompressor()
+        root = os.path.join(self.dir, name)
+        romfs = os.path.join(root, "romfs")
+
+        def put(rel, data):
+            path = os.path.join(romfs, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as f:
+                f.write(data)
+        pack_dict = zstandard.ZstdCompressionDict(d.by_name["pack.zsdic"].as_bytes())
+        adult = fake_player_pack("Adult")
+        if change:
+            ap_path = "Actor/Player_Adult.engine__actor__ActorParam.bgyml"
+            doc = byml.loads(adult[ap_path])
+            doc["Components"]["ModelInfoRef"] = "?Component/ModelInfo/Player_Mod_Adult.engine__component__ModelInfo.bgyml"
+            doc["Components"]["AnimationRef"] = "?Component/AnimationParam/Player_Mod_Adult.engine__component__AnimationParam.bgyml"
+            adult[ap_path] = byml.dumps(doc)
+            adult["Component/ModelInfo/Player_Mod_Adult.engine__component__ModelInfo.bgyml"] = byml.dumps(
+                {"FmdbName": "Player_Mod_Adult", "ModelProjectName": "Npc_Mod_Adult"})
+            adult["Component/AnimationParam/Player_Mod_Adult.engine__component__AnimationParam.bgyml"] = byml.dumps(
+                {"AnimationResources": [{"IsRetarget": True, "ModelProjectName": "Mod__Adult_01_Animation",
+                                         "RetargetModel": "Skeleton"}]})
+        for v, files in (("Adult", adult), ("Child", fake_player_pack("Child"))):
+            put(f"Pack/Actor/Player_{v}.pack.zs", zstandard.ZstdCompressor(dict_data=pack_dict).compress(sarc.write(files)))
+        put("AS/Player_Adult.root.asb.zs", plain.compress(b"ASB mod root"))
+        put("Model/Npc_Mod_Adult.Player_Mod_Adult.bfres.zs", plain.compress(b"FRES mod model"))
+        put("Model/Mod__Adult_01_Animation.Skeleton.bfres.zs", plain.compress(b"FRES mod anim"))
+        put("Model/Player_Adult.Player_Adult.bfres.zs", plain.compress(b"FRES replaced in place"))
+        put("Mals/USen.Product.110.sarc.zs", plain.compress(b"text"))
+        # Gear: a Goron tunic made for the mod's body (its own model), and a sword it ships unchanged.
+        goron = "Armor_Adult_Goron"
+        g_info = "Component/ModelInfo/Armor_Goron.engine__component__ModelInfo.bgyml"
+        put(f"Pack/Actor/{goron}.pack.zs", plain.compress(sarc.write({
+            f"Actor/{goron}.engine__actor__ActorParam.bgyml": byml.dumps(
+                {"Components": {"ModelInfoRef": "?" + g_info, "ArmorRef": "?Component/ArmorParam/G.bgyml"}}),
+            g_info: byml.dumps({"FmdbName": "Player_Mod_Adult_Goron", "ModelProjectName": "Npc_Mod_Adult"}),
+            "Component/ArmorParam/G.bgyml": byml.dumps({"A": 1})})))
+        put("Model/Npc_Mod_Adult.Player_Mod_Adult_Goron.bfres.zs", plain.compress(b"FRES mod goron"))
+        sword = "Weapon_Sword_Kokiri"
+        s_info = "Component/ModelInfo/Sword.engine__component__ModelInfo.bgyml"
+        put(f"Pack/Actor/{sword}.pack.zs", plain.compress(sarc.write({
+            f"Actor/{sword}.engine__actor__ActorParam.bgyml": byml.dumps({"Components": {"ModelInfoRef": "?" + s_info}}),
+            s_info: byml.dumps({"FmdbName": sword, "ModelProjectName": sword})})))
+        ai = byml.loads(d.decompress(build.read(os.path.join(self.romfs, "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))
+        if not any(r["__RowId"] == goron for r in ai):
+            ai.append({"__RowId": goron, "ActorName": goron, "FmdbName": "Armor_Adult_Goron",
+                       "ModelProjectName": "Armor_Adult_Goron", "InstanceHeapSize": 1000})
+            ai.append({"__RowId": sword, "FmdbName": sword, "ModelProjectName": sword})
+            self.write("RSDB/ActorInfo.Product.999.rstbl.byml.zs", plain.compress(byml.dumps(ai)))
+            gai = [{"__RowId": r["__RowId"]} for r in ai]
+            self.write("RSDB/GameActorInfo.Product.999.rstbl.byml.zs", plain.compress(byml.dumps(gai)))
+        t = rstb.Rstb()
+        t.set("Model/Npc_Mod_Adult.Player_Mod_Adult.bfres", 777777)
+        t.set("AS/Player_Adult.root.asb", 3000000)
+        put("System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs", plain.compress(t.dumps()))
+        if exefs:
+            os.makedirs(os.path.join(root, "exefs"))
+        # The game's own table knows the model the mod replaces in place.
+        tpath = os.path.join(self.romfs, "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs")
+        game = rstb.Rstb.loads(d.decompress(build.read(tpath)))
+        game.set("Model/Player_Adult.Player_Adult.bfres", 50000)
+        game.set("AS/Player_Adult.root.asb", 2000000)
+        self.write("System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs", plain.compress(game.dumps()))
+        return root
+
+    def test_build_skin(self):
+        from puppet_pack import skin
+        mod_src = self.make_model_mod()
+        mod = os.path.join(self.dir, "mod_skin")
+        said = []
+        m = build.build(self.romfs, mod, log=said.append, skins=[("Mod", mod_src)], look_slots=0)
+        d = zs.Dicts.from_romfs(self.romfs)
+        out = os.path.join(mod, "romfs")
+        [entry] = m["skins"]
+        # Only the age the mod changes; the child is the game's own, left out.
+        self.assertEqual(entry["variants"], ["Adult"])
+        self.assertEqual(entry["models"], {"Adult": "Npc_Mod_Adult"})
+        self.assertEqual(entry["actors"], {"Adult": "CoopPuppet_Adult_Skin_Mod"})
+        self.assertEqual(entry["as"], {"Adult": "AS/CoopSkin_Mod_Adult.root.asb"})
+        self.assertEqual(len(entry["sha256"]), 64)
+        self.assertTrue(any("skin Mod: Adult" in line and "Child unchanged" in line for line in said))
+        # The mod's new files come along; what it replaces in place and its text do not.
+        self.assertEqual(sorted(entry["files"]), ["AS/CoopSkin_Mod_Adult.root.asb.zs",
+                                                  "Model/Mod__Adult_01_Animation.Skeleton.bfres.zs",
+                                                  "Model/Npc_Mod_Adult.Player_Mod_Adult.bfres.zs",
+                                                  "Model/Npc_Mod_Adult.Player_Mod_Adult_Goron.bfres.zs",
+                                                  "Pack/Actor/Armor_Adult_Goron_Skin_Mod.pack.zs"])
+        # Gear: only the piece with a model of the mod's own, as a copy of its own; the game's stays.
+        self.assertEqual(entry["gear"], {"Armor_Adult_Goron": "Armor_Adult_Goron_Skin_Mod"})
+        self.assertFalse(os.path.exists(os.path.join(out, "Pack/Actor/Armor_Adult_Goron.pack.zs")))
+        g = sarc.read(d.decompress(build.read(os.path.join(out, "Pack/Actor/Armor_Adult_Goron_Skin_Mod.pack.zs"))))
+        g_comps = byml.loads(g["Actor/Armor_Adult_Goron_Skin_Mod.engine__actor__ActorParam.bgyml"])["Components"]
+        g_info = "Component/ModelInfo/Armor_Adult_Goron_Skin_Mod.engine__component__ModelInfo.bgyml"
+        self.assertEqual(g_comps["ModelInfoRef"], "?" + g_info)
+        self.assertEqual(byml.loads(g[g_info]), {"FmdbName": "Player_Mod_Adult_Goron", "ModelProjectName": "Npc_Mod_Adult"})
+        self.assertIn("Component/ArmorParam/G.bgyml", g)
+        self.assertFalse(os.path.exists(os.path.join(out, "Model/Player_Adult.Player_Adult.bfres.zs")))
+        self.assertFalse(os.path.exists(os.path.join(out, "AS/Player_Adult.root.asb.zs")))
+        self.assertFalse(os.path.exists(os.path.join(out, "Mals")))
+        self.assertEqual(d.decompress(build.read(os.path.join(out, "AS/CoopSkin_Mod_Adult.root.asb.zs"))), b"ASB mod root")
+        # The skin puppet: the mod's model and animations, its own AS copy.
+        files = sarc.read(d.decompress(build.read(os.path.join(out, "Pack/Actor/CoopPuppet_Adult_Skin_Mod.pack.zs"))))
+        comps = byml.loads(files["Actor/CoopPuppet_Adult_Skin_Mod.engine__actor__ActorParam.bgyml"])["Components"]
+        self.assertEqual(comps["ASRef"], "?AS/CoopSkin_Mod_Adult.root.asb")
+        self.assertEqual(comps["ModelInfoRef"], "?Component/ModelInfo/Player_Mod_Adult.engine__component__ModelInfo.bgyml")
+        self.assertIn("Component/AnimationParam/Player_Mod_Adult.engine__component__AnimationParam.bgyml", files)
+        # The plain puppet keeps the game's AS and model.
+        plain = sarc.read(d.decompress(build.read(os.path.join(out, "Pack/Actor/CoopPuppet_Adult.pack.zs"))))
+        pc = byml.loads(plain["Actor/CoopPuppet_Adult.engine__actor__ActorParam.bgyml"])["Components"]
+        self.assertEqual(pc["ASRef"], "?AS/Player_Adult.root.asb")
+        self.assertEqual(pc["ModelInfoRef"], "?Component/ModelInfo/Adult.engine__component__ModelInfo.bgyml")
+        # ActorInfo: the skin's row names the mod's model and adds its animations.
+        rows = {r["__RowId"]: r for r in byml.loads(d.decompress(build.read(
+            os.path.join(out, "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))}
+        row = rows["CoopPuppet_Adult_Skin_Mod"]
+        self.assertEqual(row["ModelProjectName"], "Npc_Mod_Adult")
+        self.assertEqual(row["FmdbName"], "Player_Mod_Adult")
+        self.assertIn({"ModelProjectName": "Mod__Adult_01_Animation"}, row["AnimationResources"])
+        self.assertNotIn("ActorName", row)
+        self.assertNotIn("CoopPuppet_Child_Skin_Mod", rows)
+        self.assertEqual(rows["CoopPuppet_Adult"]["FmdbName"], "Player_Adult")
+        g_row = rows["Armor_Adult_Goron_Skin_Mod"]
+        self.assertEqual((g_row["ActorName"], g_row["ModelProjectName"], g_row["FmdbName"], g_row["InstanceHeapSize"]),
+                         ("Armor_Adult_Goron_Skin_Mod", "Npc_Mod_Adult", "Player_Mod_Adult_Goron", 1000))
+        self.assertEqual(rows["Armor_Adult_Goron"]["ModelProjectName"], "Armor_Adult_Goron")
+        self.assertNotIn("Weapon_Sword_Kokiri_Skin_Mod", rows)
+        # Size table: the mod's own entries, the bigger AS entry for the copy.
+        t = rstb.Rstb.loads(d.decompress(build.read(os.path.join(
+            out, "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"))))
+        self.assertEqual(t.get("Model/Npc_Mod_Adult.Player_Mod_Adult.bfres"), 777777)
+        self.assertEqual(t.get("AS/CoopSkin_Mod_Adult.root.asb"), 3000000)
+        self.assertEqual(t.get("AS/Player_Adult.root.asb"), 2000000)  # the game's own stays
+        self.assertGreater(t.get("Model/Mod__Adult_01_Animation.Skeleton.bfres") or 0, 0)  # no mod entry: from the file
+        self.assertGreater(t.get("Pack/Actor/CoopPuppet_Adult_Skin_Mod.pack") or 0, 0)
+        # Your own Link in the skin: the mod's player pack beside the pack (not in romfs/), its AS on the copy.
+        self.assertEqual(entry["self_files"], {"Pack/Actor/Player_Adult.pack.zs": "coop_skin_self/Mod/Player_Adult.pack.zs"})
+        self.assertFalse(os.path.exists(os.path.join(out, "Pack/Actor/Player_Adult.pack.zs")))
+        own = sarc.read(d.decompress(build.read(os.path.join(mod, "coop_skin_self/Mod/Player_Adult.pack.zs"))))
+        base = byml.loads(own["Actor/Player_Base.engine__actor__ActorParam.bgyml"])["Components"]
+        self.assertEqual(base["ASRef"], "?AS/CoopSkin_Mod_Adult.root.asb")
+        top = byml.loads(own["Actor/Player_Adult.engine__actor__ActorParam.bgyml"])["Components"]
+        self.assertIn("Player_Mod_Adult", top["ModelInfoRef"])
+        self.assertGreater(t.get("Pack/Actor/Player_Adult.pack") or 0, 0)
+        actors = {a["actor"]: a for a in m["actors"]}
+        self.assertEqual(actors["CoopPuppet_Adult_Skin_Mod"]["skin"], "Mod")
+        self.assertIsNone(actors["CoopPuppet_Adult"]["skin"])
+        self.assertIsNone(m["test_skin"])
+        # The same mod gives the same hash.
+        m2 = build.build(self.romfs, os.path.join(self.dir, "mod_skin2"), log=lambda *_: None,
+                         skins=[("Mod", mod_src)], look_slots=0)
+        self.assertEqual(m2["skins"][0]["sha256"], entry["sha256"])
+        self.assertEqual(skin.actor_name("Adult", "Mod"), "CoopPuppet_Adult_Skin_Mod")
+
+    def test_build_skin_quiet_copy(self):
+        # With puppets the game's perception sees, each skin puppet has its quiet copy too.
+        self.add_perception_and_guards()
+        mod_src = self.make_model_mod()
+        m = build.build(self.romfs, os.path.join(self.dir, "mod_skin_q"), log=lambda *_: None,
+                        skins=[("Mod", mod_src)], look_slots=0, perception=True)
+        actors = {a["actor"]: a for a in m["actors"]}
+        self.assertTrue(actors["CoopPuppet_AdultQuiet_Skin_Mod"]["quiet"])
+        self.assertEqual(actors["CoopPuppet_AdultQuiet_Skin_Mod"]["skin"], "Mod")
+        self.assertFalse(actors["CoopPuppet_Adult_Skin_Mod"]["quiet"])
+
+    def test_build_test_skin(self):
+        mod_src = self.make_model_mod()
+        mod = os.path.join(self.dir, "mod_test_skin")
+        m = build.build(self.romfs, mod, log=lambda *_: None, skins=[("Mod", mod_src)], test_skin="mod",
+                        tunics=["red"], look_slots=0)
+        d = zs.Dicts.from_romfs(self.romfs)
+        out = os.path.join(mod, "romfs")
+        self.assertEqual(m["test_skin"], "Mod")
+        for actor in ("CoopPuppet_Adult", "CoopPuppet_Adult_Red"):
+            files = sarc.read(d.decompress(build.read(os.path.join(out, f"Pack/Actor/{actor}.pack.zs"))))
+            comps = byml.loads(files[f"Actor/{actor}.engine__actor__ActorParam.bgyml"])["Components"]
+            self.assertEqual(comps["ASRef"], "?AS/CoopSkin_Mod_Adult.root.asb", actor)
+            self.assertIn("Player_Mod_Adult", comps["ModelInfoRef"], actor)
+        # The child: the mod does not change it, so the child puppets stay Link.
+        files = sarc.read(d.decompress(build.read(os.path.join(out, "Pack/Actor/CoopPuppet_Child.pack.zs"))))
+        comps = byml.loads(files["Actor/CoopPuppet_Child.engine__actor__ActorParam.bgyml"])["Components"]
+        self.assertNotIn("Player_Mod", comps["ModelInfoRef"])
+        with self.assertRaises(build.BuildError):
+            build.build(self.romfs, os.path.join(self.dir, "mod_x"), log=lambda *_: None,
+                        skins=[("Mod", mod_src)], test_skin="Other", look_slots=0)
+
+    def test_skin_refusals(self):
+        cases = [
+            (("Mod", self.make_model_mod("with_code", exefs=True)), "exefs"),
+            (("Mod", self.make_model_mod("unchanged", change=False)), "does not change the player's model"),
+            (("Bad-Id", self.make_model_mod("bad_id")), "skin id"),
+            (("Mod", os.path.join(self.dir, "nothing_here")), "no romfs folder"),
+        ]
+        # A skin that cannot be built is left out with a line; the pack is built without it.
+        for i, (sk, words) in enumerate(cases):
+            said = []
+            m = build.build(self.romfs, os.path.join(self.dir, f"mod_r{i}"), log=said.append,
+                            skins=[sk], look_slots=0)
+            self.assertEqual(m["skins"], [])
+            self.assertTrue(any(f"skin {sk[0]}: left out" in s and words in s for s in said), said)
+        good = self.make_model_mod("twice")
+        said = []
+        m = build.build(self.romfs, os.path.join(self.dir, "mod_r9"), log=said.append,
+                        skins=[("Mod", good), ("mod", good)], look_slots=0)
+        self.assertEqual([e["id"] for e in m["skins"]], ["Mod"])
+        self.assertTrue(any("skin mod: left out" in s for s in said), said)
+
+    def test_broken_skin_costs_only_itself(self):
+        # One broken model (here a size table that does not decode) is left out; the good one is built
+        # whole, and nothing of the broken one is in the pack.
+        good = self.make_model_mod("good")
+        bad = self.make_model_mod("bad")
+        table = os.path.join(bad, "romfs", "System", "Resource")
+        os.makedirs(table, exist_ok=True)
+        with open(os.path.join(table, "ResourceSizeTable.Product.999.Test.rsizetable.zs"), "wb") as f:
+            f.write(b"not a table")
+        mod = os.path.join(self.dir, "mod_broken")
+        said = []
+        m = build.build(self.romfs, mod, log=said.append, skins=[("Bad", bad), ("Good", good)], look_slots=0)
+        self.assertEqual([e["id"] for e in m["skins"]], ["Good"])
+        self.assertTrue(any("skin Bad: left out" in s and "size table" in s for s in said), said)
+        self.assertFalse(os.path.exists(os.path.join(mod, "romfs", "AS", "CoopSkin_Bad_Adult.root.asb.zs")))
+        # --test-skin naming the skin that was left out says so (not "no --skin with that id").
+        with self.assertRaisesRegex(build.BuildError, "left out"):
+            build.build(self.romfs, os.path.join(self.dir, "mod_broken2"), log=lambda *_: None,
+                        skins=[("Bad", bad), ("Good", good)], test_skin="bad", look_slots=0)
+
+    def test_reader_has_is_exact(self):
+        # "Does the game have this file": an exact name, never a glob pattern. Through the real readers the
+        # build is given (a stand-in reader once hid that the .nup one has no listdir, and every skin was left out).
+        from puppet_pack import hud
+
+        class Nup:
+            def listdir(self, d):
+                if d not in ("Model",):
+                    raise KeyError(d)
+                return {"A[1].bfres.zs": ("f", 0), "Sub": ("d", 1)}
+        root = os.path.join(self.dir, "reader_romfs")
+        os.makedirs(os.path.join(root, "Model", "Sub"))
+        with open(os.path.join(root, "Model", "A[1].bfres.zs"), "wb") as f:
+            f.write(b"x")
+        for r in (hud.NupReader(Nup()), hud.DirReader(root)):
+            self.assertTrue(build._reader_has(r, "Model/A[1].bfres.zs"), r)
+            self.assertFalse(build._reader_has(r, "Model/A*.bfres.zs"), r)
+            self.assertFalse(build._reader_has(r, "Model/Sub"), r)
+            self.assertFalse(build._reader_has(r, "Nope/A.bfres.zs"), r)
+
+    def test_skin_table_and_files(self):
+        from puppet_pack import skin
+        # The size table named like the game's, else the newest version's.
+        game = "System/Resource/ResourceSizeTable.Product.111.Nin_Ounce_NVN2.rsizetable.zs"
+        older = "System/Resource/ResourceSizeTable.Product.110.Nin_Ounce_NVN2.rsizetable.zs"
+        newer = "System/Resource/ResourceSizeTable.Product.120.Nin_Ounce_NVN2.rsizetable.zs"
+        self.assertEqual(skin.pick_table([older, game, newer], game), game)
+        self.assertEqual(skin.pick_table([older, newer], game), newer)
+        self.assertEqual(skin.pick_table([older, newer]), newer)
+        self.assertIsNone(skin.pick_table([]))
+        # A file the game has is a replacement even when its size table does not list it.
+        sk = skin.Skin("S", self.dir, {}, None, ["Model/New.bfres.zs", "Model/Replaced.bfres.zs"])
+
+        class NoTable:
+            def get(self, _):
+                return None
+        have = {"Model/Replaced.bfres.zs"}
+        self.assertEqual(skin.new_files(sk, NoTable(), game_has=lambda p: p in have), ["Model/New.bfres.zs"])
+        # Symlinks in a mod folder are skipped.
+        root = os.path.join(self.dir, "links")
+        os.makedirs(os.path.join(root, "Model"))
+        with open(os.path.join(root, "Model", "a.bfres.zs"), "wb") as f:
+            f.write(b"x")
+        try:
+            os.symlink(os.path.join(root, "Model", "a.bfres.zs"), os.path.join(root, "Model", "b.bfres.zs"))
+        except (OSError, NotImplementedError):
+            self.skipTest("this system makes no symlinks")
+        self.assertEqual(skin._walk(root), ["Model/a.bfres.zs"])
+
+    def test_two_versions_of_one_mod(self):
+        # Outfit variants of one mod name their models the same: identical files are shared, and the skin
+        # with a model file of other contents under the same path gets its model project under its own name.
+        a = self.make_model_mod("version_a")
+        b = self.make_model_mod("version_b")
+        m = build.build(self.romfs, os.path.join(self.dir, "mod_v1"), log=lambda *_: None,
+                        skins=[("A", a), ("B", b)], look_slots=0)
+        self.assertEqual([e["id"] for e in m["skins"]], ["A", "B"])
+        self.assertIn("Model/Npc_Mod_Adult.Player_Mod_Adult.bfres.zs", m["skins"][1]["files"])
+        with open(os.path.join(b, "romfs", "Model", "Npc_Mod_Adult.Player_Mod_Adult.bfres.zs"), "wb") as f:
+            f.write(zstandard.ZstdCompressor().compress(b"FRES another outfit"))
+        # Both add a model under the game's own Player_Adult project, of other contents: that project is not
+        # renamed (it names the game's own files too); B uses A's copy.
+        for mod_dir, body in ((a, b"FRES npc link a"), (b, b"FRES npc link b")):
+            with open(os.path.join(mod_dir, "romfs", "Model", "Player_Adult.Npc_Link_Adult.bfres.zs"), "wb") as f:
+                f.write(zstandard.ZstdCompressor().compress(body))
+        said = []
+        m = build.build(self.romfs, os.path.join(self.dir, "mod_v2"), log=said.append,
+                        skins=[("A", a), ("B", b)], look_slots=0)
+        # Both are built: B's model project gets a name of its own, and every name of it in B's packs follows.
+        self.assertEqual([e["id"] for e in m["skins"]], ["A", "B"])
+        self.assertEqual(m["skins"][1]["renamed"], {"Npc_Mod_Adult": "Npc_Mod_Adult_B"})
+        self.assertEqual(m["skins"][0]["renamed"], {})
+        self.assertIn("Model/Npc_Mod_Adult_B.Player_Mod_Adult.bfres.zs", m["skins"][1]["files"])
+        self.assertIn("Model/Npc_Mod_Adult.Player_Mod_Adult.bfres.zs", m["skins"][0]["files"])
+        self.assertEqual(m["skins"][1]["models"], {"Adult": "Npc_Mod_Adult_B"})
+        self.assertTrue(any("skin B: model project Npc_Mod_Adult -> Npc_Mod_Adult_B" in s for s in said), said)
+        self.assertTrue(any("skin B: Model/Player_Adult.Npc_Link_Adult.bfres.zs differ" in s for s in said), said)
+        self.assertIn("Model/Player_Adult.Npc_Link_Adult.bfres.zs", m["skins"][0]["files"])
+        self.assertNotIn("Model/Player_Adult.Npc_Link_Adult.bfres.zs", m["skins"][1]["files"])
+        out = os.path.join(self.dir, "mod_v2", "romfs")
+        d = zs.Dicts.from_romfs(self.romfs)
+        self.assertEqual(d.decompress(build.read(os.path.join(out, "Model/Npc_Mod_Adult_B.Player_Mod_Adult.bfres.zs"))),
+                         b"FRES another outfit")
+        rows = {r["__RowId"]: r for r in byml.loads(d.decompress(build.read(
+            os.path.join(out, "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))}
+        self.assertEqual(rows["CoopPuppet_Adult_Skin_B"]["ModelProjectName"], "Npc_Mod_Adult_B")
+        self.assertEqual(rows["CoopPuppet_Adult_Skin_A"]["ModelProjectName"], "Npc_Mod_Adult")
+        self.assertEqual(rows["Armor_Adult_Goron_Skin_B"]["ModelProjectName"], "Npc_Mod_Adult_B")
+        g = sarc.read(d.decompress(build.read(os.path.join(out, "Pack/Actor/Armor_Adult_Goron_Skin_B.pack.zs"))))
+        info = byml.loads(g["Component/ModelInfo/Armor_Adult_Goron_Skin_B.engine__component__ModelInfo.bgyml"])
+        self.assertEqual(info["ModelProjectName"], "Npc_Mod_Adult_B")
+
+    def test_skin_cli(self):
+        mod_src = self.make_model_mod()
+        quiet = io.StringIO()
+        with contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+            self.assertEqual(build.main(["--romfs", self.romfs, "--mod-dir", os.path.join(self.dir, "cli"),
+                                         "--any-version", "--no-hud", "--skin", "noequals"]), 2)
+
     def test_not_a_romfs(self):
         with self.assertRaises(build.BuildError):
             build.build(self.dir, os.path.join(self.dir, "mod"), log=lambda *_: None)

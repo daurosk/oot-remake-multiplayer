@@ -451,22 +451,22 @@ bool MergedByKit(const fs::path& mods_root, std::string_view mod, std::string* r
     return true;
 }
 
-std::optional<std::string> OutsideSizeTable(const fs::path& mods_root, const std::vector<CoopMods::Row>& rows,
-                                            const std::vector<std::string>* indexed, std::string* merged, std::string* rule) {
-    // The game writes a nested folder's name with '\' (patch 0011 counts it as '/'; the pack is one).
-    const auto slashed = [](std::string name) {
-        std::replace(name.begin(), name.end(), '\\', '/');
-        return name;
-    };
-    const auto has_table = [&](const std::string& name) {
-        return HasSizeTable(mods_root / CoopMods::FromUtf8(slashed(name)));
-    };
+namespace {
+// The game writes a nested folder's name with '\' (patch 0011 counts it as '/'; the pack is one).
+std::string Slashed(std::string name) {
+    std::replace(name.begin(), name.end(), '\\', '/');
+    return name;
+}
+
+// The mod whose copy of a file the game reads, among the mods `has_file` holds for; "" when none sorts over the pack.
+template <typename Has>
+std::string WinnerOf(const std::vector<CoopMods::Row>& rows, const std::vector<std::string>* indexed, Has has_file) {
     std::string winner;
     if (indexed != nullptr) {
         // The game's own indexing order (coop-mods.applied): the Mods list's rows from the last to the first, under
         // them the mods it does not name (a mod dropped in since; the pack, never listed) by name. The last one wins.
         for (auto it = indexed->rbegin(); it != indexed->rend() && winner.empty(); ++it) {
-            if (has_table(*it)) winner = *it;
+            if (has_file(*it)) winner = *it;
         }
     } else {
         // Hookshot's order: by name, case folded, the last wins; the pack is a mod of its own in it.
@@ -477,14 +477,23 @@ std::optional<std::string> OutsideSizeTable(const fs::path& mods_root, const std
         };
         std::string best = "contents/0400486024dec000/coop-puppet";
         for (const CoopMods::Row& r : rows) {
-            if (!r.on_now || !has_table(r.name)) continue;
+            if (!r.on_now || !has_file(r.name)) continue;
             if (const std::string f = folded(r.name); f > best) {
                 best = f;
                 winner = r.name;
             }
         }
     }
-    if (winner.empty() || CoopMods::NameSame(slashed(winner), kPackFolder) || IsSeedFolder(winner) ||
+    return winner;
+}
+}  // namespace
+
+std::optional<std::string> OutsideSizeTable(const fs::path& mods_root, const std::vector<CoopMods::Row>& rows,
+                                            const std::vector<std::string>* indexed, std::string* merged, std::string* rule) {
+    const std::string winner = WinnerOf(rows, indexed, [&](const std::string& name) {
+        return HasSizeTable(mods_root / CoopMods::FromUtf8(Slashed(name)));
+    });
+    if (winner.empty() || CoopMods::NameSame(Slashed(winner), kPackFolder) || IsSeedFolder(winner) ||
         CoopMods::NameSame(winner, kFolder)) {
         return std::nullopt;
     }
@@ -493,6 +502,85 @@ std::optional<std::string> OutsideSizeTable(const fs::path& mods_root, const std
         return std::nullopt;
     }
     return winner;
+}
+
+std::vector<std::string> PackActorTables(const fs::path& mods_root) {
+    std::vector<std::string> out;
+    std::error_code ec;
+    for (fs::directory_iterator files(mods_root / CoopMods::FromUtf8(kPackFolder) / "romfs" / "RSDB", ec), last;
+         !ec && files != last; files.increment(ec)) {
+        const std::string file = CoopMods::ToUtf8(files->path().filename());
+        const std::string_view tail = ".rstbl.byml.zs";
+        if (std::error_code fec; files->is_regular_file(fec) && file.size() > tail.size() &&
+                                 file.compare(file.size() - tail.size(), tail.size(), tail) == 0) {
+            out.push_back(file);
+        }
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+bool RowsMergedByKit(const fs::path& mods_root, std::string_view mod, std::string_view table) {
+    const fs::path folder = mods_root / CoopMods::FromUtf8(Slashed(std::string(mod)));
+    const std::vector<std::string> lines = LastLines(ReadAll(folder / kRowsFile), static_cast<std::size_t>(-1));
+    if (lines.empty() || lines.front() != "coop-rows 1") return false;
+    for (const std::string& line : lines) {
+        std::istringstream words(line);
+        std::string key, name, table_hash, pack_hash;
+        words >> key >> name >> table_hash >> pack_hash;
+        if (key != "table" || name != table || table_hash.size() != 16 || pack_hash.size() != 16) continue;
+        const fs::path in_mod = folder / "romfs" / "RSDB" / CoopMods::FromUtf8(name);
+        const fs::path in_pack =
+            mods_root / CoopMods::FromUtf8(kPackFolder) / "romfs" / "RSDB" / CoopMods::FromUtf8(name);
+        std::error_code ec;
+        if (!fs::is_regular_file(in_mod, ec) || !fs::is_regular_file(in_pack, ec)) return false;
+        return Fnv64Hex(ReadAll(in_mod)) == table_hash && Fnv64Hex(ReadAll(in_pack)) == pack_hash;
+    }
+    return false;
+}
+
+std::optional<std::pair<std::string, std::string>> OutsideActorRows(const fs::path& mods_root,
+                                                                    const std::vector<CoopMods::Row>& rows,
+                                                                    const std::vector<std::string>* indexed) {
+    for (const std::string& table : PackActorTables(mods_root)) {
+        const std::string winner = WinnerOf(rows, indexed, [&](const std::string& name) {
+            std::error_code ec;
+            return fs::is_regular_file(
+                mods_root / CoopMods::FromUtf8(Slashed(name)) / "romfs" / "RSDB" / CoopMods::FromUtf8(table), ec);
+        });
+        if (winner.empty() || CoopMods::NameSame(Slashed(winner), kPackFolder)) continue;
+        if (RowsMergedByKit(mods_root, winner, table)) continue;
+        return std::make_pair(winner, table);
+    }
+    return std::nullopt;
+}
+
+int PutBackKeptRows(const fs::path& folder) {
+    int back = 0;
+    const fs::path keep = folder / "_coop-rows";  // (merge_tables.py ROWS_KEEP)
+    std::error_code ec;
+    if (!fs::is_directory(keep, ec)) return 0;
+    for (fs::directory_iterator f(keep, ec), last; !ec && f != last; f.increment(ec)) {
+        const std::string name = CoopMods::ToUtf8(f->path().filename());
+        const std::string_view tail = ".rstbl.byml.zs";
+        if (name.size() <= tail.size() || name.compare(name.size() - tail.size(), tail.size(), tail) != 0) continue;
+        std::error_code cec;
+        if (!fs::copy_file(f->path(), folder / "romfs" / "RSDB" / f->path().filename(),
+                           fs::copy_options::overwrite_existing, cec)) {
+            return -1;  // (the kept folder stays: the kit's next start sorts it out)
+        }
+        ++back;
+    }
+    fs::remove(folder / kRowsFile, ec);
+    fs::remove_all(keep, ec);
+    return back;
+}
+
+std::string RowsLine(std::string_view mod, std::string_view table) {
+    const std::string_view name = table.substr(0, std::min(table.find(".Product"), table.size()));
+    return "Co-op: the mod \"" + ShortName(mod) + "\" has its own " + std::string(name) +
+           " table, without the puppet pack's rows, so the game can't make the other players' bodies (they show as "
+           "fairies). Start the game with Start Squadala (it merges the rows in), or turn the mod off.";
 }
 
 std::string OutsideLine(std::string_view mod) {
@@ -944,6 +1032,24 @@ void Rando::Start() {
             outside_tell_ = true;
             lines_.push_back(ChatSafe(OutsideLine(*outside), 300));
         }
+        // Player report 144/145: a mod whose RSDB table (ActorInfo, GameActorInfo) wins without the pack's rows (an
+        // OOTRR seed made with settings that change actors ships its own, built from the game's): the game refuses
+        // every puppet create, so the others show as fairies this run and the chat says why. The kit's start merges
+        // the rows in (merge_tables.py merge_rows) and marks it (kRowsFile).
+        if (const auto missing = OutsideActorRows(loader_.Root(), loader_.Rows(),
+                                                  loader_.ExeReadsList() ? &indexed : nullptr)) {
+            rows_out_ = true;
+            if (hooks_.log) {
+                hooks_.log("randomizer: the game reads RSDB/" + missing->second + " of the mod " + missing->first +
+                           ", without the co-op puppet pack's rows (no " + kRowsFile +
+                           " from the kit's start for it): the game would refuse every puppet; the others show as "
+                           "their fairy this run");
+            }
+            const std::lock_guard lock(mutex_);
+            rows_mod_ = missing->first;
+            rows_table_ = missing->second;
+            lines_.push_back(ChatSafe(RowsLine(rows_mod_, rows_table_), 300));
+        }
         const std::lock_guard lock(mutex_);
         on_now_ = on_said_ = on_now;
     }
@@ -1034,6 +1140,7 @@ void Rando::TellOthers() {
 
 void Rando::SayOutside() {
     const std::lock_guard lock(mutex_);
+    if (!rows_mod_.empty()) lines_.push_back(ChatSafe(RowsLine(rows_mod_, rows_table_), 300));
     if (outside_mod_.empty()) return;
     lines_.push_back(ChatSafe(OutsideLine(outside_mod_), 300));
     outside_tell_ = true;  // a player who joined since hears it too
@@ -1416,6 +1523,20 @@ void Rando::Build(const Plan& plan, const Want& want) {
             table_changed = true;
         }
         if (!fs::is_regular_file(made_at / kSeedFile, fec)) copied = false;
+        // The kit merged the pack's rows into this seed's actor tables and raised their sizes in the table just
+        // replaced (merge_tables.py merge_rows, player report 144/145): their own copies go back, so the seed's files
+        // agree again (the game is not left reading a merged table with too small a size); the kit's next start
+        // merges them again, and a start without the kit shows the others as fairies and says why.
+        if (copied && table_changed) {
+            const int back = PutBackKeptRows(target);
+            if (back != 0 && hooks_.log) {
+                hooks_.log("randomizer: " + plan.folder +
+                           (back > 0 ? ": its own actor tables are back (the kit's next start merges the puppet rows "
+                                       "in again)"
+                                     : ": its own actor tables could not be put back (the kit's next start merges "
+                                       "the puppet rows in again)"));
+            }
+        }
     } else if (built == 0) {
         fs::rename(made_at, target, ec);
     }

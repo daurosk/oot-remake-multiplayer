@@ -12,6 +12,7 @@ No game files, keys or firmware are part of this repository or of any kit.
 | doctest | Unit tests only, not shipped | MIT | https://github.com/doctest/doctest, fetched by CMake at a pinned version |
 | fmt 12.1.0 (Victor Zverovich and contributors) | The co-op hook's log lines in the Hookshot module (`hookshot_coop.dll`, `hookshot/compat/common/logging.h`) | MIT | https://github.com/fmtlib/fmt, fetched by CMake (`hookshot/CMakeLists.txt`) at a pinned commit |
 | Longshot (Team MagicBean and contributors; its changes are being merged into Hookshot by NotRexed and contributors) | `hookshot/patches/` changes it: the patches hold a few context lines of its files; they are applied to Longshot's source at the commit in `hookshot/PIN`, outside this repository | GPL-3.0 | https://git.magicbean.dev/MagicBeanDev/Longshot (Hookshot: https://git.notrexed.dev/Hookshot/Hookshot) |
+| CityHash64 1.1 (Copyright (c) 2011 Google, Inc.) | The game's pane ids for the pack's copied UI parts (`tools/puppet_pack/ui_pack.py` `city_hash64`, written in Python from city.cc) | MIT | https://github.com/google/cityhash |
 | Monocypher 4.0.2 (Loup Vaillant, Michael Savage, Fabio Scotoni) | Traffic encryption: X25519, BLAKE2b, XChaCha20-Poly1305 (server, emulator hook, Hookshot module) | CC0-1.0 or BSD-2-Clause, the user's choice; we use it under CC0-1.0 | https://github.com/LoupVaillant/Monocypher, fetched by CMake at a pinned commit (cmake/monocypher.cmake) |
 
 Code copied in from other projects gets an entry here, with its copyright line and licence text, when it is added.

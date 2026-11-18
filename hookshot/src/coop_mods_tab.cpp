@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <string_view>
 #include <tuple>
 #include <utility>
 
@@ -52,6 +53,66 @@ void EraseUtf8(std::string& s) {
         s.pop_back();
         if ((c & 0xC0) != 0x80) return;
     }
+}
+
+// Text from the clipboard made fit for one setting: valid UTF-8 only (a broken byte is dropped), no control
+// characters (a pasted line break or tab is dropped, so a string copied over two lines joins), no spaces at
+// either end. It stops on a character's edge, never inside one, once it passes `room` bytes (`cut` says so).
+std::string CleanPaste(std::string_view in, std::size_t room, bool* cut) {
+    std::string out;
+    std::size_t i = 0;
+    while (i < in.size()) {
+        const unsigned char c = static_cast<unsigned char>(in[i]);
+        const std::size_t n = c < 0x80 ? 1 : (c >= 0xC2 && c < 0xE0) ? 2 : (c >= 0xE0 && c < 0xF0) ? 3
+                              : (c >= 0xF0 && c < 0xF5) ? 4 : 0;
+        bool ok = n != 0 && i + n <= in.size();
+        for (std::size_t k = 1; ok && k < n; ++k) ok = (static_cast<unsigned char>(in[i + k]) & 0xC0) == 0x80;
+        if (ok && n >= 3) {   // no overlong forms, no surrogates, nothing past U+10FFFF
+            const unsigned char d = static_cast<unsigned char>(in[i + 1]);
+            if (n == 3) ok = !(c == 0xE0 && d < 0xA0) && !(c == 0xED && d >= 0xA0);
+            else ok = !(c == 0xF0 && d < 0x90) && !(c == 0xF4 && d >= 0x90);
+        }
+        if (!ok || (n == 1 && (c < 0x20 || c == 0x7F))) {
+            ++i;
+            continue;
+        }
+        if (out.size() + n > room) {
+            if (cut != nullptr) *cut = true;
+            break;
+        }
+        out.append(in.substr(i, n));
+        i += n;
+    }
+    std::size_t b = 0, e = out.size();
+    while (b < e && out[b] == ' ') ++b;
+    while (e > b && out[e - 1] == ' ') --e;
+    return out.substr(b, e - b);
+}
+
+// The text's characters (code points) as start offsets, for cutting a long value on a character's edge.
+std::vector<std::size_t> CharStarts(const std::string& s) {
+    std::vector<std::size_t> at;
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        if ((static_cast<unsigned char>(s[i]) & 0xC0) != 0x80) at.push_back(i);
+    }
+    return at;
+}
+
+constexpr std::size_t kShownChars = 40;   // a long value shows this many characters, not the whole of it
+
+// While typing: the END of the text (that is where the next character goes), "..." before it when cut.
+std::string TailShown(const std::string& s) {
+    const std::vector<std::size_t> at = CharStarts(s);
+    if (at.size() <= kShownChars) return s;
+    return "..." + s.substr(at[at.size() - (kShownChars - 3)]);
+}
+
+// Not typing: a long value shows its start and its end, so one pasted string can be told from another.
+std::string EndsShown(const std::string& s) {
+    const std::vector<std::size_t> at = CharStarts(s);
+    if (at.size() <= kShownChars) return s;
+    const std::size_t part = (kShownChars - 3) / 2;
+    return s.substr(0, at[part]) + "..." + s.substr(at[at.size() - part]);
 }
 
 Row Make(std::string name, std::string value, RowKind kind) {
@@ -206,6 +267,8 @@ void Tab::Show() {
 void Tab::Hide() {
     typing_ = false;
     typed_.clear();
+    paste_wanted_ = false;
+    paste_for_.clear();
 }
 
 std::vector<Tab::Line> Tab::Lines() const {
@@ -337,7 +400,7 @@ std::vector<Tab::Line> Tab::Lines() const {
             break;
         }
         case CoopMods::SettingType::Text:
-            l.row = Make(caption, s.value.empty() ? "(empty)" : s.value, RowKind::kAction);
+            l.row = Make(caption, s.value.empty() ? "(empty)" : EndsShown(s.value), RowKind::kAction);
             break;
         }
         l.row.fixed = s.locked;
@@ -495,7 +558,13 @@ bool Tab::Press(Input input) {
     case Input::kDown: Move(1); break;
     case Input::kLeft:
     case Input::kRight:
-        if (selected_ < lines.size()) Change(lines[selected_], input == Input::kRight ? 1 : -1);
+        if (selected_ < lines.size()) {
+            if (IsText(lines[selected_])) {   // a text row has no sides: Left / Right is Paste (the pad's way)
+                AskPaste(lines[selected_]);
+            } else {
+                Change(lines[selected_], input == Input::kRight ? 1 : -1);
+            }
+        }
         break;
     case Input::kDecide:
         if (selected_ < lines.size()) Decide(lines[selected_]);
@@ -524,15 +593,86 @@ void Tab::Click(std::size_t row, int side) {
     note_.clear();
     if (side != 0 && (lines[row].row.kind == RowKind::kToggle || lines[row].row.kind == RowKind::kChoice)) {
         Change(lines[row], side);
+    } else if (side != 0 && IsText(lines[row])) {
+        AskPaste(lines[row]);
     } else {
         Decide(lines[row]);
     }
     Clamp();
 }
 
+bool Tab::IsText(const Line& l) {
+    return l.act == Act::kSetting && l.row.kind == RowKind::kAction;
+}
+
+std::size_t Tab::MaxLength(const std::string& key) const {
+    if (src_.loader != nullptr) {
+        for (const CoopMods::SettingRow& s : src_.loader->Settings(mod_)) {
+            if (s.setting.key == key) return std::min(s.setting.max_length, CoopMods::kMaxSettingValue);
+        }
+    }
+    return CoopMods::kMaxSettingValue;
+}
+
+void Tab::AskPaste(const Line& l) {
+    if (l.row.fixed) {
+        Say("In this co-op game the host sets this.");
+        return;
+    }
+    paste_wanted_ = true;
+    paste_for_ = mod_ + "\n" + l.name;
+}
+
+bool Tab::TakePasteRequest() {
+    return std::exchange(paste_wanted_, false);
+}
+
+void Tab::Paste(const std::optional<std::string>& clip, bool into_typing) {
+    if (src_.loader == nullptr) return;
+    const std::vector<Line> lines = Lines();
+    if (selected_ >= lines.size() || !IsText(lines[selected_])) return;
+    const Line& l = lines[selected_];
+    if (into_typing ? !typing_ : (typing_ || paste_for_ != mod_ + "\n" + l.name)) {
+        return;   // the player left the field (or the row, or the page) while the text came: it is not for this one
+    }
+    if (!clip) {
+        Say("The clipboard could not be read: copy the text again, then Paste.");
+        return;
+    }
+    const std::size_t max = MaxLength(l.name);
+    const std::size_t room = into_typing ? max - std::min(typed_.size(), max) : max;
+    bool cut = false;
+    const std::string text = CleanPaste(*clip, room, &cut);
+    if (text.empty()) {
+        Say(cut ? "No room left in this field."
+                : clip->empty() ? "The clipboard has no text." : "The clipboard has no text this setting can take.");
+        return;
+    }
+    if (into_typing) {   // Ctrl+V while typing: after what is typed, as a text field does
+        typed_ += text;
+        if (cut) Say("The text was longer than this setting takes (" + std::to_string(max) + "): the end was left out.");
+        return;
+    }
+    if (cut) {   // not half a settings string: a cut one would be taken for the real thing
+        Say("That text is longer than this setting takes (" + std::to_string(max) + "): nothing was changed.");
+        return;
+    }
+    std::string problem;
+    if (src_.loader->Set(mod_, l.name, text, &problem)) {
+        Say("Pasted: " + std::to_string(CharStarts(text).size()) + " characters.");
+    } else {
+        Say(problem);
+    }
+}
+
 bool Tab::Char(std::uint32_t cp) {
     if (!typing_) return false;
-    if (cp >= 0x20 && cp != 0x7F && typed_.size() < CoopMods::kMaxSettingValue) AppendUtf8(typed_, cp);
+    if (cp < 0x20 || cp == 0x7F || cp > 0x10FFFF || (cp >= 0xD800 && cp < 0xE000)) return true;
+    const std::vector<Line> lines = Lines();
+    const std::size_t max = selected_ < lines.size() ? MaxLength(lines[selected_].name) : CoopMods::kMaxSettingValue;
+    std::string one;
+    AppendUtf8(one, cp);
+    if (typed_.size() + one.size() <= max) typed_ += one;   // (the setting's own max_length, not only the 512 cap)
     return true;
 }
 
@@ -546,9 +686,11 @@ CoopPauseMenu::View Tab::view() const {
         v.help_title = l.row.name;
         v.help = l.help;
         if (typing_) {
-            v.rows[selected_].value = typed_ + "_";
+            v.rows[selected_].value = TailShown(typed_) + "_";   // (the end: where the next character goes)
             v.typing = true;
-            v.help = "Type, then Enter. Esc: as it was.";
+            v.help = "Type or Ctrl+V, then Enter. Esc: as it was.";   // (a line of the translation table: keep it whole)
+            v.hint = std::to_string(CharStarts(typed_).size()) + " characters (" + std::to_string(typed_.size()) +
+                     " of " + std::to_string(MaxLength(l.name)) + " bytes)";
         }
     }
     if (!note_.empty()) {
@@ -556,7 +698,8 @@ CoopPauseMenu::View Tab::view() const {
     } else if (src_.loader != nullptr && src_.loader->RestartNeeded().needed) {
         v.gold = "Restart the game to use the changes.";
     }
-    v.change = typing_ ? "" : "Switch";
+    const bool on_text = !typing_ && selected_ < lines.size() && IsText(lines[selected_]) && !lines[selected_].row.fixed;
+    v.change = typing_ ? "" : on_text ? "Paste" : "Switch";
     v.confirm = typing_ ? "Done" : mod_.empty() ? "Open" : "Choose";
     v.back = mod_.empty() && !typing_ ? "Close" : "Back";
     return v;

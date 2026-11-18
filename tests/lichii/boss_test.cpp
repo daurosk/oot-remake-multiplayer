@@ -166,8 +166,11 @@ TEST_CASE("boss: our own intro and death, read with no name, are told to the are
     CHECK(a.intro_here == nullptr);
     a = s.Tick(At("ForestTemple", Forest().arrive, true), 12 * kS);  // the real intro, after the wait
     CHECK(s.phase() == Sync::Phase::intro);
+    CHECK(a.intro_here == nullptr);  // no shut-in flag here: told once it has run kMinIntroUs (issue 148)
+    a = s.Tick(At("ForestTemple", Forest().arrive, true), 15 * kS);
     CHECK(a.intro_here == &Forest());
     CHECK(a.beaten_here == nullptr);
+    CHECK(s.Tick(At("ForestTemple", Forest().arrive, true), 16 * kS).intro_here == nullptr);  // once
     a = s.Tick(At("ForestTemple", Forest().arrive, false), 30 * kS);
     CHECK(a.intro_here == nullptr);
     {
@@ -688,6 +691,49 @@ TEST_CASE("boss: A on the way to Gohma's door moves no one, A shut in moves B (i
     }
     CHECK(said);
     CHECK(pulled);
+}
+
+TEST_CASE("boss: the area rules hear of our intro only once we are past the door (issue 148)") {
+    // The older rules tell the area rules (coop_boss_scenes) "our game runs the intro"; they send
+    // intro_start and move every other game in the area to the room's start. Told at the first event in
+    // Gohma's circle (which takes in the way to her door), the door's own event pulled the others in
+    // while the leader still stood outside.
+    Sync a;
+    std::uint64_t t = 1 * kS;
+    const auto tick = [&](Vec p, bool event, std::optional<bool> shut) {
+        Actions out = a.Tick(DekuAt(p, event, shut, 1), t);
+        t += 250'000;
+        return out;
+    };
+    tick(kDekuOnTheWay, false, false);
+    // The door opening (and texts) on the way, 6 s, not shut in: nothing told.
+    for (int i = 0; i < 24; ++i) CHECK(tick(kDekuOnTheWay, true, false).intro_here == nullptr);
+    CHECK(tick(kDekuOnTheWay, false, false).intro_here == nullptr);
+    // Came into the room with an event running, still not shut in: nothing told either.
+    for (int i = 0; i < 8; ++i) CHECK(tick(Deku().arrive, true, false).intro_here == nullptr);
+    // The door shuts behind A: told, once.
+    int told = 0;
+    for (int i = 0; i < 12; ++i) told += tick(Deku().arrive, true, true).intro_here == &Deku() ? 1 : 0;
+    CHECK(told == 1);
+}
+
+TEST_CASE("boss: in a room with no shut-in flag a short event is not told as the intro (issue 148)") {
+    Sync s;
+    s.Tick(At("ForestTemple", Forest().arrive), 1 * kS);
+    // A 2 s event (a door, a text): shorter than kMinIntroUs, never told.
+    for (std::uint64_t t = 2 * kS; t <= 4 * kS; t += kS / 2) {
+        CHECK(s.Tick(At("ForestTemple", Forest().arrive, true), t).intro_here == nullptr);
+    }
+    CHECK(s.Tick(At("ForestTemple", Forest().arrive, false), 4 * kS + kS / 2).intro_here == nullptr);
+    CHECK(s.phase() == Sync::Phase::waiting);
+    // The real intro: told while it still runs (the area rules then see it end), once.
+    int told = 0;
+    for (std::uint64_t t = 6 * kS; t <= 20 * kS; t += kS / 2) {
+        told += s.Tick(At("ForestTemple", Forest().arrive, true), t).intro_here == &Forest() ? 1 : 0;
+    }
+    CHECK(told == 1);
+    CHECK(s.Tick(At("ForestTemple", Forest().arrive, false), 21 * kS).intro_here == nullptr);
+    CHECK(s.phase() == Sync::Phase::fight);
 }
 
 TEST_CASE("boss: in the Deku Tree an event that ends with A not shut in moves no one (issue 148)") {

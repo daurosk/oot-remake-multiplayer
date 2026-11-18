@@ -92,10 +92,26 @@ done
 pack=$repo/tools/puppet_pack
 files=(ainb.py build.py __init__.py byml.py dumpcheck.py dungeon_rooms.py hud.py nup.py rstb.py sarc.py texture.py
     title_menu.py tunic.py tunic_extra.py zs.py self_tunic.py merge_tables.py)   # (self_tunic.py, merge_tables.py: start.sh)
-while IFS= read -r m; do files+=("$m.py"); done < <(sed -n 's/#.*//; s/^[[:space:]]*from \. import //p' "$pack/build.py" | tr ',' '\n' | tr -d ' ' | grep .)
-for f in $(printf '%s\n' "${files[@]}" | sort -u); do
+# Followed through every module they import, and theirs (title_menu.py -> ui_pack.py -> msbt.py): one missing from
+# the kit stops build.py at its first import, and the pack is never made on the players' PCs.
+imports_of() {   # the modules a file imports from its own package, one per line
+    sed -n 's/#.*//; s/^[[:space:]]*from \.\([A-Za-z0-9_][A-Za-z0-9_]*\) import .*/\1/p; s/^[[:space:]]*from \. import //p' "$1" \
+        | tr ',' '\n' | awk '{print $1}' | grep -v '^$' || true
+}
+declare -A seen=()
+queue=("${files[@]}")
+while ((${#queue[@]})); do
+    f=${queue[0]}; queue=("${queue[@]:1}")
+    [[ -n ${seen[$f]:-} ]] && continue
+    seen[$f]=1
     [[ -f $pack/$f ]] || die "tools/puppet_pack/$f (needed by build.py) is not in the repo"
+    while IFS= read -r m; do queue+=("$m.py"); done < <(imports_of "$pack/$f")
+done
+for f in $(printf '%s\n' "${!seen[@]}" | sort); do
     text "$pack/$f" "$kit/data/tools/puppet_pack/$f"
+done
+for s in "$pack"/strings/*.txt; do   # ui_pack.py's words for the game's menus, read where the module is
+    text "$s" "$kit/data/tools/puppet_pack/strings/$(basename "$s")"
 done
 text "$repo/docs/setup-linux.md" "$kit/data/docs/SETUP-LINUX.md"
 text "$repo/docs/known-issues.md" "$kit/data/docs/KNOWN-ISSUES.md"

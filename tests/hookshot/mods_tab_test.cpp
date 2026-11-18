@@ -5,6 +5,7 @@
 #include <doctest/doctest.h>
 
 #include <filesystem>
+#include <optional>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -137,12 +138,11 @@ TEST_CASE("mods tab: a mod's page moves it and changes each kind of setting") {
     tab.Press(Input::kDecide);
     CHECK_FALSE(tab.typing());
     CHECK(m.Value("label") == "Hey");
-    // Too long for its max_length: refused with the reason, the old value kept.
+    // Too long for its max_length (8): typing stops at the limit (nothing longer can be Done).
     tab.Press(Input::kDecide);
     for (const char c : std::string("123456789")) tab.Char(static_cast<unsigned char>(c));
     tab.Press(Input::kDecide);
-    CHECK(m.Value("label") == "Hey");
-    CHECK_FALSE(tab.view().gold.empty());
+    CHECK(m.Value("label") == "Hey12345");
     // Glow (toggle, restart): Confirm flips it, the help says so.
     tab.Press(Input::kDown);
     v = tab.view();
@@ -153,6 +153,97 @@ TEST_CASE("mods tab: a mod's page moves it and changes each kind of setting") {
     CHECK(tab.Press(Input::kBack));
     CHECK_FALSE(tab.on_mod_page());
     CHECK(tab.view().selected == 0 + 1);  // back on Big HUD's row (under the restart note)
+}
+
+
+TEST_CASE("mods tab: typing stops at the setting's max_length and a long value shows its end") {
+    Mods m;
+    Tab tab({m.loader.get(), nullptr, nullptr});
+    tab.Show();
+    tab.Press(Input::kDecide);
+    for (int i = 0; i < 4; ++i) tab.Press(Input::kDown);
+    tab.Press(Input::kDown);  // Size, look, Label
+    auto v = tab.view();
+    REQUIRE(v.rows[v.selected].name == "Label");
+    tab.Press(Input::kDecide);
+    for (const char c : std::string("123456789")) tab.Char(static_cast<unsigned char>(c));
+    CHECK(tab.view().rows[tab.view().selected].value == "12345678_");   // max_length 8: the rest is not taken
+    tab.Press(Input::kDecide);
+    CHECK(m.Value("label") == "12345678");
+    // The seed row (no max_length: 64): 100 typed show the END with "..." before it.
+    tab.Press(Input::kDown);
+    tab.Press(Input::kDown);
+    v = tab.view();
+    REQUIRE(v.rows[v.selected].name == "Seed");
+    tab.Press(Input::kDecide);
+    for (int i = 0; i < 100; ++i) tab.Char('a' + i % 26);
+    v = tab.view();
+    const std::string shown = v.rows[v.selected].value;
+    CHECK(shown.rfind("...", 0) == 0);
+    CHECK(shown.size() == 40 + 1);                       // 40 characters and the cursor
+    CHECK(shown.back() == '_');
+    CHECK(v.hint.find("64 bytes") != std::string::npos);
+}
+
+TEST_CASE("mods tab: Paste into a text row (the pad's way) and Ctrl+V while typing") {
+    Mods m;
+    Tab tab({m.loader.get(), nullptr, nullptr});
+    tab.Show();
+    tab.Press(Input::kDecide);
+    for (int i = 0; i < 5; ++i) tab.Press(Input::kDown);
+    auto v = tab.view();
+    REQUIRE(v.rows[v.selected].name == "Label");
+    CHECK(v.change == "Paste");
+    // Right asks; the module hands the clipboard: the value is replaced, line breaks and spaces dropped.
+    CHECK_FALSE(tab.TakePasteRequest());
+    tab.Press(Input::kRight);
+    REQUIRE(tab.TakePasteRequest());
+    CHECK_FALSE(tab.TakePasteRequest());
+    tab.Paste(std::string("  AB\r\nCD \n"), false);
+    CHECK(m.Value("label") == "ABCD");
+    CHECK(tab.view().gold.rfind("Pasted", 0) == 0);
+    // Too long for max_length 8: nothing changes, and it says why.
+    tab.Press(Input::kLeft);
+    REQUIRE(tab.TakePasteRequest());
+    tab.Paste(std::string("123456789"), false);
+    CHECK(m.Value("label") == "ABCD");
+    CHECK_FALSE(tab.view().gold.empty());
+    // The clipboard could not be read: said, the value kept.
+    tab.Press(Input::kRight);
+    REQUIRE(tab.TakePasteRequest());
+    tab.Paste(std::nullopt, false);
+    CHECK(m.Value("label") == "ABCD");
+    CHECK(tab.view().gold.find("clipboard") != std::string::npos);
+    // A paste that comes after the player moved to another row is dropped.
+    tab.Press(Input::kRight);
+    REQUIRE(tab.TakePasteRequest());
+    tab.Press(Input::kUp);
+    tab.Paste(std::string("ZZ"), false);
+    CHECK(m.Value("label") == "ABCD");
+    tab.Press(Input::kDown);
+    // Ctrl+V while typing joins the typed text (UTF-8 kept whole, cut on a character's edge at max_length).
+    tab.Press(Input::kDecide);
+    REQUIRE(tab.typing());
+    tab.Paste(std::string("\xC3\xA9\xE4\xBD\xA0X"), true);   // e-acute (2), a CJK character (3), X (1): ABCD + 6 > 8
+    CHECK(tab.view().rows[tab.view().selected].value == "ABCD\xC3\xA9_");   // room 4: the e-acute fits, the CJK character (3) does not
+    CHECK_FALSE(tab.view().gold.empty());
+}
+
+TEST_CASE("mods tab: Paste is only for text rows (a number row still steps)") {
+    Mods m;
+    Tab tab({m.loader.get(), nullptr, nullptr});
+    tab.Show();
+    tab.Press(Input::kDecide);
+    for (int i = 0; i < 3; ++i) tab.Press(Input::kDown);
+    auto v = tab.view();
+    REQUIRE(v.rows[v.selected].name == "Size");
+    CHECK(v.change == "Switch");
+    tab.Press(Input::kRight);
+    CHECK_FALSE(tab.TakePasteRequest());   // a number row's sides still step it
+    CHECK(m.Value("size") == "3");
+    tab.Paste(std::string("x"), false);    // nothing asked, not a text row: nothing happens
+    tab.Paste(std::string("x"), true);
+    CHECK(m.Value("size") == "3");
 }
 
 TEST_CASE("mods tab: the host's value is locked, and co-op has its line") {

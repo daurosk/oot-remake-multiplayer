@@ -14,6 +14,10 @@
 #   crawl-stuck-A A max=0 (?<!fairy )coop: puppet: (P\d+) show -> (?:hide)(?![\s\S]*(?<!fairy )coop: puppet: \1 (?:hold|hide) -> show)
 #   crawl-hides-A A max=99 (?<!fairy )coop: puppet: P\d+ show -> hide \(our cutscene\)
 # crawl's own notes:
+# big-run-0115 (20261117-200328): A never entered the tunnel. It was placed at -66.3 5.8 and pushed
+# toward -75.58 14.13, a line 1.8 m beside the tunnel's (A stopped at -69.67 7.22 against the trunk, shot
+# through-A). The game's own CrawlAnchor actors mark the two ends (-68.72 8.16 and -75.33 13.95): A is
+# now placed on that line outside the mouth and pushed along it.
 # crawl (issue 86), checked by itself: both warp into Kokiri Forest as child (no save set up), A
 # crawls the Kokiri Sword tunnel, B watches from inside (crawl.A.txt / crawl.B.txt).
 # Run: tools\autotest\run.ps1 -Scenario crawl
@@ -56,13 +60,13 @@ press A
 wait 2400
 mark after
 wait 600                # let the arrival event end before the place
-place -66.3 118.3 5.8
+place -67.6 118.6 7.2        # on the tunnel's line, 1.5 m outside the mouth (CrawlAnchor -68.72 118.56 8.16)
 wait 240
-toward -68.47 8.00 20
+toward -75.33 13.95 20       # face along the tunnel (far CrawlAnchor -75.33 118.56 13.95)
 mark at-hole
-toward -75.58 14.13 240     # push into the tunnel and through it
+toward -75.33 13.95 240      # push into the tunnel and through it
 press A 12                  # in case the game wants a button at the mouth
-toward -75.58 14.13 300
+toward -75.33 13.95 300
 mark through
 toward -78.9 17.0 120       # a few steps on, inside
 wait 120

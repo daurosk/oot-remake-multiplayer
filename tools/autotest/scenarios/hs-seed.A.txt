@@ -6,13 +6,17 @@
 # BEFORE the run: make the pairs' puppet pack again with this branch's pack tool (model-only
 # stand-ins; its log says "stand-in effects (seed trail): left out").
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-seed (the emulator: -Scenario seed-view)
-# Pass, A's log: "spawn: CoopShot_Seed: create copy N" then "spawn: CoopShot_Seed: copy N is actor",
-# and no "CoopShot_Seed: request dropped". Impacts: at most 3 "CoopHit_SeedSpark: request dropped", then
+# Pass, A's log: "spawn: CoopShotFx_Seed: create copy N" then "spawn: CoopShotFx_Seed: copy N is actor",
+# and no "CoopShotFx_Seed: request dropped". Impacts: at most 3 "CoopHit_SeedSpark: request dropped", then
 # "CoopHit_SeedSpark: could not be made 3 times in a row; no more of it this session" (the same for
 # SeedSound). Shots fly1a..: the seed copy in flight on A's screen.
+# bigrun-0115 (g2/hs-seed/20261117-192247): every seed WAS copied ("spawn: CoopShotFx_Seed: copy 1 is actor": the
+# stand-in is CoopShotFx_Seed since issue 166, the group's expect still said CoopShot_Seed), but A stood 4 m behind B
+# on B's own line, so A's own Link hid B's puppet and the seeds (fly1b-A: only A's back). Now A stands 1.3 m to the
+# left and 1 m further back, so B's puppet and the flight line are right of A's Link on A's screen.
 mark start
 wait 900
-place -35.7 98.3 7.0
+place -37.0 98.3 6.0
 wait 30
 toward -35.7 40 10
 press ZL 10

@@ -382,6 +382,21 @@ class PlayerTest(unittest.TestCase):
         self.assertGreater(-game.pos[2], 2.5)
         self.assertLess(abs(game.pos[0]), 0.5)
 
+    def test_a_stopped_toward_keeps_pushing_straight(self):
+        # #147 (big-run-0115 deku-block): Link against a block stands still until the push starts; a step
+        # aside slid him off its face. A stopped toward holds one direction for all its ticks.
+        game = FakeGame()
+        game.speed = 0.0
+        play("toward 0 -100 180", game)
+        sticks = {(r["x"], r["y"]) for r in game.cmds("stick")}
+        self.assertEqual(sticks, {(0.0, 1.0)})
+
+    def test_a_stopped_goto_still_steps_aside(self):
+        game = FakeGame()
+        game.speed = 0.0
+        play("goto 0 -100 1 180", game)
+        self.assertGreater(len({(r["x"], r["y"]) for r in game.cmds("stick")}), 1)
+
     def test_goto_without_memory_is_skipped(self):
         game, log, _, _, _ = play("goto 1 1\nwait 6", FakeGame(mem=False))
         self.assertTrue(any("HOS_CONTROL_MEM=ro" in line for line in log.lines))

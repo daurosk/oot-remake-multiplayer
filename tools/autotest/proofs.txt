@@ -1,0 +1,192 @@
+# Screenshot checks for groups.py see=<name> (tools/autotest/proof.py; docs/testing.md "Screenshot proof").
+# name  shot  region(x,y,w,h of 1280x720)  kind  [margin= max= min= from= refs= cells=WxH]
+# shot: <scenario>-<shot>.png in the run folder: <script>-<mark>-<game> (A-up1-B: script A's 'mark up1', game B's
+# picture). refs: <kit root>\proof-refs\<refs or name>\good-*.png / bad-*.png (local only: game screenshots never go
+# in the repo; add with proof.py ref add).
+
+# hs-deku-platforms (#176): at the A script's 'up1' both games play the event's camera on the lifts (the same view):
+# lifts up (cylinders) = good, down (flat discs in the floor) = bad. One reference set for both games.
+deku-lifts-A   A-up1-A  330,300,580,280  refs  refs=deku-lifts
+deku-lifts-B   A-up1-B  330,300,580,280  refs  refs=deku-lifts
+
+# --- stub checks (proof-shots, 2026-11-18): region is the play area; references come from the
+# reference-capture run (reports/proof-shots-a.md). Good = what the comment says, in that game's shot. ---
+# hs-deku-torch (#176 #177): at the B script's 'lit' A's torch (centre, behind where the web was) must burn as B's
+# does; 'web': the web gone in A. Bad refs: bigrun-0115 A (torch dark).
+deku-torch-A   B-lit-A  680,140,100,110  refs
+deku-web-A     B-web-A  600,0,280,240    refs
+# deku-block: the block pushed to the same place in both games
+deku-block-A               A-a-watch-A        160,80,960,520  refs
+deku-block-B               A-a-watch-B        160,80,960,520  refs
+# hs-barinade-native: Barinade in the same pose/place in both games
+hs-barinade-native-A       A-a-3-A            160,80,960,520  refs
+hs-barinade-native-B       A-a-3-B            160,80,960,520  refs
+# hs-bongobongo-native: Bongo Bongo in the same pose/place in both games
+hs-bongobongo-native-A     A-a-3-A            160,80,960,520  refs
+hs-bongobongo-native-B     A-a-3-B            160,80,960,520  refs
+# hs-ganon-native: Ganon in the same pose/place in both games
+hs-ganon-native-A          A-a-3-A            160,80,960,520  refs
+hs-ganon-native-B          A-a-3-B            160,80,960,520  refs
+# hs-ganondorf-native: Ganondorf in the same pose/place in both games
+hs-ganondorf-native-A      A-a-3-A            160,80,960,520  refs
+hs-ganondorf-native-B      A-a-3-B            160,80,960,520  refs
+# hs-morpha-native: Morpha in the same pose/place in both games
+hs-morpha-native-A         A-a-3-A            160,80,960,520  refs
+hs-morpha-native-B         A-a-3-B            160,80,960,520  refs
+# hs-phantomganon-native: Phantom Ganon in the same pose/place in both games
+hs-phantomganon-native-A   A-a-3-A            160,80,960,520  refs
+hs-phantomganon-native-B   A-a-3-B            160,80,960,520  refs
+# hs-twinrova-native: Twinrova in the same pose/place in both games
+hs-twinrova-native-A       A-a-3-A            160,80,960,520  refs
+hs-twinrova-native-B       A-a-3-B            160,80,960,520  refs
+# hs-volvagia-native: Volvagia in the same pose/place in both games
+hs-volvagia-native-A       A-a-3-A            160,80,960,520  refs
+hs-volvagia-native-B       A-a-3-B            160,80,960,520  refs
+# hs-dodongo-native: King Dodongo swallowing/stunned alike in both games
+hs-dodongo-native-A        A-a-bomb1-A        160,80,960,520  refs
+hs-dodongo-native-B        A-a-bomb1-B        160,80,960,520  refs
+# hs-gohma-native: Gohma stunned (on the floor) in both games
+hs-gohma-native-A          A-a-stun1-A        160,80,960,520  refs
+hs-gohma-native-B          A-a-stun1-B        160,80,960,520  refs
+# hs-gohma: Gohma stunned in both games, the fight past Pre_Battle
+hs-gohma-A                 A-a-stun1-A        160,80,960,520  refs
+hs-gohma-B                 A-a-stun1-B        160,80,960,520  refs
+# hs-boss-cutscenes-gohma: Gohma's intro cutscene on screen in both games (and a-death: the death)
+hs-boss-cutscenes-gohma-A  A-a-intro-A        160,80,960,520  refs
+hs-boss-cutscenes-gohma-B  A-a-intro-B        160,80,960,520  refs
+# hs-boss-cutscenes-dodongo: King Dodongo's intro cutscene on screen in both games
+hs-boss-cutscenes-dodongo-A A-a-intro-A        160,80,960,520  refs
+hs-boss-cutscenes-dodongo-B A-a-intro-B        160,80,960,520  refs
+# hs-boss-far-gohma: A: the intro plays; B (far away): no cutscene, the chat line shows
+hs-boss-far-gohma-A        A-a-intro-A        160,80,960,520  refs
+hs-boss-far-gohma-B        A-a-intro-B        160,80,960,520  refs
+# hs-boss-fix-gohma: the copy Gohma reacts to B's hit in B (and in A)
+hs-boss-fix-gohma-A        A-a-hit1-A         160,80,960,520  refs
+hs-boss-fix-gohma-B        A-a-hit1-B         160,80,960,520  refs
+# hs-boss-fix-gohma-rev: the copy Gohma reacts to A's hit in A (and in B)
+hs-boss-fix-gohma-rev-A    A-a-hit1-A         160,80,960,520  refs
+hs-boss-fix-gohma-rev-B    A-a-hit1-B         160,80,960,520  refs
+# hs-gohma-death: the boss room in both games after Gohma's death (not black)
+hs-gohma-death-A           A-a-d3-A           160,80,960,520  refs
+hs-gohma-death-B           A-a-d3-B           160,80,960,520  refs
+# hs-gohma-door: both Links past the boss door, the door shut, Gohma in the room
+hs-gohma-door-A            B-b-in-A           160,80,960,520  refs
+hs-gohma-door-B            B-b-in-B           160,80,960,520  refs
+# hs-chest-other: the map chest open in both games after B opened it
+hs-chest-other-A           A-a-look-A         160,80,960,520  refs
+hs-chest-other-B           A-a-look-B         160,80,960,520  refs
+# hs-crawl: the puppet crawls (low, in the hole) in the other game
+hs-crawl-A                 A-through-A        160,80,960,520  refs
+hs-crawl-B                 A-through-B        160,80,960,520  refs
+# hs-deku-torch-away: web burned and torch lit in A too (A was out of the room)
+hs-deku-torch-away-A       A-web-A            160,80,960,520  refs
+hs-deku-torch-away-B       A-web-B            160,80,960,520  refs
+# hs-deku-water-floor: the water low and the floors moved alike in both games
+hs-deku-water-floor-A      A-moved-A          160,80,960,520  refs
+hs-deku-water-floor-B      A-moved-B          160,80,960,520  refs
+# hs-door: the puppet hidden during its door cutscene, then shown again
+hs-door-A                  A-a-watch-A        160,80,960,520  refs
+hs-door-B                  A-a-watch-B        160,80,960,520  refs
+# hs-epona: the puppet on Epona in the other game
+hs-epona-A                 A-riding-A         160,80,960,520  refs
+hs-epona-B                 A-riding-B         160,80,960,520  refs
+# hs-fishing: the fish near A's lure in both games; B holds the rod
+hs-fishing-A               A-a-reel-A         160,80,960,520  refs
+hs-fishing-B               A-a-reel-B         160,80,960,520  refs
+# hs-goron-rock: the rock broken in both games
+hs-goron-rock-A            A-boom-A           160,80,960,520  refs
+hs-goron-rock-B            A-boom-B           160,80,960,520  refs
+# hs-hud: the co-op blocks drawn over the HUD (label 'HUD off': none)
+hs-hud-A                   A-a-hud-A          160,80,960,520  refs
+hs-hud-B                   A-a-hud-B          160,80,960,520  refs
+# hs-jabu-water: Jabu's room 14 water level the same in both games
+hs-jabu-water-A            A-water-A          160,80,960,520  refs
+hs-jabu-water-B            A-water-B          160,80,960,520  refs
+# hs-kak-letter: the Kakariko gate open in both games
+hs-kak-letter-A            A-open-A           160,80,960,520  refs
+hs-kak-letter-B            A-open-B           160,80,960,520  refs
+# kak-gate: the Kakariko gate open in both games
+kak-gate-A                 A-open-A           160,80,960,520  refs
+kak-gate-B                 A-open-B           160,80,960,520  refs
+# hs-ladder: the ladder down in both games
+hs-ladder-A                A-ladder-A         160,80,960,520  refs
+hs-ladder-B                A-ladder-B         160,80,960,520  refs
+# hs-lift-ride: the lift carries both Links in both games
+hs-lift-ride-A             A-a-during-A       160,80,960,520  refs
+hs-lift-ride-B             A-a-during-B       160,80,960,520  refs
+# hs-masks: the puppet wears the Skull Mask in the other game
+hs-masks-A                 A-skull-A          160,80,960,520  refs
+hs-masks-B                 A-skull-B          160,80,960,520  refs
+# hs-npc-anim: the NPC plays the same talk animation in both games
+hs-npc-anim-A              A-talk-A           160,80,960,520  refs
+hs-npc-anim-B              A-talk-B           160,80,960,520  refs
+# hs-npc-walk: the townspeople walking (legs moving) the same in both games
+hs-npc-walk-A              A-w5-A             160,80,960,520  refs
+hs-npc-walk-B              A-w5-B             160,80,960,520  refs
+# hs-ocarina-given: B holds and plays the Ocarina
+hs-ocarina-given-A         B-saria-A          160,80,960,520  refs
+hs-ocarina-given-B         B-saria-B          160,80,960,520  refs
+# hs-ocarina-show: the puppet holds the Ocarina while playing, in the other game
+hs-ocarina-show-A          A-playing2-A       160,80,960,520  refs
+hs-ocarina-show-B          A-playing2-B       160,80,960,520  refs
+# hs-panel: chat lines and name tags drawn in both games
+hs-panel-A                 A-a-chat-A         160,80,960,520  refs
+hs-panel-B                 A-a-chat-B         160,80,960,520  refs
+# hs-platforms-dodongo: A and B on the SAME lift facing the same way (misc-fails-0115), so at one mark both games show
+# that lift from beside it: the cave above the Links (top band, the puppets stay below it) must match. s3 and s4 come
+# after B's one-time counter fix (about 21 s after placed). A lift up in one game and down in the other moves the
+# camera about 3.5 m (a different band). max= is a first guess: check it on the first run's distances.
+hs-platforms-dodongo-A     A-s3-A             0,0,1280,300    same  max=12
+hs-platforms-dodongo-B     A-s4-B             0,0,1280,300    same  max=12
+# hs-players: the player list panel drawn
+hs-players-A               A-a-list-A         160,80,960,520  refs
+hs-players-B               A-a-list-B         160,80,960,520  refs
+# hs-pot-drops: the pot's drop lying in both games, then picked
+hs-pot-drops-A             A-pick2-A          160,80,960,520  refs
+hs-pot-drops-B             A-pick2-B          160,80,960,520  refs
+# hs-puppets: the other player's puppet standing in each game
+hs-puppets-A               A-spawned-A        160,80,960,520  refs
+hs-puppets-B               A-spawned-B        160,80,960,520  refs
+# hs-seed: the seed copy flying in the other game
+# (misc-fails-0115: A-ready was before any shot; now in flight on A's screen, A placed off B's line)
+hs-seed-A                  B-fly1b-A          160,80,960,520  refs
+hs-seed-B                  B-aim3-B           160,80,960,520  refs
+# spawn-seed (#166): A's seed copy in A's puppet's sling / in flight on B's screen (B placed beside, spawn-seed.B.txt)
+spawn-seed-B               A-aim5-B           160,80,960,520  refs
+# hs-sign-late: the sign cut in the late loader's game too
+hs-sign-late-A             A-cut3-A           160,80,960,520  refs
+hs-sign-late-B             A-cut3-B           160,80,960,520  refs
+# hs-skulltula-token: the token gone in both games
+hs-skulltula-token-A       A-taken-A          160,80,960,520  refs
+hs-skulltula-token-B       A-taken-B          160,80,960,520  refs
+# hs-spawn: the puppet appears where the player is, no pop from elsewhere
+hs-spawn-A                 A-reading-A        160,80,960,520  refs
+hs-spawn-B                 A-reading-B        160,80,960,520  refs
+# hs-teleport-room: A arrived by the other player
+hs-teleport-room-A         A-arrived-A        160,80,960,520  refs
+hs-teleport-room-B         A-arrived-B        160,80,960,520  refs
+# hs-tunic: own Link blue, the puppet in its colour
+hs-tunic-A                 A-a-still-A        160,80,960,520  refs
+hs-tunic-B                 A-a-still-B        160,80,960,520  refs
+# pvp: B's Link hit (knocked back/flash) by A's sword
+pvp-A                      A-on1-A            160,80,960,520  refs
+pvp-B                      A-on1-B            160,80,960,520  refs
+# teleport-other: A in the other overworld scene by the other player
+teleport-other-A           A-arrived-A        160,80,960,520  refs
+teleport-other-B           A-arrived-B        160,80,960,520  refs
+# stray: after B rejoins: the puppet back in each game
+stray-A                    s*-b-rejoined-A    160,80,960,520  refs
+stray-B                    s*-b-rejoined-B    160,80,960,520  refs
+# screens: both back in: each game shows the other's puppet
+screens-A                  s*-a-back-in-A     160,80,960,520  refs
+screens-B                  s*-a-back-in-B     160,80,960,520  refs
+# threads-of-time: the Threads of Time menu open
+threads-of-time-A          *.A2-A-opened-A      160,80,960,520  refs
+threads-of-time-B          *.A2-A-opened-B      160,80,960,520  refs
+# world-reset: the same grass and objects in each game after B's load
+world-reset-A              s*-still-60s-A     160,80,960,520  refs
+world-reset-B              s*-still-60s-B     160,80,960,520  refs
+# stalchild (#124, misc-fails-0115): at A's fight3 A fights a Stalchild on the open field in front of the Market; B,
+# 18 m away facing A, shows A's puppet and the same Stalchild (refs from the first run of the new spots)
+stalchild-A                A-fight3-A         160,80,960,520  refs
+stalchild-B                A-fight3-B         160,80,960,520  refs

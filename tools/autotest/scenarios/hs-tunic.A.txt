@@ -9,6 +9,11 @@
 # Second run with -Switches LICHII_COOP_PUPPET=1, LICHII_COOP_TUNICS=0:
 #   both logs "coop: puppets on, actor by age, tunics off
 #   (LICHII_COOP_TUNICS=0)", both puppets green.
+# bigrun-0115 (g1/hs-tunic/20261117-191231): A's Link blue on A and A's puppet blue on B (shots a-still), but the
+# log line now reads "your Link wears <colour> at the start; ..." and the big run's harness copy had no
+# tools\puppet_pack, so run.ps1 could not put A's blue own files in: A logged "the puppet pack's tunic files are
+# green, your colour is blue" and "wears green at the start" (the live repaint still made it blue). The group line
+# now takes both texts and FAILs on that warning (never=); run.ps1 warns when self_tunic.py is missing.
 stick 1 0 50            # off the cow at the save spot
 wait 240
 mark a-still

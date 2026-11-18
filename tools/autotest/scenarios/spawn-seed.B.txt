@@ -1,0 +1,13 @@
+# spawn-seed, B (#166): until bigrun-0115 B had no script: it stood on the save spot right behind A and looked the
+# way the save left it, so A's puppet and its seed were never on B's screen (spawn-seed shots: "nothing to judge").
+# A shoots from about -35.7 11.7 toward +z (its "sent Shootable_DekuSeed at -35.76 98.86 11.66" lines); B stands
+# 1.5 m left of that line and 5 m behind A, facing +z, so A's puppet, the nocked seed and the flight are right of
+# B's own Link. A's marks take both games' shots (A-aim5-B, A-shot02-B: the seed copy on B's screen).
+mark start
+wait 120
+place -37.2 98.3 6.5
+wait 30
+toward -35.7 40 10
+mark ready
+wait 1500
+mark end

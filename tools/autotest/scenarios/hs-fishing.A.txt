@@ -16,6 +16,11 @@
 #   "share owner" changes (no ping-pong).
 # - a bite: "<fish> ... hooked" in A only; no "share owner" for that fish in either log while hooked.
 # - a landed fish: A "share caught here:", B "share caught in its owner's game:" for the same fish.
+# big-run-0115 (20261117-195509): Hookshot's warp does not use the start point ('start
+# MiniGame_Fishing_PlayerStart not used on hookshot (the map's own)'), so A landed at the field's own
+# arrival (197.56 163.22 309.86), far from the pond, talked to nobody, and its 'back out' step left the
+# map. Now A is placed at the pond's start point (from the Banc: -97.61 134.06 489.67), walks to the
+# owner, and after the talk is placed on the paved walk by the water (-96.93 132.77 516.64).
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_OBJECTS_RELEASE=1
@@ -32,7 +37,10 @@ wait 300
 press A                 # loads the save, then the warp
 wait 2400
 mark a-in
-stick 0 1 60            # to the owner's counter
+place -97.61 134.1 489.67  # the pond's own start point (StartPos MiniGame_Fishing_PlayerStart)
+wait 60
+goto -99.2 492.2 0.5 120  # to the owner's counter (Npc_Hylia_Fishman_001_Child -100.16 134.21 493.3)
+toward -100.16 493.3 10
 wait 60
 press A 12              # talk
 wait 300
@@ -51,7 +59,9 @@ wait 300
 press A 12
 wait 360
 mark a-rod
-stick 0 -1 90           # back out to the water
+place -96.9 133.3 516.6  # onto the pond's paved walk (Land_LakeHrl_FishingPondPaver_A_01)
+wait 60
+toward -75.0 516.0 20    # face the water (east)
 wait 90
 press B 12              # cast (the original game's button)
 wait 600

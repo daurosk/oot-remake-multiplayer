@@ -1,4 +1,4 @@
-From 7a7f6e32210846c445748b9a3d19ac5c6810f1d5 Mon Sep 17 00:00:00 2001
+From 44fa05ae7f41feba91b69b7dfaa8612821b4de8d Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Fri, 13 Nov 2026 16:01:26 -0900
 Subject: [PATCH] Co-op map state: the game's menu state for the players on the
@@ -22,6 +22,14 @@ out is also forgotten when the slot that held it is reused, and the state
 says how long ago it last ran (hud_ran_ns_ago, -1 not since it was seen).
 Both new fields are filled when the module's struct is that long.
 
+The running screens, for the module (row 141): a module whose struct is
+long enough also gets the screens that ran in the last 100 ms
+(screen_count, screens[24], from the tracker's table under its lock), so
+it can find the player status screen (hearts, magic bar, d-pad) by its
+layout's panes and put the co-op player list below the game's own HUD
+as the game lays it out. An older module's shorter struct gets what it
+got before.
+
 The screens' tracker (hos_oot_menu_tick) and both exports build on Linux
 too (host/posix's windows.h): Linux knows the menu in front, the Map
 page and the HUD screen, and runs the HUD refresh, as Windows does. Only
@@ -30,11 +38,11 @@ pause menu's screen (hos_oot_menu_pause_focus), as Windows' focus_locked
 keeps it. (No hunk on tests/: the Linux kit patches the AppImage's
 source, which has no tests/ folder; our module_test checks the hook.)
 ---
- host/oot_menu.c | 94 ++++++++++++++++++++++++++++++++++++++++++++++---
- 1 file changed, 90 insertions(+), 4 deletions(-)
+ host/oot_menu.c | 113 ++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 109 insertions(+), 4 deletions(-)
 
 diff --git a/host/oot_menu.c b/host/oot_menu.c
-index 7c38611b..a3981a2c 100644
+index 7c38611b..537a97a8 100644
 --- a/host/oot_menu.c
 +++ b/host/oot_menu.c
 @@ -16,13 +16,18 @@
@@ -164,7 +172,7 @@ index 7c38611b..a3981a2c 100644
      for (int i = 0; i < (int)(sizeof seen / sizeof *seen); i++)   /* (a screen with no update for 200 ms has stopped) */
          if (seen[i].running && now - seen[i].seen_ns > 200000000) {
              seen[i].running = 0;
-@@ -808,23 +839,78 @@ void hos_oot_menu_tick(Ctx *c, uint64_t screen) {
+@@ -808,23 +839,97 @@ void hos_oot_menu_tick(Ctx *c, uint64_t screen) {
      static uint64_t front_was;
      if (trace && front && front->screen != front_was) hos_log("menu: the mouse is for screen %#llx", (unsigned long long)front->screen);
      front_was = front ? front->screen : 0;
@@ -195,7 +203,7 @@ index 7c38611b..a3981a2c 100644
 +            hos_log("menu: the HUD refresh %#llx is not in this build of the game: not run", (unsigned long long)HUD_REFRESH_FN);
 +        }
 +    }
-+}
+ }
 +
 +/* (oot-remake-multiplayer's patch 0018, the other players on the game's maps) For hookshot_coop.dll, found by name in
 +   this exe, any thread: the HUD screen (its layout holds the minimap and the Map page's map), the panel's frame (Key
@@ -208,11 +216,20 @@ index 7c38611b..a3981a2c 100644
 +    int64_t hud_ran_ns_ago;   /* how long ago the HUD screen last ran (-1: not since it was seen); filled when size covers it */
 +    uint32_t hud_refreshes;   /* the HUD refreshes made for hos_coop_hud_refresh so far */
 +    uint32_t reserved2;
++    /* (patch 0018, row 141) The screens that ran in the last 100 ms (the HUD's, the player status's with the hearts,
++       magic bar and d-pad, the menus'), for the module to find a screen by its layout's panes; filled when size covers
++       them */
++    uint32_t screen_count;
++    uint32_t reserved3;
++    uint64_t screens[24];
 +} HosCoopMenuState;
 +__declspec(dllexport) int hos_coop_menu_state(HosCoopMenuState *out) {
 +    if (!out || out->size < offsetof(HosCoopMenuState, hud_ran_ns_ago)) return 0;   /* (an older module's smaller one too) */
-+    const int long_one = out->size >= sizeof *out;
-+    out->size = long_one ? (uint32_t)sizeof *out : (uint32_t)offsetof(HosCoopMenuState, hud_ran_ns_ago);
++    const int long_one = out->size >= offsetof(HosCoopMenuState, screen_count);
++    const int with_screens = out->size >= sizeof *out;   /* (row 141: the running screens too) */
++    out->size = with_screens ? (uint32_t)sizeof *out
++                : long_one   ? (uint32_t)offsetof(HosCoopMenuState, screen_count)
++                             : (uint32_t)offsetof(HosCoopMenuState, hud_ran_ns_ago);
 +    out->map_page = map_page;
 +    const int64_t at = front_ns;
 +    out->menu_open = at && hos_now_ns() - at < 150000000;
@@ -223,8 +240,18 @@ index 7c38611b..a3981a2c 100644
 +        out->hud_ran_ns_ago = out->hud_screen && ran ? hos_now_ns() - ran : -1;
 +        out->hud_refreshes = (uint32_t)hud_refreshes, out->reserved2 = 0;
 +    }
++    if (with_screens) {   /* (row 141) */
++        const int64_t now = hos_now_ns();
++        uint32_t n = 0;
++        AcquireSRWLockExclusive(&seen_lock);
++        for (int i = 0; i < (int)(sizeof seen / sizeof *seen) && n < 24; i++)
++            if (seen[i].screen && seen[i].running && now - seen[i].seen_ns < 100000000) out->screens[n++] = seen[i].screen;
++        ReleaseSRWLockExclusive(&seen_lock);
++        out->screen_count = n, out->reserved3 = 0;
++        for (uint32_t i = n; i < 24; i++) out->screens[i] = 0;
++    }
 +    return 1;
- }
++}
 +/* (patch 0018, rows 63/76) The module asks the HUD screen's own refresh once: it runs at that screen's next update
 +   (hos_oot_menu_tick), never on a stored pointer. 1: asked */
 +__declspec(dllexport) int hos_coop_hud_refresh(void) {
@@ -245,3 +272,6 @@ index 7c38611b..a3981a2c 100644
  }
 -void hos_oot_menu_tick(Ctx *c, uint64_t screen) { (void)c, (void)screen; }
  #endif
+-- 
+2.56.0.windows.4
+

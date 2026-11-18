@@ -75,7 +75,9 @@ std::vector<Shooter> Shooters(std::uint64_t now_us);
 // `shooter`: the actor the game's own shoot code makes the shot for (patch
 // 0007's SHOOT_FROM), 0 when not known. A noted shooter at that address
 // decides by its owner alone, with no guess by place; an actor that is not
-// in the list falls back to the place.
+// in the list falls back to the place. Also asked inside the native boss
+// sync's calls on a copy (the owner's shoot action put in: CoopPuppet::Call::
+// copy_game), so the shot has one maker, the owner's game (issue 189).
 bool StopAtCreate(std::string_view shot, const Vec3& at, std::uint64_t shooter = 0);
 std::uint64_t StoppedAtCreate();  // how many so far
 // LICHII_COOP_ENEMY_SHOTS_STOP=0: never stopped at the create (deleted by the

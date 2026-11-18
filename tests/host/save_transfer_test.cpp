@@ -1053,3 +1053,38 @@ TEST_CASE("save transfer: a rejoin with the game on an earlier host's save goes 
   CHECK_FALSE(save::old_coop_first(false, false, true, false, true));  // nothing asked (solo, the host)
   CHECK_FALSE(save::old_coop_first(true, false, false, false, true));  // a pick loading (suspended): after it
 }
+
+TEST_CASE("save transfer: a failed write or switch ends the ask, so Resync is not 'already on its way' for good") {
+  constexpr std::uint64_t s = 1'000'000;
+  save::GuestSession g;
+  g.asked = true;
+  CHECK(save::save_coming(g, 5 * s, 10 * s));   // asked, nothing yet: coming
+  g.unwritten = Slot(5);
+  CHECK(save::save_coming(g, 5 * s, 10 * s));   // waiting for the title
+  save::note_write_failed(g);                   // the write or the switch failed
+  CHECK_FALSE(g.unwritten.has_value());
+  CHECK_FALSE(g.ready);
+  CHECK_FALSE(save::save_coming(g, 6 * s, 10 * s));
+  CHECK(save::resync_check(true, true, save::save_coming(g, 6 * s, 10 * s)) == save::ResyncCheck::go);
+  // a fresh session (Resync's go) asks again
+  g = save::GuestSession{};
+  CHECK_FALSE(g.asked);
+}
+
+TEST_CASE("save transfer: every state that ends the ask also ends 'coming'") {
+  constexpr std::uint64_t s = 1'000'000;
+  save::GuestSession g;
+  g.asked = true;
+  g.no_save = true;   // the host has no save: nothing coming
+  CHECK_FALSE(save::save_coming(g, 5 * s, 10 * s));
+  g = save::GuestSession{};
+  g.asked = true;
+  g.gave_up = true;   // gave up after the asks
+  CHECK_FALSE(save::save_coming(g, 5 * s, 10 * s));
+  g = save::GuestSession{};
+  g.asked = true;
+  save::note_write_failed(g);   // unreadable slot / failed write / failed switch
+  CHECK_FALSE(save::save_coming(g, 5 * s, 10 * s));
+  save::note_part(g, 7, 6 * s);   // a new transfer clears gave_up again
+  CHECK_FALSE(g.gave_up);
+}

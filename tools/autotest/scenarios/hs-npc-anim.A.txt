@@ -51,6 +51,28 @@ press A 12
 wait 90
 press A 12
 wait 90
+# big-run-0115 (20261117-195056): six A presses did not reach the end of Dampe's talk (shots talk-2 and
+# after: two different lines, the box still open at 'after'), so the event never ended. Ten more:
+press A 12
+wait 90
+press A 12
+wait 90
+press A 12
+wait 90
+press A 12
+wait 90
+press A 12
+wait 90
+press A 12
+wait 90
+press A 12
+wait 90
+press A 12
+wait 90
+press A 12
+wait 90
+press A 12
+wait 90
 press B 12
 wait 60
 press B 12

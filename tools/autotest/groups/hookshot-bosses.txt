@@ -3,19 +3,19 @@
 # Each scenario's header has its proof lines; the expects below are the first three of them.
 
 [g1]
-hs-gohma-native         expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Gohma"
-hs-dodongo-native       expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 King Dodongo"
-hs-barinade-native      expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Barinade"
+hs-gohma-native         expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Gohma"  see=hs-gohma-native-A  see=hs-gohma-native-B
+hs-dodongo-native       expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 King Dodongo"  see=hs-dodongo-native-A  see=hs-dodongo-native-B
+hs-barinade-native      expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Barinade"  see=hs-barinade-native-A  see=hs-barinade-native-B
 
 [g2]
-hs-phantomganon-native  expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Phantom Ganon"
-hs-volvagia-native      expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Volvagia"
-hs-morpha-native        expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Morpha"
+hs-phantomganon-native  expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Phantom Ganon"  see=hs-phantomganon-native-A  see=hs-phantomganon-native-B
+hs-volvagia-native      expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Volvagia"  see=hs-volvagia-native-A  see=hs-volvagia-native-B
+hs-morpha-native        expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Morpha"  see=hs-morpha-native-A  see=hs-morpha-native-B
 
 [g3]
-hs-bongobongo-native    expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Bongo Bongo"
-hs-twinrova-native      expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Twinrova"
+hs-bongobongo-native    expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Bongo Bongo"  see=hs-bongobongo-native-A  see=hs-bongobongo-native-B
+hs-twinrova-native      expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Twinrova"  see=hs-twinrova-native-A  see=hs-twinrova-native-B
 
 [g4]
-hs-ganondorf-native     expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Ganondorf"
-hs-ganon-native         expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Ganon"
+hs-ganondorf-native     expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Ganondorf"  see=hs-ganondorf-native-A  see=hs-ganondorf-native-B
+hs-ganon-native         expect="A:native boss sync on \(BSA 0x[0-9a-f]+, ours\)"  expect="B:the owner's verbs came"  label="#150 Ganon"  see=hs-ganon-native-A  see=hs-ganon-native-B

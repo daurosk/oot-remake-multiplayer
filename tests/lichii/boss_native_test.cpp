@@ -726,6 +726,294 @@ TEST_CASE("native boss: a death list for another boss, or none, leaves a copy a 
     CHECK(t.OnBrainVerb(kBsa, 9, false, false));
 }
 
+// The enemies' brain path (fable-g4-enemies, LICHII_COOP_ENEMY_BRAIN): a plain enemy as Boss::plain.
+namespace {
+
+Boss Baba(Role role) {
+    Boss b{kActor, kBsa, role, "Enemy_Dekubaba", 2};
+    b.plain = true;
+    return b;
+}
+
+} // namespace
+
+TEST_CASE("native boss: a plain enemy copy skips its own brain, takes the owner's and tells what its own wanted") {
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Baba(Role::copy)});
+    CHECK_FALSE(t.OnBrainVerb(kBsa, 2, false, false));  // no owner's state yet: as before
+    CHECK(t.TakeOwnWants().empty());
+    t.Receive(kActor, BossBsa{5, 4, std::nullopt, {}});
+    CHECK(t.OnBrainVerb(kBsa, 2, false, false));  // its own, another phase than the owner's: skipped and told
+    CHECK(t.OnBrainVerb(kBsa, 2, false, false));  // (told once)
+    CHECK(t.OnBrainVerb(kBsa, 4, false, false));  // its own, the owner's phase: skipped, nothing to tell
+    const auto wants = t.TakeOwnWants();
+    REQUIRE(wants.size() == 1);
+    CHECK(wants[0] == kActor);
+    CHECK(t.TakeOwnWants().empty());
+    CHECK(t.Totals().copy_skipped == 3);
+    CHECK(t.Totals().plain_wants == 2);
+    FakeGuest g;
+    const auto c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kSetBrainVerb);
+    CHECK(c->x[0] == kBsa);
+    CHECK(c->x[1] == 4);
+    // A boss's own other phase is never told: the Sync's chase rule is the plain enemies'.
+    Table b;
+    b.SetOn(true, true);
+    b.Publish({Gohma(Role::copy)});
+    b.Receive(kActor, BossBsa{5, 4, std::nullopt, {}});
+    CHECK(b.OnBrainVerb(kBsa, 2, false, false));
+    CHECK(b.TakeOwnWants().empty());
+}
+
+TEST_CASE("native boss: the owner's brain verbs a copy is given are counted, also the ones it was in already") {
+    // g4-enemies probe: Deku Tree copies showed 0 brain verbs put in; a resync whose verb the copy is in makes
+    // no call, so the count alone could not tell 'never came' from 'came, already so'.
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Baba(Role::copy)});
+    t.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});  // first state: a resync to brain 4
+    FakeGuest g;
+    const std::int32_t at = 4;
+    g.Write(kBsa + addr::kBsaBrainVerb, &at, 4);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));  // already in 4: no call
+    CHECK(t.Totals().brain_came == 1);
+    CHECK(t.Totals().brain_already == 1);
+    CHECK(t.Totals().brain_applied == 0);
+    // The owner's next change, joined to the last: queued and put in.
+    t.Receive(kActor, BossBsa{4, 6, std::nullopt, {BossChange{4, BossBrain{6, false}}}});
+    const auto c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->x[1] == 6);
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    CHECK(t.Totals().brain_came == 2);
+    CHECK(t.Totals().brain_already == 1);
+    CHECK(t.Totals().brain_applied == 1);
+}
+
+TEST_CASE("native boss: a first state queued in our event and replaced after it is counted once") {
+    // g4-enemies-2 probe (Deku Tree): 'given 33' for 16 copies, all 'already so' after the event: the first
+    // state's resync came in our event and the one after the event replaced it; both were counted.
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Baba(Role::copy)});
+    t.SetEvent(true);
+    t.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    FakeGuest g;
+    const std::int32_t at = 4;
+    g.Write(kBsa + addr::kBsaBrainVerb, &at, 4);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));  // our event: its own runs
+    t.SetEvent(false);
+    for (std::uint64_t i = 0; i <= Table::kAfterEventSteps + 1; ++i) {
+        CHECK_FALSE(t.Step(g, false, 0, kMain));  // then the owner's state: already so
+    }
+    CHECK(t.Totals().brain_came == 1);
+    CHECK(t.Totals().brain_already == 1);
+}
+
+TEST_CASE("native boss: a change whose call was not made is asked again, not lost") {
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Gohma(Role::copy)});
+    t.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    FakeGuest g;
+    const std::int32_t at = 4;
+    g.Write(kBsa + addr::kBsaBrainVerb, &at, 4);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+    t.Receive(kActor, BossBsa{4, 6, std::nullopt, {BossChange{4, BossBrain{6, false}}}});
+    auto c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->x[1] == 6);
+    // The runtime could not make it (the frame's calls ran out): the next frame asks the same change.
+    c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kSetBrainVerb);
+    CHECK(c->x[1] == 6);
+    CHECK(c->copy_game);  // (#189: what the copy's game makes inside it is judged as its own)
+    CHECK_FALSE(t.Step(g, true, 0, kMain));  // made: out of the queue
+    CHECK(t.Totals().brain_applied == 1);
+    CHECK(t.Totals().brain_came == 2);  // (the first state, already so, and 6 once though asked twice)
+    const std::int32_t six = 6;
+    g.Write(kBsa + addr::kBsaBrainVerb, &six, 4);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));  // nothing left
+    // An action not made: asked again with the same values.
+    CHECK(t.OnActionVerb(kBsa, GameRequest(5, kNode), true, false));  // its own ask, skipped: its node seen
+    const BossAction a = *ActionFromRequest(GameRequest(11, 0));
+    t.Receive(kActor, BossBsa{5, 6, a, {BossChange{5, a}}});
+    c = t.Step(g, false, 0, kMain);  // the request block first
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kMalloc);
+    CHECK_FALSE(c->copy_game);  // (our own block)
+    c = t.Step(g, true, kBlock, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kRequestActionVerb);
+    c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kRequestActionVerb);
+    CHECK(c->copy_game);
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    CHECK(t.Totals().action_applied == 1);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+}
+
+TEST_CASE("native boss: a copy's own late change whose call was not made is asked again") {
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Gohma(Role::copy)});
+    t.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    FakeGuest g;
+    const std::int32_t at = 4;
+    g.Write(kBsa + addr::kBsaBrainVerb, &at, 4);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+    CHECK(t.OnBrainVerb(kBsa, 9, true, false));
+    t.SetEvent(true);
+    auto c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->x[1] == 9);
+    c = t.Step(g, false, 0, kMain);  // not made
+    REQUIRE(c);
+    CHECK(c->x[1] == 9);
+    CHECK(c->copy_game);
+    CHECK(t.Totals().copy_own_late == 0);
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    CHECK(t.Totals().copy_own_late == 1);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+}
+
+TEST_CASE("native boss: a plain enemy copy's own wake runs its own brain for a while, a boss's does not") {
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Baba(Role::copy)});
+    t.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    FakeGuest g;
+    const std::int32_t at = 4;
+    g.Write(kBsa + addr::kBsaBrainVerb, &at, 4);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+    // Its rise was asked a moment before the Sync saw the wake: skipped, then made late.
+    CHECK(t.OnBrainVerb(kBsa, 9, false, false));
+    t.NoteOwnWake(kActor);
+    const auto c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kSetBrainVerb);
+    CHECK(c->x[1] == 9);
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    CHECK_FALSE(t.OnBrainVerb(kBsa, 10, false, false));  // what follows in the wake runs
+    CHECK(t.Totals().plain_wakes == 1);
+    CHECK(t.Totals().copy_own_late == 1);
+    for (std::uint64_t i = 0; i < Table::kWakeSteps; ++i) {
+        (void)t.Step(g, false, 0, kMain);
+    }
+    CHECK(t.OnBrainVerb(kBsa, 10, false, false));  // over: the owner's state again
+    // A boss has no own wake.
+    Table b;
+    b.SetOn(true, true);
+    b.Publish({Gohma(Role::copy)});
+    b.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    b.NoteOwnWake(kActor);
+    CHECK(b.OnBrainVerb(kBsa, 9, false, false));
+    CHECK(b.Totals().plain_wakes == 0);
+}
+
+TEST_CASE("native boss: only a plain enemy copy with the owner's state wakes by its own brain (rows 109/111)") {
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Baba(Role::copy)});
+    CHECK_FALSE(t.WakesOwnBrain(kActor));  // no owner's state yet: its own brain runs anyway, the Mover's wake too
+    t.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    CHECK(t.WakesOwnBrain(kActor));
+    CHECK_FALSE(t.WakesOwnBrain(kActor + 0x10));  // not in the Table
+    // The owner's own enemy is not a copy.
+    Table o;
+    o.SetOn(true, true);
+    o.Publish({Baba(Role::owner)});
+    o.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    CHECK_FALSE(o.WakesOwnBrain(kActor));
+    // A boss copy keeps the Mover's give-back.
+    Table b;
+    b.SetOn(true, true);
+    b.Publish({Gohma(Role::copy)});
+    b.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    CHECK_FALSE(b.WakesOwnBrain(kActor));
+    // Brain switch off: nothing is skipped, so the pose-era give-back stays.
+    Table off;
+    off.SetOn(false, true);
+    off.Publish({Baba(Role::copy)});
+    off.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    CHECK_FALSE(off.WakesOwnBrain(kActor));
+}
+
+TEST_CASE("native boss: a plain enemy copy's Life is never held and its death runs its own") {
+    constexpr std::uint64_t kLife = 0x7700'0000;
+    CHECK(PlainDeath(0, false));
+    CHECK(PlainDeath(-3, false));
+    CHECK(PlainDeath(5, true));
+    CHECK(PlainDeath(std::nullopt, true));
+    CHECK_FALSE(PlainDeath(5, false));
+    CHECK_FALSE(PlainDeath(std::nullopt, false));
+    Table t;
+    t.SetOn(true, true);
+    Boss copy = Baba(Role::copy);
+    copy.life_component = kLife;
+    t.Publish({copy});
+    t.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    CHECK_FALSE(t.Watches(kLife));
+    CHECK(t.HeldLifeStep(kLife, 5, 21) == 21);  // a killing hit of ours kills it (the Sync shares the kill)
+    CHECK(t.Totals().copy_life_held == 0);
+    FakeGuest g;
+    const std::int32_t at = 4;
+    g.Write(kBsa + addr::kBsaBrainVerb, &at, 4);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+    CHECK(t.OnBrainVerb(kBsa, 20, false, false));  // its death's first change, before the walk saw life 0
+    copy.own_death = true;
+    t.Publish({copy});
+    const auto c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kSetBrainVerb);
+    CHECK(c->x[1] == 20);  // made late
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    CHECK_FALSE(t.OnBrainVerb(kBsa, 21, false, false));  // all its own from now on
+    t.Publish({copy});
+    CHECK(t.Totals().plain_deaths == 1);
+    // A boss list's death names leave a plain enemy alone.
+    Table d;
+    d.SetOn(true, true);
+    d.Publish({Baba(Role::copy)});
+    d.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    d.SetDying({"Enemy_Dekubaba"});
+    CHECK(d.OnBrainVerb(kBsa, 9, false, false));
+}
+
+TEST_CASE("native boss: many copies take turns at the one call a frame") {
+    Table t;
+    t.SetOn(true, true);
+    Boss a = Baba(Role::copy);
+    Boss b = Baba(Role::copy);
+    b.actor = kActor + 0x100;
+    b.bsa = kBsa + 0x100;
+    t.Publish({a, b});
+    t.Receive(a.actor, BossBsa{5, 4, std::nullopt, {}});
+    t.Receive(b.actor, BossBsa{5, 6, std::nullopt, {}});
+    FakeGuest g;
+    auto c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->x[0] == a.bsa);
+    CHECK(c->x[1] == 4);
+    // The first one has a change again at once: the other's turn comes first.
+    t.Receive(a.actor, BossBsa{6, 7, std::nullopt, {}});
+    c = t.Step(g, true, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->x[0] == b.bsa);
+    CHECK(c->x[1] == 6);
+    c = t.Step(g, true, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->x[0] == a.bsa);
+    CHECK(c->x[1] == 7);
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    CHECK(t.Totals().brain_applied == 3);
+}
+
 // Row 130 (two players entering Gohma's room together; only one could beat her). The second game's own appear event
 // ran with a copy Gohma the objects layer kept putting into its owner's animation (C01 at frame 1 over her own
 // Pre_Battle_Ceiling_Find) every frame: the event waited for her for good. The table now names the copies that run

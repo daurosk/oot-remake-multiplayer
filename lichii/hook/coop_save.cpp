@@ -295,7 +295,7 @@ void PendingFrame() {
     if (!RemountLocked(to)) {
         LOG_WARNING(Core, "coop: save: could not switch the save folder to {}: this game keeps {}", to.string(),
                     g_dir.string());
-        g_guest.ready = false;
+        save::note_write_failed(g_guest);
         g_lines.on_failed();
         g_use = false;   // keeps its own saves from now on: the title asks no more (review of #278)
         Say("The host's save came, but this game could not switch to it (see the log): play your own save.");
@@ -346,10 +346,12 @@ save::WriteResult WriteSlotTo(const fs::path& dir, const save::SaveSlot& slot, b
         break;
     case save::WriteResult::not_coop:
         LOG_WARNING(Core, "coop: save: refused to write the host's save into {}", dir.string());
+        save::note_write_failed(g_guest);
         g_lines.on_failed();
         break;
     case save::WriteResult::failed:
         LOG_ERROR(Core, "coop: save: could not write the host's save into {}", dir.string());
+        save::note_write_failed(g_guest);
         g_lines.on_failed();
         Say("The host's save could not be written (see the log): play your own save.");
         break;
@@ -819,6 +821,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     const auto slot = save::unpack(packed);
     if (!slot) {
         LOG_WARNING(Core, "coop: save: the host's save (transfer {}) is not a save slot", part->transfer_id);
+        save::note_write_failed(g_guest);   // nothing is on its way now (else Resync says "already on its way")
         g_lines.on_failed();
         Say("The host's save could not be read (see the log): play your own save, or join again.");
         return;
@@ -842,11 +845,7 @@ namespace {
 // Under g_mutex: the host's save is on its way (whole and waiting to be written, parts coming, or asked and not yet
 // answered).
 bool SaveComingLocked() {
-    const auto& a = g_guest.assembler;
-    return g_guest.unwritten.has_value() ||
-           (a.received() != 0 && a.received() < a.count() &&
-            CoopEvery::NowUs() - g_guest.last_part_us < CoopEvery::kSaveStuckUs) ||
-           (g_guest.asked && !g_guest.ready && !g_guest.no_save && !g_guest.gave_up);
+    return save::save_coming(g_guest, CoopEvery::NowUs(), CoopEvery::kSaveStuckUs);
 }
 
 // Under g_mutex, from OnFrame: a guest back on the title after playing a file asks for the host's save again, the

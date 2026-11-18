@@ -72,7 +72,7 @@ index 957c34e..42586c9 100644
  void hos_coop_title(Ctx *c, uint64_t screen, int event) {
      if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_title) coop_title(c, screen, event);
 diff --git a/host/oot_menu.c b/host/oot_menu.c
-index 80e3338..c40643a 100644
+index 512c685..3442007 100644
 --- a/host/oot_menu.c
 +++ b/host/oot_menu.c
 @@ -14,6 +14,10 @@
@@ -86,7 +86,7 @@ index 80e3338..c40643a 100644
  #ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
  #include "../gpu/vk/compat/longshot_env.h"
  #endif
-@@ -336,15 +340,36 @@ static void hit_test(uint64_t screen, Hit *h) {
+@@ -341,15 +345,36 @@ static void hit_test(uint64_t screen, Hit *h) {
  
  /* The tab bar across the top (no buttons of the screen's list: the pages' names and the L and R signs), in the layout's
     units, measured from the menu as shown (the Items page): the names centred at about -696, -228, 240, 708 (468 apart),
@@ -125,7 +125,7 @@ index 80e3338..c40643a 100644
  
  static void focus_entry(int i, uint64_t entry, uint64_t button, void *arg);   /* (below: a focused button shown) */
  
-@@ -574,17 +599,17 @@ static void mouse_tick_locked(Ctx *c, uint64_t screen) {
+@@ -579,17 +604,17 @@ static void mouse_tick_locked(Ctx *c, uint64_t screen) {
      }
      /* a click on the tabs: L or R pressed as many times as the pages between (one at a time, as the pages slide) */
      if (pause && (pressed & HOS_MOUSE_LEFT) && !hit.hit) {
@@ -147,7 +147,7 @@ index 80e3338..c40643a 100644
          if (cur != last_cur) last_cur = cur, arrive_ns = now;
          if (tab_goal >= 0 && (cur < 0 || now - goal_ns > 4000000000LL)) tab_goal = -1;
          if (tab_goal >= 0) {
-@@ -792,6 +817,7 @@ static Seen *screen_seen(uint64_t screen, int64_t now) {
+@@ -797,6 +822,7 @@ static Seen *screen_seen(uint64_t screen, int64_t now) {
  void hos_oot_menu_tick(Ctx *c, uint64_t screen) {
      if (!screen) return;
      hos_oot_autoload_screen(c, screen);   /* (patch 0028: Skip title screen's choice, before the screen's own update) */

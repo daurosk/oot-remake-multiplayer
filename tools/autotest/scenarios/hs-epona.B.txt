@@ -11,6 +11,10 @@
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_ANIM=1
 mark start
+# The lane saves are child and Hookshot's warp (the bridge's teleport) keeps the save's age: big-run-0115
+# landed in HyruleField_Child ('sent (map HyruleField_Child)'), with no Epona and no adult Link. So the
+# game is made adult first (Sequence_IsChildhood 0), as hs-held-adult does.
+setflag Sequence_IsChildhood 0
 warp HyruleField_Adult HyruleField_FrontOfMarket
 wait 1200               # the title screen
 mark title

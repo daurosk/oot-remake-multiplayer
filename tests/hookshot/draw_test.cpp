@@ -842,6 +842,52 @@ TEST_CASE("hookshot map page: a tap held for one present counts as a press, like
     CHECK(w.Update(true, false));
 }
 
+TEST_CASE("hookshot draw row 141: the blocks start below the game's own HUD as laid out, and stop above the chat") {
+    CoopDraw::Scene s;
+    s.hud = {{"Mido", "Kokiri Forest", {4, 4, 2, 0}, false}};
+    s.game_hud_bottom = 0.45;   // two heart rows, the magic bar and the d-pad under them
+    Canvas c(1280, 720);
+    CoopDraw::Draw(c.d, s, GameLook());
+    auto texts = c.Of("text");
+    REQUIRE(texts.size() == 12);
+    CHECK(texts[5].text == "Mido");
+    CHECK(texts[5].y == doctest::Approx((0.45 + CoopHudLayout::kGap) * 720));
+    CHECK(texts[5].y > 0.45f * 720);   // under the game's d-pad, not over it
+    // A one-row HUD: the blocks come up with it.
+    s.game_hud_bottom = 0.30;
+    Canvas up(1280, 720);
+    CoopDraw::Draw(up.d, s, GameLook());
+    CHECK(up.Of("text")[5].y == doctest::Approx((0.30 + CoopHudLayout::kGap) * 720));
+
+    // Fifteen others (16 players) with 20 hearts and a place each, chat lines at the bottom: the blocks that would
+    // run into the chat are left out and a "+N" line says how many.
+    s.hud.clear();
+    for (int i = 0; i < 15; ++i) {
+        s.hud.push_back({"Player " + std::to_string(i + 2), "Kokiri Forest", std::vector<int>(20, 4), false});
+    }
+    s.chat = {{"Saria: hi", false, 1.0f}, {"Mido: hello", false, 1.0f}};
+    Canvas many(1280, 720);
+    CoopDraw::Draw(many.d, s, GameLook());
+    texts = many.Of("text");
+    float chat_top = 720.0f, lowest = 0.0f;
+    std::string more;
+    for (const auto& t : texts) {
+        if (t.text.rfind("Saria", 0) == 0) chat_top = std::min(chat_top, t.y);
+        if (t.text.rfind("Player ", 0) == 0 || t.text == "Kokiri Forest") lowest = std::max(lowest, t.y + t.px);
+        if (!t.text.empty() && t.text[0] == '+') more = t.text;
+    }
+    CHECK(chat_top < 720.0f);
+    CHECK(lowest > 0.0f);
+    CHECK(lowest <= chat_top);
+    REQUIRE_FALSE(more.empty());
+    std::size_t names = 0;
+    for (std::size_t i = 5; i < texts.size(); i += 6) {
+        if (texts[i].text.rfind("Player ", 0) == 0) ++names;
+    }
+    CHECK(names >= 1);
+    CHECK(more == "+" + std::to_string(15 - names));
+}
+
 TEST_CASE("hookshot draw: the voice icon after a talking or muted player's name, our row over the others") {
     CoopDraw::Scene s;
     s.hud = {{"Mido", "", {}, false}};

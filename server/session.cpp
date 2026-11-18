@@ -1770,7 +1770,7 @@ void Session::drop_presence(ConnectionId id, std::uint8_t number, const ObjectId
     // A made enemy goes on with a player who has its copy. A projectile, or
     // an enemy nobody else has, is gone on every screen.
     std::optional<ConnectionId> next;
-    if (!o.projectile) next = best_other(o, id, false, now_us);
+    if (!o.projectile) next = next_owner(o, id, now_us);
     if (next) {
       change_owner(oid, o, next, number, now_us);
       return;
@@ -1786,7 +1786,18 @@ void Session::drop_presence(ConnectionId id, std::uint8_t number, const ObjectId
     forget(it);  // nobody has it loaded: forgotten
     return;
   }
-  if (o.owner == id) change_owner(oid, o, best_other(o, id, false, now_us), number, now_us);
+  if (o.owner == id) change_owner(oid, o, next_owner(o, id, now_us), number, now_us);
+}
+
+// Report 138: the owner let go of it (its game unloaded it, or it left). A
+// player who can play takes it before a loading, paused, dead or downed one,
+// which run_ownership would only hand on again a moment later (the 4-player
+// log: Lizalfos owner 1, 3, 2 within a fraction of a second, each change
+// turning the enemy to another Link). A busy one only when nobody else has it.
+std::optional<ConnectionId> Session::next_owner(const Object& o, ConnectionId except,
+                                                std::uint64_t now_us) const {
+  if (auto fit = best_other(o, except, true, now_us)) return fit;
+  return best_other(o, except, false, now_us);
 }
 
 bool Session::has_loaded(ConnectionId id, const Object& o) const {
@@ -1855,8 +1866,25 @@ bool Session::owner_hit_lately(const Object& o, std::uint64_t now_us) const {
 }
 
 bool Session::hands_back_soon(const Object& o, ConnectionId to, std::uint64_t now_us) {
-  const bool soon = config_.handover_back_us != 0 && o.previous_owner == to && o.changed_at != 0 &&
-                    now_us - o.changed_at < config_.handover_back_us;
+  if (config_.handover_back_us == 0) return false;
+  const auto lately = [&](std::uint64_t at) {
+    return at != 0 && now_us >= at && now_us - at < config_.handover_back_us;
+  };
+  // Report 37, for every player who held it (report 138): not back to one
+  // who gave it up lately.
+  const auto gave = o.gave_up.find(to);
+  bool soon = gave != o.gave_up.end() && lately(gave->second);
+  // Report 138 (row 71's sticky target): an enemy's AI chases only its
+  // owner's Link, so each change turns it to another player. One that changed
+  // lately and still stands by its owner stays its owner's; a chase, the near
+  // rule or a hit from a third player waits. An owner far from it, or with no
+  // known place, is no target: it goes on as before.
+  if (!soon && o.owner && lately(o.changed_at)) {
+    if (auto oc = connections_.find(*o.owner); oc != connections_.end()) {
+      const auto d = distance_to(oc->second, o, now_us);
+      soon = d && *d <= config_.handover_chase_m;
+    }
+  }
   if (soon) ++stats_.handover_back_held;
   return soon;
 }
@@ -1940,6 +1968,8 @@ void Session::finish_handover(const ObjectId& oid, Object& o, const ObjectState*
 void Session::change_owner(const ObjectId& oid, Object& o, std::optional<ConnectionId> next,
                            std::uint8_t old_owner, std::uint64_t now_us) {
   o.previous_owner = o.owner;
+  if (o.owner) o.gave_up[*o.owner] = stamp(now_us);
+  if (next) o.gave_up.erase(*next);
   o.owner = next;
   o.last_owner = old_owner;
   ++o.epoch;

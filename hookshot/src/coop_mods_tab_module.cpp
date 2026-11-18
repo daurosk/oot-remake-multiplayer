@@ -135,6 +135,16 @@ bool Char(std::uint32_t cp) {
     return g_tab != nullptr && g_tab->Char(cp);
 }
 
+void Paste(const std::optional<std::string>& clip, bool into_typing) {
+    std::lock_guard lock(g_mutex);
+    if (g_tab != nullptr) g_tab->Paste(clip, into_typing);
+}
+
+bool TakePasteRequest() {
+    std::lock_guard lock(g_mutex);
+    return g_tab != nullptr && g_tab->TakePasteRequest();
+}
+
 bool KeysTaken() {
     std::lock_guard lock(g_mutex);
     return g_tab != nullptr && g_tab->typing();

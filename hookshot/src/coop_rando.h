@@ -26,6 +26,7 @@
 #include <functional>
 #include <mutex>
 #include <optional>
+#include <utility>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -160,6 +161,25 @@ inline constexpr const char* kMergedFile = "coop-merged.txt";
 inline constexpr const char* kPackFolder = "contents/0400486024DEC000/coop-puppet";
 std::string Fnv64Hex(std::string_view bytes);
 bool MergedByKit(const std::filesystem::path& mods_root, std::string_view mod, std::string* rule = nullptr);
+// The RSDB tables the puppet pack adds rows to (ActorInfo, GameActorInfo: CoopPuppet_*, ...), file names in its
+// romfs/RSDB, sorted.
+std::vector<std::string> PackActorTables(const std::filesystem::path& mods_root);
+// Player report 144/145: Longshot serves each RSDB file from the winning mod (OutsideSizeTable's order), so a mod
+// with its own copy of a pack table (an OOTRR seed whose settings change actors) hides the pack's rows and the game
+// refuses every puppet. The kit's start merges the pack's rows into the winner (tools/puppet_pack/merge_tables.py
+// merge_rows) and writes kRowsFile beside its romfs: "coop-rows 1", then per table "table <file in romfs/RSDB>
+// <FNV-1a 64 of it> <FNV-1a 64 of the pack's copy>". True only while both files are still those bytes.
+inline constexpr const char* kRowsFile = "coop-rows.txt";
+bool RowsMergedByKit(const std::filesystem::path& mods_root, std::string_view mod, std::string_view table);
+// The first pack table whose winning copy (not the pack's) lacks the kit's mark: {mod, table}. Seeds count too.
+std::optional<std::pair<std::string, std::string>> OutsideActorRows(const std::filesystem::path& mods_root,
+                                                                    const std::vector<CoopMods::Row>& rows,
+                                                                    const std::vector<std::string>* indexed);
+// A refresh replaced a seed's size table (Plan::Do::refresh): the actor tables the kit merged (kept as they were in
+// <folder>/_coop-rows) go back and kRowsFile goes. How many went back; -1 when one could not be copied.
+int PutBackKeptRows(const std::filesystem::path& folder);
+// Its chat line (repeats when joining).
+std::string RowsLine(std::string_view mod, std::string_view table);
 // This game's chat line for it (it repeats when joining), and the line the other players get (at most kTellChars).
 std::string OutsideLine(std::string_view mod);
 std::string OutsideTellLine(std::string_view mod);
@@ -284,7 +304,10 @@ public:
     // Start until the seed is checked (a refresh); cleared when its table was right after all, kept until the restart
     // when it was made again (RefreshLine) or could not be. The other players show as their fairies meanwhile.
     // Also kept for the whole run when another mod's size table wins (OutsideSizeTable).
-    bool HoldPack() const { return hold_pack_.load() || outside_.load(); }
+    // Also when a pack actor table wins without the pack's rows (OutsideActorRows, RowsMissing).
+    bool HoldPack() const { return hold_pack_.load() || outside_.load() || rows_out_.load(); }
+    // A mod's RSDB table wins without the pack's rows this run (OutsideActorRows): the game would refuse the puppets.
+    bool RowsMissing() const { return rows_out_.load(); }
     // The chat lines since the last call (SwitchLine when the switch changed).
     std::vector<std::string> TakeLines();
     // Waits until no build runs (tests, exit).
@@ -326,6 +349,8 @@ private:
     std::atomic<bool> hold_pack_{false};  // HoldPack
     std::atomic<bool> outside_{false};    // another mod's size table wins this run (HoldPack)
     std::string outside_mod_;         // that mod (mutex_): empty when none
+    std::atomic<bool> rows_out_{false};  // a pack actor table wins without the pack's rows (RowsMissing)
+    std::string rows_mod_, rows_table_;  // that mod and table (mutex_): empty when none
     bool outside_tell_ = false;       // OutsideTellLine not sent yet (mutex_)
     std::string bad_settings_;        // the "settings" value said to be no settings string (mutex_)
     std::string restart_;             // the restart line until this game restarts (mutex_): empty when none

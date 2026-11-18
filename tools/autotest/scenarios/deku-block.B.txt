@@ -13,7 +13,7 @@ wait 300
 press A
 wait 2400
 mark after
-place -54.5 79.9 50.2    # beside A, out of its way
+place -46.0 79.9 49.7    # beside A, out of its way (floor B stood on in big-run-0115; -54.5 was in the wall: void-out)
 wait 240
 toward -51.06 47.0 10
 press ZL 10

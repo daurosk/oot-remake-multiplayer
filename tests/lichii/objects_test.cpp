@@ -658,6 +658,38 @@ TEST_CASE("objects: animals and townspeople are shared too (hits on a cucco)") {
     CHECK_FALSE(CoopObjects::IsShared("Npc_Invisible_Hylia_Dampe_001"));
 }
 
+TEST_CASE("objects: the enemies' brain path is opt-in: unset, empty or 0 is off (g4-enemies)") {
+    // The first g4-enemies probe ran the path in its switch-off runs too: the switch read as on-unless-0.
+    CHECK_FALSE(CoopObjects::EnemyBrainSwitch(""));
+    CHECK_FALSE(CoopObjects::EnemyBrainSwitch("0"));
+    CHECK(CoopObjects::EnemyBrainSwitch("1"));
+}
+
+TEST_CASE("objects: the enemies' brain path takes plain enemies only (fable-g4-enemies)") {
+    CHECK(CoopObjects::OnBrainPath("Enemy_Dekubaba"));
+    CHECK(CoopObjects::OnBrainPath("Enemy_Skulltula"));
+    CHECK(CoopObjects::OnBrainPath("Enemy_Scrub_Deku"));
+    // Bosses have their own entry; own puzzles, the picture book and everything that is no Enemy_ stay out.
+    CHECK_FALSE(CoopObjects::OnBrainPath("Enemy_DungeonBoss_Gohma"));
+    CHECK_FALSE(CoopObjects::OnBrainPath("Enemy_MiddleBoss_GerudoThief"));
+    CHECK_FALSE(CoopObjects::OnBrainPath("Enemy_Scrub_Deku_Brothers"));
+    CHECK_FALSE(CoopObjects::OnBrainPath("Enemy_Dekubaba_Dictionary"));
+    CHECK_FALSE(CoopObjects::OnBrainPath("Enemy_MoblinClub_ShockWave"));  // an enemy's shot
+    CHECK_FALSE(CoopObjects::OnBrainPath("Npc_Zora_Ruto_Child_001"));
+}
+
+TEST_CASE("objects: townspeople and every enemy copy are followed each game frame (jitter-b, issue 239)") {
+    CHECK(CoopObjects::FollowedEachFrame("Npc_Zora_Ruto_Child_001"));
+    CHECK(CoopObjects::FollowedEachFrame("Enemy_Dekubaba"));
+    CHECK(CoopObjects::FollowedEachFrame("Enemy_Peahat"));
+    CHECK(CoopObjects::FollowedEachFrame("Enemy_MiddleBoss_GerudoThief"));
+    CHECK(CoopObjects::FollowedEachFrame("Enemy_DungeonBoss_Gohma"));
+    CHECK(CoopObjects::FollowedEachFrame("Enemy_DungeonBoss_BongoBongo_LeftHand"));  // a part with its root
+    CHECK_FALSE(CoopObjects::FollowedEachFrame("Enemy_Dekubaba_Dictionary"));
+    CHECK_FALSE(CoopObjects::FollowedEachFrame("Obj_Kibako"));
+    CHECK_FALSE(CoopObjects::FollowedEachFrame(""));
+}
+
 TEST_CASE("objects: order-puzzle scrubs are each game's own (issue 149)") {
     CHECK_FALSE(CoopObjects::IsShared("Enemy_Scrub_Deku_Brothers"));
     CHECK(CoopObjects::IsOwnPuzzle("Enemy_Scrub_Deku_Brothers"));
@@ -3515,6 +3547,40 @@ TEST_CASE("objects: a copy whose wake the Mover put back once is flagged targeti
         }
     }
     CHECK_FALSE((flags && (*flags & kTargeting) != 0));
+}
+
+TEST_CASE("objects: a plain copy whose own brain wants another phase near our Link is flagged targeting (issue 101)") {
+    // The enemies' brain path: the copy's own brain is skipped and it plays the owner's phase, so its animation
+    // never differs and it is never pulled towards our Link; the brain's own ask (TakeOwnWants) is what shows it.
+    auto run = [](float x, std::uint64_t from, std::uint64_t until, std::uint8_t owner = 2, bool wake = true) {
+        Sync sync;
+        sync.SetWake(wake);
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Tick(sync, 0, {Acting(0x100, 0x11, 2, x, "Wait")});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, owner);
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 10; t < 1500; t += 66) {
+            if (t >= from && t < until) {
+                sync.NoteOwnBrainWant(0x100, t * kMs);
+            }
+            sync.Receive(OwnerSample(id, owner, t * kMs, x, 2, "Wait"));
+            for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {Acting(0x100, 0x11, 2, x, "Wait")}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        return flags && (*flags & kTargeting) != 0;
+    };
+    CHECK(run(5.0f, 100, 1500));             // wants to act on our Link for over a second: the server gets the chase
+    CHECK_FALSE(run(5.0f, 0, 0));            // its brain wants the owner's phase: nothing
+    CHECK_FALSE(run(15.0f, 100, 1500));      // over kWakeM from our Link
+    CHECK_FALSE(run(5.0f, 100, 1500, 2, false));  // LICHII_COOP_OBJECTS_WAKE=0
+    CHECK_FALSE(run(5.0f, 1200, 1500));      // under a second: not yet
+    CHECK_FALSE(run(5.0f, 100, 1500, 1));    // ours: not a copy (its own brain runs anyway)
+    // An unknown actor: nothing (no crash, no entry).
+    Sync sync;
+    sync.NoteOwnBrainWant(0x999, 10 * kMs);
+    CHECK_FALSE(sync.IdOf(0x999));
 }
 
 TEST_CASE("objects: a copy's own wake for our Link runs, the owner's rest is not put back (report 109)") {

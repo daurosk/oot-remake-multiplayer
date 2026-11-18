@@ -450,6 +450,20 @@ bool PlaysByFrame(std::string_view name) {
     return name.starts_with("Npc_") || (name.starts_with("Enemy_") && !IsBoss(name));
 }
 
+bool FollowedEachFrame(std::string_view name) {
+    return name.starts_with("Npc_") ||
+           (name.starts_with("Enemy_") && name.find("_Dictionary") == std::string_view::npos);
+}
+
+bool OnBrainPath(std::string_view name) {
+    return name.starts_with("Enemy_") && name.find("_Dictionary") == std::string_view::npos && !IsBoss(name) &&
+           !IsOwnPuzzle(name) && !CoopEnemyShots::IsEnemyShot(name);
+}
+
+bool EnemyBrainSwitch(std::string_view value) {
+    return !value.empty() && value != "0";
+}
+
 bool IsBoss(std::string_view name) {
     if (name.find("_Dictionary") != std::string_view::npos) return false;
     if (name.starts_with("Enemy_DungeonBoss_") || name.starts_with("Enemy_MiddleBoss_")) {
@@ -1266,6 +1280,9 @@ void Sync::OwnWake(Object& o, bool taken_away, std::uint64_t now_us) {
     o.own_wake_at = now_us;
     o.own_wake_over = wanted->name;
     o.own_wake_given = false;
+    if (own_wake_starts_.size() < 64) {
+        own_wake_starts_.push_back(o.address);
+    }
     notes_.emplace_back(o.name + ": its own wake for our Link runs; the owner's '" + wanted->name +
                         "' is not put back over it (report 109)");
     // The walk sees the owner's animation again: the Mover put the copy's
@@ -1305,6 +1322,16 @@ void Sync::NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string
         own_wakes_.emplace_back(address, std::string(name));
         o.own_wake_given = true;
     }
+}
+
+void Sync::NoteOwnBrainWant(std::uint64_t address, std::uint64_t now_us) {
+    const auto it = objects_.find(address);
+    if (it == objects_.end() || !it->second.reacts) {
+        return;  // (the brain path is the enemies')
+    }
+    Object& o = it->second;
+    o.own_ai_at = now_us;  // row 97: its own AI acts (read while our event runs)
+    o.brain_want_at = now_us;
 }
 
 std::optional<float> Sync::LureDistance(const proto::Vec3& at) const {
@@ -2460,7 +2487,10 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 // Or the Mover had to put the owner's one back lately (issue 157).
                 const bool put_back = o.took_over_at != 0 && now_us >= o.took_over_at &&
                                       now_us - o.took_over_at <= kWakeLatchUs;
-                if (differs || put_back) {
+                // Or, on the enemies' brain path, its own brain asked for another phase (issue 101).
+                const bool brain_wants = o.brain_want_at != 0 && now_us >= o.brain_want_at &&
+                                         now_us - o.brain_want_at <= kWakeLatchUs;
+                if (differs || put_back || brain_wants) {
                     ChaseStep(o, now_us);
                     OwnWake(o, put_back && !differs, now_us);
                 }

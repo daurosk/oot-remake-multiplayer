@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -47,6 +48,13 @@ public:
     void Select(std::size_t row);
     void Click(std::size_t row, int side);  // side -1 / 1: the value's halves, 0: the name
     bool Char(std::uint32_t cp);            // into the text being typed
+    // Paste. A text row not being typed into asks for the clipboard on Left / Right / a click on its sides
+    // (TakePasteRequest: the module reads the clipboard, which may come a moment later, and hands it to Paste
+    // with into_typing false: the row takes it whole as its value). While typing, Ctrl+V / Shift+Insert (the
+    // module) hand it with into_typing true: it joins the typed text. nullopt: the clipboard could not be read.
+    // Text that comes after the player left the field is dropped. The setting's max_length holds in both.
+    bool TakePasteRequest();
+    void Paste(const std::optional<std::string>& clip, bool into_typing);
     bool typing() const { return typing_; }
     bool on_mod_page() const { return !mod_.empty(); }
     CoopPauseMenu::View view() const;
@@ -66,6 +74,9 @@ private:
     void Change(const Line& l, int step);  // Left / Right
     void Decide(const Line& l);
     void Say(std::string line);
+    static bool IsText(const Line& l);
+    std::size_t MaxLength(const std::string& key) const;  // the text setting's max_length (and the 512 cap)
+    void AskPaste(const Line& l);
 
     Sources src_;
     std::string mod_;  // the mod whose page shows; empty: the list
@@ -73,6 +84,8 @@ private:
     std::size_t list_selected_ = 0;  // where the list was, for Back
     bool typing_ = false;
     std::string typed_;
+    bool paste_wanted_ = false;  // a Paste on a text row waits for the module to read the clipboard
+    std::string paste_for_;      // mod + "\n" + key of the row that asked
     std::string note_;  // the answer to the last press ("In this co-op game the host sets this.")
 };
 
@@ -84,5 +97,9 @@ bool MenuInput(int event, int arg, int arg2);
 bool Key(std::uint32_t vk, bool repeat);  // while typing: the tab's
 bool Char(std::uint32_t cp);
 bool KeysTaken();
+// The clipboard text for the Mods tab (coop_pause.cpp reads it): into the field being typed (Ctrl+V /
+// Shift+Insert) or onto the selected text row (the pad's Paste). TakePasteRequest: a text row asked (once).
+void Paste(const std::optional<std::string>& clip, bool into_typing);
+bool TakePasteRequest();
 
 }  // namespace CoopModsTab

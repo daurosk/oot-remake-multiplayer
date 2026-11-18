@@ -532,7 +532,8 @@ class Player:
 
     def steer(self, s, t0):
         """goto (until within s.radius or s.ticks) or toward (for s.ticks). The stick is camera-relative: the camera
-        model (an angle) is learnt from how Link moves for a push; a push that gets nowhere for a second steps aside."""
+        model (an angle) is learnt from how Link moves for a push; a goto that gets nowhere for a second steps aside
+        (a toward never does: it pushes straight on, into a block, a grave or a crawl hole)."""
         end = t0 + s.ticks / TICKS
         if self.link_pos() is None and self.mem_ok is False:
             self.log("coop: test %s skipped (no position on hookshot without guest memory)" % s.kind)
@@ -565,7 +566,10 @@ class Player:
                     stuck_since = None
                 elif stuck_since is None:
                     stuck_since = now
-                elif now - stuck_since >= 1.0 and now >= detour_until:
+                elif s.kind == "goto" and now - stuck_since >= 1.0 and now >= detour_until:
+                    # Only goto walks round what stops it. A toward that stops is pushing (a block, a grave,
+                    # into a crawl hole): the game needs the stick held straight on, and a step aside slid
+                    # Link off the Deku block's face (big-run-0115 deku-block, #147: the block never moved).
                     detour_until, detour, stuck_since = now + 0.5, -detour, None
             want = math.atan2(-dz, dx) - self.angle
             if now < detour_until:

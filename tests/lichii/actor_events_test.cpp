@@ -167,3 +167,10 @@ TEST_CASE("actor events: a create's flags (our own call, refused) come through t
     CHECK(out[1].flags == CoopActorEvents::kStopped);
     CHECK(out[1].Name() == "Octorok_Bullet");
 }
+
+TEST_CASE("actor events: a create inside a call that runs a copy's own game code is the game's, not ours (#189)") {
+    CHECK_FALSE(CoopActorEvents::Ours(false, false));  // the game's own
+    CHECK(CoopActorEvents::Ours(true, false));         // a copy or a remove we asked
+    // The owner's shoot action put into a copy: the copy's own shot is judged (stopped), the owner's comes.
+    CHECK_FALSE(CoopActorEvents::Ours(true, true));
+}

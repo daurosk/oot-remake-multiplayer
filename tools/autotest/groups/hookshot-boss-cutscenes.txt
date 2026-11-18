@@ -4,18 +4,18 @@
 # cleared in the baselines first (hs-gohma-door's header).
 
 [g1]
-hs-boss-cutscenes-gohma    expect="A:Dm_Deku_BossIn: our game started it"  expect="B:Dm_Deku_BossIn: playing it here too"  expect="B:Dm_Deku_BossOut: playing it here too"  label="boss cutscenes: Gohma intro + death"
-hs-boss-far-gohma          expect="A:Dm_Deku_BossIn: our game started it"  expect="B:Dm_Deku_BossIn: not played here"  label="boss cutscenes: far player gets a chat line"
+hs-boss-cutscenes-gohma    expect="A:Dm_Deku_BossIn: our game started it"  expect="B:Dm_Deku_BossIn: playing it here too"  expect="B:Dm_Deku_BossOut: playing it here too"  label="boss cutscenes: Gohma intro + death"  see=hs-boss-cutscenes-gohma-A  see=hs-boss-cutscenes-gohma-B
+hs-boss-far-gohma          expect="A:Dm_Deku_BossIn: our game started it"  expect="B:Dm_Deku_BossIn: not played here"  label="boss cutscenes: far player gets a chat line"  see=hs-boss-far-gohma-A  see=hs-boss-far-gohma-B
 
 [g2]
-hs-boss-cutscenes-dodongo  expect="A:Dm_DodongoCave_BossIn: our game started it"  expect="A:Dm_DodongoCave_BossOut: our game started the death"  label="boss cutscenes: King Dodongo intro + death"
+hs-boss-cutscenes-dodongo  expect="A:Dm_DodongoCave_BossIn: our game started it"  expect="A:Dm_DodongoCave_BossOut: our game started the death"  label="boss cutscenes: King Dodongo intro + death"  see=hs-boss-cutscenes-dodongo-A  see=hs-boss-cutscenes-dodongo-B
 
 # boss-fix (player reports #30, #31): the non-owner's own intro hands control back, a copy stuns on its own hit.
 [boss-fix]
-hs-boss-fix-gohma       expect="B:our event: the copy runs its own"  expect="B:the copy takes the owner's state again"  expect="B:our own hit: the copy runs its own reaction"  label="#30 #31 Gohma two players"
-hs-boss-fix-gohma-rev   expect="A:our event: the copy runs its own"  expect="A:the copy takes the owner's state again"  label="#30 Gohma, guest first (reverse order)"
+hs-boss-fix-gohma       expect="B:our event: the copy runs its own"  expect="B:the copy takes the owner's state again"  expect="B:our own hit: the copy runs its own reaction"  label="#30 #31 Gohma two players"  see=hs-boss-fix-gohma-A  see=hs-boss-fix-gohma-B
+hs-boss-fix-gohma-rev   expect="A:our event: the copy runs its own"  expect="A:the copy takes the owner's state again"  label="#30 Gohma, guest first (reverse order)"  see=hs-boss-fix-gohma-rev-A  see=hs-boss-fix-gohma-rev-B
 
 # gohma-death (player report #105): the host (A) holds a copy Gohma, the guest (B) owns her and kills her; A's
 # game must play her whole death and come back from it (fade, container, blue warp). Header: hs-gohma-death.A.txt.
 [gohma-death]
-hs-gohma-death          expect="B:Dm_Deku_BossOut: our game started the death"  expect="A:its death has begun: the copy runs all its own"  expect="A:Dm_Deku_BossOut: playing it here too"  label="#105 host's copy Gohma dies: no black screen"
+hs-gohma-death          expect="B:Dm_Deku_BossOut: our game started the death"  expect="A:its death has begun: the copy runs all its own"  expect="A:Dm_Deku_BossOut: playing it here too"  label="#105 host's copy Gohma dies: no black screen"  see=hs-gohma-death-A  see=hs-gohma-death-B

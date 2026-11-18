@@ -554,7 +554,9 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         if (slot.refused < kRefusedFast) {
             slot.retry_ms = now_ms + kRefusedRetryMs;
             if (slot.refused == 1) {
-                Say(who + ": create refused; trying again each second");
+                Say(who + ": create refused (most often the game does not know " + slot.actor_name +
+                    ": no row in the actor table it reads, e.g. a mod with its own RSDB/ActorInfo, or an older "
+                    "puppet pack); trying again each second");
             }
         } else {
             slot.retry_ms = now_ms + kRefusedSlowMs;

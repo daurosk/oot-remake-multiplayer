@@ -116,6 +116,97 @@ TEST_CASE("coop i18n: the boss room's leave notices around a name (#50)") {
     CHECK(CoopI18n::Tr(nullptr, "Saria took the blue warp") == "Saria took the blue warp");
 }
 
+TEST_CASE("coop i18n: the chat's join and leave notices around a name") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    // The player's name is the shape's middle; the rest is the notice. Without a shape for
+    // these two, the whole line missed the table and stayed English ("Saria left").
+    CHECK(CoopI18n::Tr(hans, "Saria joined") == "Saria 加入了");
+    CHECK(CoopI18n::Tr(hans, "Saria left") == "Saria 离开了");
+    CHECK(CoopI18n::Tr(hant, "Saria left") == "Saria 離開了");
+    // " left the boss room" is its own line, not "<name> left" plus a tail.
+    CHECK(CoopI18n::Tr(hans, "Saria left the boss room") == "Saria 离开了 Boss 房间");
+    // A name that reads like the end of a line is still the name.
+    CHECK(CoopI18n::Tr(hans, "left joined") == "left 加入了");
+    // A longer line that happens to end " left" is not "<name> left": the
+    // teleport's stop notice keeps its own sentence (coop_teleport.cpp).
+    CHECK(CoopI18n::Tr(hans, "teleport: stopped: Saria left") == "传送：已停下：Saria 离开了");
+    CHECK(CoopI18n::Tr(hant, "teleport: stopped: Saria left") == "傳送：已停下：Saria 離開了");
+    CHECK(CoopI18n::Tr(hans, "teleport: stopped: you left Hyrule Field") ==
+          "传送：已停下：你离开了 海拉鲁平原");
+    // The chat's own notices with a number or a note (the player saw "joined as
+    // player 2" in English: the table's key had no shape to reach it).
+    CHECK(CoopI18n::Tr(hans, "joined as player 2") == "已加入：玩家 2");
+    CHECK(CoopI18n::Tr(hans, "reconnected as player 2") == "已重新连上：玩家 2");
+    CHECK(CoopI18n::Tr(hant, "joined as player 2") == "已加入：玩家 2");
+    // The refusal arrives as "server refused: <reason>" (coop_hook.cpp puts
+    // note_, which already starts "refused: ", after "server ").
+    CHECK(CoopI18n::Tr(hans, "server refused: wrong join password: ask the host for it, "
+                              "then start Join.bat again and type it") ==
+          "服务器：被拒绝：加入密码不对：向房主要密码，然后重新启动 Join.bat 输入");
+    CHECK(CoopI18n::Tr(hans, "connection lost, reconnecting") == "连接断了，正在重连");
+}
+
+TEST_CASE("coop i18n: the difficulty line fits the chat's room") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const char* en =
+        "Difficulty: Automatic (2 players): life 140%, damage 120%, enemies 125%; bosses: life 200%, damage 120%";
+    const std::string zh = CoopI18n::Tr(hans, en);
+    CHECK(zh == "难度 自动（2人）生命140% 伤害120% 敌人125% · Boss生命200% 伤害120%");
+    // The room is the game's own line's width (Elided() in coop_draw.cpp cuts what is wider, and
+    // the HUD showed "伤..." before this): a CJK glyph is about two Latin ones, so the Chinese
+    // line must stay well under the English one.
+    const auto width = [](const std::string& s) {
+        float w = 0.0f;
+        for (std::size_t i = 0; i < s.size();) {
+            const unsigned char c = static_cast<unsigned char>(s[i]);
+            const int bytes = c < 0x80 ? 1 : (c >> 5) == 0x6 ? 2 : (c >> 4) == 0xE ? 3 : 4;
+            w += bytes == 1 ? 1.0f : 2.0f;
+            i += static_cast<std::size_t>(bytes);
+        }
+        return w;
+    };
+    CHECK(width(zh) <= width(en) * 0.75f);
+}
+
+TEST_CASE("coop i18n: the chat's refusal line says its reason too") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    // The chat writes "refused: <reason>" (coop_lobby_game.cpp) and the tab keeps the part before
+    // ':' (RefusedLine). The reason was the shape's middle read as data, so the line read
+    // "被拒绝：wrong join password: ask the host...": the reason is a line of the table now.
+    CHECK(CoopI18n::Tr(hans, "refused: server full") == "被拒绝：房间满了");
+    CHECK(CoopI18n::Tr(hans, "refused: wrong join password: ask the host for it, then start Join.bat again and type it") ==
+          "被拒绝：加入密码不对：向房主要密码，然后重新启动 Join.bat 输入");
+    CHECK(CoopI18n::Tr(hant, "refused: the host banned you from this game: you cannot join it again until the host stops hosting") ==
+          "被拒絕：房主在這個房間封禁了你：房主停止建立房間後，你才能再加入");
+    // A reason no table has: the line's start still reads in the language.
+    CHECK(CoopI18n::Tr(hans, "refused: something new") == "被拒绝：something new");
+}
+
+TEST_CASE("coop i18n: the pickup notices' place and item, one set of brackets") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    // A place's own line: "got the map (Deku Tree)" must not read as the bare
+    // " got the " with "map (Deku Tree)" as an item name.
+    CHECK(CoopI18n::Tr(hans, "Saria got the map (Deku Tree)") == "Saria 拿到了地图（德库大树）");
+    CHECK(CoopI18n::Tr(hans, "Saria got the compass (Deku Tree)") == "Saria 拿到了指南针（德库大树）");
+    CHECK(CoopI18n::Tr(hans, "Saria got the Boss Key (Deku Tree)") == "Saria 拿到了 Boss 钥匙（德库大树）");
+    CHECK(CoopI18n::Tr(hant, "Saria got the map (Deku Tree)") == "Saria 拿到了地圖（德庫大樹）");
+    // The token line: the table's key has the brackets, so the line gets one
+    // pair, not two ("(12))").
+    CHECK(CoopI18n::Tr(hans, "Saria got a Gold Skulltula token (12)") ==
+          "Saria 得到一枚金色骷髅蜘蛛徽章（12）");
+    CHECK(CoopI18n::Tr(hant, "Saria got a Gold Skulltula token (12)") ==
+          "Saria 得到一枚金色骷髏蜘蛛徽章（12）");
+    // The heart container's own end is part of the line's table form.
+    CHECK(CoopI18n::Tr(hans, "Saria got a Heart Container - your max health went up") ==
+          "Saria 得到一颗心之容器 —— 最大生命值提升了");
+    // The plain item line still reads as it did.
+    CHECK(CoopI18n::Tr(hans, "Saria got the Silver Scale - you got one too!") ==
+          "Saria 拿到了银鳞 —— 你也得到了一个！");
+}
+
 TEST_CASE("coop i18n: a language code picks its table") {
     // Longshot's menu codes (MenuLanguageCode) and language.txt's,
     // any case, and the first part of a longer one ("zh-Hans-CN").
@@ -183,6 +274,7 @@ std::string Sources() {
     const fs::path repo = fs::path(COOP_TEST_SOURCE_DIR) / "..";
     std::string all;
     for (const fs::path& dir : {repo / "hookshot" / "src", repo / "lichii" / "hook", repo / "coop" / "host" / "src",
+                               repo / "coop" / "net" / "src",
                                repo / "coop" / "host" / "include" / "coop" / "host"}) {
         for (const auto& e : fs::directory_iterator(dir)) {
             const std::string name = e.path().filename().string();
@@ -211,6 +303,25 @@ std::string Escaped(const std::string& s) {   // (as the key is written in C: \"
     return out;
 }
 
+
+// The names a pickup notice says are the module's own list (coop/host/src/notify.cpp's
+// kItems, kSongs, kDungeons) plus what its Spell() makes out of an id it does not
+// know ("Pocket Cucco"). The first three are a line of that file, so Sources() has
+// them; the ones Spell() builds are not a literal anywhere, so the check for "every
+// key is still a line of the module" leaves them out by name.
+std::string NotifyNames() {
+    namespace fs = std::filesystem;
+    const fs::path repo = fs::path(COOP_TEST_SOURCE_DIR) / "..";
+    std::ifstream in(repo / "coop" / "host" / "src" / "notify.cpp", std::ios::binary);
+    std::ostringstream text;
+    text << in.rdbuf();
+    return text.str();
+}
+
+bool Spelled(const std::string& key) {
+    // a name Spell() can make: words, or a capitalised single word
+    return key.find(' ') != std::string::npos || (key.size() > 2 && key[0] >= 'A' && key[0] <= 'Z');
+}
 }  // namespace
 
 
@@ -240,8 +351,13 @@ TEST_CASE("coop i18n: every key is still a line of the module") {
         if (Braces(en) > 0) {
             continue;
         }
-        const bool found = sources.find("\"" + Escaped(en)) != std::string::npos ||
-                           sources.find(Escaped(en) + "\"") != std::string::npos;
+        bool found = sources.find("\"" + Escaped(en)) != std::string::npos ||
+                     sources.find(Escaped(en) + "\"") != std::string::npos;
+        if (!found) {
+            // a pickup's name: notify.cpp's own list, or one Spell() builds from an id
+            const std::string names = NotifyNames();
+            found = names.find("\"" + Escaped(en) + "\"") != std::string::npos || Spelled(en);
+        }
         CHECK_MESSAGE(found, en);
     }
 }

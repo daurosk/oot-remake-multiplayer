@@ -424,8 +424,11 @@ int EnvNumber(const char* name) {
 #endif
 }
 
-// Unset or anything but "0": on.
-bool EnvOn(const char* name) {
+// Unset or anything but "0": on (a switch that is on by default). An opt-in switch (off unless set) reads EnvFlag
+// above. g4-enemies: this was named EnvOn, the name the other files (coop_drops, coop_svc, coop_fairy, the
+// Hookshot module) give the opt-in reading, so LICHII_COOP_ENEMY_BRAIN and LICHII_COOP_DEBUG_NPC, both opt-in, read
+// as on for everyone.
+bool EnvOnUnlessZero(const char* name) {
 #ifdef _WIN32
     char* value = nullptr;
     std::size_t size = 0;
@@ -641,6 +644,25 @@ public:
         return counts;
     }
 
+    // Issue 239: where the Follower last drew each followed copy (what was written, not the place wished),
+    // so the walk's own-AI pull (NoteDrift, issue 101) is measured from what the game was given.
+    std::unordered_map<u64, coop::protocol::Vec3> Drawn() {
+        std::lock_guard lock(mutex_);
+        return drawn_;
+    }
+
+    // Issue 239 probe, since the last ask: followed copies' steps against their step a written frame before
+    // (avg, max metres, count). Even movement: ~0; a turn, a start or a stop: a few cm.
+    std::tuple<float, float, std::size_t> TakeUneven() {
+        std::lock_guard lock(mutex_);
+        const auto out = std::make_tuple(uneven_count_ ? uneven_sum_ / uneven_count_ : 0.0f, uneven_max_,
+                                         uneven_count_);
+        uneven_sum_ = 0.0f;
+        uneven_max_ = 0.0f;
+        uneven_count_ = 0;
+        return out;
+    }
+
     // Townspeople, since the last ask: plays put under the copy's own AI's
     // name, names given back, frames set.
     std::array<std::size_t, 3> TakeNpc() {
@@ -736,6 +758,8 @@ public:
                 return std::none_of(work_.begin(), work_.end(),
                                     [&f](const Pose& p) { return p.actor == f.first && p.velocity; });
             });
+            std::erase_if(drawn_, [this](const auto& d) { return !follow_.contains(d.first); });
+            std::erase_if(steps_, [this](const auto& d) { return !follow_.contains(d.first); });
             if (resync_.Size() > 256) {  // jitter-b: copies that left
                 std::unordered_set<u64> playing;
                 for (const PlayWish& w : plays_) {
@@ -952,6 +976,28 @@ public:
                 const CoopFollow::Vec3 at{p.transform[0], p.transform[1], p.transform[2]};
                 const auto drawn = follow_[p.actor].Step(at, *p.velocity, want_ms_, cadence_.At(now_ms));  // jitter-2: even
                 std::copy(drawn.begin(), drawn.end(), followed.transform.begin());
+                // Issue 239 probe: how uneven the drawn steps are (this step against the last one, metres).
+                if (const auto was = drawn_.find(p.actor); was != drawn_.end()) {
+                    coop::protocol::Vec3 step{};
+                    for (std::size_t i = 0; i < 3; ++i) {
+                        step[i] = drawn[i] - was->second[i];
+                    }
+                    if (const auto last = steps_.find(p.actor); last != steps_.end()) {
+                        float u2 = 0.0f;
+                        for (std::size_t i = 0; i < 3; ++i) {
+                            const float u = step[i] - last->second[i];
+                            u2 += u * u;
+                        }
+                        const float u = std::sqrt(u2);
+                        if (std::isfinite(u)) {
+                            uneven_sum_ += u;
+                            uneven_max_ = std::max(uneven_max_, u);
+                            ++uneven_count_;
+                        }
+                    }
+                    steps_[p.actor] = step;
+                }
+                drawn_[p.actor] = {drawn[0], drawn[1], drawn[2]};
             }
             if (p.rotation) {
                 guest.Write(p.actor + kActorPosition, followed.transform.data(), 48);
@@ -1206,6 +1252,11 @@ private:
     u64 main_ = 0;
     std::vector<Pose> poses_;
     std::unordered_map<u64, CoopFollow::Follower> follow_;  // jitter-b: by actor
+    std::unordered_map<u64, coop::protocol::Vec3> drawn_;    // issue 239: the Follower's last place, by actor
+    std::unordered_map<u64, coop::protocol::Vec3> steps_;    // issue 239: its last step
+    float uneven_sum_ = 0.0f;
+    float uneven_max_ = 0.0f;
+    std::size_t uneven_count_ = 0;
     CoopFollow::Cadence cadence_;  // jitter-2: the game frames' time made even
     CoopNpcAnim::Resync resync_;  // jitter-b: townspeople's frame sets
     std::vector<u64> removes_;
@@ -1651,9 +1702,14 @@ public:
                 }
                 const std::optional<u8> owner = sync_.OwnerOf(s.address);
                 if (owner && *owner != 0) {
+                    const bool owner_dead = sync_.OwnerSaysDead(s.address);
+                    const bool plain = !IsBoss(s.name);  // (seen with a BSA only under LICHII_COOP_ENEMY_BRAIN)
+                    const std::optional<std::int32_t> life =
+                        s.life ? std::optional<std::int32_t>(s.life->life) : std::nullopt;
                     list.push_back({s.address, s.bsa_component,
                                     *owner == self ? CoopBossNative::Role::owner : CoopBossNative::Role::copy, s.name,
-                                    *owner, s.life_component, sync_.OwnerSaysDead(s.address)});
+                                    *owner, s.life_component, owner_dead, plain,
+                                    plain && CoopBossNative::PlainDeath(life, owner_dead)});
                 }
             }
             TheBossMain().store(main_);
@@ -1853,7 +1909,7 @@ public:
                 // event; checked by its vtable and owner; read only) runs its
                 // own start again (the Mover's call), so its next push starts
                 // where the block rests now. On unless LICHII_COOP_BLOCK_NODE=0.
-                static const bool node_on = EnvOn("LICHII_COOP_BLOCK_NODE");
+                static const bool node_on = EnvOnUnlessZero("LICHII_COOP_BLOCK_NODE");
                 const bool first = fix.tries == 0;
                 if (!node_on) {
                     continue;
@@ -3107,6 +3163,29 @@ private:
                         max_read = r.Get<s32>(life_value->second + 8);
                     }
                 });
+                // One model for every enemy (fable-g4-enemies), off by default until its game run:
+                // LICHII_COOP_ENEMY_BRAIN=1 puts every plain Enemy_ on the bosses' native path (the owner's brain
+                // and action verbs through the game's own two functions, the copy's own brain's changes skipped),
+                // so a copy's own AI no longer moves it against the owner's place. A plain one's Life is not held
+                // and its death, own hit and own wake run its own brain (CoopBossNative, Boss::plain). Its
+                // animation slots and its samples' hit place stay as a plain enemy's.
+                static const bool enemy_brain = [] {
+                    const bool on = EnemyBrainSwitch(EnvText("LICHII_COOP_ENEMY_BRAIN"));  // opt-in
+                    LOG_INFO(Core, "coop: objects: enemies' brain path {} (LICHII_COOP_ENEMY_BRAIN)",
+                             on ? "on: plain enemies take the owner's verbs" : "off: plain copies are posed");
+                    return on;
+                }();
+                if (enemy_brain && OnBrainPath(s.name)) {
+                    if (const auto table = r.Ptr(a + kActorComponents)) {
+                        s.bsa_component = r.Ptr(*table + CoopBossNative::addr::kComponentBsa).value_or(0);
+                    }
+                    if (s.bsa_component != 0) {
+                        s.bsa = CoopBossNative::TheTable().OwnerState(a);
+                        if (own_hit_life) {
+                            (void)NewOwnHitAt(r, a, *own_hit_life, s.position);
+                        }  // our own hit: its own reaction runs (NoteOwnHit)
+                    }
+                }
                 if (IsBoss(s.name)) {
                     s.hit_ours.reset();  // issue 133: whose hit is for plain enemies (bosses: NewOwnHitAt, their sync)
                     s.slots = OtherSlots(r, a);  // issue 150
@@ -3967,7 +4046,7 @@ private:
         }
         npc_ours_ = ours;
         npc_claimed_ = claimed;
-        static const bool debug_npc = EnvOn("LICHII_COOP_DEBUG_NPC");
+        static const bool debug_npc = EnvFlag("LICHII_COOP_DEBUG_NPC");  // opt-in debug lines
         const bool every = debug_npc && now_us - npc_log_at_ >= 1'000'000;
         if (every) {
             npc_log_at_ = now_us;
@@ -4056,6 +4135,13 @@ private:
         for (const auto& [a, name] : TheMover().TakeTakeovers()) {
             sync_.NoteTakeover(a, now_us, name);
         }
+        // The enemies' brain path: a plain copy whose own brain asked for another phase than its owner's wants
+        // to act on our Link (issue 101; no play to give back: its brain is let run instead).
+        for (const u64 a : CoopBossNative::TheTable().TakeOwnWants()) {
+            sync_.NoteOwnBrainWant(a, now_us);
+        }
+        // Issue 239: a followed copy was written where the Follower drew it, not where it was wished.
+        const auto drawn = TheMover().Drawn();
         for (const PoseWrite& w : poses) {
             const u32 state = r.Get<u32>(w.address + kActorState).value_or(0);
             bool asleep = false;
@@ -4071,17 +4157,20 @@ private:
                 asleep = true;
                 ++asleep_placed_;
             }
-            if (const auto before = placed_.find(w.address); before != placed_.end()) {
+            const auto drew = drawn.find(w.address);
+            const auto put = placed_.find(w.address);
+            if (drew != drawn.end() || put != placed_.end()) {
+                const coop::protocol::Vec3& before = drew != drawn.end() ? drew->second : put->second;
                 coop::protocol::Vec3 now{};
                 float d2 = 0.0f;
                 for (std::size_t i = 0; i < 3; ++i) {
                     now[i] = r.Get<float>(w.address + kActorPosition + 4 * i).value_or(0.0f);
-                    const float d = now[i] - before->second[i];
+                    const float d = now[i] - before[i];
                     d2 += d * d;
                 }
                 const float d = std::sqrt(d2);
-                // A copy whose own AI pulls it at our Link (issue 101).
-                sync_.NoteDrift(w.address, before->second, now, now_us);
+                // A copy whose own AI pulls it at our Link (issue 101), from what it was last written at.
+                sync_.NoteDrift(w.address, before, now, now_us);
                 drift_sum_ += d;
                 if (d > drift_max_) {
                     drift_max_ = d;
@@ -4097,9 +4186,12 @@ private:
                 std::copy(w.rotation->begin(), w.rotation->end(), p.transform.begin() + 3);
                 p.rotation = true;
             }
-            // jitter-b: a townsperson is followed in even steps each game frame (coop_follow.h).
+            // jitter-b: a townsperson is followed in even steps each game frame (coop_follow.h). Issue 239 /
+            // rows 37, 54: an enemy copy too (plain, mid-boss, boss). Its place was worked out at the present
+            // and written on a later game frame, a different time apart each frame (the cause jitter-b fixed
+            // for townspeople): uneven steps, the more so the faster it moves. Same setter as before.
             if (const auto name = names_.find(w.address);
-                w.velocity && name != names_.end() && name->second.first.starts_with("Npc_")) {
+                w.velocity && name != names_.end() && FollowedEachFrame(name->second.first)) {
                 p.velocity = std::array<float, 3>{(*w.velocity)[0], (*w.velocity)[1], (*w.velocity)[2]};
             }
             wish.push_back(p);
@@ -4114,8 +4206,15 @@ private:
         if (const auto ours = sync_.TakeOursNow(); release_ && !ours.empty()) {
             TheMover().Release(ours);
         }
+        // Report 109: a copy's own wake. On the enemies' brain path its own brain runs it (NoteOwnWake); the
+        // pose-era give-back of the wake's animation is for the other copies only (one maker, rows 109/111).
         for (auto& [a, name] : sync_.TakeOwnWakes()) {
-            TheMover().GiveBack(a, std::move(name));  // report 109
+            if (!CoopBossNative::TheTable().WakesOwnBrain(a)) {
+                TheMover().GiveBack(a, std::move(name));
+            }
+        }
+        for (const u64 a : sync_.TakeOwnWakeStarts()) {
+            CoopBossNative::TheTable().NoteOwnWake(a);  // (a plain copy on the brain path; else nothing)
         }
         std::vector<u64> removes = sync_.Removes();
         for (const u64 a : horde_.Removes()) {
@@ -4177,6 +4276,11 @@ private:
         TheMover().Want(main_, std::move(wish), std::move(removes), std::move(plays));
         if (now_us - drift_at_ >= kDriftLogUs) {
             const auto [moved, deleted, played, framed] = TheMover().TakeCounts();
+            if (const auto [uneven_avg, uneven_max, uneven_n] = TheMover().TakeUneven(); uneven_n > 0) {
+                LOG_INFO(Core, "coop: objects: followed copies' steps uneven avg {:.4f} max {:.3f} m over {} "
+                               "(issue 239: a step against the one before)",
+                         uneven_avg, uneven_max, uneven_n);
+            }
             if (const auto [started, skipped] = TheMover().TakeNodeStarts(); started + skipped > 0) {
                 LOG_INFO(Core, "coop: world: push node starts run {}, skipped {} (block gone, another "
                                "node, or busy by then)",
@@ -4455,33 +4559,33 @@ Objects& Instance() {
         objects.aggro_ = EnvFlag("LICHII_COOP_DEBUG_AGGRO");
         objects.cheat_ = EnvFlag("LICHII_COOP_OBJECTS_CHEAT");
         objects.share_ = EnvFlag("LICHII_COOP_OBJECTS");
-        objects.pose_ = EnvOn("LICHII_COOP_OBJECTS_POSE");
+        objects.pose_ = EnvOnUnlessZero("LICHII_COOP_OBJECTS_POSE");
         objects.gimmick_probe_on_ = EnvFlag("LICHII_COOP_GIMMICK_PROBE");  // opt-in: many reads
         objects.logic_probe_on_ = EnvFlag("LICHII_COOP_LOGIC_PROBE");      // jabu-lifts: reads only
-        objects.lift_ride_on_ = EnvOn("LICHII_COOP_LIFT_RIDE");            // jabu-lifts (#65), on unless =0
+        objects.lift_ride_on_ = EnvOnUnlessZero("LICHII_COOP_LIFT_RIDE");            // jabu-lifts (#65), on unless =0
         {
             const std::string platforms = EnvText("LICHII_COOP_PLATFORMS");
             objects.platforms_mode_ = platforms == "0" ? 0 : platforms == "probe" ? 2 : 1;
             const std::string share = EnvText("LICHII_COOP_SWITCH_SHARE");  // room-objects
             objects.switch_share_mode_ = share == "0" ? 0 : share == "probe" ? 2 : 1;
         }
-        objects.scrubs_on_ = EnvOn("LICHII_COOP_SCRUBS");  // issue 149, on unless =0
+        objects.scrubs_on_ = EnvOnUnlessZero("LICHII_COOP_SCRUBS");  // issue 149, on unless =0
         objects.ocarina_probe_on_ = EnvFlag("LICHII_COOP_OCARINA_PROBE");  // issue 152, reads only
         // On by default (=0 turns it off): a life an enemy must lose is given
         // to the game as a whole hit, so it flinches, is knocked back and a
         // Stalchild loses its head on every screen. An amount alone at
         // Life + 0x228 is not taken (live test, 2026-11-09).
-        objects.replay_ = EnvOn("LICHII_COOP_OBJECTS_HIT_REPLAY");
+        objects.replay_ = EnvOnUnlessZero("LICHII_COOP_OBJECTS_HIT_REPLAY");
         objects.hurt_ = EnvFlag("LICHII_COOP_OBJECTS_HURT") || objects.replay_;
         objects.drive_ = EnvFlag("LICHII_COOP_OBJECTS_TEST_DRIVE");
         objects.ai_hold_ = EnvNumber("LICHII_COOP_OBJECTS_AI_HOLD");
         objects.test_take_ = EnvHex("LICHII_COOP_OBJECTS_TEST_TAKE");
         objects.drive_mode_ = objects.drive_ ? EnvNumber("LICHII_COOP_OBJECTS_TEST_DRIVE") : 0;
-        objects.hearts_to_link_ = EnvOn("LICHII_COOP_HEARTS_TO_LINK");
-        objects.wake_ = EnvOn("LICHII_COOP_OBJECTS_WAKE");
-        objects.release_ = EnvOn("LICHII_COOP_OBJECTS_RELEASE");
-        objects.pvp_replay_ = EnvOn("LICHII_COOP_PVP_REPLAY");
-        objects.wake_far_ = EnvOn("LICHII_COOP_OBJECTS_ASLEEP");
+        objects.hearts_to_link_ = EnvOnUnlessZero("LICHII_COOP_HEARTS_TO_LINK");
+        objects.wake_ = EnvOnUnlessZero("LICHII_COOP_OBJECTS_WAKE");
+        objects.release_ = EnvOnUnlessZero("LICHII_COOP_OBJECTS_RELEASE");
+        objects.pvp_replay_ = EnvOnUnlessZero("LICHII_COOP_PVP_REPLAY");
+        objects.wake_far_ = EnvOnUnlessZero("LICHII_COOP_OBJECTS_ASLEEP");
         return true;
     }();
     (void)once;

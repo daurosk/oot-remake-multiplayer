@@ -3,13 +3,13 @@
 # expect= is a regex for the run's hookshot_log-A.txt / -B.txt ("A:" / "B:" in front, either log without).
 
 [g1]
-walk           expect="A:coop: connected"  expect="B:coop: connected"
-teleport-same  expect="A:coop: connected"
+walk           expect="A:coop: connected"  expect="B:coop: connected"  logonly="smoke: grades the connection only"
+teleport-same  expect="A:coop: connected"  logonly="smoke: grades the connection only"
 
 [g2]
-time           expect="A:coop: connected"
+time           expect="A:coop: connected"  logonly="smoke: grades the connection only"
 warp
 
 [g3]
-wear           expect="A:coop: connected"
+wear           expect="A:coop: connected"  logonly="smoke: grades the connection only"
 turn

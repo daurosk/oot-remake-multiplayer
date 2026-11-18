@@ -6,7 +6,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <mutex>
 #include <string>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -17,6 +19,7 @@
 #include <fmt/format.h>
 
 #include "common/logging.h"
+#include "coop_hud_layout.h"
 #include "coop_pause_files.h"
 #include "coop_runtime.h"
 
@@ -32,6 +35,8 @@ struct HosCoopMenuState {
     std::uint64_t hud_screen, panel_screen;
     std::int64_t hud_ran_ns_ago;  // (rows 63/76; an older exe answers with the struct up to here)
     std::uint32_t hud_refreshes, reserved2;
+    std::uint32_t screen_count, reserved3;  // (row 141; an older exe answers with the struct up to here)
+    std::uint64_t screens[24];
 };
 using MenuStateFn = int (*)(HosCoopMenuState*);
 
@@ -192,7 +197,11 @@ std::optional<Menu> MenuState() {
         return std::nullopt;
     }
     Menu m{s.menu_open != 0, s.map_page != 0, s.hud_screen, s.panel_screen};
-    if (s.size >= sizeof s) m.hud_ran_ns_ago = s.hud_ran_ns_ago, m.hud_refreshes = s.hud_refreshes;
+    if (s.size >= offsetof(HosCoopMenuState, screen_count)) m.hud_ran_ns_ago = s.hud_ran_ns_ago, m.hud_refreshes = s.hud_refreshes;
+    if (s.size >= sizeof s) {  // (row 141: the running screens)
+        m.screen_count = (std::min<std::uint32_t>)(s.screen_count, static_cast<std::uint32_t>(m.screens.size()));
+        std::copy(s.screens, s.screens + m.screen_count, m.screens.begin());
+    }
     return m;
 }
 
@@ -226,6 +235,106 @@ bool AskHudRefresh() {
     return true;
 }
 
+namespace {
+// Row 141: the player status screen (PlayerStatus_00) and its HUD panes; the screens already looked in.
+std::atomic<std::uint64_t> g_status_screen{0};
+Found g_status_dpad, g_status_hearts, g_status_magic, g_status_agony;
+std::array<std::uint64_t, 24> g_status_looked{};
+bool g_status_told = false;
+
+void ForgetStatus() {
+    for (Found* f : {&g_status_dpad, &g_status_hearts, &g_status_magic, &g_status_agony}) f->pane = 0, f->from = 0;
+    g_status_screen = 0;
+    g_status_looked = {};  // (a new screen may come at a gone one's address)
+}
+
+// Looks in each running screen not looked in before for the d-pad pane, only in a layout of the same kind as the HUD
+// screen's (its object's vtable), so the game's lookup is never handed something that is not a layout.
+void SearchStatus(void* ctx, const HosCoopApi* api, const Menu& menu) {
+    const std::uint64_t had = g_status_screen.load();
+    if (had != 0 && !menu.Runs(had)) {
+        ForgetStatus();
+        LOG_INFO(Core, "coop: hud: the player status screen {:#x} no longer runs: forgotten", had);
+    }
+    if (g_status_screen.load() != 0 || menu.hud_screen == 0 || menu.screen_count == 0) {
+        return;
+    }
+    const std::uint64_t hud_layout = Read64(menu.hud_screen + kScreenLayout);
+    const std::uint64_t layout_kind = hud_layout != 0 ? Read64(hud_layout) : 0;
+    if (layout_kind == 0) {
+        return;
+    }
+    std::array<std::uint64_t, 24> looked{};
+    for (std::uint32_t i = 0; i < menu.screen_count && i < looked.size(); ++i) {
+        const std::uint64_t screen = menu.screens[i];
+        looked[i] = screen;
+        if (screen == 0 || screen == menu.hud_screen || screen == menu.panel_screen ||
+            std::find(g_status_looked.begin(), g_status_looked.end(), screen) != g_status_looked.end()) {
+            continue;
+        }
+        const std::uint64_t layout = Read64(screen + kScreenLayout);
+        if (layout == 0 || Read64(layout) != layout_kind) {
+            continue;
+        }
+        const std::uint64_t dpad = FindPane(ctx, api, layout, kStatusDpadPane);
+        if (dpad == 0) {
+            continue;
+        }
+        const std::uint64_t hearts = FindPane(ctx, api, layout, kStatusHeartsPane);
+        const std::uint64_t magic = FindPane(ctx, api, layout, kStatusMagicPane);
+        const std::uint64_t agony = FindPane(ctx, api, layout, kStatusAgonyPane);
+        g_status_dpad.pane = dpad, g_status_hearts.pane = hearts, g_status_magic.pane = magic, g_status_agony.pane = agony;
+        for (Found* f : {&g_status_dpad, &g_status_hearts, &g_status_magic, &g_status_agony}) f->from = screen;
+        g_status_screen = screen;
+        LOG_INFO(Core, "coop: hud: the player status screen {:#x} (layout {:#x}): {} {:#x}, {} {:#x}, {} {:#x}, {} {:#x}",
+                 screen, layout, kStatusDpadPane, dpad, kStatusHeartsPane, hearts, kStatusMagicPane, magic,
+                 kStatusAgonyPane, agony);
+        break;
+    }
+    g_status_looked = looked;
+    if (g_status_screen.load() == 0 && !g_status_told) {
+        g_status_told = true;
+        LOG_INFO(Core, "coop: hud: no running screen has {} yet ({} screens): the player list starts at the fixed top "
+                       "until one does", kStatusDpadPane, menu.screen_count);
+    }
+}
+}  // namespace
+
+std::optional<double> GameHudBottom() {
+    static std::mutex mutex;
+    static CoopHudLayout::Hold hold;
+    const auto menu = MenuState();
+    const std::uint64_t screen = g_status_screen.load();
+    const bool runs = menu && screen != 0 && menu->Runs(screen);
+    std::optional<double> now;
+    if (runs) {
+        std::vector<CoopHudLayout::HudPiece> pieces;
+        const auto add = [&](const Found& f, auto&& piece) {
+            const std::uint64_t pane = f.from.load() == screen ? f.pane.load() : 0;
+            float m[12] = {};
+            if (pane == 0 || !CoopRuntime::Read(pane + kPaneMatrix, m, sizeof m)) {
+                return;
+            }
+            float alpha = 1.0f;
+            if (!CoopRuntime::Read(pane + kPaneAlpha, &alpha, sizeof alpha) || !std::isfinite(alpha)) {
+                alpha = 1.0f;  // (unreadable: counted as shown, the blocks rather lower than over it)
+            }
+            pieces.push_back(piece(m, alpha));
+        };
+        add(g_status_dpad, [](const float* m, float a) {
+            CoopHudLayout::HudPiece p = CoopHudLayout::Centred(m, a, kDpadSlot, kDpadSlot);
+            p.x0 += kDpadDownX, p.x1 += kDpadDownX, p.y0 += kDpadDownY, p.y1 += kDpadDownY;
+            return p;
+        });
+        add(g_status_hearts, [](const float* m, float a) { return CoopHudLayout::Centred(m, a, kHeartsW, kHeartsH); });
+        add(g_status_magic, [](const float* m, float a) { return CoopHudLayout::Centred(m, a, kMagicW, kMagicH); });
+        add(g_status_agony, [](const float* m, float a) { return CoopHudLayout::Centred(m, a, kAgonySize, kAgonySize); });
+        now = CoopHudLayout::HudBottom(pieces);
+    }
+    std::lock_guard lock(mutex);
+    return hold.Update(now);
+}
+
 void Frame(void* ctx, const HosCoopApi* api) {
     if (ctx == nullptr || !CanCall(api)) {
         return;
@@ -235,6 +344,7 @@ void Frame(void* ctx, const HosCoopApi* api) {
         return;
     }
     Probe(*menu);
+    SearchStatus(ctx, api, *menu);  // (row 141: the game's own HUD, for the player list's top)
     if (g_refresh_pending && menu->hud_refreshes != g_refresh_asked_at) {  // rows 63/76: the asked refresh has run
         g_refresh_pending = false;
         LOG_INFO(Core, "coop: map refresh: run at the HUD screen's update; its copy now {}", HudCopy(menu->hud_screen));

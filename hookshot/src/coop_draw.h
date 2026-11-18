@@ -190,6 +190,9 @@ struct Scene {
     // Our own voice icon (CoopVoice::IconFor): not none, a "You" row with it
     // over the HUD blocks (only when there are any).
     CoopVoice::Icon own_voice = CoopVoice::Icon::none;
+    // Row 141: the bottom of the game's own top-left HUD this frame, as a fraction of the picture height
+    // (CoopMapPage::GameHudBottom); the HUD blocks start below it. None: at CoopHudLayout::kBlocksTop.
+    std::optional<double> game_hud_bottom;
     std::optional<ChatBoxView> box;
     std::vector<ChatShown> chat;
     std::optional<CoopHook::Markers> markers;

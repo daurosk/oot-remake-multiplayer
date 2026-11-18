@@ -10,8 +10,8 @@
 # hs-jabu-water and the #196 / #249 checks need a tree with g3-objects merged; deku-block (#147) needs push-block.
 #   python -I tools/autotest/groups.py run tools/autotest/groups/hookshot-rc-checks.txt --kit-root <root>
 [g1]
-hs-deku-torch-away  expect='B:our game started the event InsideTheDekuTree_Gimmick_CandleAndSpiderWeb: sent to the others'  expect='A:bool 0x0f8f3fa3 \(entry \d+\) 0 -> 1'  expect='A:bool 0x46e8fcf9 \(entry \d+\) 0 -> 1'  label="#177 torch flame: the other player outside room E"
+hs-deku-torch-away  expect='B:our game started the event InsideTheDekuTree_Gimmick_CandleAndSpiderWeb: sent to the others'  expect='A:bool 0x0f8f3fa3 \(entry \d+\) 0 -> 1'  expect='A:bool 0x46e8fcf9 \(entry \d+\) 0 -> 1'  label="#177 torch flame: the other player outside room E"  see=hs-deku-torch-away-A  see=hs-deku-torch-away-B
 hs-deku-torch-reload  label="#177 torch flame after a reload (shots: torch lit, no web, in both)"
-deku-block  expect='A:world hooks: first AI node start from hookshot.exe'  expect='B:world hooks: first AI node start from hookshot.exe'  expect='B:push node [0-9a-f]+: its own start \(main\+0x2751790\) asked to run again'  label="#147 push block: B's push after A's (patch 0029)"
-hs-lift-ride  expect='A:coop: lift ride: another player is on our lift'  label="#249 row 65 Jabu lift: a lift another Link rides moves in both"
-hs-jabu-water  expect='B:bool 0xc517f1b5 \(entry \d+\) 0 -> 1'  expect='A:bool 0xc517f1b5 \(entry \d+\) 0 -> 1'  label="#249 Jabu room 14 water: the other player's under switch raises the water in both"
+deku-block  expect='A:world hooks: first AI node start from hookshot.exe'  expect='A:world: 7155a64297e96d5a Obj_MovableBox_A_01 moved here: sending'  expect='B:world hooks: first AI node start from hookshot.exe'  expect='B:push node [0-9a-f]+: its own start \(main\+0x2751790\) asked to run again'  label="#147 push block: B's push after A's (patch 0029)"  see=deku-block-A  see=deku-block-B
+hs-lift-ride  expect='A:coop: lift ride: another player is on our lift'  label="#249 row 65 Jabu lift: a lift another Link rides moves in both"  see=hs-lift-ride-A  see=hs-lift-ride-B
+hs-jabu-water  expect='B:bool 0xc517f1b5 \(entry \d+\) 0 -> 1'  expect='A:bool 0xc517f1b5 \(entry \d+\) 0 -> 1'  label="#249 Jabu room 14 water: the other player's under switch raises the water in both"  see=hs-jabu-water-A  see=hs-jabu-water-B

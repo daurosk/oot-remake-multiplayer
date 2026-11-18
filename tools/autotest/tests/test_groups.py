@@ -38,13 +38,19 @@ class ParseTest(unittest.TestCase):
         self.assertEqual([n for n, _ in gs], ["g1", "g2"])
         walk, door = gs[0][1]
         self.assertEqual(walk, {"scenario": "walk", "switches": "", "expects": [], "timeout": None, "label": "",
-                                "password": ""})
+                                "password": "", "see": [], "logonly": "", "never": []})
         self.assertEqual(door["switches"], "LICHII_COOP_CHEATS=1,A:LICHII_COOP_COLOR=red")
         self.assertEqual(door["expects"], [("A", "coop: connected")])
         self.assertEqual(door["label"], "#178 door")
         chest = gs[1][1][0]
         self.assertEqual(chest["expects"], [("B", r"got item \d+"), ("", "puppet")])
         self.assertEqual(chest["timeout"], 900)
+
+    def test_never(self):
+        run = g.parse_groups("[g1]\nhs-spawn expect='B:spawned' never='B:P1 snap' never=do.not.hold\n")[0][1][0]
+        self.assertEqual(run["never"], [("B", "P1 snap"), ("", "do.not.hold")])
+        with self.assertRaises(g.Fail):
+            g.parse_groups("[g1]\nwalk never=(\n")
 
     def test_errors(self):
         for text in ("walk\n", "[g1]\n", "[g1]\nwalk\n[g1]\nchest\n", "[g1]\nwalk nope\n", "[g1]\nwalk color=red\n",
@@ -236,8 +242,9 @@ class StepsGroupTest(unittest.TestCase):
             f = os.path.join(root, "g11", "stray", "t")
             write(os.path.join(f, "steps.txt"), "step 5: start A B\nsteps done: 0 FAIL\n")
             write(os.path.join(f, "counts.txt"), "PASS both-loaded (want A=1 B=1, after 3 s)\nPASS b-left\n")
-            write(os.path.join(f, "run.json"), json.dumps({"group": "g11", "scenario": "stray", "exit": 0}))
-            self.assertEqual(g.judge(f), ("PASS", "counts.txt: 2 PASS"))
+            write(os.path.join(f, "run.json"), json.dumps({"group": "g11", "scenario": "stray", "exit": 0,
+                                                           "logonly": "joins and leaves"}))
+            self.assertEqual(g.judge(f), ("PASS", "counts.txt: 2 PASS [log only: joins and leaves]"))
             write(os.path.join(f, "counts.txt"), "PASS both-loaded\nFAIL b-left (want A=0)\n")
             self.assertEqual(g.judge(f)[0], "FAIL")
         finally:
@@ -266,15 +273,16 @@ class MergeTest(unittest.TestCase):
         log_a = "[1.0] coop: module loaded\n[2.0] coop: connected to 127.0.0.1:27560\n"
         log_b = "[3.0] puppet: P1 spawned\n[9.0] got item 42 from the chest\n"
         self.run_folder("g1", "walk", {"expects": [], "exit": 0})
-        self.run_folder("g1", "teleport-same", {"expects": [["A", "coop: connected"]], "exit": 0, "label": "#178"},
-                        {"hookshot_log-A.txt": log_a})
-        self.run_folder("g2", "chest", {"expects": [["B", r"got item \d+"], ["", "puppet"]], "exit": 0},
+        self.run_folder("g1", "teleport-same", {"expects": [["A", "coop: connected"]], "exit": 0, "label": "#178",
+                                                "logonly": "connect"}, {"hookshot_log-A.txt": log_a})
+        self.run_folder("g2", "chest", {"expects": [["B", r"got item \d+"], ["", "puppet"]], "exit": 0,
+                                        "logonly": "item"},
                         {"hookshot_log-A.txt": log_a, "hookshot_log-B.txt": log_b})
         table = g.merge([self.root], rel_to=self.root)
         lines = table.splitlines()
         self.assertEqual(lines[0], "| Run | Result | Evidence |")
         self.assertIn("| g1 teleport-same (#178) | PASS | g1/teleport-same/20261112-120000: A: '[2.0] coop: connected to "
-                      "127.0.0.1:27560' |", lines)
+                      "127.0.0.1:27560' [log only: connect] |", lines)
         self.assertTrue(any(line.startswith("| g1 walk | PLAYED |") for line in lines))
         self.assertTrue(any(line.startswith("| g2 chest | PASS |") and "got item 42" in line for line in lines))
         self.assertEqual(lines[-1], "3 run(s): 2 PASS, 1 PLAYED -> PASS")
@@ -296,6 +304,20 @@ class MergeTest(unittest.TestCase):
         for row in rows.values():
             self.assertIn("| FAIL |", row)
         self.assertTrue(g.merge([self.root]).endswith("5 run(s): 5 FAIL -> FAIL"))
+
+    def test_a_never_line_found_fails_the_run(self):
+        log_b = "[1.0] coop: puppet: P1 CoopPuppet_Child_Green spawned after 200 ms\n[2.0] coop: puppet: P1 snap 0.835 m (show)\n"
+        meta = {"exit": 0, "expects": [["B", "spawned after"]], "logonly": "x"}
+        self.run_folder("g1", "snapped", dict(meta, never=[["B", "P1 snap"]]), {"hookshot_log-B.txt": log_b})
+        self.run_folder("g1", "clean", dict(meta, never=[["A", "P1 snap"], ["B", "do not hold"]]),
+                        {"hookshot_log-B.txt": log_b})
+        self.run_folder("g1", "both", dict(meta, expects=[["B", "nope"]], never=[["", "snap"]]),
+                        {"hookshot_log-B.txt": log_b})
+        rows = {line.split(" | ")[0][2:]: line for line in g.merge([self.root]).splitlines() if line.startswith("| g")}
+        self.assertIn("| FAIL |", rows["g1 snapped"])
+        self.assertIn("never= found B: '[2.0] coop: puppet: P1 snap 0.835 m (show)'", rows["g1 snapped"])
+        self.assertIn("| PASS |", rows["g1 clean"])
+        self.assertIn("missing B:'nope'; never= found B:", rows["g1 both"])
 
     def test_folders_without_run_json_and_empty(self):
         self.run_folder("g1", "walk")   # a plain run.ps1 -Runtime hookshot folder

@@ -18,11 +18,17 @@ toward -7.46 71.12 10   # face it, so the camera looks at it
 press ZL 10             # nothing to target: the camera swings behind Link, onto the post
 mark watching
 wait 420
-toward -7.46 71.12 6
-press ZL 10
-mark framed
+place -1.73 101.54 68.8  # back at the start point: the earlier 'toward' steps walked B up to the wall
+wait 60
+toward -7.46 71.12 10
+press ZL 30
+wait 60
+mark framed             # B's camera on its own post (proof check sign-B: in pieces = PASS, whole = #90 FAIL)
 wait 300
-toward -7.46 71.12 6
-press ZL 10
+place -1.73 101.54 68.8
+wait 60
+toward -7.46 71.12 10
+press ZL 30
+wait 60
 mark b-end
 wait 300

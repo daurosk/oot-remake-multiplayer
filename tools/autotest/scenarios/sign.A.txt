@@ -43,7 +43,12 @@ press Y
 wait 60
 mark cut3
 goto -3.5 66.5 0.8 300  # step aside (south-east), so B's camera sees the post, not A
-wait 120
-mark after-cut
+toward -7.46 71.12 10  # face the post, then ZL (nothing to target): the camera swings behind Link, onto the post
+press ZL 30
+wait 60
+mark after-cut          # A's own camera on the post: in pieces (proof check sign-A)
 wait 600
+toward -7.46 71.12 10
+press ZL 30
+wait 30
 mark end

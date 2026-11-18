@@ -133,6 +133,8 @@ A late joiner gets the same: its block is first seen where the map made it, the 
 
 Logs: `world: <hash> <name> came to rest where another player left it; its base anchor is put there too` (or `was not found near its old place`), then the push node's line (below).
 
+Probe (`LICHII_COOP_DEBUG_BLOCKS=1`, off by default): once a second per push block, `world: <hash> <name> probe: at <place>, rest <place> (<m>), Link <m> away; ours / following / remote / place / settle / quiet`: what `WorldSync::Move` saw and why a push was or was not claimed (big-run-0115 rerun: the block moved in the pusher's game and no `moved here: sending` came).
+
 ### Blocks: the push node (issue 147, world-objects-2)
 
 Why the anchor move above is not enough: the place a push starts from is kept in the block's AI node, not in the actor, its components or its physics root. Read from main (build e0f3ccfaf50065ae; disassembled, nothing run):

@@ -995,6 +995,20 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
     const auto found = remote_.find(o.hash);
     Remote* r = found != remote_.end() ? &found->second : nullptr;
     bool remote = r != nullptr && !r->samples.empty() && now_us - r->got_us < kRemoteHoldUs;
+    if (debug_blocks_ && IsPushBlock(o.name) && now_us - o.debug_us >= 1'000'000) {
+        // #147 probe: what this walk saw and why the move is or is not claimed below.
+        o.debug_us = now_us;
+        char more[256];
+        std::snprintf(more, sizeof more,
+                      " at %.2f %.2f %.2f, rest %.2f %.2f %.2f (%.2f m), Link %.2f m away; ours %d following %d "
+                      "remote %d place %d settle %d quiet %.1f s",
+                      o.position[0], o.position[1], o.position[2], o.rest[0], o.rest[1], o.rest[2],
+                      Distance(o.position, o.rest), player ? Distance(*player, o.position) : -1.0f, o.ours ? 1 : 0,
+                      o.following ? 1 : 0, remote ? 1 : 0, r != nullptr && r->place ? 1 : 0,
+                      o.settle_us != 0 ? 1 : 0,
+                      now_us < o.quiet_until ? static_cast<double>(o.quiet_until - now_us) / 1e6 : 0.0);
+        out.notes.push_back(Line("world: %016llx %s probe:%s", o.hash, o.name, more));
+    }
     if (r != nullptr && !remote && r->place) {
         r->samples.clear();  // the mover stopped: only its rest place counts now
     }

@@ -1272,6 +1272,30 @@ TEST_CASE("world: a block pushed next to our Link is sent while it moves, then w
     }
 }
 
+TEST_CASE("world: the block probe says once a second where a push block is, only when asked (#147)") {
+    const auto probes = [](const WorldSync::Out& out) {
+        int n = 0;
+        for (const auto& note : out.notes) {
+            n += note.find(" probe: at ") != std::string::npos ? 1 : 0;
+        }
+        return n;
+    };
+    WorldSync off;
+    Walk(off, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});
+    CHECK(probes(Walk(off, 3000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)})) == 0);
+    WorldSync w;
+    w.SetDebugBlocks(true);
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});
+    const auto first = Walk(w, 2000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});
+    REQUIRE(probes(first) == 1);
+    CHECK(probes(Walk(w, 2500 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)})) == 0);  // not twice a second
+    CHECK(probes(Walk(w, 3000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)})) == 1);
+    WorldSync pot;  // not a push block
+    pot.SetDebugBlocks(true);
+    Walk(pot, 1000 * kMs, {Thing(0x100, 0x11, 1, "Obj_Pot_A_01")});
+    CHECK(probes(Walk(pot, 3000 * kMs, {Thing(0x100, 0x11, 1, "Obj_Pot_A_01")})) == 0);
+}
+
 TEST_CASE("world: an object that moves far from our Link is not ours to send") {
     WorldSync w;
     const proto::Vec3 far_link{100.0f, 2.0f, 3.0f};

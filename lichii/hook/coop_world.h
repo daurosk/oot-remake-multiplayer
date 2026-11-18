@@ -607,6 +607,8 @@ public:
     // the lock stays, and our player opens it with a lent key (Lend).
     // LICHII_COOP_LOCK_DELETE=1 deletes, and then no key is ever lent.
     void SetDeleteLocks(bool on) { delete_locks_ = on; }
+    // LICHII_COOP_DEBUG_BLOCKS=1 (#147 probe): once a second per push block, why its move is or is not ours.
+    void SetDebugBlocks(bool on) { debug_blocks_ = on; }
     // Present thread: the host loaded a save (host-save's FLAG_RESET): kept
     // breaks (locks) are forgotten, so our locks come back with their rooms.
     void ForgetKept();
@@ -745,6 +747,7 @@ private:
         std::optional<coop::protocol::Vec3> follow_from;  // where it rested before another game moved it
         std::uint64_t settle_us = 0;       // when we took it
         std::uint64_t quiet_until = 0;
+        std::uint64_t debug_us = 0;        // SetDebugBlocks: its last probe line
         // deku-visuals-b: where it rested before the last followed push
         // (stale_from) and where that push left it (agreed), watched for a
         // snap back until stale_until; and its place at the walk before.
@@ -800,6 +803,7 @@ private:
     std::vector<std::pair<std::uint32_t, std::uint64_t>> own_drops_;  // (key flag, when)
     bool no_key_logged_ = false;
     bool delete_locks_ = false;           // SetDeleteLocks
+    bool debug_blocks_ = false;           // SetDebugBlocks
     std::uint64_t lent_hash_ = 0;         // the lock a lent key is out for (0: none)
     std::uint32_t lent_key_ = 0;            // its count's flag, to take it back
     std::vector<std::uint32_t> lend_back_;  // lent keys to take back, for this Tick's Out::lend_returns

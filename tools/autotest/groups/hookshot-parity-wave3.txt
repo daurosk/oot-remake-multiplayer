@@ -55,7 +55,7 @@ spawn-seed  label="#166 seed copy held"
 # World and enemies on Hookshot as on the emulator: chest notice, drops, signs, Peahat, Stalchildren, scrubs, Navi.
 chest-notice  label="#195 chest notice"
 drops  label="#101 #102 enemy drops"
-sign  label="#90 sign cut live"
+sign  label="#90 sign cut live"  see=sign-A  see=sign-B
 peahat  label="#157 Peahat"
 stalchild  label="#124 Stalchildren (its own time switch: give it no switches=)"
 deku-scrubs  label="#149 Deku Scrub brothers"

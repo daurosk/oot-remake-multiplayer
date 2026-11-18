@@ -1720,6 +1720,11 @@ public:
                 return v != nullptr && std::string_view(v) == "1";
             }();
             world_.SetDeleteLocks(delete_locks);
+            static const bool debug_blocks = [] {  // #147 probe (coop_world.h SetDebugBlocks)
+                const char* v = std::getenv("LICHII_COOP_DEBUG_BLOCKS");
+                return v != nullptr && std::string_view(v) == "1";
+            }();
+            world_.SetDebugBlocks(debug_blocks);
             world_.Tick(*scene, self, server_now_us, seen, player_, world);
             for (auto& m : world.send) {
                 send.emplace_back(std::move(m));

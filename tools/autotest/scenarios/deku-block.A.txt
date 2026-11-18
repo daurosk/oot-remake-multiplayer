@@ -26,11 +26,13 @@
 #    same place after about 0.1 s. B's log: no "moved by another player" for this block after
 #    "b-reach"; one "moved here: sending" per move; A: "moved by another player" and later its own
 #    "push node ... asked to run again" line. If "b-reach" shows Link not touching the block, change the goto z.
+#  - LICHII_COOP_DEBUG_BLOCKS=1 (#147 probe): "world: <hash> <name> probe: at ..., rest ..., Link N m away; ours ..."
+#    once a second per push block in each game: the block place each walk saw and why a move was or was not sent.
 #  - FAIL = B's Link or block jumps back (to z ~47.1 or a step back) at "b-grab", "b-pull" or
 #    "b-push1", in B's shots or A's.
 #! noload
 #! start coop: test warp done
-#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_BLOCKS=1
 #! timeout 420
 mark start
 warp InsideTheDekuTree Entrance

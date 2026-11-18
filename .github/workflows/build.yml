@@ -152,6 +152,10 @@ jobs:
         run: python tools/hookshot/tests/test_hs_share.py -v
       - name: Test lanes tests
         run: python tools/autotest/tests/test_lanes.py -v
+      - name: Autotest groups tests
+        run: python tools/autotest/tests/test_groups.py -v
+      - name: Screenshot proof tests
+        run: python tools/autotest/tests/test_proof.py -v
       - name: Kit-mode autotest tests
         run: python tools/autotest/tests/test_kit_pair.py -v
       - name: Bad-connection relay tests

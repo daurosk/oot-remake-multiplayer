@@ -17,7 +17,9 @@ A group file:
 
 Each line under a [group] is one scenario (tools/autotest/scenarios/<name>.A.txt), played in order. Optional words:
 switches= (run.ps1 -Switches), expect= (a regex that must be in the run's hookshot_log-A.txt, -B.txt with an "A:" or
-"B:" in front, either log without; repeatable), timeout= (s), label= (the table's text for the run).
+"B:" in front, either log without; repeatable), timeout= (s), label= (the table's text for the run),
+see= (a screenshot check of tools/autotest/proofs.txt, graded by proof.py from the run's shots; repeatable) and
+logonly= (why this run checks nothing visible, e.g. logonly="connect line only": then log expects alone may pass).
 
 Group N (the Nth [group] in the file) uses the game folders <kit root>\\hookshot-A<N> and -B<N>, server port
 27560 + 10*(N-1) (run.ps1's relays use +1 and +2), control pipes coop-auto-g<N>-A/-B, and run folders under
@@ -31,8 +33,14 @@ With --lane N --kit <kit A>,<kit B> every game is started by that kit's own star
 tools/autotest/kit_pair.py setup makes the two kits from a release zip and points them at the lane's pair).
 
 Result of one run (merge): FAILED.txt in the run folder -> FAIL; a FAIL line in counts.txt -> FAIL; run.ps1's exit code
-not 0 -> FAIL; every expect= found -> PASS, one missing -> FAIL; no expect= -> PLAYED (it ran to the end; look at the
-shots). Nothing here starts a game unless `run` is called without --dry-run.
+not 0 -> FAIL; one expect= missing -> FAIL; a see= check whose shot shows the wrong result -> FAIL; every expect=
+found and every see= OK -> PASS; no expect= -> PLAYED (it ran to the end; look at the shots).
+Owner rule (2026-11-18): NO PASS FROM LOG LINES ALONE. A run whose expects (or a steps file's counts) all pass but that
+has no see= check, or a see= check that is unclear or has no shot/references yet -> UNPROVEN, which is not a pass
+(merge's verdict is UNPROVEN, exit 1). Only a line marked logonly="reason" (nothing visible to prove: a connect line,
+a sent note's own log) passes on log lines alone. `merge --regrade` takes see=/logonly= from the group files of today
+for run folders made before (their run.json has none). Nothing here starts a game unless `run` is called without
+--dry-run.
 """
 import argparse
 import datetime
@@ -80,7 +88,8 @@ def parse_groups(text):
             words = shlex.split(line, posix=True)
         except ValueError as e:
             raise Fail("line %d: %s" % (n, e))
-        run = {"scenario": words[0], "switches": "", "expects": [], "timeout": None, "label": "", "password": ""}
+        run = {"scenario": words[0], "switches": "", "expects": [], "timeout": None, "label": "", "password": "",
+               "see": [], "logonly": ""}
         if not re.match(r"^[A-Za-z0-9_.-]+$", run["scenario"]):
             raise Fail("line %d: bad scenario name %r" % (n, run["scenario"]))
         for w in words[1:]:
@@ -103,6 +112,14 @@ def parse_groups(text):
                 run["timeout"] = int(v)
             elif k == "label":
                 run["label"] = v
+            elif k == "see":
+                if not re.match(r"^[A-Za-z0-9_.-]+$", v):
+                    raise Fail("line %d: see=%r is not a check name" % (n, v))
+                run["see"].append(v)
+            elif k == "logonly":
+                if not v.strip():
+                    raise Fail("line %d: logonly= needs the reason" % n)
+                run["logonly"] = v
             elif k == "password":   # run.ps1 -ServerPassword: a steps file's password/try lines (join-password)
                 run["password"] = v
             else:
@@ -258,7 +275,8 @@ def run_groups(planned, dry=False, say=print, runner=None):
             if folder:
                 with open(os.path.join(folder, "run.json"), "w", encoding="utf-8") as f:
                     json.dump({"group": s["name"], "scenario": r["scenario"], "label": r["label"],
-                               "expects": r["expects"], "exit": code, "port": s["port"]}, f, indent=1)
+                               "expects": r["expects"], "see": r.get("see", []), "logonly": r.get("logonly", ""),
+                               "exit": code, "port": s["port"]}, f, indent=1)
                 return folder, code
             note = "exit %d\n%s\n%s" % (code, p.stdout or "", p.stderr or "")
         except Exception as e:   # one broken run must not end its group or vanish from the table
@@ -305,9 +323,45 @@ def read_text(path):
         return None
 
 
-def judge(folder, meta=None):
-    """(result, evidence) of one run folder."""
+def judge(folder, meta=None, kit_root=None, checks=None):
+    """(result, evidence) of one run folder: the log verdict (judge_logs), then the screenshot proof (prove)."""
     meta = meta or json.loads(read_text(os.path.join(folder, "run.json")) or "{}")
+    result, evidence = judge_logs(folder, meta)
+    if result != "PASS":
+        return result, evidence
+    return prove(folder, meta, evidence, kit_root, checks)
+
+
+def prove(folder, meta, evidence, kit_root=None, checks=None):
+    """A log PASS becomes PASS only with every see= check OK (proof.py), FAIL when a shot shows the wrong result,
+    else UNPROVEN. A run marked logonly= (nothing visible to prove) keeps its log PASS."""
+    see = list(meta.get("see") or [])
+    if not see:
+        if meta.get("logonly"):
+            return "PASS", evidence + " [log only: %s]" % meta["logonly"]
+        return "UNPROVEN", evidence + " [no screenshot check (see=): log lines alone prove no visible result]"
+    sys.path.insert(0, HERE)
+    import proof
+    try:
+        checks = checks if checks is not None else proof.load_proofs()
+    except (OSError, proof.ProofError) as e:
+        return "UNPROVEN", evidence + " [proofs.txt: %s]" % e
+    states = []
+    for name in see:
+        if name not in checks:
+            states.append(("MISSING", "%s: not in proofs.txt" % name))
+        else:
+            states.append(proof.grade(folder, checks[name], kit_root))
+    text = "; ".join("%s %s" % st for st in states)
+    if any(st == "BAD" for st, _ in states):
+        return "FAIL", "shot shows the wrong result: " + text + " (logs: " + evidence[:120] + ")"
+    if all(st == "OK" for st, _ in states):
+        return "PASS", evidence + " [seen: " + text + "]"
+    return "UNPROVEN", evidence + " [screenshot check not passed: " + text + "]"
+
+
+def judge_logs(folder, meta):
+    """(result, evidence) of one run folder from its files and logs alone (no screenshot proof)."""
     failed = read_text(os.path.join(folder, "FAILED.txt"))
     if failed is not None:
         return "FAIL", "FAILED.txt: " + (failed.strip().splitlines() or ["(empty)"])[0][:160]
@@ -367,9 +421,28 @@ def no_folder_notes(paths):
     return out
 
 
-def merge(paths, rel_to=None, expected=None):
+def group_defs(files):
+    """{(scenario, label): (see list, logonly)} from group files (merge --regrade). A (scenario, label) that two lines
+    give different proofs is left out (ambiguous)."""
+    defs, clash = {}, set()
+    for path in files:
+        with open(path, encoding="utf-8-sig") as f:
+            groups = parse_groups(f.read())
+        for _, runs in groups:
+            for r in runs:
+                k, v = (r["scenario"], r["label"]), (tuple(r["see"]), r["logonly"])
+                if k in defs and defs[k] != v:
+                    clash.add(k)
+                defs[k] = v
+    for k in clash:
+        del defs[k]
+    return defs
+
+
+def merge(paths, rel_to=None, expected=None, kit_root=None, defs=None, checks=None):
     """The markdown table of every run under paths and a summary line. A run with no run folder is a FAIL row; with
-    `expected` (the number of planned runs), each planned run that left nothing at all is counted as FAIL too."""
+    `expected` (the number of planned runs), each planned run that left nothing at all is counted as FAIL too.
+    defs (group_defs): see=/logonly= for each run instead of its run.json's (re-grading older runs)."""
     rows, tally = [], {}
     for n in no_folder_notes(paths):
         note = (read_text(n) or "").strip().splitlines()
@@ -380,7 +453,10 @@ def merge(paths, rel_to=None, expected=None):
             where.replace("\\", "/"), (note[0] if note else "no note")[:140].replace("|", "/")))
     for f in run_folders(paths):
         meta = json.loads(read_text(os.path.join(f, "run.json")) or "{}")
-        result, evidence = judge(f, meta)
+        if defs is not None:
+            key = (meta.get("scenario") or os.path.basename(os.path.dirname(f)), meta.get("label", ""))
+            meta["see"], meta["logonly"] = list(defs.get(key, ((), ""))[0]), defs.get(key, ((), ""))[1]
+        result, evidence = judge(f, meta, kit_root, checks)
         tally[result] = tally.get(result, 0) + 1
         name = meta.get("scenario") or os.path.basename(os.path.dirname(f))
         run = "%s %s" % (meta["group"], name) if meta.get("group") else name
@@ -394,9 +470,9 @@ def merge(paths, rel_to=None, expected=None):
         tally["FAIL"] = tally.get("FAIL", 0) + lost
         rows.append("| (%d planned run(s)) | FAIL | no result at all: no run folder and no note |" % lost)
     total = sum(tally.values())
-    summary = "%d run(s): %s" % (total, ", ".join("%d %s" % (tally[k], k) for k in ("PASS", "PLAYED", "FAIL")
-                                                 if k in tally) or "none")
-    verdict = "FAIL" if tally.get("FAIL") or not total else "PASS"
+    summary = "%d run(s): %s" % (total, ", ".join("%d %s" % (tally[k], k) for k in ("PASS", "PLAYED", "UNPROVEN",
+                                                                                   "FAIL") if k in tally) or "none")
+    verdict = "FAIL" if tally.get("FAIL") or not total else "UNPROVEN" if tally.get("UNPROVEN") else "PASS"
     return "\n".join(["| Run | Result | Evidence |", "|---|---|---|"] + rows + ["", "%s -> %s" % (summary, verdict)])
 
 
@@ -438,10 +514,18 @@ def main(argv=None):
     m = sub.add_parser("merge")
     m.add_argument("paths", nargs="+")
     m.add_argument("--out", help="write the table here too")
+    m.add_argument("--kit-root", help="the folder with proof-refs (default: the first coop-kit above the repo)")
+    m.add_argument("--regrade", action="store_true",
+                   help="take see=/logonly= from today's tools/autotest/groups/*.txt (runs made before see= existed)")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "merge":
-            table = merge(a.paths, rel_to=os.path.dirname(os.path.abspath(a.paths[0])))
+            defs = None
+            if a.regrade:
+                gdir = os.path.join(HERE, "groups")
+                defs = group_defs(sorted(os.path.join(gdir, x) for x in os.listdir(gdir) if x.endswith(".txt")))
+            kit = os.path.abspath(a.kit_root) if a.kit_root else find_kit_root()
+            table = merge(a.paths, rel_to=os.path.dirname(os.path.abspath(a.paths[0])), kit_root=kit, defs=defs)
             print(table)
             if a.out:
                 with open(a.out, "w", encoding="utf-8") as f:
@@ -474,7 +558,7 @@ def main(argv=None):
         if not os.path.isfile(server):
             raise Fail("no server at %s" % server)
         run_groups(planned)
-        table = merge([run_root], rel_to=run_root, expected=sum(len(runs) for _, runs, _ in planned))
+        table = merge([run_root], rel_to=run_root, expected=sum(len(runs) for _, runs, _ in planned), kit_root=kit)
         with open(os.path.join(run_root, "results.md"), "w", encoding="utf-8") as f:
             f.write(table + "\n")
         print(table)

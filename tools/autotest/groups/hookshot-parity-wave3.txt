@@ -34,18 +34,18 @@
 
 [g1]
 # The save setups (header step): the Deku Tree gimmicks (#176 #177 #196), the map chest (#195), the Ocarina given back (#190).
-hs-deku-platforms  expect='B:our game started the event InsideTheDekuTree_Gimmick_RoomD_PlatformUp: sent to the others'  expect='A:player 2 started the event InsideTheDekuTree_Gimmick_RoomD_PlatformUp in this scene'  label="#176 platforms"
-hs-deku-torch  expect='B:our game started the event InsideTheDekuTree_Gimmick_CandleAndSpiderWeb: sent to the others'  expect='A:player 2 started the event InsideTheDekuTree_Gimmick_CandleAndSpiderWeb in this scene'  label="#176 #177 torch and web"
-hs-deku-water-floor  expect='A:RoomG_WaterLevel.*0 -> 1'  expect='B:bool 0x8d2b85ef \(entry \d+\) 0 -> 1'  label="#196 water floor"
-hs-chest-other  expect='B:0x89787395.*0 -> 1'  expect='A:opened in another game, shows open here'  label="#195 map chest"
-hs-ocarina-given  expect='B:ocarina bool 0x[0-9a-f]+ 0 -> 1 for the held ocarina'  expect='B:ocarina probe: our Link plays the ocarina'  label="#190 Ocarina given back"
+hs-deku-platforms  expect='B:our game started the event InsideTheDekuTree_Gimmick_RoomD_PlatformUp: sent to the others'  expect='A:player 2 started the event InsideTheDekuTree_Gimmick_RoomD_PlatformUp in this scene'  label="#176 platforms"  see=deku-lifts-A  see=deku-lifts-B
+hs-deku-torch  expect='B:our game started the event InsideTheDekuTree_Gimmick_CandleAndSpiderWeb: sent to the others'  expect='A:player 2 started the event InsideTheDekuTree_Gimmick_CandleAndSpiderWeb in this scene'  label="#176 #177 torch and web"  see=deku-torch-A  see=deku-web-A
+hs-deku-water-floor  expect='A:RoomG_WaterLevel.*0 -> 1'  expect='B:bool 0x8d2b85ef \(entry \d+\) 0 -> 1'  label="#196 water floor"  see=hs-deku-water-floor-A  see=hs-deku-water-floor-B
+hs-chest-other  expect='B:0x89787395.*0 -> 1'  expect='A:opened in another game, shows open here'  label="#195 map chest"  see=hs-chest-other-A  see=hs-chest-other-B
+hs-ocarina-given  expect='B:ocarina bool 0x[0-9a-f]+ 0 -> 1 for the held ocarina'  expect='B:ocarina probe: our Link plays the ocarina'  label="#190 Ocarina given back"  see=hs-ocarina-given-A  see=hs-ocarina-given-B
 
 [g2]
 # The emulator big run's scenarios on Hookshot as they are (no twin needed: plain A/B scripts) and the two steps-file
 # twins: puppets moving, riding, crawling, the HUD hearts. Pass lines: each scenario's header (and hs-crawl/hs-epona's).
 walk  label="walk (puppet follows)"
-hs-crawl  expect='A:coop: test warp done'  expect="B:(?<!fairy )coop: puppet: P\d+ (?:their command|plays) '(?!Wait)"  label="#86 crawl (twin of crawl)"
-hs-epona  expect='B:coop: ride: we ride Animal_Epona_Adult'  expect='A:coop: ride: P\d+ rides Animal_Epona_Adult'  expect='A:coop: spawn: CoopRide_Epona: create copy'  label="#199 Epona (twin of epona)"
+hs-crawl  expect='A:coop: test warp done'  expect="B:(?<!fairy )coop: puppet: P\d+ (?:their command|plays) '(?!Wait)"  label="#86 crawl (twin of crawl)"  see=hs-crawl-A  see=hs-crawl-B
+hs-epona  expect='B:coop: ride: we ride Animal_Epona_Adult'  expect='A:coop: ride: P\d+ rides Animal_Epona_Adult'  expect='A:coop: spawn: CoopRide_Epona: create copy'  label="#199 Epona (twin of epona)"  see=hs-epona-A  see=hs-epona-B
 color-field  label="#202 colours in the field (adult)"
 hearts  label="HUD hearts (puppet life)"
 ocarina-hand  label="#152 ocarina in hand"

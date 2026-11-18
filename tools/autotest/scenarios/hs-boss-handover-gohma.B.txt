@@ -73,7 +73,9 @@ wait 180
 hit Enemy_DungeonBoss_Gohma 2   # after the hand-over
 wait 420
 mark t10
-wait 600
+wait 180
+kill Enemy_DungeonBoss_Gohma   # both games kill: the owner's lands, the copy's is held at 1
+wait 420
 mark after-turns
 wait 1200               # her death cutscene, if she died
 mark d1

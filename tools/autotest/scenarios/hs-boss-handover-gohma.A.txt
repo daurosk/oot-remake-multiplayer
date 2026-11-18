@@ -1,8 +1,8 @@
 # hs-boss-handover-gohma (fable-g2-bosses, rows 104/118, #150): every player's hits count across Gohma's hand-overs.
 # B walks in first and owns Gohma; A walks in ~25 s later with a copy. Then ten turns, 600 frames each, the same
-# on both sides: turn 1 B (the owner) hits 3; turns 2-10 the player whose turn it is tells its copy's owner it is
+# on both sides: turn 1 B (the owner) hits 3; turns 2-9 the player whose turn it is tells its copy's owner it is
 # stunned (`stun`: the stun hand-over of issue 150, a DAMAGE of 0) and hits 2 (`hit`: through the game's own Life
-# step; on a copy the fall goes to the owner as DAMAGE). 3 + 9 x 2 = 21 = her whole life: she dies on turn 10.
+# step; on a copy the fall goes to the owner as DAMAGE). 3 + 8 x 2 = 19 for turns 1-9, so turn 10 is a kill (a hit of 2 stops at her life 1, 'The life stops' in docs/dungeons-boss.md; the owner's kill is a kill, a copy's is held at 1 and goes to the owner): she dies on turn 10.
 # Turns 2-5 hit 20 frames after the stun (inside the hand-over: H3 our unsent hit, H4 our DAMAGE on the wire);
 # turns 6-10 hit 180 frames after it (the hand-over done: the hitter owns her, its "life L" must be 21 minus every
 # hit before). Either game may own her at the start (the chase hand-over, hs-gohma-death): a `stun` from the owner
@@ -87,7 +87,7 @@ wait 600
 mark t10
 stun Enemy_DungeonBoss_Gohma     # she goes to us (issue 150)
 wait 180
-hit Enemy_DungeonBoss_Gohma 2   # after the hand-over
+kill Enemy_DungeonBoss_Gohma   # turn 10 is a kill, as hs-gohma-death: a hit stops at her life 1 (docs/dungeons-boss.md)
 wait 420
 mark after-turns
 wait 1200               # her death cutscene, if she died

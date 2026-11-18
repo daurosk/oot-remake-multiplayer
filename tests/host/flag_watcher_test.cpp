@@ -1349,7 +1349,7 @@ TEST_CASE("flag watcher: the key of a write that keeps failing is counted and sa
   CHECK(w.stats().write_failures == FlagWatcher::kFailureSayAt);
   CHECK(w.stats().top_write_failure == kDekuMap);
   CHECK(w.stats().top_write_failure_count == FlagWatcher::kFailureSayAt);
-  CHECK(std::string_view(w.stats().top_write_failure_site) == "one-way put-back");
+  CHECK(std::string_view(w.stats().top_write_failure_site) == "diff put back");  // g1-events' site name
   const auto said = w.take_keeps_failing();
   REQUIRE(said.size() == 1);
   CHECK(said[0].key == kDekuMap);

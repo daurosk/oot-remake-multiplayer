@@ -972,6 +972,9 @@ enum class DamageCause : std::uint8_t {
   hookshot = 10,
   hammer = 11,
   magic = 12,
+  // The hitter's copy of an enemy whose life cannot be read died in its game (its own death
+  // animation as it left): no life drop to send, so the kill itself goes (amount 1).
+  killed = 13,
 };
 
 // DAMAGE: life lost on a copy, for the owner to take off. Amount 0 or more.

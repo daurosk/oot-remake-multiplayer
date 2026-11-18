@@ -26,6 +26,7 @@
 #include <mutex>
 #include <optional>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
@@ -243,6 +244,31 @@ private:
 };
 
 Blasts& TheBlasts();
+
+// Issue 133 (whose hit): our own projectiles (seeds, arrows, nuts, bombs, the boomerang, the hookshot's tip) by
+// actor address, kept kKeepUs after each was last seen on our list, so a seed that hit an enemy and was removed
+// that frame still names the hit ours when the walk reads the enemy's hit record a moment later. The spawn sync
+// notes, the objects sync asks; any thread may call. Its own clock (CoopEvery::NowUs on both sides).
+class OwnShots {
+public:
+    static constexpr std::uint64_t kKeepUs = 1'500'000;
+    static constexpr std::size_t kKeep = 64;
+
+    void Note(std::uint64_t address, std::uint64_t now_us);
+    bool Was(std::uint64_t address, std::uint64_t now_us) const;
+    void Reset();
+
+private:
+    mutable std::mutex mutex_;
+    std::deque<std::pair<std::uint64_t, std::uint64_t>> seen_;  // address, last seen
+};
+
+OwnShots& TheOwnShots();
+
+// Whose hit an enemy's newest hit record names (its attacker actor): ours when our Link (a sword, a stick, the
+// hammer, a shield bash) or one of our own projectiles made it. Anything else (a projectile copy's blast, an
+// explosion actor, another enemy) is not known to be ours.
+bool HitIsOurs(std::uint64_t attacker, std::uint64_t our_link, const OwnShots& shots, std::uint64_t now_us);
 
 // Issue 151 (fishing-2). A cast lure: Weapon_Lure or Weapon_SinkingLure. The
 // spawn sync shares ours (copies are model-only stand-ins, so another

@@ -443,6 +443,45 @@ Blasts& TheBlasts() {
     return blasts;
 }
 
+void OwnShots::Note(std::uint64_t address, std::uint64_t now_us) {
+    if (address == 0) {
+        return;
+    }
+    std::lock_guard lock(mutex_);
+    std::erase_if(seen_, [address](const auto& e) { return e.first == address; });
+    seen_.emplace_back(address, now_us);
+    while (seen_.size() > kKeep) {
+        seen_.pop_front();
+    }
+}
+
+bool OwnShots::Was(std::uint64_t address, std::uint64_t now_us) const {
+    if (address == 0) {
+        return false;
+    }
+    std::lock_guard lock(mutex_);
+    return std::any_of(seen_.begin(), seen_.end(), [&](const auto& e) {
+        return e.first == address && now_us >= e.second && now_us - e.second <= kKeepUs;
+    });
+}
+
+void OwnShots::Reset() {
+    std::lock_guard lock(mutex_);
+    seen_.clear();
+}
+
+OwnShots& TheOwnShots() {
+    static OwnShots shots;
+    return shots;
+}
+
+bool HitIsOurs(std::uint64_t attacker, std::uint64_t our_link, const OwnShots& shots, std::uint64_t now_us) {
+    if (attacker == 0) {
+        return false;
+    }
+    return attacker == our_link || shots.Was(attacker, now_us);
+}
+
 bool IsLure(std::string_view actor) {
     return actor == "Weapon_Lure" || actor == "Weapon_SinkingLure";
 }

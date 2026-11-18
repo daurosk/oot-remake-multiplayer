@@ -2380,6 +2380,8 @@ private:
             block_retry_.clear();
             ForgetBosses();
             boss_hit_ids_.clear();
+            hit_ids_.clear();
+            CoopProjectiles::TheOwnShots().Reset();
             extras_.Reset();  // difficulty: that run's extra enemies are gone with it
             horde_.Reset();
             {
@@ -3172,6 +3174,9 @@ private:
                         if (const auto component = table ? r.Ptr(*table + kComponentLife) : std::nullopt) {
                             life_components.emplace(*component, a);  // (whose Life step is whose: StepHits)
                             s.life_component = *component;
+                            if (!IsBoss(s.name)) {
+                                s.hit_ours = NewHitOurs(r, a, *component);  // issue 133: whose hit
+                            }
                             if (CoopDifficulty::IsEnemy(s.name, false)) {  // difficulty: its hits are scaled
                                 const bool no_spot = extras_.NoSpot(s.hash);
                                 CoopDifficulty::TheKinds().Mark(*component,
@@ -3193,6 +3198,7 @@ private:
             names.emplace(a, std::move(known));
         }
         names_ = std::move(names);
+        std::erase_if(hit_ids_, [this](const auto& e) { return !names_.contains(e.first); });  // (reused addresses)
         life_components_ = std::move(life_components);
         CoopDbno::NoteEnemiesNear(player && CoopDbno::AnyNear(*player, foes));
         sync_.SetPlayer(player);
@@ -3310,6 +3316,27 @@ private:
     static constexpr float kHitNearBoss = 12.0f;
     static constexpr u64 kHitPlace = 0x27c;
     std::unordered_map<u64, u32> boss_hit_ids_;  // actor: the last hit id seen
+    // Issue 133 (whose hit): a non-boss's new hit in its game's own hit record (the attacker actor at the record's
+    // start, +0x240 of its Life component): ours when our Link or one of our own projectiles made it. Nothing for
+    // no new hit, or for our replay of its owner's hit (TheMover's id).
+    static constexpr u64 kHitAttacker = kHitRecord;
+    std::unordered_map<u64, u32> hit_ids_;  // actor: the last hit id seen (NewHitOurs)
+    std::optional<bool> NewHitOurs(Reader& r, u64 a, u64 life) {
+        const auto id = r.Get<u32>(life + kLastHitId);
+        if (!id) {
+            return std::nullopt;
+        }
+        const auto [it, fresh] = hit_ids_.try_emplace(a, *id);
+        if (fresh || it->second == *id) {
+            return std::nullopt;
+        }
+        it->second = *id;
+        if (*id == TheMover().ReplayedId(life)) {
+            return std::nullopt;
+        }
+        const u64 attacker = r.Get<u64>(life + kHitAttacker).value_or(0);
+        return CoopProjectiles::HitIsOurs(attacker, our_link_, CoopProjectiles::TheOwnShots(), CoopEvery::NowUs());
+    }
     std::optional<coop::protocol::Vec3> NewOwnHitAt(Reader& r, u64 a, const coop::protocol::Vec3& boss) {
         const auto table = r.Ptr(a + kActorComponents);
         const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;

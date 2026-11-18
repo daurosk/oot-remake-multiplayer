@@ -84,6 +84,9 @@ struct Seen {
     // Where a boss copy's own new hit landed (its game's hit record, +0x27c; IsBoss only, never one we replayed,
     // checked near the boss): sent with our DAMAGE so the owner's replay lands there (boss-intro).
     std::optional<coop::protocol::Vec3> hit_at{};
+    // Issue 133 (whose hit): a new hit in its game's own hit record (not our replay of the owner's), and whether
+    // its attacker was our Link or one of our own projectiles (CoopProjectiles::HitIsOurs). Not set: no new hit.
+    std::optional<bool> hit_ours{};
     // Its Life component (0: none read); a copy boss's is held at life 1 by its own Life step
     // (CoopBossNative::Table::HeldLifeStep) until its owner's dies.
     std::uint64_t life_component = 0;
@@ -369,6 +372,13 @@ inline constexpr std::uint64_t kEncounterStaleUs = 5'000'000;
 // could not be read (the big Skulltula has none we can read; issue 133).
 bool IsDeathAnimation(std::string_view name);
 
+// Issue 133 (an enemy whose life cannot be read: Deku Scrubs, Tailpasaran, ...): our copy of it left our walk
+// after playing its own death animation here (`own_death_recent`) while its owner's samples show no death and the
+// owner has not said it dead: our game killed it. Its life never fell, so no hit was summed; the kill itself goes
+// to the owner (DAMAGE cause killed). Never a boss or a boss's part (the boss sync has their deaths).
+bool LifelessKillHere(std::string_view name, bool reacts, bool life_read, bool own_death_recent,
+                      std::string_view owner_animation, bool owner_said_dead);
+
 // Issue 35 (4): an animation that hides the model (the withered Deku Baba's
 // "Upside_Visible_Off_Spine4", the stem's "DownSide_Visible_Off_Withered_Spine6"):
 // "Visible_Off" at the start or after '_'. A plain enemy's copy never
@@ -560,6 +570,11 @@ public:
     static constexpr std::uint64_t kPoseStaleUs = 2'500'000;  // no sample this long: let it be
     static constexpr std::uint64_t kHurtWaitUs = 400'000;     // then write life directly
     static constexpr std::uint64_t kHitPlaceKeepUs = 200'000;  // a hit's place waits this long for its life drop
+    // Issue 133: our newest hit (its game's hit record) waits this long for its life drop (a walk or two), so a
+    // copy's blast beside it never takes it for the blast's.
+    static constexpr std::uint64_t kOurHitKeepUs = 500'000;
+    // Issue 133: a copy's own death animation counts for its leaving our walk this long (LifelessKillHere).
+    static constexpr std::uint64_t kOwnDeathKeepUs = 5'000'000;
     static constexpr std::size_t kKeepSamples = 16;
     static constexpr std::uint64_t kSceneStaleUs = 5'000'000;  // a player's scene, from its samples
     static constexpr float kClaimDistance = 4.0f;  // a fresh roll this near a copy being made is it
@@ -990,6 +1005,8 @@ private:
         std::int32_t hit_sum = 0;
         std::optional<coop::protocol::Vec3> place_seen;  // a new hit's place, waiting for its life drop
         std::uint64_t place_seen_at = 0;
+        std::uint64_t ours_hit_at = 0;   // issue 133: our Link's or projectile's newest hit on it (Seen::hit_ours)
+        std::uint64_t own_death_at = 0;  // issue 133: its own death animation last read here (LifelessKillHere)
         std::optional<coop::protocol::Vec3> hit_place;  // where our own hit summed now landed (a boss; cleared with the sum)
         std::uint64_t hit_since = 0;
         std::uint64_t hit_at = 0;  // last DAMAGE sent

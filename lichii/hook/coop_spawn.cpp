@@ -8,6 +8,7 @@
 #include "coop_spawn.h"
 #include "coop_caller_orders.h"
 
+#include "coop_every.h"
 #include "coop_objects_sync.h"  // QuatOf
 
 #include <algorithm>
@@ -432,6 +433,14 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         mine_[s.address] = std::move(m);
     }
 
+    // Issue 133 (whose hit): an enemy's hit record naming one of these is our hit, also just after it went.
+    const std::uint64_t steady_us = CoopEvery::NowUs();
+    for (const auto& entry : mine_) {
+        const std::uint64_t address = entry.first;
+        if (on_list.count(address) != 0) {
+            CoopProjectiles::TheOwnShots().Note(address, steady_us);
+        }
+    }
     for (auto it = mine_.begin(); it != mine_.end();) {
         if (on_list.count(it->first) != 0 || ++it->second.missed < kGoneWalks) {
             ++it;

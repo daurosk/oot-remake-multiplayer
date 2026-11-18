@@ -414,6 +414,50 @@ TEST_CASE("platforms: writes the game takes back each time are stopped") {
     CHECK(stopped);
 }
 
+TEST_CASE("platforms: a follower whose game runs slower keeps following (#196)") {
+    // room-actor-replay-0116, bigrun-0115: the Deku Tree water room's floor stepped 1.155 a second in one game and
+    // 0.932 in the other (a per-frame phase, frame rates differ). Every write held, yet 0.5 s later the follower was
+    // more than kDriftS off again, and four of those were taken for "the game takes it back".
+    Game a;
+    Game b;
+    a.self = 1;
+    b.self = 2;
+    a.cycle = b.cycle = 6.2831853f;
+    b.rate = 0.6f;  // 40% slower: 0.2 s off again 0.5 s after each write (over kDriftS)
+    b.clock = 3.0f;
+    std::uint64_t time = 0;
+    float worst_late = 0.0f;
+    for (int i = 0; i < 400; ++i) {
+        time += 50 * kMs;
+        a.Step(0.05f);
+        b.Step(0.05f);
+        a.Tick(time);
+        b.Tick(time);
+        for (auto& m : a.sent) {
+            auto pc = std::get<proto::PlatformClock>(m);
+            pc.player_number = 1;
+            b.sync.Receive(pc);
+        }
+        a.sent.clear();
+        b.sent.clear();
+        if (i > 200) {
+            float d = std::remainder(a.clock - b.clock, a.cycle);
+            worst_late = std::max(worst_late, std::fabs(d));
+        }
+    }
+    bool stopped = false;
+    bool held = false;
+    for (const auto& n : b.notes) {
+        stopped = stopped || n.find("do not hold") != std::string::npos;
+        held = held || n.find("hold; our game runs at another pace") != std::string::npos;
+    }
+    CHECK_FALSE(stopped);
+    CHECK(held);
+    CHECK(b.sync.Writes() > PlatformSync::kMaxNoHold);
+    // Put in step every 0.5 s: at most about 0.5 s x 40% of the rate apart (plus a look's step).
+    CHECK(worst_late < 0.35f);
+}
+
 TEST_CASE("platforms: a new scene forgets the clocks and owners") {
     Game a;
     Game b;

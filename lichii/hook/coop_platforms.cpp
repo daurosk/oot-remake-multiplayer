@@ -558,8 +558,31 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
             continue;
         }
         if (s.written) {
-            // Off again since our last write: the game took it back.
-            if (++s.no_hold >= kMaxNoHold) {
+            // Off again since our last write. Taken back only when our word is nearer where it stood before the
+            // write than where we put it (both moved on at the owner's rate since): a game whose frame rate is lower
+            // than the owner's drifts off again within kWriteEveryUs with every write held (#196: the Deku Tree
+            // water room's floor, 1.155 a second in one game and 0.932 in the other, "gave up" 0.17 s off).
+            bool took_back = true;
+            if (s.before_write) {
+                const float put = Advance(*s.written, h.tick.rate, h.tick.cycle, s.write_server_us, server_us);
+                const float old = Advance(*s.before_write, h.tick.rate, h.tick.cycle, s.write_server_us, server_us);
+                took_back = DriftSeconds(mine->second, old, h.tick.rate, h.tick.cycle) <
+                            DriftSeconds(mine->second, put, h.tick.rate, h.tick.cycle);
+            }
+            if (!took_back) {
+                s.no_hold = 0;  // it held; only drifted since: written again below
+                if (!s.logged_drift) {
+                    s.logged_drift = true;
+                    char text[200];
+                    std::snprintf(text, sizeof text,
+                                  "%016llx %s: our writes of %s hold; our game runs at another pace (%.2f s off "
+                                  "again): put in step again every %.1f s",
+                                  static_cast<unsigned long long>(d->hash), d->name.c_str(),
+                                  Where(h.tick.key).c_str(), static_cast<double>(drift),
+                                  static_cast<double>(kWriteEveryUs) / 1e6);
+                    out.notes.emplace_back(text);
+                }
+            } else if (++s.no_hold >= kMaxNoHold) {
                 s.gave_up = true;
                 char text[200];
                 std::snprintf(text, sizeof text,
@@ -583,6 +606,8 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
         }
         out.writes.push_back({d->address, d->hash, h.tick.key, want, mine->second});
         s.written = want;
+        s.before_write = mine->second;
+        s.write_server_us = server_us;
         s.last_write_us = steady_us;
         ++writes_;
     }

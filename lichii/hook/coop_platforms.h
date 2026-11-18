@@ -241,6 +241,13 @@ private:
         int no_hold = 0;
         bool gave_up = false;
         std::optional<float> written;  // what we wrote last, to see whether it held
+        // #196 (room-actor-replay-0116): our word just before that write and when it was written (server time).
+        // A write held when our word is nearer the written value than the old one, both moved on at the owner's
+        // rate: two games whose frame rates differ (a per-frame phase steps slower in the slower game) drift apart
+        // again within kWriteEveryUs, and that drift is not the game taking our write back.
+        std::optional<float> before_write;
+        std::uint64_t write_server_us = 0;
+        bool logged_drift = false;
         // #35, the owner: the last tick we sent (server time), and the value our clock stood still at.
         std::optional<coop::protocol::PlatformTick> sent;
         std::uint64_t sent_us = 0;

@@ -601,6 +601,8 @@ void Act(int row) {
         {
             std::lock_guard lock(g_mutex);
             room = g_page.Field(0).text(), password = g_page.Field(1).text();
+            g_page.Field(1).Clear();   // (the password is not kept once used; the room name stays for a retry)
+            g_live_poke = true;
         }
         CoopPause::JoinRoomNow(room, password);   // (a refused or failed join: co-op's menu says why)
         break;

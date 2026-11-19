@@ -6027,3 +6027,71 @@ TEST_CASE("objects: the real hit goes everywhere: copy's DAMAGE, the owner's rep
     CHECK(step.writes[0].hurt == 2);
     CHECK(step.writes[0].record == std::optional<proto::HitRecord>(rec));
 }
+
+TEST_CASE("objects: row 149: IsBoss is the real bosses only, their parts are IsBossPart and follow their root") {
+    using CoopObjects::BossPartRoot;
+    using CoopObjects::IsBoss;
+    using CoopObjects::IsBossOrPart;
+    using CoopObjects::IsBossPart;
+    // The roots of every boss fight stay bosses.
+    for (const char* root : {"Enemy_DungeonBoss_Gohma", "Enemy_DungeonBoss_Dodongo", "Enemy_DungeonBoss_Barinade",
+                             "Enemy_DungeonBoss_PhantomGanon", "Enemy_DungeonBoss_Volvagia", "Enemy_DungeonBoss_Morpha",
+                             "Enemy_DungeonBoss_BongoBongo", "Enemy_DungeonBoss_Twinrova",
+                             "Enemy_KotakeKoumeBattleManager", "Enemy_DungeonBoss_Ganondorf", "Enemy_DungeonBoss_Ganon",
+                             "Enemy_MiddleBoss_DarkLink", "Enemy_MiddleBoss_BigOcto", "Enemy_DeadHand"}) {
+        CAPTURE(root);
+        CHECK(IsBoss(root));
+        CHECK(IsBossOrPart(root));
+        CHECK_FALSE(IsBossPart(root));
+    }
+    // Their parts are no bosses of their own (King Dodongo's roll centre had its own owner and boss lock).
+    for (const char* part : {"Enemy_DungeonBoss_Dodongo_Attention_RollingCenter", "Enemy_DungeonBoss_Dodongo_Attention",
+                             "Enemy_DungeonBoss_Dodongo_SpawnBabyDodongo", "Enemy_DungeonBoss_Gohma_Egg",
+                             "Enemy_DungeonBoss_Barinade_Arm", "Enemy_DungeonBoss_Barinade_Jellyfish",
+                             "Enemy_DungeonBoss_Morpha_Attention_Spin", "Enemy_DungeonBoss_Morpha_Tentacle",
+                             "Enemy_DungeonBoss_BongoBongo_LeftHand", "Enemy_DungeonBoss_BongoBongo_RightHand",
+                             "Enemy_DungeonBoss_Kotake", "Enemy_DungeonBoss_Koume", "Enemy_DungeonBoss_Ganon_Crystal",
+                             "Enemy_MiddleBoss_BigOcto_Attention"}) {
+        CAPTURE(part);
+        CHECK_FALSE(IsBoss(part));
+        CHECK(IsBossPart(part));
+        CHECK(IsBossOrPart(part));  // (the rules every boss actor shares: life, hits, slots)
+    }
+    // A part not named as a boss (Gohma's larva, a baby Dodongo) is a part, not IsBossOrPart; plain enemies neither.
+    CHECK(IsBossPart("Enemy_Gohma_Larva"));
+    CHECK_FALSE(IsBossOrPart("Enemy_Gohma_Larva"));
+    CHECK_FALSE(IsBossPart("Enemy_Dodongo_Attention"));  // (a plain enemy's part)
+    CHECK_FALSE(IsBossPart("Enemy_Dodongo"));
+    CHECK_FALSE(IsBossPart("Enemy_DungeonBoss_Dodongo_Attention_RollingCenter_Dictionary"));
+
+    // Its root in a walk: by name, the nearest in reach, else the next root name (Twinrova's witches).
+    using coop::protocol::Vec3;
+    const std::vector<std::string_view> names{"Enemy_Dodongo", "Enemy_DungeonBoss_Dodongo",
+                                              "Enemy_DungeonBoss_Dodongo_Attention_RollingCenter"};
+    const std::vector<Vec3> places{Vec3{1, 0, 0}, Vec3{50, 0, 0}, Vec3{0, 0, 0}};
+    CHECK(BossPartRoot("Enemy_DungeonBoss_Dodongo_Attention_RollingCenter", places[2], names, places) == 1u);
+    CHECK_FALSE(BossPartRoot("Enemy_DungeonBoss_Dodongo", places[1], names, places));  // a root follows none
+    CHECK_FALSE(BossPartRoot("Enemy_Dodongo_Attention", places[0], names, places));  // no boss part
+    CHECK_FALSE(BossPartRoot("Enemy_DungeonBoss_BongoBongo_LeftHand", places[0], names, places));  // no root here
+    const std::vector<std::string_view> witches{"Enemy_DungeonBoss_Twinrova", "Enemy_DungeonBoss_Kotake"};
+    const std::vector<Vec3> at{Vec3{0, 0, 0}, Vec3{5, 0, 0}};
+    CHECK(BossPartRoot("Enemy_DungeonBoss_Kotake", at[1], witches, at) == 0u);
+    // Out of reach (a larva far from Gohma): none.
+    const std::vector<std::string_view> gohma{"Enemy_DungeonBoss_Gohma", "Enemy_Gohma_Larva"};
+    const std::vector<Vec3> far{Vec3{0, 0, 0}, Vec3{500, 0, 0}};
+    CHECK_FALSE(BossPartRoot("Enemy_Gohma_Larva", far[1], gohma, far));
+}
+
+TEST_CASE("objects: row 149: a boss part never linked sends no boss lock of its own, a root still does") {
+    using CoopObjects::GroupInput;
+    using CoopObjects::GroupsOf;
+    const proto::ObjectId centre{proto::ObjectKind::placed, 0, 8};
+    const proto::ObjectId twinrova{proto::ObjectKind::placed, 0, 9};
+    // King Dodongo not in this walk: his roll centre sends nothing (no group lock of its own).
+    const std::vector<GroupInput> walk{{centre, "Enemy_DungeonBoss_Dodongo_Attention_RollingCenter", {0, 0, 0}},
+                                       {twinrova, "Enemy_DungeonBoss_Twinrova", {0, 0, 0}}};
+    const auto groups = GroupsOf(walk);
+    REQUIRE(groups.size() == 1);
+    CHECK(groups[0].member == twinrova);  // Twinrova, a part with no battle manager here, keeps its own boss lock
+    CHECK(groups[0].flags == proto::object_group::boss);
+}

@@ -149,6 +149,25 @@ void Table::Publish(const std::vector<Boss>& bosses) {
                 Note(b.name + ": now " + (b.role == Role::owner ? "ours: our game runs it (sends its verbs)"
                                           : e.role == Role::copy ? "a copy of a new owner: it waits for that owner's state"
                                                                  : "a copy: it takes the owner's verbs"));
+                // Row 149: a copy made ours whose body ran the owner's verbs while its own AI's were skipped (each
+                // skipped request answered as taken): its AI may wait for a move its body never ran and never ask
+                // the held one's end. Its brain verb is set again once (Step): it chooses from what its body does.
+                // A copy in its own time (its stun of our hit, our event, its start) ran its own AI: left as it is.
+                if (e.role == Role::copy && b.role == Role::owner && e.wanted && !b.plain && !OwnTime(e)) {
+                    e.rechoose = true;
+                    Note(b.name + ": its AI did not run its body as a copy: it chooses again");
+                }
+                e.hold_since = steps_;
+                e.hold_asks = 0;
+                e.hold_rechoices = 0;
+                if (b.role == Role::copy) {
+                    // (put_action stays: our copy's body still runs that move; a new owner whose state names
+                    // the same one, its old owner's, is not asked it again)
+                    e.rechoose = false;
+                } else {
+                    e.put_action.reset();
+                    e.own_action_ran = false;
+                }
                 // Ours from here: we go on from the old owner's last state
                 // and seq (changes still queued here are dropped; Step takes
                 // the brain verb from our game's own BSA at once, so we never
@@ -198,6 +217,9 @@ void Table::Publish(const std::vector<Boss>& bosses) {
             if (e.dying && b.role == Role::copy) {
                 AddDyingLife(b.life_component);
             }
+            if (b.role == Role::owner) {
+                Hold(e, b);
+            }
         }
         next.emplace(b.bsa, std::move(e));
     }
@@ -229,6 +251,38 @@ void Table::Publish(const std::vector<Boss>& bosses) {
             held_life_[i].store(want[i], std::memory_order_release);
         }
     }
+}
+
+void Table::Hold(Entry& e, const Boss& b) {
+    const std::optional<std::int32_t> action =
+        e.mine.action ? std::optional<std::int32_t>(e.mine.action->verb) : std::nullopt;
+    const bool same = b.animation == e.hold_animation && e.mine.brain_verb == e.hold_brain &&
+                      action == e.hold_action && b.life == e.hold_life;
+    if (!same) {
+        e.hold_animation = b.animation;
+        e.hold_brain = e.mine.brain_verb;
+        e.hold_action = action;
+        e.hold_life = b.life;
+        e.hold_rechoices = 0;
+    }
+    if (!same || event_ || e.dying || b.animation.empty() || !b.life) {
+        // A new move, or none to judge (our event's, its death's, nothing read): counted from now.
+        e.hold_since = steps_;
+        e.hold_asks = 0;
+        return;
+    }
+    if (steps_ - e.hold_since < kStallSteps || e.hold_asks == 0 || e.hold_rechoices >= kMaxStallRechoices) {
+        return;
+    }
+    ++e.hold_rechoices;
+    e.hold_since = steps_;
+    e.hold_asks = 0;
+    e.rechoose = true;
+    ++counts_.owner_stalls;
+    Note(b.name + ": ours held '" + b.animation + "' (brain " + std::to_string(e.hold_brain) + ", action " +
+         (action ? std::to_string(*action) : std::string("none")) + ", life " + std::to_string(*b.life) + ") " +
+         std::to_string(kStallSteps / 60) + " s with no hit: stuck, its AI chooses again (" +
+         std::to_string(e.hold_rechoices) + " of " + std::to_string(kMaxStallRechoices) + ")");
 }
 
 bool Table::Watches(std::uint64_t component) const {
@@ -363,6 +417,7 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed
             e->mine.action = *a;
             Record(*e, std::move(*a));
             ++counts_.owner_action;
+            ++e->hold_asks;  // (its AI is acting: the stall check, Hold)
             if (plug) {
                 ++counts_.plug_actions;
             }
@@ -384,6 +439,7 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed
     }
     if (OwnTime(*e)) {
         ++counts_.copy_own_run;
+        e->own_action_ran = true;  // its body leaves the owner's move: a resync asks that move again
         return false;
     }
     if (auto a = ActionFromRequest(request)) {
@@ -610,16 +666,24 @@ void Table::Record(Entry& e, std::variant<BossBrain, BossAction> what) {
 
 void Table::Resync(Entry& e, const BossBsa& state) {
     // The state now: the brain verb (skipped when the copy is so already,
-    // see Step), then the last action asked. The action is always asked
-    // again: a joiner or a resync starts the owner's current move over
-    // (the game holds no "action now" we could compare with).
+    // see Step), then the last action asked. The game holds no "action now"
+    // we could compare with, so the action is asked again (a joiner's copy, or
+    // one whose own AI ran a move of its own, starts the owner's current move
+    // over), except when it is the one we put in last and the copy's own AI
+    // ran none since (row 149): its body runs that move already, and asking
+    // it again started a long move (King Dodongo's roll) over after every
+    // own time with no move of its own (a sword hit with no stun).
     e.due.clear();
     if (e.asking == Entry::Asking::due) {
         e.asking = Entry::Asking::none;  // (its asked change is gone: the call, if made, takes nothing out)
     }
     e.due.push_back({BossChange{state.seq, BossBrain{state.brain_verb, true}}, true});
     if (actions_on_ && state.action) {
-        e.due.push_back({BossChange{state.seq, *state.action}, true});
+        if (e.put_action && *e.put_action == *state.action && !e.own_action_ran) {
+            ++counts_.moves_kept;
+        } else {
+            e.due.push_back({BossChange{state.seq, *state.action}, true});
+        }
     }
     e.queued_seq = state.seq;
 }
@@ -724,6 +788,20 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
             if (std::exchange(e.record_after_event, false)) {
                 Record(e, BossBrain{own, true});
                 ++counts_.owner_brain;
+            }
+            if (e.rechoose && !e.dying && !e.plain) {
+                // Row 149: the brain verb it is in, set again (force) through the game's own function. Our
+                // caller's call: the wrap keeps it as any change of ours, so every copy does the same.
+                CoopPuppet::Call c;
+                c.function = main_base + addr::kSetBrainVerb;
+                c.x[0] = bsa;
+                c.x[1] = static_cast<std::uint32_t>(own);
+                c.x[2] = 1;
+                c.x[3] = 0;  // (the asking node: not read by the function)
+                pending_ = Pending::rechoose;
+                pending_bsa_ = bsa;
+                call = std::move(c);
+                return true;
             }
         }
         return false;
@@ -855,6 +933,8 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
         // frame's calls ran out): its change stays queued and is asked again.
         if (pending_ == Pending::malloc) {
             allocating_ = false;
+        } else if (pending_ == Pending::rechoose) {
+            pending_bsa_ = 0;  // (still asked: the next frame calls it again)
         } else {
             Made(false);
         }
@@ -880,6 +960,12 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
         case Pending::late:
             ++counts_.copy_own_late;
             Made(true);
+            break;
+        case Pending::rechoose:
+            if (Entry* e = Find(std::exchange(pending_bsa_, 0)); e != nullptr && e->role == Role::owner) {
+                e->rechoose = false;
+                ++counts_.owner_rechosen;
+            }
             break;
         case Pending::none:
             break;
@@ -926,8 +1012,15 @@ void Table::Made(bool made) {
         return;  // the change is still at the front of its queue
     }
     if (asking == Entry::Asking::due && !e->due.empty()) {
+        if (const auto* action = std::get_if<BossAction>(&e->due.front().change.what)) {
+            e->put_action = *action;  // (the move our copy's body runs now: Resync)
+            e->own_action_ran = false;
+        }
         e->due.pop_front();
     } else if (asking == Entry::Asking::late && !e->own_late.empty()) {
+        if (std::holds_alternative<BossAction>(e->own_late.front())) {
+            e->own_action_ran = true;  // (a move of its own, made late)
+        }
         e->own_late.pop_front();
     }
 }

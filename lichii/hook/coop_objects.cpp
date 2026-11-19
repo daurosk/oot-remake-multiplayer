@@ -1707,20 +1707,37 @@ public:
             // ours (our game runs them and sends their verbs) and which are
             // copies (they take the owner's verbs, put in by its caller).
             std::vector<CoopBossNative::Boss> list;
+            // Row 149: a boss part (King Dodongo's roll centre, Bongo Bongo's hands, ...) is run by its root's
+            // owner from its first frame, not by the server's owner of the part until the group link has moved
+            // it (a roll centre is made anew for each roll: its first owner was whichever game listed it first).
+            std::vector<std::string_view> names;
+            std::vector<coop::protocol::Vec3> places;
+            for (const Seen& s : seen) {
+                names.push_back(s.name);
+                places.push_back(s.position);
+            }
             for (const Seen& s : seen) {
                 if (s.bsa_component == 0) {
                     continue;
                 }
-                const std::optional<u8> owner = sync_.OwnerOf(s.address);
+                std::optional<u8> owner = sync_.OwnerOf(s.address);
+                if (const auto root = BossPartRoot(s.name, s.position, names, places)) {
+                    if (const auto root_owner = sync_.OwnerOf(seen[*root].address); root_owner && *root_owner != 0) {
+                        owner = root_owner;
+                    }
+                }
                 if (owner && *owner != 0) {
                     const bool owner_dead = sync_.OwnerSaysDead(s.address);
-                    const bool plain = !IsBoss(s.name);  // (seen with a BSA only under LICHII_COOP_ENEMY_BRAIN)
+                    const bool plain = !IsBossOrPart(s.name);  // (seen with a BSA only under LICHII_COOP_ENEMY_BRAIN)
                     const std::optional<std::int32_t> life =
                         s.life ? std::optional<std::int32_t>(s.life->life) : std::nullopt;
-                    list.push_back({s.address, s.bsa_component,
-                                    *owner == self ? CoopBossNative::Role::owner : CoopBossNative::Role::copy, s.name,
-                                    *owner, s.life_component, owner_dead, plain,
-                                    plain && CoopBossNative::PlainDeath(life, owner_dead)});
+                    CoopBossNative::Boss b{s.address, s.bsa_component,
+                                           *owner == self ? CoopBossNative::Role::owner : CoopBossNative::Role::copy,
+                                           s.name, *owner, s.life_component, owner_dead, plain,
+                                           plain && CoopBossNative::PlainDeath(life, owner_dead)};
+                    b.animation = s.animation ? s.animation->name : std::string{};
+                    b.life = life;
+                    list.push_back(std::move(b));
                 }
             }
             TheBossMain().store(main_);
@@ -3348,7 +3365,7 @@ private:
                         }  // our own hit: its own reaction runs (NoteOwnHit) unless it took life (NoteOwnDamage)
                     }
                 }
-                if (IsBoss(s.name)) {
+                if (IsBossOrPart(s.name)) {
                     s.hit_ours.reset();  // issue 133: whose hit is for plain enemies (bosses: NewOwnHitAt, their sync)
                     s.slots = OtherSlots(r, a);  // issue 150
                     // Native boss sync (coop_boss_native.h): its BSA
@@ -3734,7 +3751,7 @@ private:
         std::vector<CoopDifficulty::Extras::Original> originals;
         bool boss = false;
         for (const Seen& s : seen) {
-            boss = boss || IsBoss(s.name);
+            boss = boss || IsBossOrPart(s.name);
             const bool special = SpecialForExtras(s.name) ||
                                  extras_.HashOf(s.address, s.name).has_value();  // an extra gets none of its own
             if (CoopDifficulty::GetsExtras(s.name, s.hash, s.life && s.life->max > 0, special)) {

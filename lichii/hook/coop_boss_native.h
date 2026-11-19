@@ -134,6 +134,10 @@ struct Boss {
     //   on our Link (the wake and chase rules of the Sync hand it over, and NoteOwnWake lets it run).
     bool plain = false;
     bool own_death = false;
+    // Row 149 (the stall check, Table::kStallSteps): what our walk read of it now, its AS slot 0 animation and its
+    // life (nothing: not read).
+    std::string animation;
+    std::optional<std::int32_t> life;
 };
 
 struct Counts {
@@ -161,6 +165,9 @@ struct Counts {
     std::uint64_t plain_wants = 0;    // a plain enemy copy's own brain asked another brain verb than its owner's
     std::uint64_t plain_wakes = 0;    // a plain enemy copy's own wake let run (NoteOwnWake)
     std::uint64_t plain_deaths = 0;   // a plain enemy copy whose death began here: its own runs
+    std::uint64_t owner_stalls = 0;   // row 149: our boss held one move kStallSteps with no life change: re-chosen
+    std::uint64_t owner_rechosen = 0; // its brain verb set again by our caller (a stall, or a copy just made ours)
+    std::uint64_t moves_kept = 0;     // a resync's action the copy already runs (put in, none of its own since): not asked
 };
 
 class Table {
@@ -312,6 +319,17 @@ public:
     static constexpr std::size_t kMaxShotEnds = 16;
     // Steps a plain enemy copy runs its own wake (about 3 s, the Sync's kOwnWakeUs).
     static constexpr std::uint64_t kWakeSteps = 180;
+    // Row 149 (King Dodongo rolling forever, unwinnable): our own boss (never a plain enemy) whose AS slot 0
+    // animation, brain verb and last action verb stayed the same for this many steps (about 25 s at 60 frames)
+    // with its life unchanged, while its AI kept asking actions (the held move asked again: it is in a fight,
+    // not waiting), is stuck in that move. Its brain verb is then set again (force) through the game's own
+    // function by our caller: its AI leaves the held move and chooses again, every copy does the same (the
+    // change is sent as any), and the log says so. No real move holds one animation that long with no hit
+    // taken (King Dodongo's roll ends at a wall within a few seconds, Barinade's spin, Bongo Bongo's hands,
+    // Morpha's and Volvagia's moves each change animation; Gohma waiting on the ceiling asks no actions).
+    // The server frees the fight lock of such a boss on its own (boss_stall_us), so it can be handed over.
+    static constexpr std::uint64_t kStallSteps = 1500;
+    static constexpr int kMaxStallRechoices = 3;  // per held move; then left (the server's hand-over is next)
     static constexpr std::size_t kMaxWants = 64;
     static constexpr std::size_t kMaxSkippedKept = 8;
     static constexpr std::size_t kMaxHeld = 8;  // copy bosses held at once (more: not held)
@@ -356,7 +374,25 @@ private:
         std::uint64_t life_component = 0;  // (Publish's, for SetDying's release)
         bool dying = false;                // its death has begun (SetDying; a plain one's own_death): its own game runs it
         bool plain = false;                // (Boss::plain)
+        // Owner (row 149): the move it holds now (animation, brain verb, last action verb, life), since which
+        // step, the action requests its AI made since, and how often it was re-chosen in this move. `rechoose`:
+        // Step sets its brain verb again (a stall, or a copy just made ours whose AI did not run its body).
+        std::string hold_animation;
+        std::int32_t hold_brain = 0;
+        std::optional<std::int32_t> hold_action;
+        std::optional<std::int32_t> hold_life;
+        std::uint64_t hold_since = 0;
+        std::uint64_t hold_asks = 0;
+        int hold_rechoices = 0;
+        bool rechoose = false;
+        // Copy (row 149): the owner's action last put into it, and whether its own AI ran an action of its own
+        // since (our event, our hit, its start). A resync whose action is the one put in, with none of its own
+        // since, asks nothing: the copy runs that move already (asking it again started King Dodongo's roll
+        // over after every sword hit, on every hitter's screen).
+        std::optional<BossAction> put_action;
+        bool own_action_ran = false;
     };
+    void Hold(Entry& e, const Boss& b);   // the owner's stall check (Publish)
     bool OwnTime(const Entry& e) const;   // the copy's own changes run now
     void Keep(Entry& e, std::variant<BossBrain, BossAction> what);
     void MakeLate(Entry& e);              // its skipped ones of the last kLookBackSteps, to make
@@ -410,7 +446,7 @@ private:
     std::uint64_t block_ = 0;      // our request in guest memory (kRequestSize)
     std::uint64_t main_base_ = 0;  // the game the block belongs to
     bool allocating_ = false;
-    enum class Pending : std::uint8_t { none, malloc, brain, action, late } pending_ = Pending::none;
+    enum class Pending : std::uint8_t { none, malloc, brain, action, late, rechoose } pending_ = Pending::none;
     std::uint64_t pending_bsa_ = 0;  // the copy whose change pending_ is (brain, action, late)
     void Made(bool made);            // pending_bsa_'s asked change: out of its queue (made) or asked again
 };

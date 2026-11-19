@@ -431,9 +431,28 @@ struct GroupPart {
 };
 // The rule for a part, or null when `name` is no part.
 const GroupPart* PartOf(std::string_view name);
-// A boss or mini-boss on its own (Enemy_DungeonBoss_*, Enemy_MiddleBoss_*,
-// and the roots of boss groups); never a picture book _Dictionary actor.
+// A real boss or mini-boss: its root actor (Enemy_DungeonBoss_*, Enemy_MiddleBoss_*, and the roots of boss
+// groups); never a picture book _Dictionary actor, and never one of a boss's parts (IsBossPart) unless it is
+// itself a group's root (Twinrova: Kotake's and Koume's root when no battle manager is loaded). Row 149: the
+// old name test took every Enemy_DungeonBoss_* name for a boss of its own, so King Dodongo's roll centre
+// (Enemy_DungeonBoss_Dodongo_Attention_RollingCenter, made anew for each roll) sent its own boss group lock
+// when it was not linked to King Dodongo, and the native boss sync took its owner, not King Dodongo's: in the
+// boss owner's game the roll centre could be another player's copy.
 bool IsBoss(std::string_view name);
+// A part of a boss (PartRules' boss parts: the Attention actors, King Dodongo's roll centre, Barinade's arms
+// and jellyfish, Morpha's tentacle, Bongo Bongo's hands, Gohma's eggs, Twinrova's witches, ...) that is no
+// group's root. It follows its root: the native boss sync gives it its root's owner from the first frame
+// (BossPartRoot), the server's group link its root's owner and fight.
+bool IsBossPart(std::string_view name);
+// A boss or one of its parts named as one (what IsBoss was before row 149): the rules every boss actor shares
+// (its life, its hits, its slots and animations, its own native boss sync entry).
+bool IsBossOrPart(std::string_view name);
+// Row 149: the root a boss part follows in a walk (PartOf's roots in order, the nearest in reach; on a tie the
+// the first in the walk), as GroupsOf picks it; nothing for no boss part or no root in the walk. `names` and `places`
+// are the walk's, one per actor.
+std::optional<std::size_t> BossPartRoot(std::string_view part, const coop::protocol::Vec3& at,
+                                        const std::vector<std::string_view>& names,
+                                        const std::vector<coop::protocol::Vec3>& places);
 // A plain enemy whose copy takes its owner's brain and action verbs as a boss's does (CoopBossNative,
 // Boss::plain; fable-g4-enemies): every Enemy_ that is no boss, except the ones each game runs of its own
 // (IsOwnPuzzle: the scrub puzzles and shops), an enemy's shot (CoopEnemyShots: made by the shooter's game) and

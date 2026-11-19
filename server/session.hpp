@@ -230,6 +230,21 @@ struct SessionConfig {
   float boss_near_m = 15.0f;
   float boss_near_margin_m = 4.0f;
   std::uint64_t boss_near_hold_us = 0;
+  // Row 149 (King Dodongo rolling forever): a boss (a group's root) whose
+  // owner's samples keep one animation, one action verb and one life this
+  // long is stuck in that move. Its owner's game re-chooses after about 25 s
+  // (CoopBossNative::Table::kStallSteps); if it still holds the move, the
+  // fight lock is freed and not renewed by its samples until the move
+  // changes, so the rules out of a fight (a copy chasing its Link, the near
+  // player) can hand it to a game whose AI then chooses from its own body.
+  // A hit that takes life is a change. 0: off.
+  std::uint64_t boss_stall_us = 40'000'000;
+  // Row 149: a group member first listed this recently takes its root's owner
+  // at once when the group link comes (no hand-over ask): a boss's part made
+  // in every game (King Dodongo's roll centre, made anew for each roll) was
+  // first owned by whichever game listed it first, and ran in the boss
+  // owner's game as that game's copy until the ask was answered. 0: off.
+  std::uint64_t part_fresh_us = 3'000'000;
   // An owner paused or dead this long (or loading at all) loses its objects
   // to another player who has them, fight or not.
   std::uint64_t owner_paused_us = 6'000'000;
@@ -407,7 +422,9 @@ struct Stats {
   std::uint64_t damage_relayed = 0;     // DAMAGE passed on to an owner
   std::uint64_t boss_to_hitter = 0;     // a boss asked over to the player who hurt it (issue 150)
   std::uint64_t boss_to_near = 0;       // a boss asked over to the player near it (issue 150)
-  std::uint64_t boss_to_ready = 0;      // a boss asked from a game that has not played its intro to one that has
+  std::uint64_t boss_to_ready = 0;
+  std::uint64_t boss_stalled = 0;       // row 149: a boss held one move boss_stall_us: its fight lock freed
+  std::uint64_t parts_to_root = 0;      // row 149: a fresh group member given its root's owner at the link      // a boss asked from a game that has not played its intro to one that has
   std::uint64_t damage_dropped = 0;     // DAMAGE with no owner, or from it
   // DAMAGE that crossed a hand-over to its own sender (sent as a copy, here
   // after the sender became the owner): given back to it, so its game takes
@@ -654,6 +671,12 @@ class Session {
     std::uint64_t hit_at = 0;
     std::uint64_t owner_hit_at = 0;  // the owner's own hit (its samples' life fell); 0: none
     std::uint64_t orphan_since = 0;  // a made enemy its owner stopped listing
+    std::uint64_t first_at = 0;      // when it was first listed or spawned (part_fresh_us)
+    // Row 149 (boss_stall_us): the owner's move in its samples (animation,
+    // action verb, life), since when, and whether its fight lock is freed.
+    std::string hold_key;
+    std::uint64_t hold_since = 0;
+    bool stalled = false;
   };
   using Objects = std::map<protocol::ObjectId, Object>;
 
@@ -730,7 +753,10 @@ class Session {
   void on_boss_heart(ConnectionId id, Connection& c, const protocol::BossHeart& m);
   // A player who can be given an object: not loading, paused, dead or downed.
   static bool busy(const Connection& c);
-  void on_object_group(ConnectionId id, Connection& c, const protocol::ObjectGroup& g);
+  void on_object_group(ConnectionId id, Connection& c, const protocol::ObjectGroup& g,
+                       std::uint64_t now_us);
+  // Row 149 (boss_stall_us): a boss root's owner sample, for the stall check.
+  void note_hold(Object& o, const protocol::ObjectState& sample, std::uint64_t now_us);
   void on_fish_lure(Connection& c, const protocol::FishLure& m, std::uint64_t now_us);
   // Proximity voice: to the others in the speaker's scene within voice_range_m.
   void on_voice(ConnectionId id, const Connection& c, protocol::VoiceFrame& m, std::uint64_t now_us);

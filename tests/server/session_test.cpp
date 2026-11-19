@@ -5975,3 +5975,129 @@ TEST_CASE("approval: a rejoin that shows its token takes its place without askin
   CHECK(all_to<JoinKnock>(h, 1).empty());
   CHECK(h.session.player_count() == 2);
 }
+
+namespace {
+ObjectState held_move(const std::string& animation, std::int32_t life) {
+  ObjectState s = state_at(0, life);
+  s.animation = Animation{animation, 1.0f, 1.0f};
+  s.state = object_state::in_fight;
+  return s;
+}
+}  // namespace
+
+TEST_CASE("row 149: a boss stuck in one move frees its fight lock, a new move or a hit locks it again") {
+  SessionConfig config = quiet_config();
+  config.boss_near_hold_us = 0;
+  OwnerHarness h(config);
+  h.receive(1, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.receive(2, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  const auto sample_for = [&](std::uint64_t us, const std::string& animation, std::int32_t life) {
+    for (std::uint64_t t = 0; t < us; t += kSecond) {
+      h.receive(1, ObjectSample{0, placed(7), 0, held_move(animation, life)}, kChannelObjectSamples);
+      h.run(kSecond);
+    }
+  };
+  // King Dodongo's roll, held: its samples say "in fight" every time, its life stays.
+  sample_for(config.boss_stall_us - 2 * kSecond, "Rolling_Loop", 24);
+  CHECK(h.session.object_in_fight(placed(7), h.now));
+  CHECK(h.session.stats().boss_stalled == 0);
+  sample_for(4 * kSecond, "Rolling_Loop", 24);
+  CHECK(h.session.stats().boss_stalled == 1);
+  CHECK_FALSE(h.session.object_in_fight(placed(7), h.now));  // its own samples no longer renew it
+  // A new move: its fight counts again.
+  sample_for(2 * kSecond, "Rolling_End", 24);
+  CHECK(h.session.object_in_fight(placed(7), h.now));
+  // Held again, then a hit that takes life: the same.
+  sample_for(config.boss_stall_us + 2 * kSecond, "Wait", 24);
+  CHECK(h.session.stats().boss_stalled == 2);
+  CHECK_FALSE(h.session.object_in_fight(placed(7), h.now));
+  sample_for(kSecond, "Wait", 20);
+  CHECK(h.session.object_in_fight(placed(7), h.now));
+}
+
+TEST_CASE("row 149: a stuck boss's freed fight lets a copy's chase hand it over") {
+  SessionConfig config = quiet_config();
+  config.boss_near_hold_us = 0;
+  OwnerHarness h(config);
+  h.receive(1, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.receive(2, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.stand(1, 34);
+  h.stand(2, 60);
+  ObjectPresent chase = present_in("Field", {placed(7)});
+  chase.objects[0].flags = object_presence::targeting;
+  h.receive(2, chase, kChannelOwnership);
+  // In its fight the chase moves nothing.
+  for (std::uint64_t t = 0; t < config.boss_stall_us - 2 * kSecond; t += kSecond) {
+    h.receive(1, ObjectSample{0, placed(7), 0, held_move("Rolling_Loop", 24)}, kChannelObjectSamples);
+    h.run(kSecond);
+  }
+  CHECK(h.asks() == 0);
+  // Stuck: the fight is freed and the chase hands it to the chasing game.
+  for (int i = 0; i < 6 && h.asks() == 0; ++i) {
+    h.receive(1, ObjectSample{0, placed(7), 0, held_move("Rolling_Loop", 24)}, kChannelObjectSamples);
+    h.run(kSecond);
+  }
+  CHECK(h.session.stats().boss_stalled == 1);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+}
+
+TEST_CASE("row 149: a boss stuck in one move with no animation or life in its samples is never judged") {
+  SessionConfig config = quiet_config();
+  config.boss_near_hold_us = 0;
+  OwnerHarness h(config);
+  h.receive(1, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  for (std::uint64_t t = 0; t < 2 * config.boss_stall_us; t += kSecond) {
+    ObjectState s = state_at(0, 24);
+    s.state = object_state::in_fight;
+    h.receive(1, ObjectSample{0, placed(7), 0, s}, kChannelObjectSamples);
+    h.run(kSecond);
+  }
+  CHECK(h.session.stats().boss_stalled == 0);
+  CHECK(h.session.object_in_fight(placed(7), h.now));
+}
+
+TEST_CASE("row 149: a boss part first listed by another game takes its root's owner at the link, no ask") {
+  OwnerHarness h;
+  // King Dodongo (7) is player 1's; his roll centre (8), made anew in every game, was listed by player 2 first.
+  h.receive(1, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.receive(2, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);
+  h.receive(1, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);
+  CHECK(h.session.object_owner(placed(8)) == owned(2, 0));
+  h.clear();
+  h.receive(1, ObjectGroup{0, {{placed(8), placed(7), object_group::boss}}}, kChannelOwnership);
+  CHECK(h.session.object_owner(placed(8)) == owned(1, 1));
+  CHECK(h.session.stats().parts_to_root == 1);
+  CHECK(messages_to<HandoverAsk>(h, 2).empty());
+  // Player 2's game learns it is a copy now.
+  const auto told = messages_to<ObjectOwner>(h, 2);
+  REQUIRE_FALSE(told.empty());
+  CHECK(told.back().id == placed(8));
+  CHECK(told.back().owner == 1);
+}
+
+TEST_CASE("row 149: an older part, or one whose root's owner does not have it, goes by the hand-over ask as before") {
+  {
+    OwnerHarness h;
+    h.receive(1, present_in("Field", {placed(7)}), kChannelOwnership);
+    h.receive(2, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);
+    h.receive(1, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);
+    h.run(SessionConfig{}.part_fresh_us + kSecond);
+    h.clear();
+    h.receive(1, ObjectGroup{0, {{placed(8), placed(7), object_group::boss}}}, kChannelOwnership);
+    CHECK(h.session.stats().parts_to_root == 0);
+    h.run(250'000);
+    CHECK(messages_to<HandoverAsk>(h, 2) == std::vector<HandoverAsk>{{placed(8), 0, 1}});
+  }
+  {
+    // The root's owner has not listed the part: nothing to give it.
+    OwnerHarness h;
+    h.receive(1, present_in("Field", {placed(7)}), kChannelOwnership);
+    h.receive(2, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);
+    h.receive(2, ObjectGroup{0, {{placed(8), placed(7), object_group::boss}}}, kChannelOwnership);
+    CHECK(h.session.stats().parts_to_root == 0);
+    CHECK(h.session.object_owner(placed(8)) == owned(2, 0));
+  }
+}

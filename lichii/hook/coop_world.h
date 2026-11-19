@@ -804,6 +804,7 @@ private:
     bool no_key_logged_ = false;
     bool delete_locks_ = false;           // SetDeleteLocks
     bool debug_blocks_ = false;           // SetDebugBlocks
+    std::uint64_t debug_walk_us_ = 0;     // SetDebugBlocks: the last walk line
     std::uint64_t lent_hash_ = 0;         // the lock a lent key is out for (0: none)
     std::uint32_t lent_key_ = 0;            // its count's flag, to take it back
     std::vector<std::uint32_t> lend_back_;  // lent keys to take back, for this Tick's Out::lend_returns

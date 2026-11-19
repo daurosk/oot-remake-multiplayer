@@ -1289,6 +1289,24 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         }
     }
     std::set<std::uint64_t> now_seen;
+    const bool walk_probe = debug_blocks_ && now_us - debug_walk_us_ >= 1'000'000;
+    if (walk_probe) {
+        // #147 probe: every push block this walk hands in, before any test below (Move never reached?).
+        debug_walk_us_ = now_us;
+        for (const CoopObjects::Seen& s : *walk) {
+            if (!IsPushBlock(s.name)) {
+                continue;
+            }
+            const auto known = objects_.find(s.address);
+            char more[200];
+            std::snprintf(more, sizeof more,
+                          " at %.2f %.2f %.2f, Link %s, known %d, broken %d, remote %d",
+                          s.position[0], s.position[1], s.position[2], player ? "seen" : "NOT seen",
+                          known != objects_.end() ? 1 : 0, broken_.contains(s.hash) ? 1 : 0,
+                          remote_.contains(s.hash) ? 1 : 0);
+            out.notes.push_back(Line("world: %016llx %s walk probe:%s", s.hash, s.name, more));
+        }
+    }
     for (const CoopObjects::Seen& s : *walk) {
         if (s.hash == 0 || s.hash == kNoHash) {
             continue;

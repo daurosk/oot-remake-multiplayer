@@ -298,26 +298,32 @@ TEST_CASE("pause tab: each row leads to co-op's own part, by what co-op is doing
     hosting.code = true;
 
     for (const Session& s : {idle, joined, hosting_no_code, hosting}) {
-        CHECK(ActionFor(kRowSession, s) == (s.in_one ? RowAction::kOpenMain : RowAction::kHost));
+        CHECK(ActionFor(kRowSession, s) == (s.in_one ? RowAction::kViewSession : RowAction::kHost));
         CHECK(ActionFor(kRowPlayers, s) == RowAction::kViewPlayers);
         CHECK(ActionFor(kRowLeave, s) == (s.in_one ? RowAction::kConfirmLeave : RowAction::kNone));
         CHECK(ActionFor(-1, s) == RowAction::kNone);              // (no row under the cursor)
         CHECK(ActionFor(kRows, s) == RowAction::kNone);
     }
-    // Join code: the host copies its room name or code (shown on the main page); a host whose code is still coming
-    // sees the main page; in another's session the main page; alone the Join page.
+    // Join code: the host copies its room name or code (the row says so); a host whose code is still coming, or a
+    // guest, the Session view; alone the Join view.
     CHECK(ActionFor(kRowJoinCode, hosting) == RowAction::kCopyCode);
-    CHECK(ActionFor(kRowJoinCode, hosting_no_code) == RowAction::kOpenMain);
-    CHECK(ActionFor(kRowJoinCode, joined) == RowAction::kOpenMain);
+    CHECK(ActionFor(kRowJoinCode, hosting_no_code) == RowAction::kViewSession);
+    CHECK(ActionFor(kRowJoinCode, joined) == RowAction::kViewSession);
     CHECK(ActionFor(kRowJoinCode, idle) == RowAction::kViewJoin);
-    // Let in: the host's Let in view; anyone else the Lobby tab (who is in, who asks).
+    // Let in: the host's Let in view; a guest Resync from host when its game can take the host's save; else nothing.
     CHECK(ActionFor(kRowLetIn, hosting) == RowAction::kViewLetIn);
     CHECK(ActionFor(kRowLetIn, hosting_no_code) == RowAction::kViewLetIn);
-    CHECK(ActionFor(kRowLetIn, joined) == RowAction::kOpenLobby);
-    CHECK(ActionFor(kRowLetIn, idle) == RowAction::kOpenLobby);
+    CHECK(ActionFor(kRowLetIn, joined) == RowAction::kNone);
+    CHECK(ActionFor(kRowLetIn, idle) == RowAction::kNone);
+    Session resync = joined;
+    resync.can_resync = true;
+    CHECK(ActionFor(kRowLetIn, resync) == RowAction::kResync);
+    idle.can_resync = true;   // (not in a session: nothing to resync from)
+    CHECK(ActionFor(kRowLetIn, idle) == RowAction::kNone);
+    idle.can_resync = false;
     // Each has words for the log.
-    for (RowAction a : {RowAction::kNone, RowAction::kOpenMain, RowAction::kOpenJoin, RowAction::kCopyCode,
-                        RowAction::kOpenLobby, RowAction::kAllow, RowAction::kHost, RowAction::kConfirmLeave}) {
+    for (RowAction a : {RowAction::kNone, RowAction::kOpenMain, RowAction::kCopyCode, RowAction::kAllow,
+                        RowAction::kHost, RowAction::kConfirmLeave}) {
         CHECK(std::string(ActionWords(a)).size() > 3);
     }
 }
@@ -362,8 +368,8 @@ TEST_CASE("pause tab: the invite code's two rows: the host's Paste answer, a wai
 
 TEST_CASE("pause tab: the rows say what co-op is doing, in at most a row's width") {
     SessionView idle;
-    CHECK(RowTexts(idle) ==
-          std::vector<std::string>{"Host a game", "Join a game", "Players", "Let in", "Leave (not in a session)"});
+    CHECK(RowTexts(idle) == std::vector<std::string>{"Host a game", "Join a game", "Players", "Let in: when you host",
+                                                     "Leave (not in a session)"});
 
     SessionView host;
     host.s.hosting = host.s.in_one = true;
@@ -382,7 +388,11 @@ TEST_CASE("pause tab: the rows say what co-op is doing, in at most a row's width
     SessionView guest;
     guest.s.in_one = true;
     guest.players = 2;
-    CHECK(RowTexts(guest) == std::vector<std::string>{"In a session", "Room", "Players: 2", "Let in", "Leave"});
+    CHECK(RowTexts(guest) ==
+          std::vector<std::string>{"In a session", "Session details", "Players: 2", "Let in: the host does", "Leave"});
+    guest.s.can_resync = true;
+    CHECK(RowTexts(guest)[kRowLetIn] == "Resync from host");
+    guest.s.can_resync = false;
     guest.confirm_leave = true;
     CHECK(RowTexts(guest)[kRowLeave] == "A again: leave");
     host.confirm_leave = true;
@@ -467,33 +477,35 @@ TEST_CASE("pause tab: a screen reopened at the same address, or with a new layou
     CHECK(p.OnScreen(Strip(0x9000, 5, kSystemPage), now + 70).set_tabs);
 }
 
-TEST_CASE("pause tab: co-op that came with the game's start, and a failed Host, open co-op's main page") {
+TEST_CASE("pause tab: co-op that came with the game's start, and a failed Host, show the Session view") {
     // (the launcher rule, as co-op's menu: Host.bat / Join.bat / coop.ini co-op is not started or stopped here)
     Session launcher;
     launcher.by_launcher = launcher.in_one = true;
-    CHECK(ActionFor(kRowSession, launcher) == RowAction::kOpenMain);
+    CHECK(ActionFor(kRowSession, launcher) == RowAction::kViewSession);
     CHECK(ActionFor(kRowLeave, launcher) == RowAction::kOpenMain);   // (never two A's to a teardown)
     launcher.in_one = false;   // (not connected yet: still not Host)
-    CHECK(ActionFor(kRowSession, launcher) == RowAction::kOpenMain);
+    CHECK(ActionFor(kRowSession, launcher) == RowAction::kViewSession);
     CHECK(ActionFor(kRowLeave, launcher) == RowAction::kOpenMain);
     SessionView lv;
     lv.s = launcher;
     CHECK(RowTexts(lv)[kRowLeave] == "Leave: start the game again");
-    // A Host (or Join) that failed: the row says so, and A opens the main page with the session's lines.
+    // A Host (or Join) that failed: the row says so, and A shows the Session view, which says why.
     Session failed;
     failed.failed = true;
-    CHECK(ActionFor(kRowSession, failed) == RowAction::kOpenMain);
+    CHECK(ActionFor(kRowSession, failed) == RowAction::kViewSession);
     SessionView fv;
     fv.s = failed;
     CHECK(RowTexts(fv)[kRowSession] == "Co-op failed: A says why");
     CHECK(RowTexts(fv)[kRowSession].size() <= kRowChars);
 }
 
-TEST_CASE("pause tab: the Leave row's second A is waited for only while the cursor stays on it") {
-    CHECK(KeepConfirm(true, kRowLeave));
-    CHECK_FALSE(KeepConfirm(true, kRowLetIn));
-    CHECK_FALSE(KeepConfirm(true, -1));
-    CHECK_FALSE(KeepConfirm(false, kRowLeave));   // (System back: no second A waited for)
+TEST_CASE("pause tab: a second A (Leave, Kick, Ban) is waited for only while the cursor stays on its row") {
+    CHECK(KeepConfirm(true, kRowLeave, kRowLeave));
+    CHECK_FALSE(KeepConfirm(true, kRowLetIn, kRowLeave));
+    CHECK_FALSE(KeepConfirm(true, -1, kRowLeave));
+    CHECK_FALSE(KeepConfirm(true, -1, -1));       // (nothing waited for)
+    CHECK(KeepConfirm(true, 2, 2));               // (Kick, on the host's controls)
+    CHECK_FALSE(KeepConfirm(false, kRowLeave, kRowLeave));   // (System back: no second A waited for)
 }
 
 TEST_CASE("pause tab: the rows' own views: Players, Let in and Join on the same five rows, Back last") {
@@ -506,7 +518,7 @@ TEST_CASE("pause tab: the rows' own views: Players, Let in and Join on the same 
     pv.names = {"dauro (you)", "Saria (host)"};
     CHECK(RowTexts(View::kPlayers, pv) == std::vector<std::string>{"dauro (you)", "Saria (host)", " ", " ", "Back"});
     pv.names = {"a", "b", "c", "d", "e", "f"};
-    CHECK(RowTexts(View::kPlayers, pv)[3] == "+3 more (Lobby tab)");
+    CHECK(RowTexts(View::kPlayers, pv) == std::vector<std::string>{"a", "b", "c", "More players (1/2)", "Back"});
     SessionView none;
     CHECK(RowTexts(View::kPlayers, none)[0] == "Not in a session");
     for (int r = 0; r < kRows - 1; ++r) CHECK(ActionFor(View::kPlayers, r, host) == RowAction::kNone);
@@ -523,13 +535,14 @@ TEST_CASE("pause tab: the rows' own views: Players, Let in and Join on the same 
     CHECK(RowTexts(View::kLetIn, lv)[0] == "Nobody asks to join");
     lv.asking = {"Mido", "Darunia"};
     CHECK(RowTexts(View::kLetIn, lv) == std::vector<std::string>{"Let in Mido", "Refuse Mido", "+1 more ask", " ", "Back"});
-    // Join: the clipboard's code, the last game again, typing in co-op's menu; never from inside a session.
+    // Join: the clipboard's code, the last game again (the game has no text entry: a code is pasted); never from
+    // inside a session.
     CHECK(ActionFor(View::kJoin, 0, idle) == RowAction::kJoinPaste);
     CHECK(ActionFor(View::kJoin, 1, idle) == RowAction::kNone);   // (no last game kept)
     Session again = idle;
     again.rejoin = true;
     CHECK(ActionFor(View::kJoin, 1, again) == RowAction::kRejoin);
-    CHECK(ActionFor(View::kJoin, 2, idle) == RowAction::kOpenJoin);
+    CHECK(ActionFor(View::kJoin, 2, idle) == RowAction::kNone);
     CHECK(ActionFor(View::kJoin, kRows - 1, idle) == RowAction::kBack);
     Session in_one;
     in_one.in_one = in_one.rejoin = true;
@@ -542,7 +555,7 @@ TEST_CASE("pause tab: the rows' own views: Players, Let in and Join on the same 
     jv.s = again;
     jv.rejoin_host = "Saria";
     CHECK(RowTexts(View::kJoin, jv) ==
-          std::vector<std::string>{"Paste code and join", "Join Saria again", "Type a code (co-op's menu)", " ", "Back"});
+          std::vector<std::string>{"Paste code and join", "Join Saria again", "Copy a friend's code first", " ", "Back"});
     // The main view is the five rows; out of range is nothing.
     CHECK(ActionFor(View::kMain, kRowPlayers, idle) == ActionFor(kRowPlayers, idle));
     CHECK(RowTexts(View::kMain, none) == RowTexts(none));
@@ -607,4 +620,175 @@ TEST_CASE("pause tab: a screen update nested on the same thread is told so, othe
     }
     const ScreenGuard after;
     CHECK_FALSE(after.Nested());
+}
+
+TEST_CASE("pause tab: the Session view: the host's lines to copy, a guest's host, why co-op failed") {
+    // The host: its players, the room (or invite code) and the same-network and VPN lines to copy; Back last.
+    Session host;
+    host.hosting = host.in_one = host.code = true;
+    CHECK(ActionFor(View::kSession, 0, host) == RowAction::kNone);
+    CHECK(ActionFor(View::kSession, 1, host) == RowAction::kCopyCode);
+    CHECK(ActionFor(View::kSession, 2, host) == RowAction::kCopyLan);
+    CHECK(ActionFor(View::kSession, 3, host) == RowAction::kCopyVpn);
+    CHECK(ActionFor(View::kSession, kRows - 1, host) == RowAction::kBack);
+    host.code = false;   // (the code still coming: nothing to copy yet)
+    CHECK(ActionFor(View::kSession, 1, host) == RowAction::kNone);
+    SessionView hv;
+    hv.s = host;
+    hv.players = 3;
+    CHECK(RowTexts(View::kSession, hv) == std::vector<std::string>{"Hosting: 3 players", "Room: coming...",
+                                                                    "Copy same-network line", "Copy VPN line", "Back"});
+    hv.s.code = true;
+    hv.room = "forest-gang";
+    hv.note = "Copied the room name";   // (what the last copy did, on the row the player looks at)
+    CHECK(RowTexts(View::kSession, hv)[0] == "Copied the room name");
+    CHECK(RowTexts(View::kSession, hv)[1] == "Copy room: forest-gang");
+    hv.note.clear();
+    hv.players = 1;
+    CHECK(RowTexts(View::kSession, hv)[0] == "Hosting: just you");
+    // The main view's Join code row says what its copy did too.
+    hv.note = "No clipboard: write it down";
+    CHECK(RowTexts(hv)[kRowJoinCode] == "No clipboard: write it down");
+
+    // A guest: whose game, how many, Resync from host when its game can take the host's save, co-op's hint.
+    Session guest;
+    guest.in_one = true;
+    for (int r = 0; r < kRows - 1; ++r) CHECK(ActionFor(View::kSession, r, guest) == RowAction::kNone);
+    guest.can_resync = true;
+    CHECK(ActionFor(View::kSession, 3, guest) == RowAction::kResync);
+    SessionView gv;
+    gv.s = guest;
+    gv.host_name = "Saria";
+    gv.players = 2;
+    CHECK(RowTexts(View::kSession, gv) ==
+          std::vector<std::string>{"Joined Saria", "With 2 players", " ", "Resync from host", "Back"});
+    gv.why = "Voice chat is off";
+    CHECK(RowTexts(View::kSession, gv)[2] == "Voice chat is off");
+    // A guest the host could not reach: its answer code to copy.
+    Session waiting;
+    waiting.in_one = waiting.wait_host = true;
+    CHECK(ActionFor(View::kSession, 1, waiting) == RowAction::kCopyAnswer);
+    SessionView wv;
+    wv.s = waiting;
+    wv.connecting = true;
+    CHECK(RowTexts(View::kSession, wv)[0] == "Waiting for the host");
+    CHECK(RowTexts(View::kSession, wv)[1] == "Copy answer code");
+
+    // Failed: why, over the free rows, and Host again (not for co-op that came with the game's start).
+    Session failed;
+    failed.failed = true;
+    CHECK(ActionFor(View::kSession, 3, failed) == RowAction::kHost);
+    CHECK(ActionFor(View::kSession, 1, failed) == RowAction::kNone);
+    SessionView fv;
+    fv.s = failed;
+    fv.why = "The port 27015 is in use by another program: close it, or pick another port in coop.ini";
+    const std::vector<std::string> rows = RowTexts(View::kSession, fv);
+    CHECK(rows[0] == "Co-op failed:");
+    CHECK(rows[1] == "The port 27015 is in use by another");
+    CHECK(rows[2].substr(rows[2].size() - 3) == "...");   // (two rows for it: the rest is cut)
+    CHECK(rows[3] == "Host again");
+    fv.s.by_launcher = true;
+    CHECK(ActionFor(View::kSession, 3, fv.s) == RowAction::kNone);
+    CHECK(RowTexts(View::kSession, fv)[3] == "in coop.ini");   // (its row goes to why)
+    SessionView idle;
+    CHECK(RowTexts(View::kSession, idle)[0] == "Not in a session");
+    for (const SessionView& v : {hv, gv, wv, fv, idle}) {
+        for (const std::string& r : RowTexts(View::kSession, v)) CHECK((!r.empty() && r.size() <= kRowChars));
+    }
+}
+
+TEST_CASE("pause tab: the Players view's pages and a player's view, with the host's controls") {
+    // Up to four players a page; more: three a page, the fourth row turns it.
+    CHECK(PlayerIndex(2, 0, 0) == 0);
+    CHECK(PlayerIndex(2, 0, 2) == -1);
+    CHECK(PlayerIndex(4, 0, 3) == 3);
+    CHECK(PlayerIndex(0, 0, 0) == -1);
+    CHECK(PlayerPages(4) == 1);
+    CHECK(PlayerPages(5) == 2);
+    CHECK(PlayerPages(7) == 3);
+    CHECK(PlayerIndex(5, 0, 3) == -1);   // (the page's turn)
+    CHECK(PlayerIndex(5, 1, 0) == 3);
+    CHECK(PlayerIndex(5, 1, 1) == 4);
+    CHECK(PlayerIndex(5, 1, 2) == -1);
+    CHECK(PlayerIndex(5, 2, 0) == 0);    // (past the last page: the first again)
+    CHECK(PlayerIndex(5, 0, kRows - 1) == -1);
+    Session list;
+    list.in_one = true;
+    list.listed = 5;
+    CHECK(ActionFor(View::kPlayers, 0, list) == RowAction::kViewPlayer);
+    CHECK(ActionFor(View::kPlayers, 3, list) == RowAction::kMorePlayers);
+    list.page = 1;
+    CHECK(ActionFor(View::kPlayers, 2, list) == RowAction::kNone);
+    SessionView lv;
+    lv.s = list;
+    lv.names = {"a", "b", "c", "d", "e"};
+    CHECK(RowTexts(View::kPlayers, lv) == std::vector<std::string>{"d", "e", " ", "More players (2/2)", "Back"});
+
+    // Another player, as a guest: teleport and our own mutes; nothing more.
+    Session other;
+    other.in_one = true;
+    other.player = 2;
+    CHECK(ActionFor(View::kPlayer, 0, other) == RowAction::kTeleport);
+    CHECK(ActionFor(View::kPlayer, 1, other) == RowAction::kOwnVoice);
+    CHECK(ActionFor(View::kPlayer, 2, other) == RowAction::kOwnChat);
+    CHECK(ActionFor(View::kPlayer, 3, other) == RowAction::kNone);
+    CHECK(ActionFor(View::kPlayerHost, 2, other) == RowAction::kNone);   // (no host controls for a guest)
+    SessionView pv;
+    pv.s = other;
+    pv.player_name = "Mido";
+    CHECK(RowTexts(View::kPlayer, pv) == std::vector<std::string>{"Teleport to Mido", "Mute their voice (you)",
+                                                                   "Mute their chat (you)", " ", "Back"});
+    pv.own_mutes = kMuteVoice | kMuteChat;
+    CHECK(RowTexts(View::kPlayer, pv)[1] == "Hear their voice again");
+    CHECK(RowTexts(View::kPlayer, pv)[2] == "Show their chat again");
+    // The host: its controls on row 3, then mutes for everyone, Kick and Ban (each after a second A).
+    Session host = other;
+    host.hosting = true;
+    CHECK(ActionFor(View::kPlayer, 3, host) == RowAction::kHostControls);
+    CHECK(ActionFor(View::kPlayerHost, 0, host) == RowAction::kHostVoice);
+    CHECK(ActionFor(View::kPlayerHost, 1, host) == RowAction::kHostChat);
+    CHECK(ActionFor(View::kPlayerHost, 2, host) == RowAction::kKick);
+    CHECK(ActionFor(View::kPlayerHost, 3, host) == RowAction::kBan);
+    CHECK(ActionFor(View::kPlayerHost, kRows - 1, host) == RowAction::kBack);
+    SessionView cv;
+    cv.s = host;
+    cv.player_name = "Mido";
+    CHECK(RowTexts(View::kPlayerHost, cv) == std::vector<std::string>{"Mute voice for everyone", "Mute chat for everyone",
+                                                                       "Kick Mido", "Ban for this session", "Back"});
+    cv.host_mutes = kMuteVoice;
+    cv.confirm_kick = true;
+    CHECK(RowTexts(View::kPlayerHost, cv)[0] == "Unmute voice for everyone");
+    CHECK(RowTexts(View::kPlayerHost, cv)[2] == "A again: kick Mido");
+    cv.confirm_kick = false, cv.confirm_ban = true;
+    CHECK(RowTexts(View::kPlayerHost, cv)[3] == "A again: ban Mido");
+    // Us, or a player who left: nothing to do to them.
+    Session self = host;
+    self.player = 1;
+    Session gone = host;
+    gone.player = 0;
+    for (const Session& s : {self, gone}) {
+        for (int r = 0; r < kRows - 1; ++r) {
+            CHECK(ActionFor(View::kPlayer, r, s) == RowAction::kNone);
+            CHECK(ActionFor(View::kPlayerHost, r, s) == RowAction::kNone);
+        }
+    }
+    SessionView sv;
+    sv.s = self;
+    sv.player_name = "dauro";
+    CHECK(RowTexts(View::kPlayer, sv)[0] == "dauro (you)");
+    sv.s = gone;
+    CHECK(RowTexts(View::kPlayer, sv)[0] == "They left the session");
+    CHECK(RowTexts(View::kPlayerHost, sv)[0] == "They left the session");
+    // Back (and B): the host's controls to the player, the player to the list, the rest to the five rows.
+    CHECK(BackOf(View::kPlayerHost) == View::kPlayer);
+    CHECK(BackOf(View::kPlayer) == View::kPlayers);
+    for (View w : {View::kPlayers, View::kLetIn, View::kJoin, View::kSession, View::kMain}) {
+        CHECK(BackOf(w) == View::kMain);
+    }
+    for (RowAction a : {RowAction::kViewSession, RowAction::kCopyLan, RowAction::kCopyVpn, RowAction::kResync,
+                        RowAction::kViewPlayer, RowAction::kMorePlayers, RowAction::kHostControls,
+                        RowAction::kTeleport, RowAction::kOwnVoice, RowAction::kOwnChat, RowAction::kHostVoice,
+                        RowAction::kHostChat, RowAction::kKick, RowAction::kBan}) {
+        CHECK(std::string(ActionWords(a)).size() > 3);
+    }
 }

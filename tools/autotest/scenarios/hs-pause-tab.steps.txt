@@ -4,13 +4,26 @@
 # Pass, by the shots of BOTH games (screenshot proof; the lines below only say what the module did):
 #   system         the System page, five tabs in the strip: Collection, Equipment, Items, System, Multiplayer (dim)
 #   page           the Multiplayer page over System: five rows in the System page's own buttons ("In a session",
-#                  "Room", "Players: 2", "Let in", "Leave"), the fifth tab lit, System's not; no controller picture
+#                  "Session details", "Players: 2", "Let in: the host does" or "Resync from host", "Leave"), the fifth tab lit, System's not; no controller picture
 #   page-down      the game's cursor frame one row lower, on our rows
 #   system-back    System's page and its tab lit again, its own buttons
 #   closed / idle-walking   the menu closed, the game plays (Link walks in A's)
+# The views (b4093233), cursor moved to the top first (DUP x5):
+#   a-session      A (host): "Hosting: 2 players", "Copy room: ..." or "Copy invite code", "Copy same-network line",
+#                  "Copy VPN line", "Back"; a-session-back: the five rows again (B in a view does not close the menu)
+#   a-players      "<A> (you)", "<B>", " ", " ", "Back"
+#   a-player       B's view: "Teleport to <B>", "Mute their voice (you)", "Mute their chat (you)", "Host controls", "Back"
+#   a-host-controls  "Mute voice for everyone", "Mute chat for everyone", "Kick <B>", "Ban for this session", "Back"
+#   a-player-back / a-players-back / a-main-back   B goes one level up: B's view, the Players view, the five rows
+#   b-session      B (guest): "Joined <A>", "With 2 players", (co-op's hint or " "), "Resync from host" or " ", "Back"
+#   b-letin-row    the cursor on Let in: "Resync from host" or "Let in: the host does" (not pressed)
+#   b-players      "<A> (host)", "<B> (you)", " ", " ", "Back"; b-player: A's view (Teleport, two mutes, no Host
+#                  controls); b-main-back: the five rows
 # A only, the co-op idle path (after Leave twice):
 #   leave-row      the cursor on "Leave"; leave-confirm: "A again: leave"
-#   idle-page      "Host a game", "Join a game", "Players", "Let in", "Leave (not in a session)"
+#   idle-page      "Host a game", "Join a game", "Players", "Let in: when you host", "Leave (not in a session)"
+#   idle-join      "Paste code and join", (" " or "Join <A> again"), "Copy a friend's code first", " ", "Back"
+#   idle-players   "Not in a session", " ", " ", " ", "Back"; idle-back: the five idle rows
 #   idle-system    System back; the game's own tabs work as ever
 #! switches LICHII_COOP_PUPPET=1
 #! timeout 420

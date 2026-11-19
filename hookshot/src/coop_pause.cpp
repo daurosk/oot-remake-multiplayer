@@ -1113,28 +1113,70 @@ void PasteAnswerNow() {
     ShowNote();
 }
 
-void CopyAnswerNow() {
-    std::lock_guard lock(g_mutex);
-    FreshMain();
-    Act(Request{Request::Kind::kCopyAnswer, {}});
-    ShowNote();
+namespace {
+
+// The page's own note (PageCopyNow's result) and when it was set; under g_mutex.
+std::string g_page_note;
+std::uint64_t g_page_note_ms = 0;
+inline constexpr std::uint64_t kPageNoteMs = 4000;
+
+void SetPageNote(std::string note) {
+    g_page_note = std::move(note);
+    g_page_note_ms = NowMs();
 }
 
-void OpenLobby() {
-    g_wanted = kLobbyTab;
-    LOG_INFO(Core, "coop: multiplayer tab: the Lobby tab opened (the pause menu's Multiplayer page)");
+}  // namespace
+
+void PageCopyNow(PageCopy what) {
+    std::lock_guard lock(g_mutex);
+    const HosCoopStatus st = Status();
+    std::string text;
+    std::string words;
+    switch (what) {
+    case PageCopy::kCode:
+        // (a relay room's name first: friends type it; then the relay's join code, then the invite code)
+        text = st.relay_room[0] != 0 ? st.relay_room : st.relay_code[0] != 0 ? st.relay_code : st.invite;
+        words = st.relay_room[0] != 0 ? "room name" : st.relay_code[0] != 0 ? "join code" : "invite code";
+        break;
+    case PageCopy::kAnswer:
+        text = st.answer;
+        words = "answer code";
+        break;
+    case PageCopy::kLan:
+    case PageCopy::kVpn: {
+        const bool vpn = what == PageCopy::kVpn;
+        if (st.state != HOS_COOP_HOSTING || st.port == 0) {
+            SetPageNote("The server is not running yet");
+            return;
+        }
+        // (as the menu's Same network / VPN rows: the first address of that kind, the port and the password)
+        const CoopTitleMenu::LanSplit split = CoopTitleMenu::SplitLan(CoopFiles::LocalCards());
+        const auto& addresses = vpn ? split.vpn : split.home;
+        if (addresses.empty()) {
+            SetPageNote(vpn ? "No VPN address found" : "No same-network address found");
+            return;
+        }
+        text = CoopTitleMenu::LanJoinText(addresses.front().address, st.port, st.password);
+        words = vpn ? "VPN line" : "same-network line";
+        break;
+    }
+    }
+    if (text.empty()) {
+        SetPageNote("No " + words + " yet");
+        return;
+    }
+    LOG_INFO(Core, "coop: multiplayer tab: the {} copied from the pause menu's Multiplayer page", words);
+    const std::uint64_t session = g_session;
+    // (on Linux the result comes a moment later, under g_mutex: a Host or Join started meanwhile drops it)
+    CopyThen(text, [session, words](bool ok) {
+        if (session != g_session) return;
+        SetPageNote(ok ? "Copied the " + words : "No clipboard: write it down");
+    });
 }
 
-void CopyJoinCode() {
-    HosCoopStatus st{};
-    st.size = sizeof st;
-    CoopHookshot::HostMenu().Status(&st);
-    // (a relay room's name first: friends type it; then the relay's join code, then the invite code)
-    const std::string text = st.relay_room[0] != 0 ? st.relay_room : st.relay_code[0] != 0 ? st.relay_code : st.invite;
+std::string PageNote() {
     std::lock_guard lock(g_mutex);
-    FreshMain();   // (first: opening clears the page's note)
-    Copy(text, "room name or join code");   // (kCopyInvite's Copy, with the relay's room name first)
-    ShowNote();
+    return NowMs() - g_page_note_ms < kPageNoteMs ? g_page_note : std::string();
 }
 
 bool TestMenu(const std::string& page) {

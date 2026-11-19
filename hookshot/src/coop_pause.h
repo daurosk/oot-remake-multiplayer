@@ -53,11 +53,12 @@ bool KeysTaken();
 // title): Host hosts at once, Join pastes a code already copied.
 void Open(CoopPauseMenu::Page page);
 
-// The pause menu's Multiplayer page (coop_pause_tab.h), its rows: the menu opened on the Lobby tab (Players, and Let in
-// for a guest); and the host's room name (else its join code) to the clipboard, the menu opened on the main page, whose
-// note says what was copied (Join code).
-void OpenLobby();
-void CopyJoinCode();
+// The pause menu's Multiplayer page (coop_pause_tab.h): its copies, done on the page itself (co-op's menu stays shut): the host's room name (else its relay join code,
+// else its invite code), a waiting guest's answer code, the host's same-network or VPN join line (as the menu's rows).
+// PageNote: what became of the last one ("Copied the room name", or why not) for 4 s after it, else "".
+enum class PageCopy { kCode, kAnswer, kLan, kVpn };
+void PageCopyNow(PageCopy what);
+std::string PageNote();
 // The page's own actions, through the menu's requests and its rules: hosting at once with the kit's settings (its
 // room name, relay, port, approval), as the menu's Host does; and leaving (or stopping hosting), as its Leave does.
 // Co-op that came with the game's start (ByLauncher) is neither started nor stopped: the menu opens on its main page,
@@ -73,10 +74,9 @@ void JoinPasteNow();
 void RejoinNow();
 // A last game's code is kept (coop.ini last_invite); its host's name into `host` (may be null; "" when not known).
 bool Rejoin(std::string* host);
-// The host's Paste answer (a friend's answer code from the clipboard) and a waiting guest's Copy answer, as the
-// menu's rows do them; the menu opened on its main page, whose note says what became of it.
+// The host's Paste answer (a friend's answer code from the clipboard), as the menu's row does it; the menu opened on
+// its main page, whose note says what became of it.
 void PasteAnswerNow();
-void CopyAnswerNow();
 
 // The autotest's `menu customize|close` step (LICHII_COOP_TEST_COMMANDS only, coop_testinput.h): the menu opened
 // on the Customize page, or closed. Never asked in a player's game (no commands file there).

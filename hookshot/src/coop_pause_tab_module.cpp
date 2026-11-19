@@ -18,6 +18,7 @@
 #include "coop_pause.h"
 #include "coop_runtime.h"
 #include "coop_lobby_game.h"
+#include "coop_lobby.h"
 #include "coop_save.h"
 
 namespace CoopPauseTab {
@@ -34,8 +35,12 @@ std::atomic<int> g_view{static_cast<int>(View::kMain)};   // the rows' view (Vie
 View ViewShown() {
     return static_cast<View>(g_view.load());
 }
-// The Leave row's second A: until when it is waited for (0: not). Any thread.
+// A second A (Leave, Kick, Ban): until when it is waited for (0: not), and on which row of which view. Any thread.
 std::atomic<std::uint64_t> g_confirm_until{0};
+std::atomic<int> g_confirm_row{-1}, g_confirm_view{0};
+// The Players view's page, and the player whose view shows (their number; the views kPlayer, kPlayerHost).
+std::atomic<int> g_players_page{0}, g_player{0};
+static_assert(kMuteVoice == CoopLobby::kVoice && kMuteChat == CoopLobby::kChat);
 // Panes found, per opening of a screen (Page::Track's number; a menu reopened at the same address is looked up again,
 // so no pane of a freed layout is used). *_ok: both looked up for that opening and parts; the page is usable only then.
 std::uint64_t g_pages_gen = 0, g_pages_screen = 0, g_system_pane = 0, g_coop_pane = 0;
@@ -230,7 +235,23 @@ bool LiveText(void* ctx, std::uint64_t layout, std::uint64_t gen, const std::str
     return true;
 }
 
-// What the rows say now (co-op's host status and the Lobby's room). No lock of ours held: they take their own.
+// A second A on this row of this view is waited for.
+bool Confirming(View view, int row) {
+    return NowMs() < g_confirm_until.load() && g_confirm_view.load() == static_cast<int>(view) &&
+           g_confirm_row.load() == row;
+}
+
+// The player whose view shows, in the session as it is now (null: they left, or no session).
+const CoopLobby::PlayerSeen* ShownPlayer(const CoopLobby::Seen& seen) {
+    if (!seen.connected) return nullptr;
+    for (const CoopLobby::PlayerSeen& p : seen.players) {
+        if (p.number == g_player.load()) return &p;
+    }
+    return nullptr;
+}
+
+// What the rows say now (co-op's host status and the Lobby's room, its players). No lock of ours held: they take
+// their own.
 SessionView ViewNow(View view) {
     HosCoopStatus st{};
     st.size = sizeof st;
@@ -247,13 +268,27 @@ SessionView ViewNow(View view) {
     v.s.code = v.s.hosting && (!room.empty() || st.invite[0] != 0);
     v.s.invite = v.s.hosting && room.empty() && st.invite[0] != 0;
     v.s.wait_host = st.state == HOS_COOP_WAIT_HOST;
-    v.confirm_leave = NowMs() < g_confirm_until.load();
+    v.s.can_resync = !v.s.hosting && CoopSave::CanResync();
+    v.why = std::string(st.message, strnlen(st.message, sizeof st.message));
+    v.note = CoopPause::PageNote();
+    v.confirm_leave = Confirming(View::kMain, kRowLeave);
+    v.confirm_kick = Confirming(View::kPlayerHost, 2);
+    v.confirm_ban = Confirming(View::kPlayerHost, 3);
     const CoopLobby::Seen seen = CoopLobby::Now();
     v.players = seen.connected ? static_cast<int>(seen.players.size()) : 0;
-    if (view == View::kPlayers && seen.connected) {
+    v.s.listed = v.players;
+    v.s.page = g_players_page.load();
+    if (seen.connected) {
         for (const CoopLobby::PlayerSeen& p : seen.players) {
-            v.names.push_back(p.name + (p.self ? " (you)" : p.host ? " (host)" : ""));
+            if (view == View::kPlayers) v.names.push_back(p.name + (p.self ? " (you)" : p.host ? " (host)" : ""));
+            if (p.host && !p.self) v.host_name = p.name;
         }
+    }
+    if (const CoopLobby::PlayerSeen* p = ShownPlayer(seen)) {
+        v.s.player = p->self ? 1 : 2;
+        v.player_name = p->name;
+        v.own_mutes = p->own_mutes;
+        v.host_mutes = p->host_mutes;
     }
     if (view == View::kJoin) v.s.rejoin = CoopPause::Rejoin(&v.rejoin_host);
     if (v.s.hosting) v.asking = CoopLobby::Asking();
@@ -384,57 +419,87 @@ int FocusedRow() {
     return -1;
 }
 
-// What co-op is doing now, as the rows need it.
-Session SessionNow() {
-    HosCoopStatus st{};
-    st.size = sizeof st;
-    CoopHookshot::HostMenu().Status(&st);
-    Session s;
-    s.by_launcher = CoopPause::ByLauncher();
-    s.failed = st.state == HOS_COOP_FAILED;
-    s.hosting = st.state == HOS_COOP_HOSTING;
-    s.in_one = (st.state != HOS_COOP_IDLE && st.state != HOS_COOP_FAILED) || CoopSave::SessionLive();
-    s.code = s.hosting && (st.relay_room[0] != 0 || st.relay_code[0] != 0 || st.invite[0] != 0);
-    s.invite = s.hosting && st.relay_room[0] == 0 && st.relay_code[0] == 0 && st.invite[0] != 0;
-    s.asking = s.hosting && !CoopLobby::Asking().empty();
-    s.wait_host = st.state == HOS_COOP_WAIT_HOST;
-    s.rejoin = CoopPause::Rejoin(nullptr);
-    return s;
-}
-
 void SetView(View v) {
-    g_view = static_cast<int>(v);
+    if (g_view.exchange(static_cast<int>(v)) != static_cast<int>(v)) g_confirm_until = 0;   // (a new view: no A waited)
 }
 
-// A row's action (after the lock: co-op's menu and the chat take their own).
+// A row that wants a second A: true on that second A (within kConfirmMs, the cursor still on the row), else it waits.
+bool SecondA(View view, int row) {
+    if (Confirming(view, row)) {
+        g_confirm_until = 0;
+        return true;
+    }
+    g_confirm_view = static_cast<int>(view), g_confirm_row = row;
+    g_confirm_until = NowMs() + kConfirmMs;   // (the row says "A again" until then)
+    return false;
+}
+
+// A row's action (after the lock: co-op's menu, the Lobby and the chat take their own).
 void Act(int row) {
     const View view = ViewShown();
-    const RowAction a = ActionFor(view, row, SessionNow());
+    const SessionView v = ViewNow(view);
+    const RowAction a = ActionFor(view, row, v.s);
     LOG_INFO(Core, "coop: pause tab: row {} chosen (view {}): {}", row, static_cast<int>(view), ActionWords(a));
+    const std::uint8_t player = static_cast<std::uint8_t>(g_player.load());
+    const auto host_action = [player](coop::protocol::LobbyActionKind kind) {
+        CoopLobby::Ask(coop::protocol::LobbyAction{kind, player});   // (the server's answer shows in the Lobby, the chat)
+    };
+    using Lobby = coop::protocol::LobbyActionKind;
     switch (a) {
-    case RowAction::kViewPlayers: SetView(View::kPlayers); break;
+    case RowAction::kViewPlayers:
+        g_players_page = 0;
+        SetView(View::kPlayers);
+        break;
+    case RowAction::kViewPlayer: {
+        const CoopLobby::Seen seen = CoopLobby::Now();
+        const int i = PlayerIndex(static_cast<int>(seen.players.size()), v.s.page, row);
+        if (seen.connected && i >= 0 && i < static_cast<int>(seen.players.size())) {
+            g_player = seen.players[static_cast<std::size_t>(i)].number;
+            SetView(View::kPlayer);
+        }
+        break;
+    }
+    case RowAction::kMorePlayers: g_players_page = (v.s.page + 1) % PlayerPages(v.s.listed); break;
+    case RowAction::kHostControls: SetView(View::kPlayerHost); break;
     case RowAction::kViewLetIn: SetView(View::kLetIn); break;
     case RowAction::kViewJoin: SetView(View::kJoin); break;
-    case RowAction::kBack: SetView(View::kMain); break;
+    case RowAction::kViewSession: SetView(View::kSession); break;
+    case RowAction::kBack: SetView(BackOf(view)); break;
+    case RowAction::kTeleport: CoopHook::SendChat("/teleport " + v.player_name); break;   // (as the Lobby tab's)
+    case RowAction::kOwnVoice: CoopLobby::SetOwnMute(player, CoopLobby::kVoice, (v.own_mutes & kMuteVoice) == 0); break;
+    case RowAction::kOwnChat: CoopLobby::SetOwnMute(player, CoopLobby::kChat, (v.own_mutes & kMuteChat) == 0); break;
+    case RowAction::kHostVoice: host_action((v.host_mutes & kMuteVoice) != 0 ? Lobby::unmute_voice : Lobby::mute_voice); break;
+    case RowAction::kHostChat: host_action((v.host_mutes & kMuteChat) != 0 ? Lobby::unmute_chat : Lobby::mute_chat); break;
+    case RowAction::kKick:
+        if (SecondA(view, row)) {
+            LOG_INFO(Core, "coop: pause tab: the second A: player {} kicked", player);
+            host_action(Lobby::kick);
+        }
+        break;
+    case RowAction::kBan:
+        if (SecondA(view, row)) {
+            LOG_INFO(Core, "coop: pause tab: the second A: player {} banned for this session", player);
+            host_action(Lobby::ban);
+        }
+        break;
+    case RowAction::kResync: CoopSave::RequestResync(); break;   // (the chat says how it goes)
     case RowAction::kDeny: CoopHook::SendChat("/deny"); break;   // (its answer shows in the chat)
     case RowAction::kJoinPaste: CoopPause::JoinPasteNow(); break;
     case RowAction::kRejoin: CoopPause::RejoinNow(); break;
     case RowAction::kHost: CoopPause::HostNow(); break;
     case RowAction::kConfirmLeave:
-        if (NowMs() < g_confirm_until.exchange(0)) {
+        if (SecondA(view, row)) {
             LOG_INFO(Core, "coop: pause tab: the second A: co-op stops");
             CoopPause::LeaveNow();
-        } else {
-            g_confirm_until = NowMs() + kConfirmMs;   // (the row says "A again" until then)
         }
         break;
     case RowAction::kOpenMain: CoopPause::Open(CoopPauseMenu::Page::kMain); break;
-    case RowAction::kOpenJoin: CoopPause::Open(CoopPauseMenu::Page::kJoin); break;
-    case RowAction::kCopyCode: CoopPause::CopyJoinCode(); break;
-    case RowAction::kOpenLobby: CoopPause::OpenLobby(); break;
+    case RowAction::kCopyCode: CoopPause::PageCopyNow(CoopPause::PageCopy::kCode); break;
+    case RowAction::kCopyAnswer: CoopPause::PageCopyNow(CoopPause::PageCopy::kAnswer); break;
+    case RowAction::kCopyLan: CoopPause::PageCopyNow(CoopPause::PageCopy::kLan); break;
+    case RowAction::kCopyVpn: CoopPause::PageCopyNow(CoopPause::PageCopy::kVpn); break;
     case RowAction::kAllow: CoopHook::SendChat("/allow"); break;   // (its answer, or "nobody asks", shows in the chat)
     case RowAction::kPasteAnswer: CoopPause::PasteAnswerNow(); break;
-    case RowAction::kCopyAnswer: CoopPause::CopyAnswerNow(); break;
     case RowAction::kNone: break;
     }
 }
@@ -501,7 +566,7 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
         for (const std::string& line : lines) LOG_INFO(Core, "{}", line);
         if (was && !now_shown) LOG_INFO(Core, "coop: pause tab: System back ({})", why);
         if (f.kind == Kind::kPages && now_shown && f.state == 2 && calls) {
-            if (!KeepConfirm(true, focused)) g_confirm_until = 0;   // (the cursor left the Leave row)
+            if (!KeepConfirm(true, focused, g_confirm_row.load())) g_confirm_until = 0;   // (the cursor left that row)
             // (after our lock: the status and the Lobby take their own; read only when the rows are due)
             if (LiveDue(gen)) LiveRows(ctx, f.layout, gen, ViewNow(ViewShown()));
         }
@@ -530,7 +595,8 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             shown = g_page.Shown();
             decide = g_page.TakeDecide();
             row = decide ? FocusedRow() : -1;   // (under the lock: the pages screen is the screens' updates')
-            if (g_page.TakeBack() || !shown) SetView(View::kMain);   // (B in a view: the five rows again)
+            if (g_page.TakeBack()) SetView(BackOf(ViewShown()));   // (B in a view: where its Back goes)
+            if (!shown) SetView(View::kMain);
             g_page.SetSubView(ViewShown() != View::kMain);
             why = g_page.TakeWhy();
             g_mouse = g_page.MousePage();

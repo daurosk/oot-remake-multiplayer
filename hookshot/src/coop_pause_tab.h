@@ -163,23 +163,25 @@ private:
 };
 
 // The rows (Pa_Button_00..04): Session, Join code, Players, Let in, Leave. Each A acts on the page itself (hosting,
-// a copy, the second A of Leave), or shows one of the rows' own views on the same five rows (View: Players, Let in,
-// Join), or, for what only co-op's menu has (typing a code, the Lobby's per-player controls, why something failed),
-// opens co-op's menu (Hookshot's menu, its Multiplayer tab, over the game's pause menu) at a page or its Lobby tab.
-enum class View { kMain, kPlayers, kLetIn, kJoin };
+// a copy, the second A of Leave), or shows one of the rows' own views on the same five rows (View: Session, Players,
+// a player, Let in, Join). Only a Paste answer, a refused Host or Join, and co-op that came with the game's start open
+// co-op's menu (Hookshot's menu, over the game's pause menu) on its main page, whose note or help says why.
+// The game has no text entry or keyboard of its own (docs/game-ui.md, "Frames for a text field"), so a code is pasted.
+enum class View { kMain, kPlayers, kLetIn, kJoin, kSession, kPlayer, kPlayerHost };
+// Where B (or Back) goes from a view: a player's host controls to that player, a player to the Players view, else the
+// five rows.
+View BackOf(View view);
 enum Row { kRowSession = 0, kRowJoinCode = 1, kRowPlayers = 2, kRowLetIn = 3, kRowLeave = 4 };
 enum class RowAction {
     kNone,
     kOpenMain,    // co-op's menu, its main page: what co-op does now, Host and Join, Stop and Leave
-    kOpenJoin,    // co-op's menu, its Join page (a room name or a code)
-    kCopyCode,    // the room name (or join code) to the clipboard, then the main page, which shows it
-    kOpenLobby,   // co-op's menu, its Lobby tab: the players, the host's controls
+    kCopyCode,    // the room name (or join code, or invite code) to the clipboard; the row says what was copied
     kAllow,       // the Lobby's /allow: the oldest player who asks to join is let in (its line says who, or nobody)
     kHost,        // host at once, with the kit's settings (its room name, relay, port, approval); refused or failed:
                   // co-op's main page, which says why
     kConfirmLeave,   // Leave or Stop hosting: the row asks for a second A first (kConfirmMs), then co-op stops
     kPasteAnswer,    // the host: a friend's answer code from the clipboard (co-op's menu's Paste answer), its main page
-    kCopyAnswer,     // a guest the host could not reach: its answer code to the clipboard (Copy answer), the main page
+    kCopyAnswer,     // a guest the host could not reach: its answer code to the clipboard (Copy answer), on the row
     // The views (View) and what their rows do:
     kViewPlayers,    // the Players view: who is in the session, one a row
     kViewLetIn,      // the host's Let in view: the oldest who asks, Let in or Refuse
@@ -188,8 +190,24 @@ enum class RowAction {
     kDeny,           // the Lobby's /deny: the oldest player who asks is refused
     kJoinPaste,      // join with the code (or address line) on the clipboard, as co-op's menu's Join page
     kRejoin,         // join the last game again (its code kept in coop.ini), as the Join page's "Join <host> again"
+    kViewSession,    // the Session view: what co-op does, the host's lines to copy, why co-op failed
+    kCopyLan,        // the host's same-network join line to the clipboard (the menu's Same network row)
+    kCopyVpn,        // the host's VPN join line to the clipboard (the menu's VPN row)
+    kResync,         // a guest: the host's save again (CoopSave::RequestResync, the Lobby tab's Resync from host)
+    kViewPlayer,     // a player's view (the Players view's row): teleport, own mutes; the host's controls
+    kMorePlayers,    // the Players view's next page of players
+    kHostControls,   // the host's controls for that player: mutes for everyone, Kick, Ban
+    kTeleport,       // /teleport to that player, as the Lobby tab's
+    kOwnVoice,       // our own mute of their voice, on or off (only in this game)
+    kOwnChat,        // our own mute of their chat
+    kHostVoice,      // the host: their voice muted for everyone, on or off (the Lobby's server action)
+    kHostChat,       // the host: their chat muted for everyone
+    kKick,           // the host: out of the game, after a second A (kConfirmMs)
+    kBan,            // the host: out for this session, after a second A
 };
 inline constexpr std::uint64_t kConfirmMs = 3000;
+// proto::lobby_mute's bits (CoopLobby's kVoice, kChat; the module checks they match).
+inline constexpr std::uint8_t kMuteVoice = 1u << 0, kMuteChat = 1u << 1;
 // What co-op is doing, as the rows need it.
 struct Session {
     bool hosting = false;   // this game hosts (its server listens)
@@ -202,12 +220,22 @@ struct Session {
                                 // stopped here; Session and Leave open co-op's main page, whose help says why
     bool failed = false;    // the last Host or Join did not work (co-op's main page says why)
     bool rejoin = false;    // a last game's code is kept (coop.ini last_invite): the Join view's "Join <host> again"
+    bool can_resync = false;    // a guest whose game can take the host's save again (CoopSave::CanResync)
+    int listed = 0;         // the Players view: how many players it lists
+    int page = 0;           // the Players view: its page (PlayerIndex)
+    int player = 0;         // a player's view: 0 that player left, 1 it is us, 2 another player
 };
+// The Players view: which player (an index of the list) a row shows on a page, or -1. Up to four fit; more: three a
+// page and the fourth row turns the page ("More players").
+int PlayerIndex(int listed, int page, int row);
+int PlayerPages(int listed);
 RowAction ActionFor(int row, const Session& s);
 // A row of a view (kMain: ActionFor).
 RowAction ActionFor(View view, int row, const Session& s);
-// The Leave row's second A is still waited for: our page shows and the game's cursor is on the Leave row.
-inline bool KeepConfirm(bool shown, int focused_row) { return shown && focused_row == kRowLeave; }
+// A second A (Leave, Kick, Ban) is still waited for: our page shows and the game's cursor is on that row still.
+inline bool KeepConfirm(bool shown, int focused_row, int confirm_row) {
+    return shown && focused_row >= 0 && focused_row == confirm_row;
+}
 
 // What the rows say, in the game's own text panes (the module writes them through the pack's placeholder messages,
 // Coop_Live_NN, in LayoutMsg/PlusMenu_00): the session's state on the rows themselves.
@@ -220,6 +248,12 @@ struct SessionView {
     bool confirm_leave = false;  // the Leave row waits for its second A
     std::vector<std::string> names;   // the Players view: who is in the session, by number ("(you)", "(host)" added)
     std::string rejoin_host;          // the Join view: the last game's host ("" its name is not known)
+    std::string note;                 // what the last copy on the page did, a few seconds (CoopPause::PageNote)
+    std::string host_name;            // a guest: the host's name ("" not known)
+    std::string why;                  // co-op's last problem or hint (its status message), "" none
+    std::string player_name;          // a player's view: who
+    std::uint8_t own_mutes = 0, host_mutes = 0;   // a player's view: kMuteVoice / kMuteChat bits
+    bool confirm_kick = false, confirm_ban = false;   // the host's Kick or Ban waits for its second A
 };
 inline constexpr std::size_t kRowChars = 40;   // the most a row's text holds (the System page's button width)
 std::vector<std::string> RowTexts(const SessionView& v);

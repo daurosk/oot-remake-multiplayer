@@ -204,7 +204,7 @@ CoopPauseMenu::Session SessionNow() {
     default: s.state = State::kOff; break;
     }
     s.hosting = g_doing == "hosting";
-    s.by_launcher = g_coop_on;
+    s.by_launcher = LauncherLive();
     if (s.hosting) {
         s.players = st.players;
         s.code = st.invite;
@@ -383,6 +383,31 @@ void Follow(const HosCoopStatus& st) {
 }
 std::uint64_t g_next_follow_ms = 0;
 
+// Co-op that came with the game's start (g_coop_on: coop.ini's server line or LICHII_COOP_SERVER, as Nucleus's
+// handler, an older kit's Host/Join .bat or a test kit write them) holds the Multiplayer page only while it is in a
+// game: the server took this game in (WELCOME). A line that names no server running (a Nucleus instance folder or a
+// copied game started by hand, row 170: "The menu items for mp in game don't work at all") never gets there, and
+// the page's Host, Join and Find a game are the player's again.
+bool LauncherLive() {
+    return g_coop_on && CoopLobby::Now().connected;
+}
+
+// The player ends co-op that came with the game's start: Leave while it is in a game, or their own Host or Join while
+// it is not. The client goes as the menu's own does (CoopHook::End; CoopHook::Begin may run again), and coop.ini's
+// server and join password lines are commented out, so the next start of this game by hand is solo (a launcher
+// writes them again at its own start).
+void EndLauncher(const char* why) {
+    if (!g_coop_on) return;
+    g_coop_on = false;
+    CoopHook::End();
+    CoopLobby::Forget();   // (the Lobby tab shows nobody once co-op is left, as the menu's own Leave)
+    const std::string before = ReadText(CoopIni());
+    const std::string after = CoopTitleMenu::IniUnset(CoopTitleMenu::IniUnset(before, "server"), "password");
+    const bool kept = after == before || WriteText(CoopIni(), after);
+    LOG_INFO(Core, "coop: multiplayer tab: co-op that came with the game's start ended: {}{}", why,
+             after == before ? "" : kept ? " (coop.ini's server line commented out)" : " (coop.ini could not be written)");
+}
+
 // Host and Join through the module's own host (native-host-b, hos_coop_host.h): the co-op server or the
 // invite code's join helper on the module's "coop host" thread, and this game's client connected to it.
 bool Busy() {
@@ -396,6 +421,7 @@ void Save();
 // (the session's lines say why).
 bool Host() {
     g_player_acted = true;
+    if (!LauncherLive()) EndLauncher("the player hosts while it is not in a game");
     if (g_doing == "hosting" && !g_coop_on) {
         Save();
         CoopHookshot::HostMenu().Leave();
@@ -444,6 +470,8 @@ bool Host() {
 // join could not start (the session's lines say why).
 bool Join(const std::string& text) {
     if (!g_auto_join) g_player_acted = true;
+    // (the player's own Join; auto-rejoin never ends co-op that came with the game's start: it may be connecting)
+    if (!g_auto_join && !LauncherLive()) EndLauncher("the player joins while it is not in a game");
     if (Busy()) {
         g_menu.SetNote({"Co-op is on already in this game: stop it first, or start the game again."});
         return false;
@@ -495,6 +523,7 @@ bool Join(const std::string& text) {
 void Leave() {
     g_player_left = true;
     LOG_INFO(Core, "coop: multiplayer tab: {}", g_doing == "hosting" ? "stop hosting" : "leave the friend's game");
+    EndLauncher("the player left");   // (co-op that came with the game's start: its client goes; none: nothing)
     CoopHookshot::HostMenu().Leave();
     CoopTitle::StopSaveWait();
     g_doing.clear();
@@ -1119,7 +1148,7 @@ void SayOnPage(const char* otherwise) {
     LOG_INFO(Core, "coop: multiplayer tab: the pause menu's Multiplayer page says: {}", t);
 }
 
-constexpr const char* kSayLauncher = "Co-op came with the game's start: start the game again to change it.";
+constexpr const char* kSayLauncher = "Co-op came with the game's start: Leave it first to host or join another game.";
 constexpr const char* kSayRefused = "Co-op did not start.";
 
 // The menu on its main page, the settings as the files have them now (Host reads them from the menu), no note.
@@ -1133,14 +1162,14 @@ void FreshMain() {
 
 bool ByLauncher() {
     std::lock_guard lock(g_mutex);
-    return g_coop_on;
+    return LauncherLive();
 }
 
 void HostNow() {
     std::lock_guard lock(g_mutex);
     FreshMain();
     LOG_INFO(Core, "coop: multiplayer tab: host from the pause menu's Multiplayer page");
-    if (g_coop_on) {   // (the main page's Host row says why: kByLauncher)
+    if (LauncherLive()) {   // (the main page's Host row says why: kByLauncher; not in a game: Host() ends it first)
         LOG_INFO(Core, "coop: multiplayer tab: not hosting: co-op came with the game's start");
         SayOnPage(kSayLauncher);
         return;
@@ -1152,20 +1181,14 @@ void HostNow() {
 
 void LeaveNow() {
     std::lock_guard lock(g_mutex);
-    if (g_coop_on) {   // (as the menu: no Leave row for it; its main page says to start the game again)
-        FreshMain();
-        LOG_INFO(Core, "coop: multiplayer tab: not leaving: co-op came with the game's start");
-        SayOnPage(kSayLauncher);
-        return;
-    }
-    Act(Request{Request::Kind::kLeave, {}});
+    Act(Request{Request::Kind::kLeave, {}});   // (co-op that came with the game's start too: Leave ends it, row 170)
 }
 
 void JoinPasteNow() {
     std::lock_guard lock(g_mutex);
     FreshMain();
     LOG_INFO(Core, "coop: multiplayer tab: join with the clipboard's code from the pause menu's Multiplayer page");
-    if (g_coop_on) {
+    if (LauncherLive()) {   // (not in a game: Join() ends it first, row 170)
         SayOnPage(kSayLauncher);
         return;
     }
@@ -1227,7 +1250,7 @@ void JoinLanNow(const std::string& address, std::uint16_t port, const std::strin
     std::lock_guard lock(g_mutex);
     FreshMain();
     LOG_INFO(Core, "coop: multiplayer tab: join a game on this network from the pause menu's Multiplayer page");
-    if (g_coop_on) {
+    if (LauncherLive()) {   // (not in a game: Join() ends it first, row 170)
         SayOnPage(kSayLauncher);
         return;
     }
@@ -1245,7 +1268,7 @@ void JoinRoomNow(const std::string& room, const std::string& password) {
     std::lock_guard lock(g_mutex);
     FreshMain();
     LOG_INFO(Core, "coop: multiplayer tab: join a room by its name from the pause menu's Multiplayer page");
-    if (g_coop_on) {
+    if (LauncherLive()) {   // (not in a game: Join() ends it first, row 170)
         SayOnPage(kSayLauncher);
         return;
     }
@@ -1272,9 +1295,10 @@ void RejoinNow() {
     FreshMain();
     LOG_INFO(Core, "coop: multiplayer tab: the last game again from the pause menu's Multiplayer page");
     const auto code = CoopTitleMenu::IniGet(ReadText(CoopIni()), "last_invite");
-    if (g_coop_on || !code || code->empty()) {
-        if (!g_coop_on) g_menu.SetNote({"No last game to join again: paste your friend's code."});
-        SayOnPage(g_coop_on ? kSayLauncher : kSayRefused);
+    const bool live = LauncherLive();   // (not in a game: Join() ends it first, row 170)
+    if (live || !code || code->empty()) {
+        if (!live) g_menu.SetNote({"No last game to join again: paste your friend's code."});
+        SayOnPage(live ? kSayLauncher : kSayRefused);
         return;
     }
     if (!Join(*code)) SayOnPage(kSayRefused);

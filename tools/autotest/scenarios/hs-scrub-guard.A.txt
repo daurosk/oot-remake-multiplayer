@@ -21,10 +21,10 @@ wait 300
 press A
 wait 2400
 mark after
-place -29.5 53.2 26.0
+place -26.0 53.2 31.0
 wait 240
 mark placed
-toward -29.0 41.2 10
+toward -23.7 40.0 10
 wait 1800
 mark a-waits
 wait 2400

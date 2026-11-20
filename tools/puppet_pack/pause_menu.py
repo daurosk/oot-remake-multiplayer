@@ -8,11 +8,11 @@ Writes into the puppet mod's romfs:
           the R label moved right of it. The game's four tabs and L stay where they are: the
           strip's own animation places the tabs (seen in a run, 2026-11-18: moved ones went back)
       PlusMenu_00.buil (the pages): Pa_Coop_00, a copy of the System page, where a page shows
-      PaSystemMenu_00.buil (the System page's own layout, which both pages use): Pa_Game_00..07, eight
-          copies of its first button in two columns of four on the right half, where the controller
-          picture is, lined up with the rows: the game browser's cells. Stored hidden, so the System
-          page never shows them; the module shows them on ours (its copy of the controller picture
-          is hidden)
+      PaSystemMenu_00.buil (the System page's own layout, which both pages use): Pa_List_00..06,
+          seven of the game's Options rows (PaOptionBtnLevel_00: a name on the left, a value
+          between arrows on the right) down the right half, where the controller picture is: the
+          game browser's list (a header, then six games). Stored hidden, so the System page never
+          shows them; the module shows them on ours (its copy of the controller picture is hidden)
   Mals/<language>.Product.110.sarc.zs
       LayoutMsg/MenuOverlay_00.msbt: the tab's name; LayoutMsg/PlusMenu_00.msbt: the page's five
       rows (strings/en.txt and its translations: labels named for the panes they fill, as the
@@ -57,11 +57,13 @@ SYSTEM_PAGE = "Pa_System_00"
 NEW_PAGE = "Pa_Coop_00"
 PAGE_PARENT = "N_InOut_00"
 SYSTEM_LAYOUT = "PaSystemMenu_00.buil"
-CELL = "Pa_Game_%02d"          # the game browser's cells (CoopPauseTab::kCells)
-CELLS = 8
-CELL_SOURCE = "Pa_Button_00"
-CELL_X = (140.0, 940.0)        # the two columns' centres: the controller picture's half (x 540, 2600 wide)
-CELL_ROWS = ("Pa_Button_00", "Pa_Button_01", "Pa_Button_02", "Pa_Button_03")   # each row of cells at a row's height
+ROW = "Pa_List_%02d"           # the game browser's rows (CoopPauseTab::kListRows: a header and kCells games)
+ROWS = 7
+ROW_SOURCE = "Pa_Button_00"     # (a part of the page's own, in whose place each row is made)
+ROW_LAYOUT = "PaOptionBtnLevel_00"   # the game's Options row: T_Option_00 on the left, T_Text_00 between arrows
+ROW_SIZE = (1920.0, 126.0)      # its N_BtnWidth_00
+ROW_X = 540.0                   # the centre of the controller picture's half (2600 wide)
+ROW_TOP, ROW_STEP = 420.0, -172.0   # the Options screen's rows are about 172 apart (seen in a run, 2026-11-19)
 
 PauseMenuError = ui_pack.UiPackError
 
@@ -124,25 +126,21 @@ def add_page(d):
     return ui_pack.clone_parts(d, [ui_pack.Copy(SYSTEM_PAGE, NEW_PAGE, move, parent=PAGE_PARENT, hidden=True)], new_id=_new_id)
 
 
-def add_cells(d):
-    """PaSystemMenu_00.buil with the game browser's cells: CELLS copies of its first button, two
-    columns (CELL_X) of four rows at the heights of the page's first four rows, stored hidden. Each
-    is a copy of the same button part; the page's own code binds its five Pa_Button_NN by name, so
-    the copies are no buttons of the game's. The game's button overrides some of its part's panes
-    (seen in a pack run, 2026-11-19): the copies go without those overrides (Copy.drop_overrides)."""
+def add_rows(d):
+    """PaSystemMenu_00.buil with the game browser's list: ROWS of the game's Options rows
+    (ROW_LAYOUT) down the right half, ROW_STEP apart from ROW_TOP, stored hidden. Each is made in
+    the place of the page's first button (Copy.part_layout); the page's own code binds its five
+    Pa_Button_NN by name, so the rows are no buttons of the game's, and the module gives them their
+    words (live texts) and their look."""
     panes, _ = ui_pack.read_layout(d)
     names = [p.name for p in panes]
-    for name in (CELL_SOURCE,) + CELL_ROWS:
-        if name not in names:
-            raise PauseMenuError("the layout has no %s" % name)
-    if CELL % 0 in names:
-        raise PauseMenuError("the layout has the cells already")
-    sx, sy = _xy(d, CELL_SOURCE)
-    copies = []
-    for i in range(CELLS):
-        _, y = _xy(d, CELL_ROWS[i // len(CELL_X)])
-        copies.append(ui_pack.Copy(CELL_SOURCE, CELL % i, (CELL_X[i % len(CELL_X)] - sx, y - sy), hidden=True,
-                                   drop_overrides=True))   # (the game's button has its own; the words are live)
+    if ROW_SOURCE not in names:
+        raise PauseMenuError("the layout has no %s" % ROW_SOURCE)
+    if ROW % 0 in names:
+        raise PauseMenuError("the layout has the list already")
+    sx, sy = _xy(d, ROW_SOURCE)
+    copies = [ui_pack.Copy(ROW_SOURCE, ROW % i, (ROW_X - sx, ROW_TOP + ROW_STEP * i - sy), hidden=True,
+                           part_layout=ROW_LAYOUT, size=ROW_SIZE) for i in range(ROWS)]
     return ui_pack.clone_parts(d, copies, new_id=_new_id)
 
 
@@ -182,7 +180,7 @@ def make(reader, dicts, recompress, strings=ui_pack.STRINGS):
     raw = reader.read(COMMON_ARCHIVE)
     plain = dicts.decompress(raw)
     entries = sarc.read_entries(plain)
-    for layout, edit in ((OVERLAY_LAYOUT, add_tab), (PAGES_LAYOUT, add_page), (SYSTEM_LAYOUT, add_cells)):
+    for layout, edit in ((OVERLAY_LAYOUT, add_tab), (PAGES_LAYOUT, add_page), (SYSTEM_LAYOUT, add_rows)):
         olds = [data for name, data in entries if name == layout]
         if not olds:
             raise PauseMenuError("%s has no %s" % (COMMON_ARCHIVE, layout))

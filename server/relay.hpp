@@ -18,7 +18,8 @@
 //   host name, players, most players and protocol version, never the
 //   password. Anyone may ask for the list (kListRooms, a page at a time,
 //   newest first); a room leaves it when its host stops, goes quiet or
-//   unlists it.
+//   unlists it. One address gets 30 pages a minute, sends 30 LIST_ROOM a
+//   minute and puts 6 rooms on the list in ten minutes; more are ignored.
 //
 // Relay is the rules without a network (tests drive it); RelayServer is the
 // socket loop around it.
@@ -62,7 +63,14 @@ struct RelayConfig {
   std::uint32_t registers_per_window = 6;     // new hosts from one address
   std::uint64_t window_ms = 10 * 60'000;
   std::uint32_t lists_per_window = 30;        // room list pages asked from one address
-  std::uint64_t list_window_ms = 60'000;
+  // LIST_ROOM from one address (a host's link sends one each 5 seconds: 24 a
+  // minute for the 2 hosts an address may have); more are not taken.
+  std::uint32_t listings_per_window = 30;
+  std::uint64_t list_window_ms = 60'000;      // (for both)
+  // Rooms put on the list from one address in window_ms, each listing that was
+  // off the list counted (as registers_per_window counts new hosts): a room
+  // taken off and listed again would go to the top of the list each time.
+  std::uint32_t new_listings_per_window = 6;
   std::function<void(const std::string&)> log;
   // Random numbers for join codes; std::random_device when empty.
   std::function<std::uint64_t()> random;
@@ -80,6 +88,7 @@ struct RelayStats {
   std::uint64_t rooms_taken = 0;  // a room name another host already had
   std::uint64_t lists_answered = 0;  // room list pages sent
   std::uint64_t lists_limited = 0;   // room list asks over the limit (not answered)
+  std::uint64_t listings_limited = 0;  // LIST_ROOM over a limit (not taken)
 };
 
 class Relay {
@@ -153,6 +162,8 @@ class Relay {
   std::map<std::uint32_t, Tries> lookups_;
   std::map<std::uint32_t, Tries> registers_;
   std::map<std::uint32_t, Tries> lists_;
+  std::map<std::uint32_t, Tries> listings_;
+  std::map<std::uint32_t, Tries> new_listings_;
   std::uint64_t list_order_ = 0;  // a number that goes up with each new listing (newest first)
 };
 

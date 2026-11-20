@@ -130,39 +130,44 @@ class PageTest(unittest.TestCase):
             pm.add_page(make_layout(PAGES[:7], {k: v for k, v in PAGES_PARTS.items() if k != "Pa_System_00"}))
 
 
-class CellsTest(unittest.TestCase):
-    def test_eight_cells_in_two_columns_at_the_rows_heights_stored_hidden(self):
+class RowsTest(unittest.TestCase):
+    def test_seven_options_rows_down_the_right_half_stored_hidden(self):
         d = bytearray(system())
         # (the game's buttons override panes of their part: its two override lists, at +0x08 and +0x18, not empty)
         src = next(p for p in ui_pack.read_layout(bytes(d))[1] if p.name == "Pa_Button_00").record
         struct.pack_into("<QII", d, src + 0x08, 0x10, 1, 8)
-        props = ui_pack._q(bytes(d), src + 0x38)   # (and a properties list that is not empty)
-        if props:
-            struct.pack_into("<QI", d, props, 0x20, 2)
         d = bytes(d)
-        n = pm.add_cells(d)
+        n = pm.add_rows(d)
         panes, parts = ui_pack.read_layout(n)
-        self.assertEqual([p.name for p in panes[-pm.CELLS:]], [pm.CELL % i for i in range(pm.CELLS)])
-        self.assertEqual([p.name for p in parts[-pm.CELLS:]], [pm.CELL % i for i in range(pm.CELLS)])
-        for i in range(pm.CELLS):
-            x, y, parent, _ = pane(n, pm.CELL % i)
+        self.assertEqual([p.name for p in panes[-pm.ROWS:]], [pm.ROW % i for i in range(pm.ROWS)])
+        self.assertEqual([p.name for p in parts[-pm.ROWS:]], [pm.ROW % i for i in range(pm.ROWS)])
+        for i in range(pm.ROWS):
+            x, y, parent, _ = pane(n, pm.ROW % i)
             self.assertEqual(parent, "N_InOut_00")
-            self.assertEqual(x, pm.CELL_X[i % 2])
-            self.assertEqual(y, pane(d, "Pa_Button_%02d" % (i // 2))[1])   # (a row's height)
-            self.assertEqual(struct.unpack_from("<I", n, panes[len(SYSTEM) + i].record + 0x38)[0] & 1, 0)   # hidden
-            self.assertEqual(ui_pack._cstr(n, struct.unpack_from("<Q", n, parts[-pm.CELLS + i].record)[0]),
-                             "PaCommonBtnThin_00")
-            rec = parts[-pm.CELLS + i].record
-            self.assertEqual(n[rec + 0x08:rec + 0x28], bytes(0x20))
-            mine = ui_pack._q(n, rec + 0x38)
-            self.assertTrue(mine == 0 or not any(n[mine:mine + 16]))   # (no properties)
+            self.assertAlmostEqual(x, pm.ROW_X)
+            self.assertAlmostEqual(y, pm.ROW_TOP + pm.ROW_STEP * i)
+            rec = panes[len(SYSTEM) + i].record
+            self.assertEqual(struct.unpack_from("<I", n, rec + 0x38)[0] & 1, 0)   # (hidden)
+            self.assertEqual(struct.unpack_from("<ff", n, rec + 0x2c), pm.ROW_SIZE)
+            part = parts[-pm.ROWS + i].record
+            self.assertEqual(ui_pack._cstr(n, struct.unpack_from("<Q", n, part)[0]), pm.ROW_LAYOUT)
+            self.assertEqual(n[part + 0x08:part + 0x28], bytes(0x20))           # (no overrides)
+            self.assertEqual(struct.unpack_from("<QI", n, part + 0x28), (0, 0))  # (no parameters)
         self.assertEqual(struct.unpack_from("<QII", n, src + 0x08), (0x10, 1, 8))   # (the game's button keeps its own)
-        with self.assertRaises(ui_pack.UiPackError):   # (a copy that would keep them is still refused)
-            ui_pack.clone_parts(d, [ui_pack.Copy("Pa_Button_00", "Pa_Other_00")])
         for name in [p[0] for p in SYSTEM]:
             self.assertEqual(pane(n, name)[:3], pane(d, name)[:3], name)   # the page's own panes where they were
         with self.assertRaises(pm.PauseMenuError):
-            pm.add_cells(n)   # (twice)
+            pm.add_rows(n)   # (twice)
+
+    def test_another_part_layout_needs_its_size_and_takes_no_parameters(self):
+        d = system()
+        with self.assertRaises(ui_pack.UiPackError):
+            ui_pack.clone_parts(d, [ui_pack.Copy("Pa_Button_00", "Pa_X_00", part_layout="PaOther_00")])
+        with self.assertRaises(ui_pack.UiPackError):
+            ui_pack.clone_parts(d, [ui_pack.Copy("Pa_Button_00", "Pa_X_00", part_layout="PaOther_00", size=(1, 1),
+                                                 params={"State": 1.0})])
+        with self.assertRaises(ui_pack.UiPackError):
+            ui_pack.clone_parts(d, [ui_pack.Copy("Pa_Button_00", "Pa_X_00", size=(1, 1))])
 
 
 class _Plain:
@@ -235,7 +240,7 @@ class BuildTest(unittest.TestCase):
         common = dict(sarc.read_entries(written[pm.COMMON_ARCHIVE]))
         self.assertIn("Pa_Category_04", [p.name for p in ui_pack.read_layout(common[pm.OVERLAY_LAYOUT])[0]])
         self.assertIn("Pa_Coop_00", [p.name for p in ui_pack.read_layout(common[pm.PAGES_LAYOUT])[0]])
-        self.assertIn(pm.CELL % 7, [p.name for p in ui_pack.read_layout(common[pm.SYSTEM_LAYOUT])[0]])
+        self.assertIn(pm.ROW % 6, [p.name for p in ui_pack.read_layout(common[pm.SYSTEM_LAYOUT])[0]])
         self.assertEqual(common["Other_00.buil"], b"other")
         ours = ui_pack.load_strings("USen")
         msgs = sarc.read(written["Mals/USen.Product.110.sarc.zs"])
@@ -247,10 +252,10 @@ class BuildTest(unittest.TestCase):
             label = "Pa_Coop_00-Pa_Button_%02d-T_Btn_00" % i
             self.assertEqual(page.text(label), [ours[pm.PAGES_MSG][label]])
         self.assertEqual(page.text("Pa_System_00-Pa_Button_00-T_Btn_00"), ["Save"])
-        # The module's live texts (coop_pause_tab_module.cpp, kLiveSlots / kLivePlaceholder): Coop_Live_00..15 (the
+        # The module's live texts (coop_pause_tab_module.cpp, kLiveSlots / kLivePlaceholder): Coop_Live_00..47 (the
         # rows' and the browser's cells'), each exactly 64 dots, in the built message file (the module refuses any
         # other text or length).
-        for i in range(16):
+        for i in range(48):
             label = "Coop_Live_%02d" % i
             self.assertEqual(page.text(label), ["." * 64], label)
         self.assertTrue(all(sizes[k] > before[k] for k in before

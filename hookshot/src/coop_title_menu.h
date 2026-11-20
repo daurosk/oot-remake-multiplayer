@@ -90,6 +90,7 @@ struct Options {
     std::string relay;             // relay (the host's: host through that relay, Host.bat's too; read only here)
     std::string relay_key;         // relay_key (that relay's host key; read only)
     std::string relay_room;        // relay_room (a room name on the relay, issue 261; read only)
+    std::string list_name;         // list_name (the name list_room shows the room as; "": the room name; read only)
 
     // From the two files' texts (a missing file: "").
     static Options Read(std::string_view coop_ini, std::string_view options_ini);

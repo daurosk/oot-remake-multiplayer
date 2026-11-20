@@ -421,8 +421,10 @@ bool Host() {
     h.relay_via = o.relay.empty() ? nullptr : o.relay.c_str();
     h.relay_key = o.relay_key.empty() ? nullptr : o.relay_key.c_str();
     h.relay_room = o.relay_room.empty() ? nullptr : o.relay_room.c_str();
-    // (the room on the relay's public list, under the player's name, only when they turned it on: list_room)
-    h.relay_list = o.list_room && !o.relay_room.empty() ? o.name.c_str() : nullptr;
+    // (the room on the relay's public list only when they turned it on, list_room: shown as list_name, or as the
+    // room name without one; never the player's name unless they typed it there)
+    const std::string& shown = o.list_name.empty() ? o.relay_room : o.list_name;
+    h.relay_list = o.list_room && !o.relay_room.empty() ? shown.c_str() : nullptr;
     g_doing = "hosting";
     ++g_session;
     g_copied = false;

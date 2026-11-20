@@ -709,10 +709,13 @@ TEST_CASE("title menu: a room or join code through a relay is an address, and th
     CHECK(o.relay == "relay.example.net:27530");
     CHECK(o.relay_key.empty());
     CHECK(o.relay_room == "forest-gang");
+    CHECK(o.list_name.empty());   // (the public list shows the room name)
+    CHECK(Options::Read("", "list_name =  Saria's forest \r\n").list_name == "Saria's forest");
     // Read only: writing the options leaves the relay lines as they are.
-    std::string coop, options = "relay = relay.example.net:27530\r\nrelay_room = forest-gang\r\n";
+    std::string coop, options = "relay = relay.example.net:27530\r\nrelay_room = forest-gang\r\nlist_name = Saria's forest\r\n";
     o.Write(coop, options);
     CHECK(options.find("relay_room = forest-gang") != std::string::npos);
+    CHECK(options.find("list_name = Saria's forest") != std::string::npos);
 }
 
 TEST_CASE("title menu: ParsePort and host port, 1 to 65535, read and written") {

@@ -424,6 +424,11 @@ float Ahead(float prev, float now, float limit);
 
 // What the rows say, in the game's own text panes (the module writes them through the pack's placeholder messages,
 // Coop_Live_NN, in LayoutMsg/PlusMenu_00): the session's state on the rows themselves.
+// A row of the game browser's list (View::kLan, ListLines): its left text and its right one; both "" for a row not shown.
+struct ListLine {
+    std::string name, value;   // the row's left text and its right one; both "" for a row not shown
+};
+
 struct SessionView {
     Session s;
     bool connecting = false;     // starting a server, or joining (not in yet)
@@ -447,6 +452,7 @@ struct SessionView {
     bool room_ready = false, relay_set = false;
     std::vector<std::string> lan_rows;    // the games on this network, as their rows say them (CoopLan::RowText)
     std::vector<std::string> online_rows; // the relay's public rooms, as their cells say them (CoopRoomList::CellText)
+    std::vector<ListLine> lan_list, online_list;   // the same, as the browser's list shows them (name, players)
     std::string online_state;             // the browser's online list when it has no rooms: why ("" asking)
     int cell = -1;                        // the browser's cell picked with the pad or the mouse (-1: the rows')
     std::string lan_game;                 // a game's view: the game picked, as its row said it
@@ -465,19 +471,24 @@ std::vector<std::string> RowTexts(const SessionView& v);
 // A view's rows (kMain: RowTexts). A row with nothing on it says " " (a pane's text is never empty).
 std::vector<std::string> RowTexts(View view, const SessionView& v);
 
-// --- The game browser (View::kLan): the games in cells on the right of the page ---
-// The page's right half held System's controller picture (hidden on ours): the pack puts kCells copies of the page's
-// button there, Pa_Game_00..07 (tools/puppet_pack/pause_menu.py), two columns of four lined up with the rows, stored
-// hidden. The rows choose the list (this network's games, or the relay's public rooms) and its page; the cells show
-// a page of it. Right (or the mouse) goes into the cells, Left from the left column or B back to the rows; A on a cell
-// opens that game's view (a game on this network: its password, then Join; a room: the Join view with its name).
-inline constexpr int kCells = 8, kCellColumns = 2;
-// The cells' texts for this page ("" a cell not shown). With nothing listed, the first says why.
-std::vector<std::string> CellTexts(const SessionView& v);
-// A relay room's cell: "kokiri: Saria (2/4)", the room and the host's name it was listed under (both public: anyone
-// who asks the relay reads them, so the cell shows them too), then `tail` (" (2/4)", " (full)", " (other version)").
-// Within kRowChars: the longer of the two names is cut first ("..."), never the tail.
-std::string RoomCell(const std::string& room, const std::string& host, const std::string& tail);
+// --- The game browser (View::kLan): a list of the games on the right of the page, as a server browser ---
+// The page's right half held System's controller picture (hidden on ours): the pack puts kListRows of the game's own
+// Options rows there (PaOptionBtnLevel_00: a name on the left, a value on the right), Pa_List_00..06
+// (tools/puppet_pack/pause_menu.py), stored hidden. The first is the list's header (its columns' names), the others a
+// page of kCells games: the game and its host on the left, its players on the right. The rows on the left choose the
+// list (this network's games, or the relay's public rooms) and its page. Right (or the mouse, or A on the list shown)
+// goes into the list, up and down move in it, Left or B back to the rows; A on a game opens its view (a game on this
+// network: its password, then Join; a room: the Join view with its name). ("Cells" below are the list's game rows.)
+inline constexpr int kCells = 6, kCellColumns = 1, kListRows = kCells + 1;
+inline constexpr std::size_t kListNameChars = 30, kListValueChars = 16;   // (the row's left box is 908 units, its right 682)
+// The list's rows for this page: the header, then a page of games ("" rows not shown). With nothing listed, the
+// first game row says why.
+std::vector<ListLine> ListLines(const SessionView& v);
+// What a game's right column says: "2/4", "Full", "Other version" (it cannot be joined from here).
+std::string ListValue(int players, int max, bool same_version);
+// What a room's left column says: the name its host listed it under (the room name unless they picked one), with the
+// room name after it when that is another: "Saria's forest (forest-gang)".
+std::string ListName(const std::string& shown, const std::string& room);
 // The games the browser lists now (the chosen list's), and its pages.
 int BrowseListed(const Session& s);
 int CellPages(int listed);

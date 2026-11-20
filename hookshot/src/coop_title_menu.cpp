@@ -310,6 +310,7 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     o.relay = std::string(Trim(IniGet(options_ini, "relay").value_or("")));
     o.relay_key = std::string(Trim(IniGet(options_ini, "relay_key").value_or("")));
     o.relay_room = std::string(Trim(IniGet(options_ini, "relay_room").value_or("")));
+    o.list_name = std::string(Trim(IniGet(options_ini, "list_name").value_or("")));
     if (const auto v = IniGet(options_ini, "max_players"); v && !v->empty() && v->size() <= 2 &&
         std::all_of(v->begin(), v->end(), [](char c) { return c >= '0' && c <= '9'; })) {
         o.max_players = std::clamp(std::stoi(*v), kMinPlayers, kMaxPlayers);

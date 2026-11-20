@@ -1152,91 +1152,82 @@ TEST_CASE("pause tab: the game browser: the rows choose the list and its page, t
     CHECK(rows[0] == "Local games (0)");   // (the list the cells show: the module dims the other's row)
     CHECK(rows[1] == "Online games");      // (not asked yet)
     CHECK(rows[2] == "Refresh list");      // (one page: no empty row)
-    CHECK(rows[3] == "List me (my name): Off");
+    CHECK(rows[3] == "List my room: Off");
     CHECK(rows[kRows - 1] == "Back");
-    auto cells = CellTexts(v);
-    REQUIRE(cells.size() == static_cast<std::size_t>(kCells));
-    CHECK(cells[0] == "Looking for games...");
-    CHECK(cells[1].empty());
+    auto lines = ListLines(v);
+    REQUIRE(lines.size() == static_cast<std::size_t>(kListRows));
+    CHECK(lines[0].name == "Game");      // (the header: the columns' names)
+    CHECK(lines[0].value == "Players");
+    CHECK(lines[1].name == "Looking for games...");
+    CHECK(lines[1].value.empty());
+    CHECK(lines[2].name.empty());
     v.lan_rows = {"Mido's game (1/4)", "Saria's game (full)"};
+    v.lan_list = {{"Mido's game", "1/4"}, {"Saria's game: kokiri", "Full"}};
     v.s.lan_listed = 2;
-    cells = CellTexts(v);
-    CHECK(cells[0] == "Mido's game (1/4)");
-    CHECK(cells[1] == "Saria's game (full)");
-    CHECK(cells[2].empty());
-    v.s.online = true;   // (the relay's list: why there are none, in the first cell)
+    lines = ListLines(v);
+    CHECK(lines[1].name == "Mido's game");
+    CHECK(lines[1].value == "1/4");
+    CHECK(lines[2].name == "Saria's game: kokiri");
+    CHECK(lines[2].value == "Full");
+    CHECK(lines[3].name.empty());
+    v.s.online = true;   // (the relay's list: why there are none, in the first game row)
     v.online_state = "No relay set";
     rows = RowTexts(View::kLan, v);
     CHECK(rows[0] == "Local games (2)");
     CHECK(rows[1] == "Online games (0)");
-    CHECK(CellTexts(v)[0] == "No relay set");
+    CHECK(ListLines(v)[0].name == "Game");
+    CHECK(ListLines(v)[1].name == "No relay set");
     v.online_state.clear();
     v.online_rows.assign(10, "kokiri (1/4)");
+    v.online_list.assign(10, ListLine{"kokiri (Saria)", "1/4"});
+    v.online_list[7] = ListLine{"a room with a very long name indeed (Saria)", "Other version"};
     v.s.online_listed = 10;
     v.s.list_room = true;
     rows = RowTexts(View::kLan, v);
     CHECK(rows[1] == "Online games (10)");
     CHECK(rows[2] == "Next page (1/2)");
-    CHECK(rows[3] == "List me (my name): On");
-    v.s.cell_page = 1;   // (the second page: the 9th and 10th rooms)
-    cells = CellTexts(v);
-    CHECK(cells[0] == "kokiri (1/4)");
-    CHECK(cells[1] == "kokiri (1/4)");
-    CHECK(cells[2].empty());
-    CHECK(CellIndex(v.s, 1) == 9);
-    CHECK(CellIndex(v.s, 2) == -1);
-    for (const View w : {View::kLan}) {
-        for (const std::string& r : RowTexts(w, v)) CHECK(r.size() <= kRowChars);
-    }
-    for (const std::string& c : CellTexts(v)) CHECK(c.size() <= kRowChars);
+    CHECK(rows[3] == "List my room: On");
+    lines = ListLines(v);
+    CHECK(lines[2].name == "kokiri (Saria)");
+    v.s.cell_page = 1;   // (the second page: the 7th to 10th rooms)
+    lines = ListLines(v);
+    CHECK(lines[1].name == "kokiri (Saria)");
+    CHECK(lines[2].name == "a room with a very long nam...");   // (cut to kListNameChars)
+    CHECK(lines[2].name.size() <= kListNameChars);
+    CHECK(lines[2].value == "Other version");
+    CHECK(lines[4].name == "kokiri (Saria)");
+    CHECK(lines[5].name.empty());
+    CHECK(CellIndex(v.s, 3) == 9);
+    CHECK(CellIndex(v.s, 4) == -1);
+    for (const std::string& r : RowTexts(View::kLan, v)) CHECK(r.size() <= kRowChars);
+    CHECK(ListValue(2, 4, true) == "2/4");
+    CHECK(ListValue(4, 4, true) == "Full");
+    CHECK(ListValue(1, 4, false) == "Other version");
+    CHECK(ListValue(3, 0, true) == "3");
+    // A room: the name its host listed it under, with the room name after it when that is another.
+    CHECK(ListName("forest-gang", "forest-gang") == "forest-gang");
+    CHECK(ListName("Forest-Gang", "forest-gang") == "Forest-Gang");   // (the same room name in another case)
+    CHECK(ListName("", "forest-gang") == "forest-gang");
+    CHECK(ListName("Saria's forest", "forest-gang") == "Saria's forest (forest-gang)");
 }
 
-TEST_CASE("pause tab: a relay room's cell shows its room and its host's name, cut to fit, the count kept") {
-    CHECK(RoomCell("kokiri", "Saria", " (2/4)") == "kokiri: Saria (2/4)");
-    for (const auto& [room, host, tail] :
-         {std::tuple<std::string, std::string, std::string>{"forest-gang-and-friends", "Saria", " (2/4)"},
-          {"kokiri", "A very long player name here", " (1/16)"},
-          {"forest-gang-and-friends", "A very long player name here", " (other version)"},
-          {"abc", "Ã©Ã©Ã©Ã©Ã©Ã©Ã©Ã©Ã©Ã©", " (1/4)"}}) {
-        const std::string c = RoomCell(room, host, tail);
-        CHECK(c.size() <= kRowChars);
-        CHECK(c.size() >= tail.size());
-        CHECK(c.compare(c.size() - tail.size(), tail.size(), tail) == 0);   // (the count is never cut)
-        CHECK(c.find(host.substr(0, 1)) != std::string::npos);              // (the host's name starts there)
-        CHECK(c.find(": ") != std::string::npos);
-        for (std::size_t i = 0; i + 1 < c.size(); ++i) {   // (no UTF-8 letter cut in half: no lead byte before ASCII)
-            const auto a = static_cast<unsigned char>(c[i]), b = static_cast<unsigned char>(c[i + 1]);
-            CHECK_FALSE(((a & 0xe0) == 0xc0 && (b & 0xc0) != 0x80));
-        }
-    }
-    CHECK(RoomCell("forest-gang-and-friends", "Saria", " (2/4)") == "forest-g...: Saria (2/4)");
-}
-
-TEST_CASE("pause tab: the browser's cells: two columns, the arrows among them, Left from the left column to the rows") {
-    // 0 1
-    // 2 3
-    // 4 5
-    // 6 7
-    CHECK(CellMove(0, 1, 0, 8) == 1);
-    CHECK(CellMove(1, 1, 0, 8) == 1);              // (the right edge)
-    CHECK(CellMove(1, -1, 0, 8) == 0);
-    CHECK(CellMove(0, -1, 0, 8) == kRowsCell);     // (Left from the left column: the rows)
-    CHECK(CellMove(2, -1, 0, 8) == kRowsCell);
-    CHECK(CellMove(0, 0, 1, 8) == 2);
-    CHECK(CellMove(6, 0, 1, 8) == 6);              // (the bottom)
-    CHECK(CellMove(2, 0, -1, 8) == 0);
-    CHECK(CellMove(0, 0, -1, 8) == 0);             // (the top)
-    CHECK(CellMove(2, 0, 1, 3) == 2);              // (only three games: no cell below)
-    CHECK(CellMove(1, 0, 1, 3) == 1);
-    CHECK(CellMove(-1, 1, 0, 8) == kRowsCell);
+TEST_CASE("pause tab: the browser's list: up and down among its games, Left to the rows, the row under the mouse") {
+    CHECK(CellMove(0, 0, 1, 6) == 1);
+    CHECK(CellMove(5, 0, 1, 6) == 5);              // (the bottom)
+    CHECK(CellMove(2, 0, -1, 6) == 1);
+    CHECK(CellMove(0, 0, -1, 6) == 0);             // (the top)
+    CHECK(CellMove(1, 0, 1, 2) == 1);              // (only two games: none below)
+    CHECK(CellMove(3, -1, 0, 6) == kRowsCell);     // (Left: back to the rows)
+    CHECK(CellMove(3, 1, 0, 6) == 3);              // (Right: one column, nothing to the right)
+    CHECK(CellMove(-1, 0, 1, 6) == kRowsCell);
     std::array<RowBox, kCells> boxes{};
-    boxes[0] = RowBox{true, -220, 160, 500, 340};
-    boxes[1] = RowBox{true, 580, 160, 1300, 340};
+    boxes[0] = RowBox{true, -400, 180, 1480, 320};
+    boxes[1] = RowBox{true, -400, 8, 1480, 148};
     CHECK(CellAt(boxes, 0, 250) == 0);
-    CHECK(CellAt(boxes, 900, 250) == 1);
-    CHECK(CellAt(boxes, 540, 250) == -1);          // (between them)
+    CHECK(CellAt(boxes, 900, 80) == 1);
+    CHECK(CellAt(boxes, 900, 165) == -1);          // (between them)
     boxes[1].shown = false;
-    CHECK(CellAt(boxes, 900, 250) == -1);
+    CHECK(CellAt(boxes, 900, 80) == -1);
 }
 
 TEST_CASE("pause tab: a game on this network: its password typed on a row, then Join this game, and Back to the list") {

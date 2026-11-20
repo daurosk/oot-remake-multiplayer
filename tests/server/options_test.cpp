@@ -54,7 +54,7 @@ TEST_CASE("command line: --relay-room needs --relay-via and a room name (issue 2
   CHECK(!parse_command_line({"--relay-via", "relay.example.net", "--relay-room"}, error).has_value());
 }
 
-TEST_CASE("command line: --relay-list lists the room under a host name, and needs --relay-room") {
+TEST_CASE("command line: --relay-list lists the room under a name (the room's without one), and needs --relay-room") {
   std::string error;
   auto listed = parse_command_line(
       {"--relay-via", "relay.example.net", "--relay-room", "forest-gang", "--relay-list", "Saria"}, error);
@@ -65,11 +65,25 @@ TEST_CASE("command line: --relay-list lists the room under a host name, and need
   CHECK(unlisted->relay_list.empty());  // (off unless asked)
   CHECK(!parse_command_line({"--relay-via", "relay.example.net", "--relay-list", "Saria"}, error).has_value());
   CHECK(error.find("--relay-room") != std::string::npos);
+  CHECK(!parse_command_line({"--relay-via", "relay.example.net", "--relay-list"}, error).has_value());
+  CHECK(error.find("--relay-room") != std::string::npos);
   CHECK(!parse_command_line({"--relay-via", "relay.example.net", "--relay-room", "forest-gang", "--relay-list", ""},
                             error)
              .has_value());
-  CHECK(!parse_command_line({"--relay-via", "relay.example.net", "--relay-room", "forest-gang", "--relay-list"}, error)
+  CHECK(!parse_command_line(
+             {"--relay-via", "relay.example.net", "--relay-room", "forest-gang", "--relay-list", std::string(33, 'a')},
+             error)
              .has_value());
+  // Without a name: the room name, whichever comes first; the next option is never taken as the name.
+  auto room_named =
+      parse_command_line({"--relay-via", "relay.example.net", "--relay-room", "forest-gang", "--relay-list"}, error);
+  REQUIRE(room_named.has_value());
+  CHECK(room_named->relay_list == "forest-gang");
+  auto list_first =
+      parse_command_line({"--relay-list", "--relay-via", "relay.example.net", "--relay-room", "Lake_Gang"}, error);
+  REQUIRE(list_first.has_value());
+  CHECK(list_first->relay_list == list_first->relay_room);
+  CHECK(list_first->relay_via == "relay.example.net");
 }
 
 TEST_CASE("command line: --bind and --allow") {

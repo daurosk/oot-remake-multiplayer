@@ -92,6 +92,11 @@ class Copy(NamedTuple):
     parent: Optional[str] = None
     hidden: bool = False
     drop_overrides: bool = False
+    # Another part layout for the copy (its name, as the archive's "<name>.buil"): the copy is a part of that layout in
+    # the source's place, with no parameters, overrides or properties (they were the source layout's), and the size
+    # (w, h) given here for its pane, as that layout's own is not read.
+    part_layout: Optional[str] = None
+    size: Optional[tuple] = None
 
 
 def _q(d, o):
@@ -318,6 +323,17 @@ def _clone(d, panes, parts, copies, new_id, out_of_order):
         if not ok:
             raise UiPackError("the move of %s is not (x, y)" % c.name)
         rec = part_of[si].record
+        if c.part_layout is not None:
+            if not re.fullmatch(r"[\x21-\x7e]{1,255}", c.part_layout) or c.params:
+                raise UiPackError("%s: another part layout needs a printable name, and takes no parameters" % c.name)
+            if c.size is None or len(c.size) != 2:
+                raise UiPackError("%s: another part layout needs its size (w, h)" % c.name)
+            for v in c.size:
+                _f32(v, "the size of %s" % c.name)
+            params_of.append([])
+            continue
+        if c.size is not None:
+            raise UiPackError("%s: a size is given only with another part layout" % c.name)
         if any(d[rec + 0x08:rec + 0x28]) and not c.drop_overrides:
             raise UiPackError("%s overrides panes of its part (+0x08, +0x18), which is not copied here" % c.source)
         props = _q(d, rec + 0x38)
@@ -349,11 +365,14 @@ def _clone(d, panes, parts, copies, new_id, out_of_order):
         out.extend(b)
         return at
 
-    # the new names, after the pool's strings
-    name_at = []
+    # the new names, after the pool's strings (and another part layout's name, for a copy that has one)
+    name_at, layout_at = [], []
     for c in copies:
         name_at.append(len(out))
         out.extend(c.name.encode("ascii") + b"\0")
+        layout_at.append(len(out) if c.part_layout is not None else 0)
+        if c.part_layout is not None:
+            out.extend(c.part_layout.encode("ascii") + b"\0")
     # the new pane records, each the last pane and its own subtree
     n0, p0 = len(panes), len(parts)
     if p0 + len(copies) > 0xFFFF:
@@ -370,6 +389,9 @@ def _clone(d, panes, parts, copies, new_id, out_of_order):
         struct.pack_into("<H", r, 0x42, p0 + i)
         if c.hidden:
             struct.pack_into("<I", r, 0x38, struct.unpack_from("<I", r, 0x38)[0] & ~1)   # (bit 0: shown at start)
+        if c.size is not None:
+            r[0x2c:0x30] = _f32(c.size[0], "the size of %s" % c.name)
+            r[0x30:0x34] = _f32(c.size[1], "the size of %s" % c.name)
         up = parent[si] if c.parent is None else index[c.parent]
         if end[up] != k and not out_of_order:
             raise UiPackError("the subtree of %s (where %s goes) ends before the last pane: the copy would be "
@@ -398,8 +420,11 @@ def _clone(d, panes, parts, copies, new_id, out_of_order):
     for i, (c, plist) in enumerate(zip(copies, params_of)):
         src = part_of[index[c.source]].record
         p = bytearray(d[src:src + PART_SIZE])
-        if c.drop_overrides:
+        if c.drop_overrides or c.part_layout is not None:
             p[0x08:0x28] = bytes(0x20)   # (no override lists: the part layout's own defaults)
+        if c.part_layout is not None:
+            struct.pack_into("<Q", p, 0x00, layout_at[i])
+            struct.pack_into("<QII", p, 0x28, 0, 0, 8)   # (no parameters)
         if plist:
             own = []
             for pname, e in plist:
@@ -410,7 +435,8 @@ def _clone(d, panes, parts, copies, new_id, out_of_order):
             struct.pack_into("<Q", p, 0x28, put(_q8(own)))
         props = _q(d, src + 0x38)
         if props:
-            struct.pack_into("<Q", p, 0x38, put(bytes(16) if c.drop_overrides else d[props:props + 16]))
+            empty = c.drop_overrides or c.part_layout is not None
+            struct.pack_into("<Q", p, 0x38, put(bytes(16) if empty else d[props:props + 16]))
         struct.pack_into("<Q", p, 0x40, n0 + i)
         part_recs.append(put(bytes(p)))
     keys, values, idarr, n = _dict(d, root + _PARTS)

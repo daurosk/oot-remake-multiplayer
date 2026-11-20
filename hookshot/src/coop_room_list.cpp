@@ -23,7 +23,8 @@ std::string CellText(const Room& r, int my_protocol) {
     } else if (r.max > 0) {
         tail = " (" + std::to_string(r.players) + "/" + std::to_string(r.max) + ")";
     }
-    return CoopPauseTab::RoomCell(r.room, r.host, tail);   // (the host's name too: what the list makes public)
+    // (the browser's list shows the name the room is listed under on its own line, CoopPauseTab::ListName)
+    return r.room + tail;
 }
 
 bool Joinable(const Room& r, int my_protocol) {

@@ -3856,6 +3856,49 @@ private:
         return CoopObjects::CheckedHitPlace(*at, boss, kHitNearBoss);
     }
 
+    // Row 178: the actor's own "takes no hit now" state (CoopBossNative::HitGuard): its Life component's
+    // invincibility counts and flags, and its no-hit map (each rigid body: in no-hit mode or not).
+    CoopBossNative::HitGuard ReadHitGuard(Reader& r, u64 a) {
+        namespace ba = CoopBossNative::addr;
+        CoopBossNative::HitGuard g;
+        const auto table = r.Ptr(a + kActorComponents);
+        const auto life = table ? r.Ptr(*table + ba::kComponentLife) : std::nullopt;
+        if (!life) {
+            return g;
+        }
+        const auto names = r.Get<s32>(*life + ba::kLifeInvincibleNames);
+        const auto other = r.Get<s32>(*life + ba::kLifeInvincibleOther);
+        const auto flags = r.Get<u32>(*life + ba::kLifeFlags);
+        if (!names || !other || !flags) {
+            return g;
+        }
+        g.read = true;
+        g.invincible_names = *names;
+        g.invincible_other = *other;
+        g.life_flags = *flags;
+        const auto map = r.Ptr(*table + ba::kComponentNoHit);
+        const auto keys = map ? r.Ptr(*map + ba::kNoHitKeys) : std::nullopt;
+        const auto values = map ? r.Ptr(*map + ba::kNoHitValues) : std::nullopt;
+        const s32 slots = map ? r.Get<s32>(*map + ba::kNoHitSlots).value_or(0) : 0;
+        if (!keys || !values || slots <= 0 || slots > ba::kNoHitMaxSlots) {
+            return g;
+        }
+        for (s32 i = 0; i < slots; ++i) {
+            const auto key = r.Get<u64>(*keys + 8 * static_cast<u64>(i));
+            const auto value = r.Get<u32>(*values + 4 * static_cast<u64>(i));
+            if (!key || !value) {
+                g.bodies = 0;  // (a part unread: nothing known of the bodies)
+                g.no_hit_bodies = 0;
+                return g;
+            }
+            if (*key != 0) {
+                ++g.bodies;
+                g.no_hit_bodies += *value != 0 ? 1 : 0;
+            }
+        }
+        return g;
+    }
+
     std::optional<std::pair<u64, u64>> LifeValue(Reader& r, u64 a) {
         const auto table = r.Ptr(a + kActorComponents);
         const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
@@ -4261,6 +4304,21 @@ private:
         ask.life = w.life;
         ask.old = old;
         ask.heal = w.heal;
+        // Row 178: another player's hit on our boss while it is in a move its own game takes no hit in.
+        // Its own game says whether it takes a hit now (HitGuard): for every boss, no move list.
+        CoopBossNative::HitGuard guard;
+        if (w.hurt > 0 && !w.direct && w.hitter != 0) {
+            guard = ReadHitGuard(r, w.address);
+            ask.out_of_reach = CoopBossNative::TheTable().OutOfReach(w.address, guard);
+            if (const auto move = CoopBossNative::TheTable().OurBossMove(w.address)) {
+                LOG_INFO(Core, "coop: objects: P{}'s hit on our boss {:#x} '{}' in '{}': its game {} (row 178: "
+                               "invincible {}/{}, flags {:#x}, no-hit bodies {}/{}{})",
+                         w.hitter, w.address, NameOf(w.address), *move,
+                         guard.TakesNoHit() ? "takes no hit now" : "takes it",
+                         guard.invincible_names, guard.invincible_other, guard.life_flags, guard.no_hit_bodies,
+                         guard.bodies, guard.read ? "" : ", unread");
+            }
+        }
         std::optional<u64> life;
 #ifdef COOP_HOOKSHOT
         // Hookshot with patch 0007: the hit (or the life the owner says this
@@ -4283,7 +4341,7 @@ private:
             }
         }
         const bool steppable = ask.step_seen && life && old >= 0 && (w.hurt > 0 || w.life < old || (w.heal && w.life > old)) &&
-                               !(w.hurt > 0 && replay_ && !w.direct && player != 0);
+                               !(w.hurt > 0 && replay_ && !w.direct && player != 0 && !ask.out_of_reach);
         if (steppable) {
             ask.stale = steps.Take(*life);
         }
@@ -4352,6 +4410,11 @@ private:
 #ifdef COOP_HOOKSHOT
             // A life (not a hurt, not a raise) is the owner's for its copy: judged there (PassStops). A test kill
             // is a kill (past the stops where it is not held: our own enemy).
+            if (ask.out_of_reach) {
+                LOG_INFO(Core, "coop: objects: share life {:#x} '{}': P{}'s hit came while its game takes no hit "
+                               "(row 178): life only, through its Life step",
+                         w.address, NameOf(w.address), w.hitter);
+            }
             if (steps.Give(*life, routed.amount, (w.hurt <= 0 && !w.heal) || w.test_kill)) {
                 LOG_INFO(Core, "coop: objects: share {} {:#x}: {} through the game's Life step at life {} (to {})",
                          w.hurt > 0 ? "hurt" : "life", w.address, routed.amount, old, w.life);

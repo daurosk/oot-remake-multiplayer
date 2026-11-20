@@ -507,6 +507,8 @@ struct LifeAsk {
     bool replay_seen = true;   // its damage step saw our last replayed hit (or we never replayed one)
     std::int32_t stale = 0;    // given to the step earlier and never taken (taken back now)
     bool heal = false;         // LifeWrite::heal: a raise to `life` through the Life step
+    bool out_of_reach = false; // row 178: our boss is in a move its own game takes no hit in
+                               // (CoopBossNative::Table::OutOfReach): another player's hit goes to its Life step
 };
 struct LifeRouted {
     LifeRoute route = LifeRoute::lost;

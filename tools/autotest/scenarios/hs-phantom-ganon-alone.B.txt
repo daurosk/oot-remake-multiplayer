@@ -1,0 +1,15 @@
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+wait 9000               # stays in the Deku Tree: nobody else in A's boss room
+mark end

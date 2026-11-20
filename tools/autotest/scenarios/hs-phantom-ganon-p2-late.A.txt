@@ -1,0 +1,54 @@
+# hs-phantom-ganon-p2-late (row 178 probe): hs-phantom-ganon-p2 with A's 4th hit (life 18 -> 12) held 900 frames, so it
+# lands after his phase-change Fly instead of during it. In hs-phantom-ganon-p2 that hit lands mid-Fly in every run (a
+# real player cannot reach him then), and 3 of 10 runs held Fly for good. If this variant never holds over several
+# runs, the hold is the scenario's mid-Fly test hit, not the game. Look: A's log "ours asks slot 0 verb 116" after
+# "verb 7 (changed 1) after N x ours asks slot 0 verb 134" (normal) vs "held 'Fly' .. stuck" (held).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 840
+mark start
+warp PhantomGanonStage PhantomGanonStage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-in
+wait 2400               # the intro, then the fight
+press ZL 10             # lock on
+wait 600
+mark t1
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t2
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t3
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t4
+wait 900                # the hit after his phase-change Fly
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t5
+wait 600
+mark t6
+hurt 80                 # the owner goes down mid-fight
+wait 600
+mark t7
+wait 600
+mark t8
+wait 600
+mark t9
+wait 600
+mark after-turns
+wait 1800               # his death, if it came
+mark d1
+wait 1800
+mark end

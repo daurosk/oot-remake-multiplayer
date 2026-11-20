@@ -1436,6 +1436,16 @@ TEST_CASE("objects: RouteLife: an enemy goes only through its game's own steps, 
     a.step_seen = true;
     a.has_component = true;
     CHECK(RouteLife(a).route == LifeRoute::replay);
+    // Row 178: our boss in a move its own game takes no hit in: the hurt is life only, through its Life step;
+    // without a Life step (emulator) it is replayed as before, never lost.
+    a.out_of_reach = true;
+    auto o = RouteLife(a);
+    CHECK(o.route == LifeRoute::step);
+    CHECK(o.amount == 2);
+    a.step_seen = false;
+    CHECK(RouteLife(a).route == LifeRoute::replay);
+    a.step_seen = true;
+    a.out_of_reach = false;
     // The 400 ms fallback (no hurt, a life to reach): the Life step once the replay was seen.
     a.hurt = 0;
     auto r = RouteLife(a);

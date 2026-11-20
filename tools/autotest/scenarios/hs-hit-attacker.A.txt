@@ -1,9 +1,13 @@
 # hs-hit-attacker (row 177 review MUST 1 + MUST 2, plain enemy): A is the host and owns the Deku Tree entrance's
 # Deku Babas; A walks up to the Baba at x -6.0 z -1.95 first (it wakes in A's game, A's), then B comes near and uses the
 # REAL sword swings on it (press Y; a test hit on a plain copy is local only, never sent). A's game replays them.
-# PASS (A's log): "P2's hit replayed with their puppet .. as the attacker" for B's hit (the Baba flinches on both
-# screens, no crash), then "P2's killing blow replayed with our Link as the attacker" for B's kill; the Baba dies in
-# both games (its drop, if any, appears in A's game). No "exception" in either log.
+# PASS needs the log line AND the screenshots (owner rule: every visible check has a shot of both games):
+#  - A's log: "P2's hit replayed with their puppet .. as the attacker" for B's first hit; no "exception" in either log.
+#  - Flinch: hs-hit-attacker-B-flinch1-A.png and -B.png (or B-flinch1b / B-flinch2): the Baba recoils on both screens.
+#  - Death: B-death-A.png and B-death-B.png: the Baba falls / dies on both screens (after the first hit the Baba's
+#    owner may pass to B, then B's kill is B's own and A's copy dies with its owner: "its owner's died" in A's log).
+#  - Drop: B-drop-A.png and B-drop-B.png: the Baba is gone on both; its drop (if any) shows in the owner's game.
+#  A shot that does not show the step (wrong moment, camera away) makes that check VOID, not PASS.
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 2 -Scenario hs-hit-attacker
 #! noload
 #! start coop: test warp done

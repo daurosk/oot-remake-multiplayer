@@ -442,9 +442,13 @@ LifeRouted RouteLife(const LifeAsk& a) {
         }
         return {LifeRoute::lost, 0};
     }
-    if (a.hurt > 0 && a.replay_on && !a.direct && a.has_player) {
+    const bool to_step = a.out_of_reach && a.step_seen && a.has_component && a.old >= 0;  // (else replayed: none lost)
+    if (a.hurt > 0 && a.replay_on && !a.direct && a.has_player && !to_step) {
         return {LifeRoute::replay, a.hurt};
     }
+    // Row 178: a boss in a move its own game takes no hit in (Phantom Ganon riding inside his painting) gets
+    // another player's hit as life only, through its Life step: no damage reaction there (the game's own hit
+    // could not land), so its phase change waits for a hit it can take, as in a one-player game.
     const bool steppable = a.step_seen && a.has_component && a.old >= 0 && (a.hurt > 0 || a.life < a.old);
     if (steppable) {
         if (a.native && a.hurt <= 0 && !a.replay_seen) {

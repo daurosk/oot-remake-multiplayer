@@ -62,6 +62,22 @@ using coop::protocol::BossChange;
 namespace addr {
 inline constexpr std::uint64_t kActorComponents = 0x270;  // actor -> component table
 inline constexpr std::uint64_t kComponentBsa = 0x188;     // table -> BSA component
+// Row 178: where the game keeps "this actor takes no hit now" (HitGuard). The Life component (table + 0x2b8)
+// holds two lists of invincibility names (ExecuteInvincible / OneShotLifeSetInvincible push and pop them):
+// counts at +0x1c70 and +0x1c38; its damage step (main+0x3a9984) refuses a hit while either is > 0 unless
+// bit 6 of +0x1d18 is set. QueryIsInvincibleAny (main+0x2a32460) reads the same two counts.
+inline constexpr std::uint64_t kComponentLife = 0x2b8;
+inline constexpr std::uint64_t kLifeInvincibleNames = 0x1c70;  // s32
+inline constexpr std::uint64_t kLifeInvincibleOther = 0x1c38;  // s32
+inline constexpr std::uint64_t kLifeFlags = 0x1d18;            // u32, bit 6: hit through invincibility
+// OneshotChangeForceNoHitMode (main+0x295f0d0) marks each of the actor's rigid bodies in a map at table +
+// 0x240 (keys u64 body at +0x20, values u32 at +0x28, slots s32 at +0x34; a value != 0 = that body takes
+// no hit, and the game turns its contact off), so a hit cannot reach it at all.
+inline constexpr std::uint64_t kComponentNoHit = 0x240;
+inline constexpr std::uint64_t kNoHitKeys = 0x20;
+inline constexpr std::uint64_t kNoHitValues = 0x28;
+inline constexpr std::uint64_t kNoHitSlots = 0x34;
+inline constexpr std::int32_t kNoHitMaxSlots = 1024;  // (a sanity bound for the read)
 inline constexpr std::uint64_t kBsaBrainVerb = 0x28;      // s32, the current brain verb
 inline constexpr std::uint64_t kSetBrainVerb = 0x6733b0;       // main+
 inline constexpr std::uint64_t kRequestActionVerb = 0xc08f0;   // main+
@@ -149,6 +165,22 @@ bool StallJudged(std::string_view animation, std::optional<std::int32_t> life);
 bool OwnHitTookLife(std::optional<std::int32_t> before, std::optional<std::int32_t> after);
 
 // One boss the Objects step saw in its walk.
+// Row 178: the game's own "takes no hit now" state of an actor (addr::kLifeInvincible*, kComponentNoHit),
+// as its damage step and QueryIsInvincibleAny read it. A hit its own game would refuse (an invincibility,
+// or every rigid body in no-hit mode) is TakesNoHit.
+struct HitGuard {
+    bool read = false;             // the Life component was read (else nothing is known: not refused)
+    std::int32_t invincible_names = 0;
+    std::int32_t invincible_other = 0;
+    std::uint32_t life_flags = 0;
+    std::int32_t bodies = 0;       // rigid bodies in the no-hit map
+    std::int32_t no_hit_bodies = 0;  // of them, in no-hit mode
+    bool TakesNoHit() const {
+        const bool invincible = (life_flags & 0x40) == 0 && (invincible_names > 0 || invincible_other > 0);
+        return read && (invincible || (bodies > 0 && no_hit_bodies == bodies));
+    }
+};
+
 struct Boss {
     std::uint64_t actor = 0;
     std::uint64_t bsa = 0;  // [[actor + 0x270] + 0x188]
@@ -280,6 +312,17 @@ public:
     // move) and the game gives that permission to the Player only, so with a puppet in its target memory
     // (EnemyCommon.BattleCommon's ExecuteMemoryPushLastAttacker) Phantom Ganon flew ~22 s without a throw.
     bool KeepsLinkAsAttacker(std::uint64_t actor) const;
+    // Row 178: whether this actor is a boss of ours (its owner's game is this one) in a move its own game takes
+    // no hit in (its game says so: HitGuard::TakesNoHit). Phantom Ganon's phase 2 started from another
+    // player's hit replayed while he rode inside his painting ('Run'), where no real hit reaches him: in
+    // LANE2 runs that start left him in Fly with no light ball in 6 of 10 (the stall check ended each), from
+    // 'Appear' (hittable) 0 of 2. Such a hit goes to its Life step as life only (RouteLife), so its damage
+    // reaction (his phase change) waits for a hit it can take.
+    // `guard` is what its own game says right now (HitGuard, read by the caller from the actor): for every
+    // boss of the table, no move list.
+    bool OutOfReach(std::uint64_t actor, const HitGuard& guard) const;
+    // The move (animation) of a boss of ours (owner, not plain), for the log; nullopt for any other actor.
+    std::optional<std::string> OurBossMove(std::uint64_t actor) const;
     // Row 178 (Geno, Forest Temple): a boss whose own native AI (Execute*MetaAI) picks its moves for a battle
     // target that must be the Player. Its perception (PerceptionFilterPlayerOnly) takes a perceived puppet too
     // (Affiliation Player), and then that AI never picks an attack: Phantom Ganon flew his phase 2 with no light

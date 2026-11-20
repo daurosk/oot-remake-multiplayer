@@ -763,6 +763,21 @@ bool Table::KeepsLinkAsAttacker(std::uint64_t actor) const {
     return e != nullptr && !e->plain;
 }
 
+bool Table::OutOfReach(std::uint64_t actor, const HitGuard& guard) const {
+    std::lock_guard lock(mutex_);
+    const Entry* e = FindActor(actor);
+    return e != nullptr && !e->plain && !e->dying && e->role == Role::owner && guard.TakesNoHit();
+}
+
+std::optional<std::string> Table::OurBossMove(std::uint64_t actor) const {
+    std::lock_guard lock(mutex_);
+    const Entry* e = FindActor(actor);
+    if (e == nullptr || e->plain || e->role != Role::owner) {
+        return std::nullopt;
+    }
+    return e->hold_animation;
+}
+
 bool Table::FightsPlayerOnly(std::string_view name) {
     // Their brains run ExecutePhantomGanonMetaAI / ExecuteDungeonBossGanondorfMetaAI (Phantom Ganon runs both;
     // Ganondorf's fly module and moves are his too). Checked against every boss's AI files: the other bosses

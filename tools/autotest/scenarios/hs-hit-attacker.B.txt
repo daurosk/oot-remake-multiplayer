@@ -16,15 +16,28 @@ goto -5.0 -0.6 0.4 900   # 1.7 m from A's Baba (a real swing reaches it; the tes
 toward -6.0 -1.95 10
 press ZL 10             # lock on
 wait 30
-press Y 8               # sword swing: a real hit on A's Baba, sent to A
+press Y 8               # 1st swing: a real hit on A's Baba, sent to A (A replays it with B's puppet as attacker)
+wait 15
+mark flinch1            # both screens: the Baba recoils (Damage_Stun)
+wait 45
+mark flinch1b
+wait 60
+press Y 8               # more swings (life is scaled 300%, so a kill takes several)
+wait 15
+mark flinch2
+wait 75
+press Y 8
+wait 90
+press Y 8
+wait 90
+press Y 8
+wait 90
+press Y 8
+wait 90
+press Y 8
+wait 15
+mark death              # both screens: the Baba falls / its death effect
 wait 120
-mark hit
-press Y 8
-wait 90
-press Y 8
-wait 90
-press Y 8               # more swings: the killing blow if it still lives
-wait 300
-mark kill
-wait 900
+mark drop               # both screens: the Baba gone, its drop (stick or nut) if any
+wait 600
 mark late

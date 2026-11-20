@@ -1,6 +1,6 @@
 # hs-scrub-guard (row 177 probe, guard case): the Scrub Brothers room (InsideTheDekuTree room 9; Banc: Two -29.0 53.0 41.2,
 # Three -34.0 53.0 39.6, One -23.7 53.0 40.0). The brothers spit ScrubDeku_DekuNut (seen as copies on B in deku-scrubs 20261119-115027).
-# A is placed first and owns them; B stands 10 m in front of One and holds ZL+ZR (lock-on + shield) while nuts come.
+# A is placed first and owns them (9 m from One); B stands in the nuts' path, 4 m in front of One, and holds ZL+ZR (lock-on + shield)
 # Probe: B log "ScrubDeku_DekuNut: PROBE4 slot ended after N ticks: vtable now .. state .." (does a nut copy end early like the
 # light ball?); fix proof: B "sent back by our Link (guard): told its owner", A "RequestChangeStateReflected took it".
 # Needs a save with the brothers unsolved. Run: run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-scrub-guard
@@ -18,7 +18,7 @@ press A
 wait 2400
 mark after
 wait 300
-place -24.0 53.2 29.5
+place -24.6 53.2 36.0
 wait 240
 toward -23.7 40.0 10
 wait 120

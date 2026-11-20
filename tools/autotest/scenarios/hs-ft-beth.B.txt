@@ -24,10 +24,10 @@ wait 300
 goto 18.0 -59.5 0.8 600  # through the door: the room entry runs (its fight shutter closes, Beth's picture manager runs)
 wait 300
 goto 30.0 -60.5 1.0 600  # up the ramp toward painting 3's near area
-place 35.0 118.6 -59.5    # lower floor east of painting 2 (29.44 122.0 -59.5, faces east), outside every near Area
-                         # (run 20261120-002734: toward painting 3 the stair rail is in the way); A holds painting 3's Area
+place 31.5 124.6 -61.25   # upper level east of painting 1 (23.94 127.2 -62.9, faces east), outside its near Area (x 24-29)
+                         # (run 20261120-022820: with A in painting 3's Area and B by painting 2, Beth sat in painting 1)
 wait 300
-face 29.44 -59.5         # face painting 2 (about 2.5 m above our eye: an upward sweep)
+face 23.94 -62.9         # face painting 1 (about 1 m above our eye, 7.7 m)
 wait 20
 mark b-paint0
 wait 600
@@ -44,46 +44,46 @@ mark b-shot1
 press ZL 10
 wait 40
 hold ZR 30
-rstick 0 1.0 3 ZR
+rstick 0 1.0 2 ZR
 hold ZR 12 b-aim2
 wait 120
 mark b-shot2
 press ZL 10
 wait 40
 hold ZR 30
-rstick 0 1.0 6 ZR
+rstick 0 1.0 4 ZR
 hold ZR 12 b-aim3
 wait 120
 mark b-shot3
 press ZL 10
 wait 40
 hold ZR 30
-rstick 0 1.0 10 ZR
+rstick 0 1.0 6 ZR
 hold ZR 12 b-aim4
 wait 120
 mark b-shot4
 press ZL 10
 wait 40
 hold ZR 30
-rstick 0 1.0 14 ZR
+rstick 0 1.0 8 ZR
 hold ZR 12 b-aim5
 wait 120
 mark b-shot5
 press ZL 10
 wait 40
 hold ZR 30
-rstick 0 1.0 18 ZR
+rstick 0 1.0 10 ZR
 hold ZR 12 b-aim6
 wait 120
 mark b-shot6
 press ZL 10
 wait 40
 hold ZR 30
-rstick 0 1.0 22 ZR
+rstick 0 1.0 13 ZR
 hold ZR 12 b-aim7
 wait 120
 mark b-shot7
-wait 36                  # (the smaller pitch steps: A's timeline stays the same)
+wait 66                  # (the smaller pitch steps: A's timeline stays the same)
 # --- end of the sweep ---
 mark b-beth-shot
 wait 600

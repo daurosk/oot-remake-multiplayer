@@ -1,19 +1,21 @@
-# hs-ft-puzzles B side (see the A script's header). Same timeline as A's: B pushes A_03 west after the scramble,
-# B shoots Beth's performer in part 2.
+# hs-ft-puzzles B side (see the A script's header for the facts and the scenario fix). Same timeline as A's: B pushes
+# A_03 west after A's shot and the scramble; in part 2 B shoots painting 3 (a real bow shot, the same sweep as A's).
 mark start
 setflag Sequence_IsChildhood 0
 setflag ForestTemple_AmyPuzzleBoxCleard 0
 setflag ForestTemple_DefeatAmy 0
 setflag ForestTemple_DefeatBeth 0
+give bow
 warp ForestTemple
 wait 1200
 mark arrived
+assign Bow
 place 63.6 104.1 -0.75   # room 25, east of the puzzle
 wait 300
 toward 57.0 -0.75 10     # face the blocks
 wait 120
 mark b-before
-wait 300                 # A shoots Amy's performer
+wait 1663                # A's sweep at Amy's painting
 mark b-shot
 wait 900
 mark b-scrambled
@@ -29,16 +31,64 @@ wait 390                 # A pushes A_01 east
 mark b-seen-a
 wait 600
 mark b-blocks-end
-place 36.0 115.6 -61.3   # part 2: beside A in Beth's room 18
+place 37.5 120.0 -61.3   # part 2: room 18, in painting 3's near area (floor ~117.6: it drops on it)
 wait 300
-toward 23.9 -62.9 10
+toward 41.87 -63.2 10    # face painting 3 (faces west, 122.0 high)
 mark b-paint0
 wait 600
 mark b-paint1
 wait 600
 mark b-paint2
-kill Enemy_GhostPicturePerformer_Poe_Beth   # B's "arrow" on Beth's performer
-wait 300
+# --- the sweep (1663 ticks) at painting 3 ---
+press ZL 10
+wait 40
+hold ZR 30
+hold ZR 12 b-aim1
+wait 120
+mark b-shot1
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 5 ZR
+hold ZR 12 b-aim2
+wait 120
+mark b-shot2
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 10 ZR
+hold ZR 12 b-aim3
+wait 120
+mark b-shot3
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 15 ZR
+hold ZR 12 b-aim4
+wait 120
+mark b-shot4
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 20 ZR
+hold ZR 12 b-aim5
+wait 120
+mark b-shot5
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 26 ZR
+hold ZR 12 b-aim6
+wait 120
+mark b-shot6
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 33 ZR
+hold ZR 12 b-aim7
+wait 120
+mark b-shot7
+# --- end of the sweep ---
 mark b-beth-shot
 wait 600
 mark b-beth-out
@@ -51,15 +101,17 @@ setflag ForestTemple_DefeatBeth 1
 setflag ForestTemple_DefeatJoe 1
 warp ForestTemple
 wait 1200
-place 3.0 100.6 4.0      # the central room 2, Meg's place 0 100.1 -3.5
+place 2.5 100.6 -3.5     # the central room 2, inside Meg's area (0 100 -3.5, radius 7.5)
 wait 300
 toward 0.0 -3.5 10
 mark b-meg0
 wait 600
 mark b-meg1
+wait 600                 # Dm_ForestTemple_0015 (the flames), then Meg
+mark b-meg2
 wait 300
 mark b-meg-hit           # A hit Meg: one Meg (and her copies) the same on both screens?
 wait 600
-mark b-meg2
-wait 600
 mark b-meg3
+wait 600
+mark b-meg4

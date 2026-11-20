@@ -1682,7 +1682,7 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
             if (!ReadValue(guest, slot.taken, vtable) || vtable != slot.vtable ||
                 !ReadValue(guest, slot.taken + addr::kActorState, state) || Gone(state)) {
                 slot.phase = Phase::done;  // it went by itself (a fuse, a hit)
-                if (CoopShotReflect::ReflectedBy(slot.copy_of.empty() ? slot.actor : slot.copy_of) != CoopShotReflect::Way::none) { Say(slot.actor + ": PROBE4 slot ended after " + std::to_string(slot.probe_seen) + " ticks"); }
+                if (CoopShotReflect::ReflectedBy(slot.copy_of.empty() ? slot.actor : slot.copy_of) != CoopShotReflect::Way::none) { Say(slot.actor + ": PROBE4 slot ended after " + std::to_string(slot.probe_seen) + " ticks: vtable now " + Hex(vtable) + " slot " + Hex(slot.vtable) + " state " + std::to_string(state) + " taken " + Hex(slot.taken)); }
                 if (const Copy* c = Wanted(slot.key);
                     c != nullptr && c->act == Act::show && c->remakes != 0) {
                     Remade& r = remade_[slot.key];

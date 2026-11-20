@@ -608,6 +608,28 @@ TEST_CASE("mod plugins v2: a hold ends when its screen has not updated for half 
     CHECK(g.calls.empty());
 }
 
+TEST_CASE("mod plugins v2: only a mod whose mod.json says file_select counts as a save screen's file select") {
+    // (CoopTitleMenu::MenuFor's one Start row: another menu-screen mod must not hide the title's New Game)
+    {
+        Run r;   // bee asks for the menu screens and says nothing of a file select
+        CHECK(r.host->WantsScreens());
+        CHECK_FALSE(r.host->FileSelectRuns());
+    }
+    {
+        Run r([](Run& run) { run.folder.Code("7-b", "bee", "b.dll", R"(, "file_select": true)"); });
+        CHECK(r.host->WantsScreens());
+        CHECK(r.host->FileSelectRuns());
+        r.host->Stop();
+        CHECK_FALSE(r.host->FileSelectRuns());   // (stopped: none runs)
+    }
+    {
+        // (a mod that says file_select but asks for no screens is not one: nothing of it reaches the title)
+        Run r([](Run& run) { run.folder.Code("9-a", "alpha", "a.dll", R"(, "file_select": true)"); });
+        CHECK(r.host->WantsScreens());       // (bee)
+        CHECK_FALSE(r.host->FileSelectRuns());
+    }
+}
+
 TEST_CASE("mod plugins v2: after stop no screen reaches a mod and nothing is held") {
     Run r;
     g.screen_do = kHoldOn;

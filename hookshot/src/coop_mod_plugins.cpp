@@ -56,6 +56,7 @@ struct Host::Slot {
     std::vector<Callback<coop_mod_setting_fn>> setting;
     std::vector<std::pair<std::uint32_t, Callback<coop_mod_hook_fn>>> hook;
     std::vector<Callback<coop_mod_screen_fn>> screen;  // (API v2)
+    bool file_select = false;                          // (its mod.json's "file_select")
     std::atomic<std::uint64_t> hold{0};                // (API v2) the buttons it holds from the game
     // (API v2) The screen the hold was set on (object and kind) and when that screen last updated: the hold ends when
     // that screen stops updating (closed: the HUD's updates do not keep it) or the object updates as another kind.
@@ -447,6 +448,7 @@ void Host::Start() {
         s->game = &game_;
         s->name = m.name;
         s->id = m.manifest.id;
+        s->file_select = m.manifest.file_select;
         s->folder = CoopMods::ToUtf8(m.folder);
         // From before its library opens to the end of its start: a crash the guard cannot catch (a stack overflow,
         // a fast fail, its own thread) or a hang leaves coop-mods.starting behind, and the next start skips it.
@@ -664,6 +666,18 @@ bool Host::WantsScreens() const {
     }
     for (const auto& s : slots_) {
         if (s->on && !s->screen.empty()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Host::FileSelectRuns() const {
+    if (!started_ || stopped_) {
+        return false;
+    }
+    for (const auto& s : slots_) {
+        if (s->on && s->file_select && !s->screen.empty()) {
             return true;
         }
     }

@@ -1220,7 +1220,22 @@ bool Start(const HosCoopApi* api) {
     CoopHook::Start();
     g_on = true;
     CoopModsRuntime::Start();  // the mods folder and the code mods (docs/mods.md)
-    CoopModsRuntime::SetGame(api, TitleHoldWhy);   // (mod API v2: the menu screens' calls)
+    // (mod API v2: the menu screens' calls) A code mod's button choice waits while co-op is busy at the title, unless
+    // the player pressed A on the title's first button just before: then it is theirs (Save Profiles' file select
+    // takes that A and presses Continue for the file picked; refused, the player was left at the title).
+    CoopModsRuntime::SetGame(api, [] {
+        const char* why = TitleHoldWhy();
+        if (why != nullptr && CoopTitle::PlayerChoseLately()) {
+            static std::atomic<const char*> said{nullptr};
+            if (said.exchange(why) != why) {
+                LOG_INFO(Core, "coop: mods: a mod's button choice goes through while {}: the player pressed A on the "
+                               "title's first button just before",
+                         why);
+            }
+            return static_cast<const char*>(nullptr);
+        }
+        return why;
+    });
     CoopTitle::Init(api);
     CoopPauseTab::Init(api);   // the pause menu's Multiplayer tab (patch 0030)
     CoopPause::Init(server);
@@ -2043,7 +2058,11 @@ COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) n
     try {
         return CoopPadOrder::Run(
             buttons, stick, [](uint64_t b, int32_t* s) { return CoopPauseTab::OnPad(b, s); },
-            [](uint64_t b) { CoopModsRuntime::NotePad(b); }, [] { return CoopModsRuntime::HeldButtons(); },
+            [](uint64_t b) {
+                CoopTitle::NotePlayerPad(b);   // (the player's own A on the title, before a mod's hold takes it)
+                CoopModsRuntime::NotePad(b);
+            },
+            [] { return CoopModsRuntime::HeldButtons(); },
             [](uint64_t b, int32_t* s) { return CoopTitle::OnPad(b, s); },
             [](uint64_t b, int32_t* s) {
                 // Down but not out (coop_dbno_game.h): a downed Link crawls and uses nothing; beside one, A revives.

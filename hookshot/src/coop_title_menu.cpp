@@ -903,6 +903,43 @@ TitleArrangement ArrangementFor(bool any_save) {
     return a;
 }
 
+TitleMenuLook MenuFor(bool any_save, bool multiplayer, bool one_start) {
+    TitleMenuLook l;
+    if (multiplayer) {
+        l.btn_num_frame = 4;
+        l.rows = {{{"0100", TitleDo::kHost}, {"0101", TitleDo::kJoin}, {"0102", TitleDo::kSettings},
+                   {"0106", TitleDo::kBack}}};
+        l.count = 4;
+        l.focus = 0;
+        return l;
+    }
+    if (any_save && !one_start) {
+        // Continue and New Game each their own (no file select of a mod's that does both): the game's fourth slot
+        // shown for Options, decided in its place (the game's third button is under Multiplayer).
+        l.btn_num_frame = 4;
+        l.rows = {{{"0001", TitleDo::kGame},
+                   {"0000", TitleDo::kGame},
+                   {"0104", TitleDo::kMultiplayer},
+                   {"0105", TitleDo::kDecide, 2}}};
+        l.count = 4;
+        return l;
+    }
+    l.btn_num_frame = 3;
+    l.rows = {{{one_start ? "0103" : "0000", TitleDo::kGame},   // (Start; New Game when no mod has a file select)
+               {"0104", TitleDo::kMultiplayer},
+               any_save ? TitleMenuRow{"0105", TitleDo::kGame} : TitleMenuRow{"0105", TitleDo::kDecide, 1},
+               {}}};
+    l.count = 3;
+    return l;
+}
+
+int RowOf(const TitleMenuLook& look, TitleDo action) {
+    for (std::size_t i = 0; i < look.count; ++i) {
+        if (look.rows[i].action == action) return static_cast<int>(i);
+    }
+    return -1;
+}
+
 const char* SkipTitleHold(const SkipTitleInput& in) {
     if (in.session_live) {
         return "a co-op session is live";

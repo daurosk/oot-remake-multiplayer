@@ -18,6 +18,8 @@
 #include "common/logging.h"
 #include "coop_hook.h"
 #include "coop_i18n.h"
+#include "coop_mod_screens.h"
+#include "coop_mods_runtime.h"
 #include "coop_pause.h"
 #include "coop_pause_files.h"
 #include "coop_runtime.h"
@@ -88,8 +90,22 @@ constexpr std::array<const char*, 3> kRowLabels{"0100", "0101", "0102"};
 constexpr std::array<CoopPauseMenu::Page, 3> kRowPages{CoopPauseMenu::Page::kHost, CoopPauseMenu::Page::kJoin,
                                                        CoopPauseMenu::Page::kSettings};
 
+// The title's own menu (CoopTitleMenu::MenuFor): the marker pane found by name the way the pause tab finds its panes
+// (main+0x43c040(layout + 0x40) -> the layout's pane table, main+0x43e300(table, "name") -> the pane; read from main,
+// 2026-11-18), the focus given as the title's set-up gives it to its first button (f_8088ffc0(screen, button, 0),
+// docs/game-ui.md "Buttons and focus"), a button chosen without input (Button::Decide, CoopModScreens::kButtonDecide)
+// and the screen's own menu sound by name (CoopModScreens::kScreenSound: the title's "button_decide").
+constexpr std::uint64_t kPaneTable = 0x43c040;
+constexpr std::uint64_t kPaneByName = 0x43e300;
+constexpr std::uint64_t kSetFocus = 0x86ffc0;
+using CoopModScreens::kButtonDecide;
+using CoopModScreens::kScreenSound;
+constexpr std::uint64_t kApplyForMs = 1500;   // the look set again each 250 ms this long after it changes (the game's
+                                              // OpenTitle sets its own texts after the set-up)
+
 // --- Switch pad bits (nn::hid::NpadButton) ---
 constexpr std::uint64_t kA = 1ull << 0;
+constexpr std::uint64_t kB = 1ull << 1;
 constexpr std::uint64_t kMinus = 1ull << 11;
 
 const HosCoopApi* g_api = nullptr;
@@ -106,8 +122,19 @@ std::atomic<bool> g_mod_asked{false};    // a code mod asked for a re-read (AskS
 std::atomic<bool> g_list_open{false};    // a re-read is asked or running (a mod's or co-op's): not ready
 std::mutex g_mutex;
 CoopTitleMenu::SaveWait g_wait;   // Join at the title -> what the title says while the host's save comes
+CoopTitleMenu::PlayerChoice g_choice;   // the player's own A on the title, before the mods' holds (NotePlayerPad)
 std::uint64_t g_pad_last = 0;
 int g_focus_logged = -2;
+// The title's own menu (a pack with CoopTitleMenu::kMenuMarker). g_mutex, but g_menu.
+std::atomic<bool> g_menu{false};   // this title has the menu's labels (the marker found at its set-up)
+bool g_sub = false;                // the Multiplayer submenu shows
+bool g_any_save = true;            // the look's save list: a save or not (the caption manager's)
+bool g_one_start = false;          // one Start row for Continue and New Game (a file select mod runs)
+std::uint64_t g_apply_until = 0, g_apply_next = 0;   // the look set again until then (kApplyForMs)
+int g_focus_to = -1;               // a button to give the focus at the next step
+int g_decide = -1;                 // a game button to decide at the next step
+const char* g_sound = nullptr;     // a sound to play at the next step
+std::uint64_t g_swallow = 0;       // pad bits kept from the game until let go (the rows the module answers)
 
 std::uint64_t NowMs() {
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -328,6 +355,118 @@ const char* ArrangeTitle(void* ctx, std::uint64_t mgr) {
     return nullptr;
 }
 
+// A game call with up to three arguments from the title's step: x0 back (nothing when it could not be made).
+std::optional<std::uint64_t> GameCall3(void* ctx, std::uint64_t function, std::uint64_t x0_in, std::uint64_t x1,
+                                       std::uint64_t x2 = 0) {
+    HosCoopCall k{};
+    k.function = function;
+    k.x[0] = x0_in, k.x[1] = x1, k.x[2] = x2;
+    std::uint64_t x0 = 0;
+    if (!g_api->call(ctx, &k, &x0)) return std::nullopt;
+    return x0;
+}
+
+// A pane of the title's layout by name (0: none).
+std::uint64_t TitlePane(void* ctx, std::uint64_t layout, const char* name) {
+    const auto table = GameCall3(ctx, Main(kPaneTable), layout + 0x40, 0);
+    const std::uint64_t at = g_api->scratch(ctx, name, std::strlen(name) + 1);
+    if (!table || *table == 0 || at == 0) return 0;
+    return GameCall3(ctx, Main(kPaneByName), *table, at).value_or(0);
+}
+
+// The title's button `i` (0: none).
+std::uint64_t TitleButton(std::uint64_t screen, int i) {
+    if (i < 0 || i >= ButtonCount(screen)) return 0;
+    return Read64(Read64(screen + kTitleButtons) + 8ull * static_cast<std::uint64_t>(i));
+}
+
+// BtnNum stopped at `frame`: that many of the game's buttons shown (OpenTitle's own way, ArrangeTitle). nullptr when
+// done, else why not.
+const char* StopBtnNum(void* ctx, std::uint64_t layout, float frame) {
+    static constexpr char kBtnNum[] = "BtnNum";
+    const std::uint64_t name = g_api->scratch(ctx, kBtnNum, sizeof kBtnNum);
+    if (name == 0) return "no scratch";
+    const auto anim = GameCall3(ctx, Main(kAnimFind), layout, name);
+    if (!anim || *anim == 0) return "the title has no BtnNum animation";
+    const std::uint64_t player = Read64(*anim + kAnimPlayer);
+    if (player == 0) return "BtnNum has no player";
+    const auto last = GameCall(ctx, Main(kAnimLastFrame), player);
+    if (!last) return "BtnNum's last frame could not be asked";
+    if (frame > static_cast<float>(static_cast<std::int32_t>(*last))) return "BtnNum ends before the frame";
+    HosCoopCall k{};
+    k.function = Main(kAnimStopAt);
+    k.x[0] = *anim;
+    k.s0 = frame;
+    std::uint64_t x0 = 0;
+    return g_api->call(ctx, &k, &x0) ? nullptr : "BtnNum could not be stopped at the frame";
+}
+
+// The title's own menu as it is now (MenuFor): the game's buttons shown, their texts, and what the step was asked to do
+// (the focus moved, a button decided, a sound). From the title's step.
+void StepMenu(void* ctx, std::uint64_t screen) {
+    if (!g_menu.load() || ctx == nullptr || !HasScratch()) return;
+    const std::uint64_t now = NowMs();
+    bool apply = false, any_save = true, sub = false;
+    int focus = -1, decide = -1;
+    const char* sound = nullptr;
+    bool one_start = CoopModsRuntime::FileSelectRuns();   // (before g_mutex: the mods' calls take it, coop_busy)
+    {
+        std::lock_guard lock(g_mutex);
+        if (one_start != g_one_start) {
+            g_one_start = one_start;   // (a file select mod started or stopped under the open title)
+            g_apply_until = now + kApplyForMs, g_apply_next = 0;
+        }
+        if (const std::uint64_t mgr = CaptionMgr(); mgr != 0) {
+            std::uint8_t any = 1;
+            CoopRuntime::Read(mgr + kCaptionAnySave, &any, 1);
+            if ((any != 0) != g_any_save) {
+                g_any_save = any != 0;
+                g_apply_until = now + kApplyForMs, g_apply_next = 0;   // (the list changed under the open title)
+            }
+        }
+        if (now < g_apply_until && now >= g_apply_next) apply = true, g_apply_next = now + 250;
+        any_save = g_any_save, sub = g_sub;
+        std::swap(focus, g_focus_to);
+        std::swap(decide, g_decide);
+        std::swap(sound, g_sound);
+    }
+    const CoopTitleMenu::TitleMenuLook look = CoopTitleMenu::MenuFor(any_save, sub, one_start);
+    const std::uint64_t layout = Read64(screen + kTitleLayout);
+    if (apply && layout != 0) {
+        const char* why = StopBtnNum(ctx, layout, look.btn_num_frame);
+        int texts = 0;
+        for (std::size_t i = 0; i < look.count; ++i) {
+            texts += SetPaneText(ctx, layout, fmt::format("Pa_Button_{:02d}/T_Btn_00", i), look.rows[i].label) ? 1 : 0;
+        }
+        static std::string logged;
+        const std::string line = fmt::format("{} rows{}{}, {} of {} texts{}", sub ? "Multiplayer's" : "the title's",
+                                             any_save ? "" : " (no save yet)",
+                                             !sub && one_start ? " (one Start: a file select mod runs)" : "",
+                                             texts, look.count,
+                                             why != nullptr ? fmt::format("; {}", why) : std::string());
+        if (line != logged) {
+            logged = line;
+            LOG_INFO(Core, "coop: title: menu: {}", line);
+        }
+    }
+    if (focus >= 0) {
+        const std::uint64_t button = TitleButton(screen, focus);
+        const auto r = button != 0 ? GameCall3(ctx, Main(kSetFocus), screen, button, 0) : std::nullopt;
+        LOG_INFO(Core, "coop: title: menu: the focus to button {}{}", focus, r ? "" : " (not made)");
+    }
+    if (decide >= 0) {
+        const std::uint64_t button = TitleButton(screen, decide);
+        const auto r = button != 0 ? GameCall3(ctx, Main(kButtonDecide), button, 0) : std::nullopt;
+        LOG_INFO(Core, "coop: title: menu: the game's button {} chosen in the row's place{}", decide,
+                 r && (*r & 1) != 0 ? "" : " (it did not take it)");
+    }
+    if (sound != nullptr) {
+        if (const std::uint64_t at = g_api->scratch(ctx, sound, std::strlen(sound) + 1); at != 0) {
+            GameCall3(ctx, Main(kScreenSound), screen, at);
+        }
+    }
+}
+
 // From the title's step (its ctx may call()): after a switch of the save folder (CoopSave::TakeSaveListStale) the game
 // re-reads its save list in its own order: its idle test, its list reset, then its read
 // (SeqOneshotRequestLoadAndSerializeCaption's body). Nothing of the list is written here: the game fills it.
@@ -389,6 +528,10 @@ void RefreshSaveList(void* ctx) {
     case R::Action::done:
         g_list_open = false;
         LOG_INFO(Core, "coop: title: save list: read again by the game: {}", CaptionLine(mgr));
+        if (g_menu.load()) {
+            std::lock_guard lock(g_mutex);   // (the title's own menu: its look, for the new list, at the next steps)
+            g_apply_until = NowMs() + kApplyForMs, g_apply_next = 0;
+        }
         if (const char* why = ArrangeTitle(ctx, mgr)) {
             LOG_WARNING(Core, "coop: title: save list: the open title keeps its buttons ({}): the new list shows when "
                               "the title opens again", why);
@@ -493,7 +636,21 @@ void OnTitle(void* ctx, std::uint64_t screen, int event) {
     if (event == HOS_COOP_TITLE_SETUP) {
         LogButtons(screen);
         const std::int32_t count = ButtonCount(screen);
-        if (count >= kFirstRow + static_cast<std::int32_t>(kRowLabels.size())) {
+        const std::uint64_t layout = Read64(screen + kTitleLayout);
+        const bool menu = ctx != nullptr && HasScratch() && layout != 0 &&
+                          TitlePane(ctx, layout, CoopTitleMenu::kMenuMarker) != 0;
+        g_menu = menu;
+        if (menu) {
+            // The pack's own menu: Start, Multiplayer, Options on the game's buttons (StepMenu sets them from the
+            // title's step on, once the game's OpenTitle has set its own).
+            g_rows = true;
+            std::lock_guard lock(g_mutex);
+            g_sub = false, g_swallow = 0, g_focus_to = -1, g_decide = -1, g_sound = nullptr;
+            g_one_start = CoopModsRuntime::FileSelectRuns();
+            g_apply_until = NowMs() + kApplyForMs, g_apply_next = 0;
+            LOG_INFO(Core, "coop: title: the title's own menu: {}, Multiplayer, Options ({} buttons)",
+                     g_one_start ? "Start" : "Continue, New Game", count);
+        } else if (count >= kFirstRow + static_cast<std::int32_t>(kRowLabels.size())) {
             const bool ok = SetRowTexts(ctx, screen);
             g_rows = ok;
             LOG_INFO(Core, "coop: title: the title's own rows Host, Join, Co-op Settings (buttons {} to {}){}",
@@ -510,6 +667,7 @@ void OnTitle(void* ctx, std::uint64_t screen, int event) {
             LOG_INFO(Core, "coop: title: the title screen's step runs");
         }
         RefreshSaveList(ctx);
+        StepMenu(ctx, screen);
         g_last_step_ms = NowMs();
         const int f = FocusedIndex(screen);
         std::lock_guard lock(g_mutex);
@@ -520,14 +678,53 @@ void OnTitle(void* ctx, std::uint64_t screen, int event) {
     }
 }
 
+// One of the title's own co-op rows (Host, Join, Co-op Settings: they open our menu, the game's title sequence has
+// nothing for them). In the title's own menu every row that is not the player's own (CoopTitleMenu::PlayersOwn):
+// Multiplayer and the submenu's, whose first is Host in the game's Continue place. g_mutex.
+bool OnCoopRow(int focused) {
+    if (g_menu.load()) {
+        const CoopTitleMenu::TitleMenuLook look = CoopTitleMenu::MenuFor(g_any_save, g_sub, g_one_start);
+        return focused < 0 || static_cast<std::size_t>(focused) >= look.count ||
+               !CoopTitleMenu::PlayersOwn(&look.rows[static_cast<std::size_t>(focused)]);
+    }
+    return g_rows && focused >= kFirstRow && focused < kFirstRow + static_cast<int>(kRowLabels.size());
+}
+
+void NotePlayerPad(std::uint64_t buttons) {
+    std::lock_guard lock(g_mutex);
+    CoopTitleMenu::PlayerChoice::Pad in;
+    in.buttons = buttons;
+    in.title_up = TitleUp();
+    in.focused = in.title_up ? FocusedIndex(g_screen.load()) : -1;
+    in.on_coop_row = OnCoopRow(in.focused);
+    in.in_game = !in.title_up && g_choice.Lately(NowMs()) && InGame();   // (the player list only while it matters)
+    const auto seen = g_choice.Step(NowMs(), in);
+    if (seen.picks_file) {
+        // The player's own A on the title (not on our co-op rows): they pick their own file or a new game while the
+        // host's save is still coming (or late). Seen here, before a code mod's hold (Save Profiles' file select
+        // takes this A and loads the file picked in it). No switch after this: it would change the save folder under
+        // the load.
+        CoopSave::CancelPendingSwitch("the player chose a file on the title");
+        if (g_wait.waiting()) {
+            g_wait.PlayerChose();
+            LOG_INFO(Core, "coop: title: host's save: not waited for (the player chose a file)");
+        }
+    }
+    if (seen.window_opened) {
+        LOG_INFO(Core, "coop: title: the player's own A on the title's first button (a code mod's choice for them goes "
+                       "through for {} s after it, co-op busy or not)",
+                 CoopTitleMenu::PlayerChoice::kWindowMs / 1000);
+    }
+}
+
 std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
     (void)stick;
     std::optional<CoopPauseMenu::Page> open;   // (opened after the lock: CoopPause calls in here)
+    std::uint64_t keep = 0;                    // (the pad bits kept from the game: g_swallow)
     {
         std::lock_guard lock(g_mutex);
         const bool title = TitleUp();
         CoopSave::NoteTitle(title);   // (a guest switches to the host's save only on the title's menu)
-        const int focused = title ? FocusedIndex(g_screen.load()) : -1;
         if (g_wait.waiting() && CoopSave::HostHasNoSave()) {
             g_wait.NoSave();
             LOG_INFO(Core, "coop: title: host's save: {}", g_wait.Line());
@@ -544,6 +741,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
             in.session_live = CoopSave::SessionLive();
             if (g_wait.Step(NowMs(), in).rearm) {
                 CoopSave::ResumePendingSwitch();   // (they backed out of their own pick: the host's save again)
+                g_choice.Clear();   // (and their earlier A no longer makes a mod's choice theirs)
             }
             if (const std::string now = g_wait.Line(); now != before && !g_wait.chose()) {
                 LOG_INFO(Core, "coop: title: host's save: {}", now.empty() ? "done" : now);
@@ -551,24 +749,66 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
         }
         const std::uint64_t down = buttons & ~g_pad_last;
         g_pad_last = buttons;
-        if ((down & kA) != 0 && title) {
-            // The player's own A on the title (not on our co-op rows): they pick their own file or a new game while
-            // the host's save is still coming (or late). No switch after this: it would change the save folder
-            // under the load.
-            const bool our_row = g_rows && focused >= kFirstRow && focused < kFirstRow + static_cast<int>(kRowLabels.size());
-            if (CoopTitleMenu::SaveWait::PlayerPicksFile(true, focused, our_row)) {
-                CoopSave::CancelPendingSwitch("the player chose a file on the title");
-                if (g_wait.waiting()) {
-                    g_wait.PlayerChose();
-                    LOG_INFO(Core, "coop: title: host's save: not waited for (the player chose a file)");
+        g_swallow &= buttons;   // (let go: the game gets it again)
+        const int focused = title ? FocusedIndex(g_screen.load()) : -1;
+        const bool menu = g_menu.load();
+        const CoopTitleMenu::TitleMenuLook look = CoopTitleMenu::MenuFor(g_any_save, g_sub, g_one_start);
+        const CoopTitleMenu::TitleMenuRow* menu_row =
+            menu && focused >= 0 && static_cast<std::size_t>(focused) < look.count ? &look.rows[static_cast<std::size_t>(focused)]
+                                                                                 : nullptr;
+        if (!HasScratch() || !title) {
+            return buttons & ~g_swallow;
+        }
+        // The host's save on its way (Join at the title): the co-op rows wait. The title's own menu still keeps the
+        // A of every row the module answers from the game, or its NormalTitle would start Continue or New Game for
+        // Multiplayer, Host or Join with the switch still pending (a mouse click is the same A: Longshot taps it on
+        // the button under the cursor once the focus is there).
+        const bool rows_wait = g_wait.active();
+        if (menu) {
+            // The title's own menu: the rows the module answers keep their A from the game (its NormalTitle would
+            // start Continue, New Game or Options for them); the step makes the sound, the focus and the look.
+            using CoopTitleMenu::TitleDo;
+            const auto change = [&](bool sub, int focus) {
+                g_sub = sub, g_focus_to = focus, g_sound = "button_decide";
+                g_apply_until = NowMs() + kApplyForMs, g_apply_next = 0;
+            };
+            const auto back = [&] {   // (the title's rows again, the cursor on Multiplayer)
+                change(false, CoopTitleMenu::RowOf(CoopTitleMenu::MenuFor(g_any_save, false, g_one_start),
+                                                   TitleDo::kMultiplayer));
+            };
+            const auto page = [&](CoopPauseMenu::Page p) {
+                if (rows_wait) {
+                    LOG_INFO(Core, "coop: title: menu: the row waits (the host's save is on its way)");
+                    return;
                 }
+                open = p, g_sound = "button_decide";
+            };
+            if ((down & kA) != 0 && menu_row != nullptr && menu_row->action != TitleDo::kGame) {
+                g_swallow |= kA;
+                LOG_INFO(Core, "coop: title: menu: row {} pressed ({})", focused, menu_row->label);
+                switch (menu_row->action) {
+                case TitleDo::kGame: break;
+                case TitleDo::kDecide: g_decide = menu_row->decide; break;   // (Options: the player's own)
+                case TitleDo::kMultiplayer: change(true, CoopTitleMenu::MenuFor(g_any_save, true, g_one_start).focus); break;
+                case TitleDo::kBack: back(); break;
+                case TitleDo::kHost: page(CoopPauseMenu::Page::kHost); break;
+                case TitleDo::kJoin: page(CoopPauseMenu::Page::kJoin); break;
+                case TitleDo::kSettings: page(CoopPauseMenu::Page::kSettings); break;
+                }
+            } else if ((down & kB) != 0 && g_sub) {
+                g_swallow |= kB;   // (B in the submenu: the three rows again)
+                back();
+                LOG_INFO(Core, "coop: title: menu: B: the title's rows again");
             }
+            if (!open) return buttons & ~g_swallow;
         }
-        if (!HasScratch() || !title || g_wait.active()) {
-            return buttons;
+        if (rows_wait) {
+            return buttons & ~g_swallow;   // (the older title's co-op rows wait)
         }
-        const int f = (down & kA) != 0 ? FocusedIndex(g_screen.load()) : -1;
-        if (g_rows && f >= kFirstRow && f < kFirstRow + static_cast<int>(kRowLabels.size())) {
+        const int f = (down & kA) != 0 && !menu ? FocusedIndex(g_screen.load()) : -1;
+        if (menu) {
+            // (opened below)
+        } else if (OnCoopRow(f)) {
             // The title's own rows: the game takes the A too (the button's own press look and sound), and its
             // title sequence has nothing for these buttons; the Multiplayer tab opens at the row's page.
             const auto row = static_cast<std::size_t>(f - kFirstRow);
@@ -577,16 +817,18 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
         } else if ((!g_rows && (down & kMinus) != 0) || (g_native && f == 3)) {
             open = CoopPauseMenu::Page::kMain;   // the Minus prompt, or the 4th title button (LICHII_COOP_TITLE_NATIVE)
         }
+        keep = g_swallow;
     }
     if (open) {
         CoopPause::Open(*open);
     }
-    return buttons;
+    return buttons & ~keep;
 }
 
 bool StartSaveWait(const std::string& host) {
     std::lock_guard lock(g_mutex);
     g_wait.Start(NowMs(), host);
+    g_choice.Clear();   // (an A before the join was not a choice of the host's save or not)
     return TitleUp();
 }
 
@@ -598,6 +840,11 @@ void StopSaveWait() {
 bool SaveWaitWaiting() {
     std::lock_guard lock(g_mutex);
     return g_wait.waiting();
+}
+
+bool PlayerChoseLately() {
+    std::lock_guard lock(g_mutex);
+    return g_choice.Lately(NowMs());
 }
 
 bool AskSaveListRead() {

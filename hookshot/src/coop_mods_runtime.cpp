@@ -446,4 +446,8 @@ std::uint64_t HeldButtons() {
     return g_running ? g_host->HeldButtons() : 0;
 }
 
+bool FileSelectRuns() {
+    return g_running && g_host->FileSelectRuns();
+}
+
 }  // namespace CoopModsRuntime

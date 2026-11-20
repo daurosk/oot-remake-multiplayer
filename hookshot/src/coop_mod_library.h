@@ -74,6 +74,9 @@ struct Manifest {
     int api = 0;              // the plugin interface the code was written for (0: not said)
     Share share = Share::Everyone;
     std::vector<Setting> settings;
+    // "file_select": true: the code is a save screen's file select that the title's Continue and New Game both open
+    // (mod API v2 menu screens): the title's own menu then has one Start row for both (CoopTitleMenu::MenuFor).
+    bool file_select = false;
 };
 
 // An id made from any name: lower case, everything else '-', never empty.

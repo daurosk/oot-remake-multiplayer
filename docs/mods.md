@@ -173,6 +173,7 @@ Version 2 adds the game's menu screens. A mod written for it says `"api": 2` in 
   - Called anywhere else they do nothing and answer 0, with one line in the log.
 - A hold covers player 1's pad, the keyboard's bindings and a click (it comes as a press), not the mouse's hover over the game's buttons.
 - While co-op's own Multiplayer page shows on the pause menu, the mods get no screen updates: the screen behind it is not the player's, and the page takes the pad first. A hold made before ends half a second after the page shows.
+- A save screen's file select that the title's Continue and New Game both open says `"file_select": true` in `mod.json` (true or false; off when left out). While such a mod runs and has asked for the screens, co-op's own title menu shows one **Start** row for both; without one (any other menu-screen mod included) it shows **Continue** and **New Game** each, so New Game is always reachable.
 
 ### Game sounds and a ready button (version 3)
 

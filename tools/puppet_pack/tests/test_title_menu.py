@@ -82,29 +82,24 @@ class LayoutTest(unittest.TestCase):
         self.assertEqual([p[0] for p in panes], PANES)
         self.assertEqual([p[0] for p in parts], PANES[3:])
 
-    def test_three_more_buttons_after_the_last(self):
+    def test_the_marker_after_the_last_button_stored_hidden(self):
         d = make_layout()
-        n = tm.add_buttons(d)
+        n = tm.add_marker(d)
         panes, parts = tm.read_layout(n)
-        self.assertEqual([p[0] for p in panes], PANES + ["Pa_Button_04", "Pa_Button_05", "Pa_Button_06"])
-        self.assertEqual([p[0] for p in parts][-3:], ["Pa_Button_04", "Pa_Button_05", "Pa_Button_06"])
+        self.assertEqual([p[0] for p in panes], PANES + [tm.MARKER])
+        self.assertEqual([p[0] for p in parts][-1], tm.MARKER)
         # the old records stay where they were (nothing that points at them moves)
         self.assertEqual([p[1] for p in panes[:7]], [p[1] for p in tm.read_layout(d)[0]])
-        for k, (name, rec, ident) in enumerate(panes[7:]):
-            parent, = struct.unpack_from("<I", n, rec + 0x28)
-            end, = struct.unpack_from("<I", n, rec + 0x34)
-            y, = struct.unpack_from("<f", n, rec + 0x20)
-            part_no, = struct.unpack_from("<H", n, rec + 0x42)
-            self.assertEqual(parent, 2)
-            self.assertEqual(end, 8 + k)
-            self.assertAlmostEqual(y, -395.0 - 110.0 * (k + 1))
-            self.assertEqual(part_no, 4 + k)
-            self.assertNotIn(ident, [p[2] for p in panes[:7]])
-        ends = [struct.unpack_from("<I", n, p[1] + 0x34)[0] for p in panes[:7]]
-        self.assertEqual(ends, [10, 10, 10, 4, 5, 6, 7])   # the ancestors end after the new rows; Pa_Button_03 not
-        for name, rec, _ in parts[4:]:
-            self.assertEqual(struct.unpack_from("<Q", n, rec + 0x40)[0], [p[0] for p in panes].index(name))
-            self.assertEqual(n[struct.unpack_from("<Q", n, rec)[0]:].split(b"\0")[0], b"PaCommonBtnTitle_00")
+        name, rec, ident = panes[7]
+        parent, = struct.unpack_from("<I", n, rec + 0x28)
+        y, = struct.unpack_from("<f", n, rec + 0x20)
+        self.assertEqual(parent, 2)
+        self.assertAlmostEqual(y, -395.0)
+        self.assertNotIn(ident, [p[2] for p in panes[:7]])
+        kind, = struct.unpack_from("<I", n, rec + 0x38)
+        self.assertEqual(kind & 1, 0)   # (stored hidden: never drawn; bit 0 of the kind word, as the source's is set)
+        self.assertEqual(struct.unpack_from("<I", d, tm.read_layout(d)[0][6][1] + 0x38)[0] & 1, 1)
+        self.assertFalse(any(p[0].startswith("Pa_Button_") and p[0] > "Pa_Button_03" for p in panes))
         secs = tm._sections(n)
         self.assertEqual(secs["StringPool"][1] + secs["StringPool"][2], len(n))
         self.assertEqual(struct.unpack_from("<I", n, 8)[0], len(n))
@@ -112,7 +107,7 @@ class LayoutTest(unittest.TestCase):
 
     def test_refuses_a_layout_that_has_them(self):
         with self.assertRaises(tm.TitleMenuError):
-            tm.add_buttons(tm.add_buttons(make_layout()))
+            tm.add_marker(tm.add_marker(make_layout()))
         with self.assertRaises(tm.TitleMenuError):
             tm.read_layout(b"BFFH" + b"\0" * 0x200)
 
@@ -126,7 +121,8 @@ class MsbtTest(unittest.TestCase):
         h, s, labels, texts = tm.read_msbt(tm.add_rows(m))
         self.assertEqual(labels["0100"], 3)
         self.assertEqual([t[:-1].decode() for t in texts], ["New Game", "Continue", "Options", "Host", "Join",
-                                                            "Co-op Settings"])
+                                                            "Co-op Settings", "Start", "Multiplayer", "Options",
+                                                            "Back"])
         self.assertEqual(struct.unpack_from("<I", tm.add_rows(m), 0x12)[0], len(tm.add_rows(m)))
 
     def test_labels_land_in_their_hash_bucket(self):
@@ -200,9 +196,9 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(set(written), set(made))
         layouts = [d for n, d in sarc.read_entries(written[tm.TITLE_ARCHIVE]) if n == tm.TITLE_LAYOUT]
         self.assertEqual(len(layouts), 2)
-        self.assertTrue(all(len(tm.read_layout(d)[0]) == len(PANES) + 3 for d in layouts))
+        self.assertTrue(all(len(tm.read_layout(d)[0]) == len(PANES) + 1 for d in layouts))
         _, _, labels, _ = tm.read_msbt(sarc.read(written["Mals/JPja.Product.110.sarc.zs"])[tm.MSG_FILE])
-        self.assertIn("0102", labels)
+        self.assertIn("0106", labels)
         self.assertTrue(all(sizes[k] > before[k] for k in before))
 
     def test_nothing_written_when_one_language_fails(self):

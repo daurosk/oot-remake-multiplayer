@@ -89,6 +89,9 @@ public:
 
     // (API v2) Whether any mod running now asked for menu screens (the runtime reads a screen only then).
     bool WantsScreens() const;
+    // (API v2) Whether a mod running now is a save screen's file select (its mod.json says "file_select": true) and
+    // asked for the menu screens. Another menu-screen mod is not one.
+    bool FileSelectRuns() const;
     // (API v2) A menu screen updates: each mod's on_screen, with the calls only it may make. Skipped when another
     // thread is in one.
     void Screen(const ScreenUpdate& update);

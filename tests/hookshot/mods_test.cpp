@@ -160,6 +160,13 @@ TEST_CASE("mods: mod.json is read strictly and says why it is refused") {
     CHECK(plain->id == "my-mod-");
     CHECK(plain->name == "My Mod!");
     CHECK(plain->version == "0");
+    CHECK_FALSE(plain->file_select);   // (a save screen's file select only when it says so)
+    const auto picker = ParseManifest(R"({"id": "picker", "file_select": true})", "f", &why);
+    REQUIRE(picker);
+    CHECK(picker->file_select);
+    const auto not_picker = ParseManifest(R"({"file_select": false})", "f", &why);
+    REQUIRE(not_picker);
+    CHECK_FALSE(not_picker->file_select);
 
     for (const char* bad : {
              "[]", R"({"id": "Bad Id"})", R"({"id": "-x"})", R"({"name": ""})", R"({"coop": "some"})",
@@ -169,7 +176,7 @@ TEST_CASE("mods: mod.json is read strictly and says why it is refused") {
              R"({"settings": [{"key": "c", "type": "choice"}]})",
              R"({"settings": [{"key": "c", "type": "choice", "choices": ["a", "a"]}]})",
              R"({"settings": [{"key": "t", "default": 2}]})", R"({"settings": [{"key": "t", "type": "slider"}]})",
-             R"({"name": "a\u0001"})"}) {
+             R"({"name": "a\u0001"})", R"({"file_select": "yes"})", R"({"file_select": 1})"}) {
         INFO(bad);
         why.clear();
         CHECK_FALSE(ParseManifest(bad, "f", &why));

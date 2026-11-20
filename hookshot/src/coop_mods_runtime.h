@@ -46,5 +46,9 @@ void Screen(void* ctx, std::uint64_t screen);
 // mods hold from the game now (COOP_MOD_HOLD_ALL: the sticks too), 0 none.
 void NotePad(std::uint64_t buttons);
 std::uint64_t HeldButtons();
+// (mod API v2) Whether a save screen's file select runs now: a code mod whose mod.json says "file_select": true and
+// that asked for the game's menu screens (the title's own menu then has one Start row, CoopTitleMenu::MenuFor). Any
+// other menu-screen mod is not one. Takes no lock of co-op's.
+bool FileSelectRuns();
 
 }  // namespace CoopModsRuntime

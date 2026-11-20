@@ -14,6 +14,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -291,6 +292,57 @@ private:
     bool live_seen_ = false;             // the session was seen on since Start (a join still connecting is not off)
 };
 
+// The player's own A on the title, seen on player 1's buttons BEFORE a code mod's hold takes them
+// (CoopTitle::NotePlayerPad, coop_pad_order.h step 2). Save Profiles' file select holds that A, so the title's watch on
+// the game's buttons (step 3) never sees it: this one does, for both things the A means.
+// - picks_file: the player picks their own file (or a new game, or the title's options) on a title button that is not
+//   a co-op row: a guest's pending switch to the host's save is dropped (CoopSave::CancelPendingSwitch), else the
+//   switch could change the save folder under the load a mod's Continue starts.
+// - the window: an A on the title's first button (Continue, or Start in the title's own menu) makes a code mod's
+//   button choice the player's for kWindowMs (a file picked with the mouse brings no A after the first), co-op busy or
+//   not (coop_hookshot.cpp, TitleHoldWhy). It ends once Link is in the game (the load came, or a later return to the
+//   title is a new choice) and on Clear: a join begun after the A (StartSaveWait), or the host's save offered again
+//   because the player backed out of their pick (SaveWait's rearm).
+class PlayerChoice {
+public:
+    static constexpr std::uint64_t kA = 1ull << 0;          // (nn::hid::NpadButton A)
+    static constexpr std::uint64_t kWindowMs = 120000;      // naming a file in a mod's file select takes a while
+    struct Pad {
+        std::uint64_t buttons = 0;   // player 1's, before the mods' holds
+        bool title_up = false;
+        int focused = -1;            // the title's focused button (-1: none)
+        bool on_coop_row = false;    // a row the module answers (Host, Join, Co-op Settings, Multiplayer, Back, ...)
+        bool in_game = false;        // Link is in the game
+    };
+    struct Seen {
+        bool picks_file = false;     // drop the pending switch
+        bool window_opened = false;  // a new window (for the log)
+    };
+    Seen Step(std::uint64_t now_ms, const Pad& in) {
+        const std::uint64_t down = in.buttons & ~last_;
+        last_ = in.buttons;
+        if (in.in_game) {
+            at_ms_ = 0;
+        }
+        Seen s;
+        if ((down & kA) == 0) {
+            return s;
+        }
+        s.picks_file = SaveWait::PlayerPicksFile(in.title_up, in.focused, in.on_coop_row);
+        if (s.picks_file && in.focused == 0) {
+            s.window_opened = !Lately(now_ms);
+            at_ms_ = now_ms + 1;   // (+1: 0 is "none")
+        }
+        return s;
+    }
+    bool Lately(std::uint64_t now_ms) const { return at_ms_ != 0 && now_ms + 1 - at_ms_ < kWindowMs; }
+    void Clear() { at_ms_ = 0; }
+
+private:
+    std::uint64_t last_ = 0;    // the buttons last seen (A edges only)
+    std::uint64_t at_ms_ = 0;   // the A that opened the window, + 1 (0: none)
+};
+
 // ---------------------------------------------------------------------------
 // Text, for the menu's fields (coop_pause_menu.h).
 
@@ -363,6 +415,56 @@ struct TitleArrangement {
     std::size_t count = 0;
 };
 TitleArrangement ArrangementFor(bool any_save);
+
+// The title's own menu (a pack whose Title_00 has the hidden marker pane kMenuMarker, tools/puppet_pack/title_menu.py):
+// three rows on the game's own buttons, Start, Multiplayer and Options; Multiplayer turns them into Host, Join, Co-op
+// Settings and Back, the game's hidden fourth slot shown (BtnNum's frame 4). With a save-screen mod's file select,
+// Continue and New Game led to the same place, so one Start row stands for both (one_start): the game's first button,
+// Continue with a save, New Game without. Without such a mod (one_start false: no running code mod whose mod.json says
+// "file_select": true, CoopModsRuntime::FileSelectRuns; another menu-screen mod does not count) and with a save the rows are Continue, New Game, Multiplayer and Options, the fourth
+// slot shown for Options (the game's third button decided in its place), so New Game stays reachable; without a save
+// New Game, Multiplayer, Options. Options is the game's own (its third button with a save; without one the game's
+// second is Options, decided by the module when the third row is chosen). The other rows are the module's: it takes
+// their A (the game never sees it) and plays the decide sound itself.
+inline constexpr const char* kMenuMarker = "Pa_CoopMenu_00";
+enum class TitleDo {
+    kGame,         // the game's own press (the A goes through)
+    kDecide,       // the game's button `decide` chosen in its place (Button::Decide)
+    kMultiplayer,  // the submenu
+    kHost,
+    kJoin,
+    kSettings,
+    kBack,         // the three rows again (also B in the submenu)
+};
+struct TitleMenuRow {
+    const char* label = nullptr;   // LayoutMsg/Title_00 (the pack's 0100..0106)
+    TitleDo action = TitleDo::kGame;
+    int decide = -1;               // kDecide: which of the game's buttons
+};
+struct TitleMenuLook {
+    float btn_num_frame = 3;   // the game's buttons shown (BtnNum's frame)
+    std::array<TitleMenuRow, 4> rows{};
+    std::size_t count = 0;
+    int focus = -1;            // where the cursor goes when this look comes in (-1: where it is)
+};
+TitleMenuLook MenuFor(bool any_save, bool multiplayer, bool one_start);
+// Whether an A on that row is the player's own choice on the title (the game's press, or Options decided in its
+// place): it drops a guest's pending switch to the host's save. The module's rows (Multiplayer, Host, Join, Co-op
+// Settings, Back) and no row are not.
+inline bool PlayersOwn(const TitleMenuRow* row) {
+    return row != nullptr && (row->action == TitleDo::kGame || row->action == TitleDo::kDecide);
+}
+// The first row of `look` that does `action` (-1: none).
+int RowOf(const TitleMenuLook& look, TitleDo action);
+// The pack's labels: 0100 Host, 0101 Join, 0102 Co-op Settings (the older packs' rows too), 0103 Start,
+// 0104 Multiplayer, 0105 Options, 0106 Back. (Continue and New Game rows use the game's own 0001 and 0000.)
+inline constexpr std::array<std::pair<const char*, const char*>, 7> kMenuLabels{{{"0100", "Host"},
+                                                                               {"0101", "Join"},
+                                                                               {"0102", "Co-op Settings"},
+                                                                               {"0103", "Start"},
+                                                                               {"0104", "Multiplayer"},
+                                                                               {"0105", "Options"},
+                                                                               {"0106", "Back"}}};
 
 // ---------------------------------------------------------------------------
 // Player report 133: Longshot's Skip title screen (its Insert menu row, off by default) starts a launch with the newest

@@ -44,6 +44,15 @@ bool StartSaveWait(const std::string& host);
 void StopSaveWait();
 // The title waits for the host's save (Longshot patch 0028's hold, hos_coop_title_hold).
 bool SaveWaitWaiting();
+// Player 1's buttons before the code mods' holds come off (coop_pad_order.h step 2), for the player's own A on the
+// title (CoopTitleMenu::PlayerChoice): an A on a title button that is not a co-op row drops a guest's pending switch to
+// the host's save (also when a code mod holds it: Save Profiles' file select takes that A), and one on the title's
+// first button (Continue, or Start in the title's own menu) makes a code mod's button choice the player's for
+// PlayerChoice::kWindowMs, so co-op being busy at the title does not refuse it (a mod's own choice with no A from the
+// player before it, as at the game's start, is still refused). The window ends once Link is in the game, when a join
+// starts (StartSaveWait) and when the host's save is offered again (the player backed out of their pick).
+void NotePlayerPad(std::uint64_t buttons);
+bool PlayerChoseLately();
 
 // This PC's own id for rejoining (coop.ini client_id, made once): the module's
 // join helper uses the same nonce and port for the same invite with it.

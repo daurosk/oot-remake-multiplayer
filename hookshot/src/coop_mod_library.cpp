@@ -469,7 +469,7 @@ std::optional<Manifest> ParseManifest(std::string_view text, std::string_view fo
     double api = 0;
     if (!f.Text("id", kMaxId, m.id) || !f.TextIn("name", 64, m.name) || !f.Text("version", kMaxVersion, m.version) ||
         !f.TextIn("author", 64, m.author) || !f.TextIn("description", 512, m.description) ||
-        !f.Text("coop", 16, share) || !f.Number("api", api)) {
+        !f.Text("coop", 16, share) || !f.Number("api", api) || !f.Flag("file_select", m.file_select)) {
         return fail();
     }
     if (!ValidId(m.id)) {

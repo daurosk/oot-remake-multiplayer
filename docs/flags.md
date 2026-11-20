@@ -2,7 +2,7 @@
 
 Where Ocarina of Time keeps its world flags, and how `coop_host` reads and writes them (`coop/host/include/coop/host/game_flags.hpp`). Game: main module of build e0f3ccfaf50065ae (1.1.1). Guest address = main base (0x7100000000 in the runs so far) + offset.
 
-Sources: the integration project's `actor-map.md` (section 4), `player-state-map.md` and `save-format.md`, plus a static read of `main` for this page. **Checked** means read from the instructions. **Not run** means no live game confirmed it. Nothing on this page is confirmed in a run yet; see "Not done".
+Sources: the earlier native recompilation project's notes (that project is gone; copies of its address notes are kept outside this repository, in the coordinator's `refs/recomp-docs`): `actor-map.md` (section 4), `player-state-map.md` and `save-format.md`, plus a static read of `main` for this page. **Checked** means read from the instructions. **Not run** means no live game confirmed it. Nothing on this page is confirmed in a run yet; see "Not done".
 
 ## Summary
 

@@ -62,7 +62,7 @@ No reading this frame means no messages, and velocity starts afresh at the next 
 All addresses and offsets are in [`coop/host/src/addresses.hpp`](../coop/host/src/addresses.hpp), each with its source. They are offsets into `main` of build e0f3ccfaf50065ae (1.1.1) and come from two places, read only:
 
 - `docs/plan.md`, "Game facts we start from".
-- `..\integration\docs\player-state-map.md` (the stage 2 project's map). Most of it was read from the code and not checked in a run; Run 1 there saw the event state and the GameUI and first-link positions agree.
+- `player-state-map.md` (the recomp project's map, copied to `refs/recomp-docs` outside this repository; the project itself is deleted). Most of it was read from the code and not checked in a run; Run 1 there saw the event state and the GameUI and first-link positions agree.
 - The AS controller offsets were read from the dump for this repo ([puppet.md](puppet.md#animation)); not checked in a run.
 
 Not confirmed yet, to check in the first run:

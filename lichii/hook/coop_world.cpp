@@ -114,6 +114,23 @@ bool IsBlockAnchor(std::string_view name) {
     return name == "Obj_MovableBox_BasePosAnchor";
 }
 
+// Row 175: every Obj_MovableBox_BasePosAnchor that more than one placed movable
+// links to (generated from the romfs Banc by tools/puppet_pack/shared_anchors.py).
+// Such an anchor is no single block's own, even when a block stands on it (the
+// Hyrule Castle boxes): it is never moved for one block's rest. The game's own
+// link (node +0x40) is not read: its layout is not proven, the Banc is.
+struct SharedAnchor {
+    std::string_view scene;
+    float at[3];
+};
+constexpr SharedAnchor kSharedAnchors[] = {
+    {"DodongoCavern", {78.4250f, 99.1771f, -6.5000f}},  // 2 movables, nearest 3.51 m
+    {"ForestTemple", {61.2500f, 103.9000f, 2.2500f}},  // 5 movables, nearest 2.25 m
+    {"HyruleCastle", {31.6244f, 117.0387f, -146.6301f}},  // 2 movables, nearest 0.00 m
+    {"HyruleField", {-145.3997f, 150.9243f, 267.2221f}},  // 7 movables, nearest 0.75 m
+};
+constexpr float kSharedAnchorM = 0.1f;  // a placed anchor is read back this near its Banc place
+
 bool IsPushBlock(std::string_view name) {
     return IsMovable(name) && (name.find("MovableBox_") != std::string_view::npos ||
                                name.starts_with("Obj_SliderBox_"));
@@ -410,6 +427,7 @@ void WorldSync::Reset() {
     early_.clear();
     anchors_.clear();
     anchor_holds_.clear();
+    anchor_of_.clear();
     refunds_.clear();
     refund_notes_.clear();
     own_drops_.clear();
@@ -965,6 +983,52 @@ std::optional<WorldSync::Sample> WorldSync::PoseAt(const Remote& r, std::uint64_
     return r.samples.back();
 }
 
+namespace {
+bool IsSharedAnchor(std::string_view scene, const coop::protocol::Vec3& at) {
+    for (const SharedAnchor& s : kSharedAnchors) {
+        if (s.scene == scene && Distance(at, {s.at[0], s.at[1], s.at[2]}) <= kSharedAnchorM) {
+            return true;
+        }
+    }
+    return false;
+}
+}  // namespace
+
+std::uint64_t WorldSync::OwnAnchor(const Object& o, const coop::protocol::Vec3& from, bool& shared) {
+    // An anchor is this block's own when it was paired with this block before,
+    // or, not yet paired, when it lies at this block's first place (a block's
+    // own base anchor is placed with it). Any other anchor near `from` is
+    // another block's or a grid base several blocks share: never moved here.
+    // An anchor in kSharedAnchors (several placed blocks link to it) is never
+    // one block's own, even when a block stands on it (the Hyrule Castle boxes).
+    std::uint64_t best_address = 0;
+    float best = kAnchorNearM;
+    for (const Anchor& a : anchors_) {
+        const float d = Distance(a.position, from);
+        if (d > best) {
+            continue;
+        }
+        if (IsSharedAnchor(scene_, a.position)) {  // several blocks' grid base: no one's own
+            shared = true;
+            continue;
+        }
+        const auto paired = anchor_of_.find(a.address);
+        const bool own = paired != anchor_of_.end() ? paired->second == o.hash
+                                                     : Distance(a.position, o.first_position) <= kAnchorNearM;
+        if (!own) {
+            shared = true;
+            continue;
+        }
+        best = d;
+        best_address = a.address;
+    }
+    if (best_address != 0) {
+        anchor_of_[best_address] = o.hash;
+        shared = false;
+    }
+    return best_address;
+}
+
 void WorldSync::Poses(std::uint64_t now_us, std::vector<CoopObjects::PoseWrite>& out) const {
     for (const auto& [address, hold] : anchor_holds_) {
         if (now_us < hold.until_us) {
@@ -1081,21 +1145,22 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
             fix.from = *o.follow_from;
             fix.to = o.position;
             fix.untouched = !o.contested;
-            float best = kAnchorNearM;
-            for (const Anchor& a : anchors_) {
-                const float d = Distance(a.position, fix.from);
-                if (d <= best) {
-                    best = d;
-                    fix.anchor = a.address;
-                }
-            }
+            // Row 175: only the block's OWN anchor is moved. Some puzzles push
+            // several blocks on one grid from ONE placed anchor (the Forest
+            // Temple's Amy blocks: Obj_MovableBox_BasePosAnchor 61.25 103.9
+            // 2.25 is the grid base of all four); moving it for one block's
+            // rest would shift the grid of the others in this game.
+            bool shared = false;
+            fix.anchor = OwnAnchor(o, fix.from, shared);
             if (fix.anchor != 0) {
                 anchor_holds_[fix.anchor] = {fix.to, now_us + kAnchorHoldUs};
             }
             out.notes.push_back(Line("world: %016llx %s came to rest where another player left it; "
                                      "its base anchor%s",
                                      o.hash, o.name,
-                                     fix.anchor != 0 ? " is put there too" : " was not found near its old place"));
+                                     fix.anchor != 0 ? " is put there too"
+                                     : shared        ? " near its old place is another block's or a shared grid base: left"
+                                                     : " was not found near its old place"));
             out.blocks.push_back(std::move(fix));
         }
         if (o.follow_from && Finite(o.position) &&
@@ -1256,6 +1321,7 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         skulltulas_seen_us_.clear();
         skulltulas_dead_.clear();
         anchor_holds_.clear();
+        anchor_of_.clear();  // the next room's anchors are new actors
         std::lock_guard lock(inbox_mutex_);
         for (proto::Message& m : early_) {
             if (*SceneOfMessage(m) == scene_) {

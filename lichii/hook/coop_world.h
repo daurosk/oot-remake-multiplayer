@@ -781,6 +781,9 @@ private:
     void Drain(std::uint64_t now_us);
     // Whether another game's state of `o` waits (SetTriggerKeepers); `what` names it for the log, once per keeper.
     bool KeepsForTrigger(const Object& o, const char* what, Out& out);
+    // Row 175: the anchor near `from` that is this block's own (0: none); `shared`
+    // is set when one near it belongs to another block or a shared grid base.
+    std::uint64_t OwnAnchor(const Object& o, const coop::protocol::Vec3& from, bool& shared);
     std::set<std::uint64_t> trigger_keepers_;
     std::set<std::uint64_t> trigger_said_;  // keepers logged
     // A lying small key we took that has not gone out as our break yet.
@@ -856,6 +859,10 @@ private:
         std::uint64_t until_us = 0;
     };
     std::map<std::uint64_t, AnchorHold> anchor_holds_;  // by actor address
+    // Row 175: block hash by anchor address, once an anchor was found to be that
+    // block's own (OwnAnchor); an anchor of another block or a shared grid base
+    // is never moved for a block's rest.
+    std::map<std::uint64_t, std::uint64_t> anchor_of_;
     // Hits for signs, until our copy is there to take them (by hash).
     std::map<std::uint64_t, std::vector<std::pair<coop::protocol::Vec3, coop::protocol::Vec3>>> hits_;
     // Another player's cut words for signs (SIGN_CUT), until our copy is there (by hash).

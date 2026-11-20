@@ -72,7 +72,7 @@ The emulator serves the packs as a romfs layer, the same way any LayeredFS mod i
 
 | Item | Where | Status |
 |---|---|---|
-| Position | Actor +0x31c, 3 floats | Checked in `../integration/docs/player-state-map.md` |
+| Position | Actor +0x31c, 3 floats | Checked in the recomp notes' `player-state-map.md` (outside this repository) |
 | Rotation | Actor +0x328, 3×3 floats in rows | Layout checked there; row order inferred |
 | State | Actor +0x2c; 4 is alive and in the world, 7 to 11 gone | Checked there |
 | Component table | Actor +0x270 | Checked |

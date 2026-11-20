@@ -645,6 +645,12 @@ public:
     }
     static constexpr std::uint64_t kExtrapolateUs = 150'000;
     static constexpr std::uint64_t kPoseStaleUs = 2'500'000;  // no sample this long: let it be
+    // Row 178 (the Forest playtest): Phantom Ganon fell ~3 km in his owner's game, and our copy followed him
+    // there, so the next owner (the hand-over after a down, then 'left') had no boss in the room either. A boss
+    // copy (IsBoss: a group's root) is not put where its owner's samples say once that is this far below where
+    // we first saw it (CoopBossNative::Table::kFallBelowStart, the owner's fall guard): it keeps its last place
+    // in the room until the owner's are back up.
+    static constexpr float kBossFallBelowStartM = 40.0f;
     static constexpr std::uint64_t kHurtWaitUs = 400'000;     // then write life directly
     // Protocol 14: how long the owner's samples carry its newest hit (a few samples: one may be lost).
     static constexpr std::uint64_t kHitShowUs = 500'000;

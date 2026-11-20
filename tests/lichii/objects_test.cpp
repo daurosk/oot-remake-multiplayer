@@ -15,6 +15,7 @@
 
 #include "coop/protocol/codec.hpp"
 #include "coop_bomb_share.h"
+#include "coop_boss_native.h"  // (row 178: Table::kFallBelowStart)
 #include "coop_guard.h"
 #include "coop_hold.h"
 #include "coop_objects_sync.h"
@@ -7376,4 +7377,54 @@ TEST_CASE("objects: a Floormaster's Littles are shared by the game that split it
         CHECK(std::find(removes_c.begin(), removes_c.end(), own) != removes_c.end());
     }
     CHECK(c.Creates().size() == 3);  // A's
+}
+
+TEST_CASE("objects: row 178, a boss copy keeps its place in the room when its owner's boss falls out of it") {
+    // The Forest playtest: Phantom Ganon fell ~3 km in his owner's game; our copy followed, so after the hand-over
+    // (a down, then 'left') nobody had him in the room.
+    for (const char* name : {"Enemy_DungeonBoss_PhantomGanon", "Enemy_Stalchild"}) {
+        CAPTURE(name);
+        const bool boss = std::string_view(name) == "Enemy_DungeonBoss_PhantomGanon";
+        Sync sync;
+        Seen e = Enemy(0x100, 0x11, 2, 0.0f, name);
+        e.position = {0.0f, 50.0f, 0.0f};
+        Tick(sync, 0, {e});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2);
+        const auto sample = [&](std::uint64_t t, float y) {
+            proto::ObjectSample s;
+            s.player_number = 2;
+            s.id = id;
+            s.state.time = {t, 0};
+            s.state.position = proto::Vec3{0.0f, y, 0.0f};
+            s.state.rotation = proto::Quat{0, 0, 0, 1};
+            sync.Receive(s);
+        };
+        std::vector<CoopObjects::PoseWrite> poses;
+        // A dive within its room (35 m down): followed.
+        sample(1000 * kMs, 50.0f - Sync::kBossFallBelowStartM + 5.0f);
+        Tick(sync, 1100 * kMs, {e});
+        sync.Poses(1200 * kMs, poses);
+        REQUIRE(poses.size() == 1);
+        // Out of its room: a boss copy is not put there; a plain enemy is (its own rules).
+        sample(1300 * kMs, -3000.0f);
+        Tick(sync, 1400 * kMs, {e});
+        poses.clear();
+        sync.Poses(1500 * kMs, poses);
+        CHECK(poses.size() == (boss ? 0u : 1u));
+        // Back up: followed again.
+        sample(1600 * kMs, 50.0f);
+        Tick(sync, 1700 * kMs, {e});
+        poses.clear();
+        sync.Poses(1800 * kMs, poses);
+        REQUIRE(poses.size() == 1);
+        CHECK(poses[0].position[1] == doctest::Approx(50.0f));
+    }
+}
+
+TEST_CASE("objects: row 178, the copies' fall line is the owner's fall guard's") {
+    CHECK(Sync::kBossFallBelowStartM == CoopBossNative::Table::kFallBelowStart);
+    CHECK(CoopObjects::IsBoss("Enemy_DungeonBoss_PhantomGanon"));
+    CHECK(CoopObjects::IsBoss("Enemy_MiddleBoss_Poe_Meg"));
+    CHECK_FALSE(CoopObjects::IsBoss("Enemy_DungeonBoss_BongoBongo_LeftHand"));  // a part follows its root
 }

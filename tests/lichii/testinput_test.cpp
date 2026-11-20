@@ -551,6 +551,23 @@ TEST_CASE("testinput: setenum hands the hook an Enum flag (name or 0x hash) and 
     CHECK(requests[1].start == "Bow");
 }
 
+TEST_CASE("testinput: nofairy empties every bottle (five setenum requests), as hookshot.py does") {
+    // A bottled fairy makes a lethal hit the game's own death and revive, never down-but-out (3 VOID runs).
+    std::string error;
+    CHECK_FALSE(Parse("nofairy now\n", error));
+    Runner r(Must("nofairy\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 5);
+    const char* items[] = {"0x7d48df76", "0x1edd164a", "0xb80c70a8", "0xe4c1b1fc", "0x365e1953"};
+    for (std::size_t i = 0; i < 5; ++i) {
+        CHECK(requests[i].kind == Kind::setenum);
+        CHECK(requests[i].name == items[i]);
+        CHECK(requests[i].start == "Empty");
+    }
+}
+
 TEST_CASE("testinput: menu hands the hook the Customize page or the close (issue 74)") {
     std::string error;
     CHECK_FALSE(Parse("menu\n", error));

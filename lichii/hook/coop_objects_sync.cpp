@@ -1038,6 +1038,7 @@ void Sync::Reset() {
     eggs_.clear();
     copy_eggs_.clear();
     away_.clear();
+    still_ours_.clear();
     left_.clear();
     game_deletes_.clear();
     bound_.clear();
@@ -1242,6 +1243,7 @@ void Sync::GameDeleted(std::uint64_t address, std::uint64_t now_us, bool by_coop
     // an actor off the list is not run by its game (no fall, no burn), and
     // its address may be another actor's by now (review r1).
     std::erase_if(away_, [address](const Away& a) { return a.address == address; });
+    std::erase_if(still_ours_, [address](const Away& a) { return a.address == address; });
 }
 
 namespace {
@@ -2691,7 +2693,12 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         owners_.erase(a.id);
         notes_.emplace_back("gone " + a.name + ": off our walk " + std::to_string(kAwayKeepUs / 1'000'000) +
                             " s with no delete request: left");
+        still_ours_.push_back(a);  // (our game still has it: no encounter copy of it meanwhile)
         return true;
+    });
+    std::erase_if(still_ours_, [this, now_us](const Away& a) {
+        return now_us - a.since >= kStillOursUs ||
+               std::any_of(objects_.begin(), objects_.end(), [&a](const auto& e) { return e.second.id == a.id; });
     });
     // enemy-left-0116: enemies of ours our game deleted itself with no death
     // read. Back on the walk (the address reused by the same id): goes on.
@@ -3125,6 +3132,12 @@ void Sync::HoldEncounters(std::uint64_t now_us) {
                                       [&](const auto& e) { return e.second.id == it->first && e.second.dead_at == 0; });
         if (ours || now_us - h.heard_us > kEncounterStaleUs) {
             it = held_.erase(it);  // ours came, or its owner left or unloaded it
+            continue;
+        }
+        if (std::any_of(still_ours_.begin(), still_ours_.end(), [&](const Away& a) { return a.id == it->first; })) {
+            // Row 175/176: our own one is only off the walk (no delete request): it takes the id when it is back.
+            h.near_us = 0;
+            ++it;
             continue;
         }
         const bool near = !player_ || Distance(*player_, h.position) <= kEncounterNearM;

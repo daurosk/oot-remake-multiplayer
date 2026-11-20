@@ -723,6 +723,8 @@ public:
     // ends it. Without delete events (the emulator) two missed walks still end it.
     void SetDeleteEvents(bool on) { delete_events_ = on; }
     static constexpr std::uint64_t kAwayKeepUs = 2'000'000;
+    static constexpr std::uint64_t kStillOursUs = 120'000'000;  // still_ours_
+    std::size_t StillOursCount() const { return still_ours_.size(); }
     // enemy-left-0116 (row 138(3), Revirie's log at DC's second Lizalfos
     // pair): an event playing here takes its performers off the list for
     // longer (the Lizalfos' jump-in during FocusOnEnemy_02 went > 2 s, so
@@ -1353,6 +1355,11 @@ private:
         std::uint64_t since = 0;          // when it left (kAwayEventMaxUs)
     };
     std::vector<Away> away_;
+    // Row 175/176 (run 20261119-233327): an away object still off the walk after kAwayKeepUs with no delete request
+    // is told gone (left), but our game still has it (a Poe sister vanishes for longer in her fight). Its id is kept
+    // here until it comes back, our game deletes it (GameDeleted), the scene changes or kStillOursUs: meanwhile
+    // its new owner's OBJECT_SPAWN makes no encounter copy here (HoldEncounters), which made a second Amy.
+    std::vector<Away> still_ours_;
     bool delete_events_ = false;
     // enemy-left-0116: enemies of ours the game deleted with no death read,
     // listed until their OBJECT_REMOVE `gone` goes out (kLeftWaitUs).

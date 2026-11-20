@@ -6776,3 +6776,81 @@ TEST_CASE("carry claim: a Cucco our Link lifts is claimed, one its owner carries
     CHECK_FALSE(run("Lifted", "Lifted"));  // the owner carries it: its Lifted on our copy, it stays theirs
     CHECK_FALSE(run("Wait", "Wait"));      // nobody carries it
 }
+
+// Row 175/176 (run 20261119-233327): our own Amy vanished in her fight for longer than kAwayKeepUs (off the walk,
+// no delete request), was told gone, the server gave her to player 2 and named her to us again: our encounter rule
+// made a second Amy next to our own.
+TEST_CASE("objects: an enemy of ours only off the walk gets no encounter copy when its new owner names it") {
+    constexpr std::uint64_t kHash = 0x0990b181d8f4b622ULL;
+    const std::string kAmy = "Enemy_Poe_Amy";
+    const proto::ObjectId id{proto::ObjectKind::placed, 0, kHash};
+    Sync a;
+    a.SetDeleteEvents(true);
+    a.SetPlayer(proto::Vec3{25.0f, 0.0f, 0.0f});
+    const std::vector<Seen> amy = {Enemy(0x100, kHash, 12, 23.0f, kAmy)};
+    Tick(a, 0, amy, 1);
+    Own(a, id, 1);
+    Tick(a, 10 * kMs, amy, 1);
+    // She vanishes: away, then left after kAwayKeepUs.
+    Tick(a, 100 * kMs, {}, 1);
+    Tick(a, 200 * kMs, {}, 1);
+    Tick(a, 300 * kMs + Sync::kAwayKeepUs, {}, 1);
+    CHECK(a.AwayCount() == 0);
+    CHECK(a.StillOursCount() == 1);
+    // Player 2 owns her now and names her to us.
+    Own(a, id, 2, 1);
+    proto::ObjectSpawn named;
+    named.player_number = 2;
+    named.id = id;
+    named.actor = kAmy;
+    named.state.position = proto::Vec3{23.0f, 0.0f, 0.0f};
+    a.Receive(named);
+    const auto heard = [&] {
+        proto::ObjectSample smp;
+        smp.player_number = 2;
+        smp.id = id;
+        smp.epoch = 1;
+        smp.state.position = proto::Vec3{23.0f, 0.0f, 0.0f};
+        a.Receive(smp);
+    };
+    std::uint64_t t = 400 * kMs + Sync::kAwayKeepUs;
+    for (int i = 0; i < 8; ++i, t += 500 * kMs) {
+        heard();
+        Tick(a, t, {}, 1);
+    }
+    CHECK(a.Creates().empty());  // ours is still in our game
+    // She comes back: ours takes the id again (a copy of player 2's now), still no second one.
+    heard();
+    Tick(a, t, amy, 1);
+    CHECK(*a.IdOf(0x100) == id);
+    CHECK(a.StillOursCount() == 0);
+    CHECK(a.Creates().empty());
+
+    // Our game deleted her while off the walk: she is really gone here, so the owner's one is copied.
+    Sync b;
+    b.SetDeleteEvents(true);
+    b.SetPlayer(proto::Vec3{25.0f, 0.0f, 0.0f});
+    Tick(b, 0, amy, 1);
+    Own(b, id, 1);
+    Tick(b, 10 * kMs, amy, 1);
+    Tick(b, 100 * kMs, {}, 1);
+    Tick(b, 200 * kMs, {}, 1);
+    Tick(b, 300 * kMs + Sync::kAwayKeepUs, {}, 1);
+    REQUIRE(b.StillOursCount() == 1);
+    b.GameDeleted(0x100, 350 * kMs + Sync::kAwayKeepUs);
+    CHECK(b.StillOursCount() == 0);
+    Own(b, id, 2, 1);
+    b.Receive(named);
+    t = 400 * kMs + Sync::kAwayKeepUs;
+    for (int i = 0; i < 8; ++i, t += 500 * kMs) {
+        proto::ObjectSample smp;
+        smp.player_number = 2;
+        smp.id = id;
+        smp.epoch = 1;
+        smp.state.position = proto::Vec3{23.0f, 0.0f, 0.0f};
+        b.Receive(smp);
+        Tick(b, t, {}, 1);
+    }
+    REQUIRE(b.Creates().size() == 1);
+    CHECK(b.Creates()[0].name == kAmy);
+}

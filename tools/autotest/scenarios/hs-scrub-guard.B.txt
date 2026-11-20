@@ -1,6 +1,9 @@
-# hs-scrub-guard (row 177 proof, guard case): a plain shared Enemy_Scrub_Deku in the Deku Tree (-8.9 78.4 27.6). A arrives first and owns it;
-# B stands 8 m from it, faces it and holds ZL+ZR (lock-on + shield) while its nuts come. Expect: B log "sent back by our Link (guard): told its owner",
-# A log "RequestChangeStateReflected took it", the nut flies back to the scrub on both screens. Run: run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-scrub-guard
+# hs-scrub-guard (row 177 probe, guard case): the Scrub Brothers room (InsideTheDekuTree room 9; Banc: Two -29.0 53.0 41.2,
+# Three -34.0 53.0 39.6, One -23.7 53.0 40.0). The brothers spit ScrubDeku_DekuNut (seen as copies on B in deku-scrubs 20261119-115027).
+# A is placed first and owns them; B stands 10 m in front of One and holds ZL+ZR (lock-on + shield) while nuts come.
+# Probe: B log "ScrubDeku_DekuNut: PROBE4 slot ended after N ticks: vtable now .. state .." (does a nut copy end early like the
+# light ball?); fix proof: B "sent back by our Link (guard): told its owner", A "RequestChangeStateReflected took it".
+# Needs a save with the brothers unsolved. Run: run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-scrub-guard
 mark start
 warp InsideTheDekuTree Entrance
 wait 1200
@@ -14,34 +17,41 @@ wait 300
 press A
 wait 2400
 mark after
-place -8.9 78.4 20.0
+wait 300
+place -24.0 53.2 29.5
 wait 240
-toward -8.9 27.6 10
-wait 240
+toward -23.7 40.0 10
+wait 120
 mark placed
 hold ZL+ZR 300
-wait 60
+wait 30
 mark guard1
 hold ZL+ZR 300
-wait 60
+wait 30
 mark guard2
 hold ZL+ZR 300
-wait 60
+wait 30
 mark guard3
 hold ZL+ZR 300
-wait 60
+wait 30
 mark guard4
 hold ZL+ZR 300
-wait 60
+wait 30
 mark guard5
 hold ZL+ZR 300
-wait 60
+wait 30
 mark guard6
 hold ZL+ZR 300
-wait 60
+wait 30
 mark guard7
 hold ZL+ZR 300
-wait 60
+wait 30
 mark guard8
+hold ZL+ZR 300
+wait 30
+mark guard9
+hold ZL+ZR 300
+wait 30
+mark guard10
 wait 300
 mark end

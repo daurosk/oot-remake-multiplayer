@@ -531,6 +531,7 @@ private:
         std::uint64_t vtable = 0;
         std::uint64_t since_ms = 0;
         bool exploded = false;
+        std::int32_t shoot_state = -1;  // row 177 probe: an enemy shot copy's Shootable state, last seen
         // Made from the stand-in pack (StandIn): placed as the puppet is
         // (place and the pending transform), with no setter call.
         bool stand_in = false;

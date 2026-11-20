@@ -1,0 +1,52 @@
+# hs-phantom-ganon-ball (row 177 research): can a non-owner return Phantom Ganon's light ball? As hs-phantom-ganon-p2
+# up to t4 (A owns him; A deals 4x6, B 3x2: phase 2), but nobody goes down: from t4 B stands beside A and swings
+# every half second while his light balls come at A. Read B's log: 'DungeonBossPhantomGanon_Bullet_LightBall: copy N
+# shootable state X -> Y' (the copy's Shootable state: does B's swing make it Reflected?), and A's log for the real
+# ball. B kills him at the end. Run: run.ps1 -Runtime hookshot -Lane 2 -Scenario hs-phantom-ganon-ball
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 780
+mark start
+warp PhantomGanonStage PhantomGanonStage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-in
+wait 2400               # the intro, then the fight
+press ZL 10             # lock on
+wait 600
+mark t1
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t2
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t3
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t4
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t5
+wait 600
+mark t6
+wait 600
+mark t7
+wait 600
+mark t8
+wait 600
+mark t9
+wait 600
+mark after-turns
+wait 1800
+mark d1
+wait 1800
+mark end

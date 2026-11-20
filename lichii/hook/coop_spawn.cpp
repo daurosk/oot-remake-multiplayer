@@ -64,6 +64,9 @@ bool Finite(const Vec3& v) {
 // Main offsets (build e0f3ccfaf50065ae): docs/objects.md and docs/puppet.md.
 constexpr std::uint64_t kActorComponents = 0x270;
 constexpr std::uint64_t kComponentLife = 0x2b8;
+// Row 177: the Shootable component (QueryShootableGetState reads it): valid byte +0x20, state +0x24
+// (Sleep, Prepare, Shoot, Stationary, Reflected, UsedExternally; 6: none).
+constexpr std::uint64_t kComponentShootable = 0x3d0;
 constexpr std::uint64_t kLifeValue = 0x1c10;
 
 template <typename T>
@@ -1664,6 +1667,20 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
                 }
                 if (c->setter && c->act == Act::show && !slot.stand_in) {
                     setters_.push_back(i);
+                }
+                if (!slot.stand_in && CoopEnemyShots::IsEnemyShot(slot.actor)) {
+                    // Row 177 probe: what a swing of our Link does to the owner's shot here.
+                    std::uint64_t table = 0, shootable = 0;
+                    std::uint8_t valid = 0;
+                    std::int32_t state = -1;
+                    if (ReadValue(guest, slot.taken + kActorComponents, table) && table != 0 &&
+                        ReadValue(guest, table + kComponentShootable, shootable) && shootable != 0 &&
+                        ReadValue(guest, shootable + 0x20, valid) && (valid & 1) != 0 &&
+                        ReadValue(guest, shootable + 0x24, state) && state != slot.shoot_state) {
+                        Say(slot.actor + ": copy " + std::to_string(slot.key) + " shootable state " +
+                            std::to_string(slot.shoot_state) + " -> " + std::to_string(state));
+                        slot.shoot_state = state;
+                    }
                 }
                 if (c->animation && c->act == Act::show && !c->animation->name.empty()) {
                     plays_.push_back(i);  // issue 169: the fuse's blink

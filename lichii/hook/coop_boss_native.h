@@ -346,6 +346,9 @@ public:
     // The plain enemy copies whose own brain asked for another brain verb than their owner's since the last
     // call (skipped at the wrap): their own AI wants to act here. At most kMaxWants kept.
     std::vector<std::uint64_t> TakeOwnWants();
+    // Row 178: our own bosses that fell kFallBelowStart below their fight start since the last call, each with
+    // that start (its first seen place): put back there (coop_objects Place, as a copy is placed).
+    std::vector<std::pair<std::uint64_t, coop::protocol::Vec3>> TakeReturns();
     // The boss's death has begun (the boss glue, every frame: the area rules'
     // fight is at its death or past it, ours or the owner's; player report
     // #105, a black screen after Gohma's death). Bodies named here are copies
@@ -456,7 +459,9 @@ public:
     // far below its first seen place (its fight start: no boss room's floor is 40 m under its boss's start;
     // free fall covers it in under 3 s) fell out of its room: its AI chooses again once per fall (its brain
     // verb set again through the game's own function, as a stall: the change goes to every copy), the log says
-    // so, at most kMaxFallRechoices times while it stays below.
+    // so, at most kMaxFallRechoices times while it stays below. Row 178 again (the Forest playtest: Phantom Ganon fell
+    // ~3 km, and a new AI choice does not bring a falling body back up): each time it is also put back at its fight
+    // start (TakeReturns: the game's own set-matrix call the copies are placed with), then its AI chooses again.
     static constexpr float kFallBelowStart = 40.0f;
     static constexpr int kMaxFallRechoices = 3;
     static constexpr std::size_t kMaxWants = 64;
@@ -532,6 +537,7 @@ private:
         OwnAsk restart_ask;
         // Row 178's fall guard: its first seen height, and its falls rechosen while below.
         std::optional<float> start_y;
+        std::optional<coop::protocol::Vec3> start;  // (its first seen place, for the put back)
         int fall_rechoices = 0;
         bool fallen = false;
         // Copy (row 149): the owner's action last put into it, and whether its own AI ran an action of its own
@@ -580,6 +586,7 @@ private:
     // every frame never keeps the others waiting (dozens of plain enemies share the one call a frame).
     std::uint64_t served_ = 0;
     std::vector<std::uint64_t> wants_;  // (TakeOwnWants)
+    std::vector<std::pair<std::uint64_t, coop::protocol::Vec3>> returns_;  // (TakeReturns)
     // One entry's turn in Step. True: Step ends with `call` (a call, or none while the block is asked).
     bool StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::uint64_t main_base,
                  std::optional<CoopPuppet::Call>& call);

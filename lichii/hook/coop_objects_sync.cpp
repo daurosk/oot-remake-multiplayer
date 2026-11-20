@@ -3226,14 +3226,19 @@ void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& g
             const float mx = o.position[0] - o.first_position[0];
             const float my = o.position[1] - o.first_position[1];
             const float mz = o.position[2] - o.first_position[2];
-            char line[260];
+            // Row 178: a boss gone this far below where we first saw it fell out of its room (Phantom Ganon, ~3 km):
+            // said so, as the next owner gets the copies' place, kept in the room (Poses).
+            const bool fell = IsBoss(o.name) && o.position[1] < o.first_position[1] - kBossFallBelowStartM;
+            char line[320];
             std::snprintf(line, sizeof line,
                           "gone %016llx %s owner %u life %d anim '%s' moved %.2f from Link %.2f: %s",
                           static_cast<unsigned long long>(o.id.value), o.name.c_str(),
                           owner->second.player, o.life.value_or(-1),
                           o.animation ? o.animation->name.c_str() : "",
                           std::sqrt(mx * mx + my * my + mz * mz), near,
-                          broken_here ? "broken here" : "left");
+                          broken_here ? "broken here"
+                          : fell      ? "left (a boss that fell out of its room, row 178: the copies kept it there)"
+                                      : "left");
             notes_.emplace_back(line);
         }
         if (owner->second.player == self) {
@@ -4131,6 +4136,9 @@ void Sync::Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const {
         }
         if (rotation) {
             w.rotation = MatOf(*rotation);
+        }
+        if (IsBoss(o.name) && w.position[1] < o.first_position[1] - kBossFallBelowStartM) {
+            continue;  // row 178: the owner's boss fell out of its room: ours stays in it
         }
         out.push_back(w);
     }

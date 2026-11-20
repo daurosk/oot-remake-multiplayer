@@ -2095,3 +2095,43 @@ TEST_CASE("native boss: row 178: our boss fallen far below its fight start choos
         CHECK(s.Totals().owner_fell == 0);
     }
 }
+
+TEST_CASE("native boss: row 178: our fallen boss is also put back at its fight start, each fall") {
+    // The Forest playtest: Phantom Ganon fell ~3 km; a new AI choice alone does not bring a falling body back up.
+    FakeGuest g;
+    const std::int32_t brain = 6;
+    g.Write(kBsa + addr::kBsaBrainVerb, &brain, 4);
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Phantom(Role::owner, 10.0f)});
+    CHECK(t.TakeReturns().empty());
+    t.Publish({Phantom(Role::owner, 10.0f - Table::kFallBelowStart + 1.0f)});  // a dive within its room
+    CHECK(t.TakeReturns().empty());
+    t.Publish({Phantom(Role::owner, -40.0f)});
+    auto back = t.TakeReturns();
+    REQUIRE(back.size() == 1);
+    CHECK(back[0].first == kActor);
+    CHECK(back[0].second == coop::protocol::Vec3{1.0f, 10.0f, 2.0f});  // its first seen place
+    CHECK(t.TakeReturns().empty());  // taken once
+    t.Publish({Phantom(Role::owner, -400.0f)});  // still below: once per fall
+    CHECK(t.TakeReturns().empty());
+    bool said = false;
+    for (const auto& n : t.TakeNotes()) {
+        said = said || n.find("put back at its fight start, its AI chooses again") != std::string::npos;
+    }
+    CHECK(said);
+    // Made ours by a hand-over (a down): the start is where our copy was first seen, in the room.
+    Table h;
+    h.SetOn(true, true);
+    h.Publish({Phantom(Role::copy, 12.0f)});
+    h.Publish({Phantom(Role::owner, -3000.0f, 1)});
+    back = h.TakeReturns();
+    REQUIRE(back.size() == 1);
+    CHECK(back[0].second[1] == doctest::Approx(12.0f));
+    // A copy below is its owner's to guard: nothing put back here.
+    Table c;
+    c.SetOn(true, true);
+    c.Publish({Phantom(Role::copy, 10.0f)});
+    c.Publish({Phantom(Role::copy, -400.0f)});
+    CHECK(c.TakeReturns().empty());
+}

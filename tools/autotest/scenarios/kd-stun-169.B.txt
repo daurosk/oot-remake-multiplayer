@@ -39,7 +39,7 @@ warp DodongoCavern StartPos_Get_StoneOfFire   # same-map warp = reload with the 
 wait 3000               # the module own warp took >25 s in run 013912
 place 25.5 73.6 -76.0   # run 070704: the bridge warp lands at the entrance (destination 20) whatever the start named; into room 22 beside A
 wait 300
-goto 24.0 -64.5 1.0 1200   # into the arena (Banc Area 24.0 73.2 -63.0), 1.5 m beside A; earlier KD runs stood at the warp spot, phase none
+goto 26.5 -70.5 1.0 1200   # onto the ring beside A, 7.5 m from the lava pit (run 071338: the old spot was in it)
 give bombs
 wait 120
 assign Bomb

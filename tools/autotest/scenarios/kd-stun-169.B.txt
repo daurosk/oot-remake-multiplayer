@@ -16,7 +16,7 @@
 #! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
 #! timeout 900
 mark start
-warp DodongoCavern StartPos_Get_StoneOfFire   # KD's room in the dungeon scene (DodongoStage is the Dream World rematch stage: Obj_DreamWorldTimerManager, molten floor, no intro)
+warp DodongoCavern StartPos_Get_StoneOfFire   # the dungeon scene (the bridge lands at its entrance; place moves Link into room 22) (DodongoStage is the Dream World rematch stage: Obj_DreamWorldTimerManager, molten floor, no intro)
 wait 1200
 mark title
 press A
@@ -37,6 +37,8 @@ setflag HavePlayedEvent.Get_StoneOfFire_DefeatBoss 0
 wait 60
 warp DodongoCavern StartPos_Get_StoneOfFire   # same-map warp = reload with the flags
 wait 3000               # the module own warp took >25 s in run 013912
+place 25.5 73.6 -76.0   # run 070704: the bridge warp lands at the entrance (destination 20) whatever the start named; into room 22 beside A
+wait 300
 goto 24.0 -64.5 1.0 1200   # into the arena (Banc Area 24.0 73.2 -63.0), 1.5 m beside A; earlier KD runs stood at the warp spot, phase none
 give bombs
 wait 120

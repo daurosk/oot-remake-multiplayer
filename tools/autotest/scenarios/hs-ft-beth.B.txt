@@ -1,0 +1,86 @@
+# hs-ft-beth B side (see hs-ft-beth.A.txt): enters room 18 through its west door, then shoots painting 3 (part 2's sweep).
+mark start
+setflag Sequence_IsChildhood 0
+setflag ForestTemple_AmyPuzzleBoxCleard 0
+setflag ForestTemple_DefeatAmy 0
+setflag ForestTemple_DefeatBeth 0
+setflag ForestTemple_Ghost_Appear_Block 0   # run 20261119-215630: arrows hit Amy's painting, but it was empty (no Amy):
+setflag HavePlayedEvent.Dm_ForestTemple_0010 1   # the room logic (Room_16_Prefab_90d8) reads both
+give bow
+warp ForestTemple
+wait 1200
+mark arrived
+assign Bow
+place 11.5 114.6 -59.5   # room 17, west of room 18's chain-locked west door (14.5 114.5 -59.5)
+setflag key64:0xc43d78cdf6bac461 1   # its chain locks (room 17 side and room 18 side): their saved keys (a small key used)
+setflag key64:0x1af8bef0075e095e 1
+wait 120
+goto 18.0 -59.5 0.8 600  # through the door: the room entry runs (its fight shutter closes, Beth's picture manager runs)
+wait 300
+goto 30.0 -60.5 1.0 600  # up the ramp toward painting 3's near area
+place 37.5 120.0 -61.3   # (down to painting 3's near area, as in part 2)
+wait 300
+toward 41.87 -63.2 20    # face painting 3 (faces west, 122.0 high)
+mark b-paint0
+wait 600
+mark b-paint1
+wait 600
+mark b-paint2
+# --- the sweep (1663 ticks) at painting 3: run 20261119-214916's 10 ticks aimed above it from 4.8 m, so smaller steps ---
+press ZL 10
+wait 40
+hold ZR 30
+hold ZR 12 b-aim1
+wait 120
+mark b-shot1
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 1 ZR
+hold ZR 12 b-aim2
+wait 120
+mark b-shot2
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 2 ZR
+hold ZR 12 b-aim3
+wait 120
+mark b-shot3
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 3 ZR
+hold ZR 12 b-aim4
+wait 120
+mark b-shot4
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 4 ZR
+hold ZR 12 b-aim5
+wait 120
+mark b-shot5
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 6 ZR
+hold ZR 12 b-aim6
+wait 120
+mark b-shot6
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 8 ZR
+hold ZR 12 b-aim7
+wait 120
+mark b-shot7
+wait 85                  # (the smaller pitch steps: A's timeline stays the same)
+# --- end of the sweep ---
+mark b-beth-shot
+wait 600
+mark b-beth-out
+wait 300                 # A hits Beth
+mark b-beth-hit
+wait 600
+mark b-beth-end

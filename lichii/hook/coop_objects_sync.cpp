@@ -1945,6 +1945,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             if (PictureDeathHere(o.name, o.life.has_value(), other, s.animation->name, owners)) {
                 o.picture_die_at = now_us;  // row 175: its own death runs here; the owner's animation waits
                 o.picture_kill_due = true;
+                o.picture_die = s.animation->name;
             }
         }
         if (s.hit_ours && *s.hit_ours) {
@@ -3960,6 +3961,13 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
                                                                              : show.idle_over});
     }
     for (const auto& [address, o] : objects_) {
+        // Row 175: our painting's own death, cut off by an owner's play already on its way: played again (from
+        // frame 0, once a sample) over whatever else it shows, so its room logic goes on.
+        if (o.picture_die_at != 0 && now_us >= o.picture_die_at && now_us - o.picture_die_at < kPictureReplayUs &&
+            !o.picture_die.empty() && o.animation && !IsDeathAnimation(o.animation->name)) {
+            out.push_back({address, o.picture_die, 1.0f, 0.0f, o.picture_die_at, 0, o.animation->name});
+            continue;
+        }
         if (o.received.empty() || now_us < o.received.back().time ||
             now_us - o.received.back().time > kPoseStaleUs) {
             continue;

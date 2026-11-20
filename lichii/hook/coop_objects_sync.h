@@ -633,6 +633,9 @@ public:
     static constexpr std::uint64_t kOurHitKeepUs = 500'000;
     // Issue 133: a copy's own death animation counts for its leaving our walk this long (LifelessKillHere).
     static constexpr std::uint64_t kOwnDeathKeepUs = 5'000'000;
+    // Row 175 (run 20261119-232719): the owner's play handed over before our painting's death was read cut it off
+    // ('Pct_Wait' at once, the room logic stalled). Its own death is played again over it this long after.
+    static constexpr std::uint64_t kPictureReplayUs = 3'000'000;
     static constexpr std::size_t kKeepSamples = 16;
     static constexpr std::uint64_t kSceneStaleUs = 5'000'000;  // a player's scene, from its samples
     static constexpr float kClaimDistance = 4.0f;  // a fresh roll this near a copy being made is it
@@ -1147,6 +1150,7 @@ private:
         std::uint64_t own_death_at = 0;  // issue 133: its own death animation last read here (LifelessKillHere)
         std::uint64_t picture_die_at = 0;  // row 175: our copy's own death here went to its owner (PictureDeathHere)
         bool picture_kill_due = false;     // row 175: that kill is still to send
+        std::string picture_die;           // row 175: its own death animation then (played again if cut off)
         std::optional<coop::protocol::Vec3> hit_place;  // where our own hit summed now landed (a boss; cleared with the sum)
         std::optional<coop::protocol::HitRecord> hit_record;  // protocol 14: our newest own hit summed now (cleared with it)
         std::uint32_t hit_seq_in = 0;  // protocol 14: the owner's newest sample hit seq replayed here

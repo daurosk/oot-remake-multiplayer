@@ -1499,6 +1499,21 @@ TEST_CASE("objects: row 175, a Poe sister's painting that died here sends the ki
     CHECK(damage[0].id == id);
     CHECK(damage[0].cause == static_cast<std::uint8_t>(proto::DamageCause::killed));
 
+    // Run 20261119-232719: an owner's play already on its way cut our death off: its own death is played again,
+    // over what it shows now, and no more once it shows its death.
+    hitter.Tick(kScene, 1, 450 * kMs, {painting("Pct_Wait")}, send, writes);
+    std::vector<CoopObjects::PlayWish> plays;
+    hitter.Plays(460 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].address == 0x300);
+    CHECK(plays[0].name == "Pct_Die");
+    CHECK(plays[0].frame == 0.0f);
+    hitter.Tick(kScene, 1, 470 * kMs, {painting("Pct_Die")}, send, writes);
+    plays.clear();
+    hitter.Plays(480 * kMs, plays);
+    CHECK(plays.empty());
+    send.clear();
+
     // The owner says it dead: ours is not deleted (its own death runs the room logic here).
     proto::ObjectRemove dead;
     dead.id = id;

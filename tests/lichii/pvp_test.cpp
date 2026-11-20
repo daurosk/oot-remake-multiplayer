@@ -122,6 +122,7 @@ TEST_CASE("pvp: shots hit within their reach, and a nut never hurts") {
     CHECK(a.Shot(proto::DamageCause::seed, {11.5f, 1, 0}, self, "spot00", 1, targets, 5 * kS).empty());
     // issue 133: a lifeless copy's kill report is never a PvP hit (no amount, no reach)
     CHECK(CoopPvp::AmountOf(proto::DamageCause::killed) == 0);
+    CHECK(CoopPvp::AmountOf(proto::DamageCause::reflected) == 0);  // row 177: a notice, never a PvP hit
     CHECK(CoopPvp::ReachOf(proto::DamageCause::killed) == 0.0f);
     CHECK(a.Shot(proto::DamageCause::killed, {10, 1, 0}, self, "spot00", 1, targets, 7 * kS).empty());
 }

@@ -250,7 +250,7 @@ wait 22
 press Y 8
 wait 22
 mark t8
-kill Enemy_DungeonBoss_PhantomGanon
+# probe 3: no kill, so PG keeps throwing balls until the end
 wait 600
 mark after-turns
 wait 1800

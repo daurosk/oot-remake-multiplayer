@@ -4,7 +4,7 @@
 #! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1
 #! timeout 720
 mark start
-warp DodongoStage DodongoStage
+warp DodongoCavern StartPos_Get_StoneOfFire   # KD's room in the dungeon scene (DodongoStage is the Dream World rematch stage: Obj_DreamWorldTimerManager, molten floor, no intro)
 wait 1200
 mark title
 press A
@@ -20,10 +20,10 @@ setflag HavePlayedEvent.Dm_DodongoCave_BossIn 0   # run 013205: in the arena but
 setflag HavePlayedEvent.Dm_DodongoCave_BossOut 0
 setflag Enemy_DungeonBoss_Dodongo_BossAppear 0
 setflag DodongoCavern_BossGroundChange 0
-setenum 0x1002b466 DungeonStart   # Get_StoneOfFire back before the fight (the lane save is past King Dodongo: molten arena, no intro), as Gohma's GoToBossRoom
+setenum 0x1002b466 DungeonStart   # Get_StoneOfFire back before the fight (the lane save is at KakarikoVillageNpc, before the dungeon), as Gohma's GoToBossRoom
 setflag HavePlayedEvent.Get_StoneOfFire_DefeatBoss 0
 wait 60
-warp DodongoStage DodongoStage   # same-map warp = reload with the flags
+warp DodongoCavern StartPos_Get_StoneOfFire   # same-map warp = reload with the flags
 wait 3000               # the module own warp took >25 s in run 013912
 goto 24.0 -64.5 1.0 1200   # into the arena (Banc Area 24.0 73.2 -63.0), 1.5 m beside A; earlier KD runs stood at the warp spot, phase none
 wait 2520

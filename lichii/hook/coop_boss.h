@@ -358,6 +358,8 @@ bool AskSceneChange(Core::System& system, std::uint64_t main_base, std::string_v
                     std::string_view start);
 // - our Link moved to `to` in this scene, the boss pull's free-play move.
 bool MoveLink(Core::System& system, std::uint64_t main_base, const Vec& to);
+// - test only (`face X Z`): our Link turned on the spot to face the world point (x, z).
+bool FaceLink(Core::System& system, std::uint64_t main_base, float x, float z);
 
 // Boss cutscenes for the area (coop_boss_scenes.h), present thread, for the hook:
 // - our game's PlayerStatus.MaxLife this frame (nothing: unread);

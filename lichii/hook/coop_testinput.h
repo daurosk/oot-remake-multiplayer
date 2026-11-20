@@ -38,6 +38,11 @@
 //                          CoopBoss::MoveLink; needs LICHII_COOP_BOSS on, the
 //                          default), so a scenario reaches a room no walk
 //                          can; logs "coop: test place ...: done" or "failed"
+//   face 66.96 0.0         test only (row 175): turns Link on the spot to
+//                          face world x, z (its rotation written, as the
+//                          place's move; CoopBoss::FaceLink), for an aim the
+//                          camera-learnt `toward` cannot square; logs
+//                          "coop: test face ...: turned to yaw N deg"
 //   kill Enemy_Skulltula_Gold test only: the nearest actor of that name to
 //                          Link takes a hit from Link through the game's own
 //                          damage (as a real kill, so it drops what it
@@ -132,6 +137,7 @@ enum class Kind {
     dress,   // test only: the game's own equip call for a slot, from the PlayerStatus.Equip* flags (re-dresses OUR Link)
     chat,    // test only: a chat line or command, as typed in the chat box (/teleport B)
     place,   // test only: Link put at x, y, z in this scene
+    face,    // test only: Link turned on the spot to face the world point x, z
     kill,    // test only: the nearest actor of that name hit by our Link for all its life
     hurt,    // test only: our own Link hit for N quarter hearts (the game's own hit)
     hit,     // test only: the nearest actor of that name hit by our Link for N of its life (its Life step)

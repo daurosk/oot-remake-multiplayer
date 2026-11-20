@@ -602,3 +602,22 @@ TEST_CASE("test input: sync waits with every button let go until the games meet,
     CHECK_FALSE(Parse("sync title 9\n", bad).has_value());
     CHECK_FALSE(Parse("sync title\n", bad).has_value());
 }
+
+TEST_CASE("testinput: face X Z hands the hook the world point Link turns to (row 175)") {
+    std::string error;
+    CHECK_FALSE(Parse("face\n", error));
+    CHECK_FALSE(Parse("face 66.96\n", error));
+    CHECK_FALSE(Parse("face 66.96 0.0 1\n", error));
+    CHECK_FALSE(Parse("face east 0.0\n", error));
+    Runner r(Must("face 66.96 -0.5\nmark faced\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].kind == Kind::face);
+    CHECK(requests[0].at[0] == doctest::Approx(66.96f));
+    CHECK(requests[0].at[2] == doctest::Approx(-0.5f));
+    REQUIRE(log.size() == 1);
+    CHECK(log[0] == "mark faced");
+    CHECK(r.Done());
+}

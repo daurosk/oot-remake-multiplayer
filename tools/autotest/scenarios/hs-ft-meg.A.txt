@@ -1,0 +1,33 @@
+# hs-ft-meg (Hookshot, row 176 Meg, review-0118-2's SHOULD on meg-join-0118): the hs-ft-puzzles part 3 alone, with
+# B placed STRAIGHT into Meg's area while A's Dm_ForestTemple_0015 plays (hs-ft-puzzles stops B outside her area
+# first, so the join always wins). Here B's own room logic may start Dm_0015 before the join: Joiner::Ours's held_by
+# case (log "our game started the story cutscene ... held for us: theirs, not sent"). Either way, wanted: B never
+# sends Dm_0015, B's Meg is a copy of A's (bosses: "a copy"), no B share of Meg as "owner 2", Meg and her dummies on
+# both screens (shots *-meg*). Meg (room 2): made by ForestTemple_Level_Room_02_Prefab_7182 on DefeatJoe, DefeatBeth,
+# DefeatAmy and Eldest_Daughter_Generate, Link in the area round the elevator (0 100 -3.5, radius 7.5).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane N -Scenario hs-ft-meg
+#! switches LICHII_COOP_CHEATS=1,LICHII_COOP_OBJECTS_CHEAT=1
+mark start
+setflag Sequence_IsChildhood 0
+setflag ForestTemple_DefeatAmy 1
+setflag ForestTemple_DefeatBeth 1
+setflag ForestTemple_DefeatJoe 1
+setflag Eldest_Daughter_Generate 1
+warp ForestTemple
+wait 1200
+mark arrived
+place -2.5 100.6 -3.5    # inside Meg's area: A starts Dm_0015
+wait 300
+toward 0.0 -3.5 10
+mark a-meg0
+wait 600                 # B is placed into her area meanwhile
+mark a-meg1
+wait 600                 # Dm_ForestTemple_0015 (the flames), then Meg
+mark a-meg2
+hit Enemy_MiddleBoss_Poe_Meg 4
+wait 300
+mark a-meg-hit
+wait 600
+mark a-meg3
+wait 600
+mark a-meg4

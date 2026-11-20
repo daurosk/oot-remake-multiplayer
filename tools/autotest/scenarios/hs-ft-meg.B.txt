@@ -1,0 +1,27 @@
+# hs-ft-meg B side (see the A script's header): B stays at the entrance (81 m: A's start is held), then is placed
+# straight into Meg's area while A's Dm_ForestTemple_0015 plays.
+#! switches LICHII_COOP_CHEATS=1,LICHII_COOP_OBJECTS_CHEAT=1
+mark start
+setflag Sequence_IsChildhood 0
+setflag ForestTemple_DefeatAmy 1
+setflag ForestTemple_DefeatBeth 1
+setflag ForestTemple_DefeatJoe 1
+setflag Eldest_Daughter_Generate 1
+warp ForestTemple
+wait 1200
+mark arrived
+wait 600                 # A starts Dm_0015 meanwhile: held here
+place 2.5 100.6 -3.5     # straight into her area (her room logic and the join race)
+wait 10
+toward 0.0 -3.5 10
+mark b-meg0
+wait 300
+mark b-meg1
+wait 600
+mark b-meg2
+wait 300
+mark b-meg-hit
+wait 600
+mark b-meg3
+wait 600
+mark b-meg4

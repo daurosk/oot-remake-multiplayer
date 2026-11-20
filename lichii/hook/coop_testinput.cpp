@@ -336,6 +336,11 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             } else if (w.size() != 4 || !Number(w[1], step.x) || !Number(w[2], step.y) || !Number(w[3], step.z)) {
                 return fail("want: place X Y Z, or place PLATFORM UP");
             }
+        } else if (cmd == "FACE") {
+            step.kind = Kind::face;
+            if (w.size() != 3 || !Number(w[1], step.x) || !Number(w[2], step.z)) {
+                return fail("want: face X Z");
+            }
         } else if (cmd == "CHAT") {
             if (w.size() < 2) {
                 return fail("want: chat TEXT");
@@ -560,7 +565,7 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
             ++index_;
             continue;
         }
-        if (s.kind == Kind::place) {
+        if (s.kind == Kind::place || s.kind == Kind::face) {
             requests_.push_back(Request{s.kind, s.mark, {}, {s.x, s.y, s.z}});
             ++index_;
             continue;
@@ -1207,6 +1212,11 @@ void OnFrame(Core::System& system) {
                                                CoopBoss::Vec{request.at[0], request.at[1], request.at[2]});
             LOG_INFO(Core, "coop: test place {:.2f} {:.2f} {:.2f}: {}", request.at[0], request.at[1],
                      request.at[2], ok ? "done" : "failed");
+        } else if (request.kind == Kind::face) {
+            const bool ok = CoopBoss::FaceLink(system, g_state.main, request.at[0], request.at[2]);
+            if (!ok) {
+                LOG_INFO(Core, "coop: test face {:.2f} {:.2f}: failed", request.at[0], request.at[2]);
+            }  // done: logged where it is turned
         } else if (request.kind == Kind::kill) {
             CoopObjects::QueueTestKill(request.name);  // logged where it is done
         } else if (request.kind == Kind::hit) {

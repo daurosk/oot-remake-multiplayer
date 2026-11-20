@@ -44,13 +44,9 @@ mark arrived
 assign Bow
 place 55.9 104.1 0.0     # room 25, west of the puzzle, level with Amy's painting (z 0)
 wait 300
-toward 66.96 0.0 60      # face Amy's painting (east wall). 60 ticks, not 10 (run 20261119-220248: Link never
-                         # turned, a-aim3 faced the door wall): the stick is camera-relative and hookshot.py
-                         # learns the camera from how Link moves; a first toward has nothing learnt (angle 0),
-                         # so 10 ticks pushed blind. 60 ticks learn, correct and end against A_01's west face
-place 55.9 104.1 0.0     # run 20261119-223508: pressed on A_01 Link ended ~40 deg off (a-aim1: the painting top left);
-wait 60                  # back to the spot, then a short turn with the camera now learnt: square to the painting
-toward 66.96 0.0 8
+face 66.96 0.0          # face Amy's painting (east wall) directly (forest-0118-6: the module's test `face`; the
+                         # camera-learnt `toward` left Link ~40 deg off in runs 223508 and 224356). Same 248 ticks
+wait 128                 # as the toward/place/toward it replaces, so B's timeline is unchanged
 wait 120
 mark a-before
 # --- the sweep (1663 ticks): ZL, draw, pitch up N ticks, let go (fires) ---

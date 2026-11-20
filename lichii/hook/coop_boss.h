@@ -194,6 +194,9 @@ public:
     // still sees the boss (a dead boss actor may stay with its life unread),
     // unless the boss is known to be at full life (Local::boss_hurt false).
     static constexpr std::uint64_t kLongEventUs = 15'000'000;
+    // The boss gone without a reading at life 0 counts as its death only this long after the event ended with us
+    // still in the room (a scene change unloads it first: kd-twist run 20261120-074938).
+    static constexpr std::uint64_t kGoneSettleUs = 2'000'000;
     // An event this soon after the fight began is never the boss's death: the
     // rest of an intro (a skipped one plays its next shot), not an outro
     // (integrate-p8: B skipped its intro and 0.1 s later took the next event
@@ -256,6 +259,11 @@ private:
     // Our side.
     const Room* here_ = nullptr;
     bool provisional_ = false;   // outro from an event while the boss may be alive
+    // The provisional outro is an event with the boss gone from the walk but never read at life 0: its death, or our
+    // scene going down (a respawn's or a teleport's map change). Decided once the event is over and we are still in
+    // the room (gone_settle_at_: kGoneSettleUs after it ended); leaving the room first is no death (row 149).
+    bool gone_unread_ = false;
+    std::uint64_t gone_settle_at_ = 0;
     // Our Link died in this room (the Game Over, then a continue or a reload): until he is up
     // again with no event, no event of ours is taken for the intro or the boss's death.
     bool died_ = false;

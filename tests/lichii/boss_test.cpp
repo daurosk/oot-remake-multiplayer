@@ -540,6 +540,10 @@ TEST_CASE("boss: a heuristic Defeat never reaches the record") {
     Local gone = Alive(Forest().arrive, true, false);
     gone.boss_read_dead = false;
     a = w.Tick(gone, 30 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));  // decided when the event ends here (row 149, run 074938)
+    gone.event = false;
+    w.Tick(gone, 31 * kS);
+    a = w.Tick(gone, 33 * kS + kS / 2);
     CHECK(Has(a, proto::BossState::defeated));
     CHECK_FALSE(Recorded(a));
     Sync x;
@@ -1090,4 +1094,58 @@ TEST_CASE("boss: never seen pre-battle, a boss is ready by its intro flag only (
     CHECK_FALSE(r.Step(3, false, false));
     CHECK(r.Step(3, true, false));
     CHECK(r.Step(3, std::nullopt, std::nullopt));  // flag not read: as before, not held back
+}
+
+TEST_CASE("boss: the boss gone with no reading at life 0 in an event is decided when it ends in the room (row 149)") {
+    // kd-twist run 20261120-074938: B was downed in King Dodongo's fight; co-op's respawn took it to the dungeon's
+    // entrance through the game's map change event. That event, with KD unloaded by it, was taken for his death.
+    auto unread_gone = [](Vec p, bool event) {
+        Local l = Alive(p, event, false);
+        l.boss_read_dead = false;  // gone from the walk, never read at life 0
+        return l;
+    };
+    {
+        Sync s;  // the map change: we leave the room before it ends here
+        ToFight(s);
+        auto a = s.Tick(unread_gone(Forest().arrive, true), 30 * kS);
+        CHECK_FALSE(Has(a, proto::BossState::defeated));
+        CHECK(s.phase() == Sync::Phase::outro);
+        a = s.Tick(unread_gone(Forest().arrive, true), 31 * kS);
+        CHECK_FALSE(Has(a, proto::BossState::defeated));
+        a = s.Tick(Alive(kForestEntrance, true, std::nullopt), 33 * kS);  // arrived at the entrance, its event
+        CHECK_FALSE(Has(a, proto::BossState::defeated));
+        CHECK(Has(a, proto::BossState::left));
+        a = s.Tick(Alive(kForestEntrance, false, std::nullopt), 36 * kS);
+        CHECK_FALSE(Has(a, proto::BossState::defeated));
+    }
+    {
+        Sync s;  // the death with no reading: the event ends, we stay, the boss stays gone: the old guess
+        ToFight(s);
+        s.Tick(unread_gone(Forest().arrive, true), 30 * kS);
+        auto a = s.Tick(unread_gone(Forest().arrive, true), 40 * kS);
+        CHECK_FALSE(Has(a, proto::BossState::defeated));
+        a = s.Tick(unread_gone(Forest().arrive, false), 41 * kS);  // ended
+        CHECK_FALSE(Has(a, proto::BossState::defeated));
+        a = s.Tick(unread_gone(Forest().arrive, false), 42 * kS);
+        CHECK_FALSE(Has(a, proto::BossState::defeated));
+        a = s.Tick(unread_gone(Forest().arrive, false), 43 * kS + kS / 2);
+        CHECK(Has(a, proto::BossState::defeated));
+        CHECK_FALSE(a.beaten_here);  // a guess, never a proof
+        CHECK(s.phase() == Sync::Phase::done);
+    }
+    {
+        Sync s;  // read at life 0 meanwhile: its death, proven
+        ToFight(s);
+        s.Tick(unread_gone(Forest().arrive, true), 30 * kS);
+        auto a = s.Tick(Alive(Forest().arrive, true, false), 32 * kS);
+        CHECK(Has(a, proto::BossState::defeated));
+        CHECK(a.beaten_here);
+    }
+    {
+        Sync s;  // seen again: the fight goes on
+        ToFight(s);
+        s.Tick(unread_gone(Forest().arrive, true), 30 * kS);
+        s.Tick(Alive(Forest().arrive, false, true), 32 * kS);
+        CHECK(s.phase() == Sync::Phase::fight);
+    }
 }

@@ -418,6 +418,8 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
         }
         here_ = room;
         provisional_ = false;
+        gone_unread_ = false;
+        gone_settle_at_ = 0;
         died_ = false;
         entered_at_ = now_us;
         intro_at_ = 0;
@@ -459,6 +461,7 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
             const bool boss_died = local.boss_alive.has_value() && !*local.boss_alive && local.boss_read_dead;
             if (phase_ == Phase::outro && provisional_ && !boss_died) {
                 provisional_ = false;
+                gone_unread_ = false;
                 phase_ = Phase::fight;
                 fight_at_ = now_us;
             }
@@ -545,13 +548,46 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
                 } else if (local.boss_read_dead) {
                     Died(out);  // read at life 0
                 } else if (local.boss_alive.has_value()) {
-                    GuessedOver(out, "the boss gone without a reading at life 0");
+                    // Its death, or our scene going down (a respawn's or a teleport's map change unloads it too):
+                    // decided when the event is over and we are still here (kd-twist run 20261120-074938).
+                    provisional_ = true;
+                    gone_unread_ = true;
+                    gone_settle_at_ = 0;
+                    out.log.push_back("an event in the fight, the boss gone without a reading at life 0: decided "
+                                      "when it ends here (leaving the room is no death)");
                 } else {
                     GuessedOver(out, "an event in the fight, the boss not read");
                 }
             }
             break;
         case Phase::outro:
+            if (provisional_ && gone_unread_) {
+                const bool gone = local.boss_alive.has_value() && !*local.boss_alive;
+                if (gone && local.boss_read_dead) {
+                    provisional_ = false;
+                    gone_unread_ = false;
+                    Died(out);
+                } else if (local.boss_alive.value_or(false)) {
+                    provisional_ = false;
+                    gone_unread_ = false;
+                    phase_ = Phase::fight;
+                    out.log.push_back("the boss is there again: the fight goes on");
+                    break;
+                } else if (local.event) {
+                    gone_settle_at_ = 0;  // still running (or another began): wait for its end
+                } else if (gone_settle_at_ == 0) {
+                    gone_settle_at_ = now_us + kGoneSettleUs;
+                } else if (now_us >= gone_settle_at_) {
+                    provisional_ = false;
+                    gone_unread_ = false;
+                    GuessedOver(out, "the boss gone without a reading at life 0");
+                }
+                if (provisional_) {
+                    break;
+                }
+                phase_ = Phase::done;
+                break;
+            }
             if (provisional_) {
                 const bool gone = local.boss_alive.has_value() && !*local.boss_alive;
                 // An untouched boss is not dying: a long event with the boss at

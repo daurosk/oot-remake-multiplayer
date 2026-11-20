@@ -28,7 +28,9 @@ wait 300
 goto 18.0 -59.5 0.8 600  # through the door: the room entry runs (its fight shutter closes, Beth's picture manager runs)
 wait 300
 goto 30.0 -60.5 1.0 600  # up the ramp toward painting 3's near area
-place 38.0 120.2 -60.2   # (down to the lower floor by painting 3, as in part 2)
+place 28.57 119.0 -59.53  # painting 2's "player near" Area (Area_05fd): Room_13_Prefab_48cb wires each painting's
+                         # IsEscapeTiming to its own near Area, so Beth leaves the painting a Link is near (A here, B
+                         # at painting 1): she is then in painting 3 (41.87 122.0 -63.2), which B shoots
 wait 300
 mark a-room18
 toward 29.44 -59.5 20    # A faces painting 2 (B faces painting 3)

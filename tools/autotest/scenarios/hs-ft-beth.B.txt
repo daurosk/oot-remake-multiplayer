@@ -24,9 +24,10 @@ wait 300
 goto 18.0 -59.5 0.8 600  # through the door: the room entry runs (its fight shutter closes, Beth's picture manager runs)
 wait 300
 goto 30.0 -60.5 1.0 600  # up the ramp toward painting 3's near area
-place 39.47 119.6 -61.29  # the middle of painting 3's "player near" Area (Beth shows in the painting near a player)
+place 26.5 124.6 -61.25   # painting 1's "player near" Area (Area_db46, upper level): Beth leaves the painting a Link
+                         # is near (see the A file), so she is in painting 3, which B shoots from here (~15 m)
 wait 300
-face 41.87 -63.2         # face painting 3 (run 20261120-000013: B stood 2 m off its Area: Beth was not in it)
+face 41.87 -63.2         # face painting 3 (2.5 m below our eye: the sweep goes both ways)
 wait 20
 mark b-paint0
 wait 600
@@ -50,39 +51,39 @@ mark b-shot2
 press ZL 10
 wait 40
 hold ZR 30
-rstick 0 1.0 6 ZR
+rstick 0 -1.0 3 ZR
 hold ZR 12 b-aim3
 wait 120
 mark b-shot3
 press ZL 10
 wait 40
 hold ZR 30
-rstick 0 1.0 9 ZR
+rstick 0 1.0 6 ZR
 hold ZR 12 b-aim4
 wait 120
 mark b-shot4
 press ZL 10
 wait 40
 hold ZR 30
-rstick 0 1.0 12 ZR
+rstick 0 -1.0 6 ZR
 hold ZR 12 b-aim5
 wait 120
 mark b-shot5
 press ZL 10
 wait 40
 hold ZR 30
-rstick 0 1.0 16 ZR
+rstick 0 1.0 10 ZR
 hold ZR 12 b-aim6
 wait 120
 mark b-shot6
 press ZL 10
 wait 40
 hold ZR 30
-rstick 0 1.0 20 ZR
+rstick 0 -1.0 10 ZR
 hold ZR 12 b-aim7
 wait 120
 mark b-shot7
-wait 43                  # (the smaller pitch steps: A's timeline stays the same)
+wait 71                  # (the smaller pitch steps: A's timeline stays the same)
 # --- end of the sweep ---
 mark b-beth-shot
 wait 600

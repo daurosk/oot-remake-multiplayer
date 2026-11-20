@@ -1720,9 +1720,9 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
                         if (lk != 0 && ReadValue(guest, lk + addr::kActorPosition, lp) && (++slot.probe_frames % 10) == 0) {
                             const float dx = lp[0] - c->position[0], dy = lp[1] - c->position[1], dz = lp[2] - c->position[2];
                             const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
-                            if (d < 3.0f) {
+                            if (true) {  // ungated (2nd probe)
                                 const std::string h = CoopShotReflect::Describe(guest, slot.taken);
-                                Say(shared + ": PROBE copy " + std::to_string(slot.key) + " dist " + std::to_string(d) +
+                                Say(shared + ": PROBE copy " + std::to_string(slot.key) + " dist " + std::to_string(d) + " copy " + std::to_string(c->position[0]) + " " + std::to_string(c->position[1]) + " " + std::to_string(c->position[2]) + " link " + std::to_string(lp[0]) + " " + std::to_string(lp[1]) + " " + std::to_string(lp[2]) +
                                     " lists:" + (h.empty() ? std::string(" EMPTY") : h));
                             }
                         }

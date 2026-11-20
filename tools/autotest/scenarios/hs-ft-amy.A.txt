@@ -1,0 +1,116 @@
+# hs-ft-amy: hs-ft-puzzles part 1 (Amy, row 175) only, with A's warp 300 ticks after B's (same total wait) so B's game
+# claims Amy's painting first and A's arrow hits a COPY (amy-hit-0118's copy branch: hitter != owner; run 230405's case).
+# Log: "its copy died here (a painting, our hit)" (A), "its copy's death in the hitter's game" (B), Dm_ForestTemple_0013.
+# hs-ft-puzzles (Hookshot, research for player rows 175 "only one player can move the ghost image (painting/block)
+# puzzle" and 176 "the Poe sisters' fight gets wonky", Forest Temple). Facts wanted, screenshots on both games.
+#! switches LICHII_COOP_CHEATS=1,LICHII_COOP_OBJECTS_CHEAT=1
+# Scenario fix (forest-0118-4, root cause of run 20261119-181519's 'none here with a life'): the test kill/hit
+# reaches only actors with a Life component. A painting performer (Enemy_GhostPicturePerformer_Poe_*) has none: it is
+# a hidden snapshot actor (its ainb: OneShotSnapshotTextureSetCameraPos/At) drawn into the painting on the wall,
+# Obj_ForestTemple_GhostPicture_A_0x, and an arrow at that painting is what kills it. The sisters (Enemy_Poe_Beth...)
+# are made only after their painting is shot. So both shots are now real bow shots: `give bow` (cheats switch above),
+# `assign Bow`, face the painting, ZL (the camera goes behind Link), hold ZR, pitch up with the right stick, let go
+# (fires; the log has `spawn: sent NormalArrow`). The pitch per tick is not known, so each shot is a sweep of
+# rising pitch (the hs-eye-probe slingshot pattern, which hit on its 2nd shot); the first hit starts the cutscene.
+# Room 18 (Beth): it rises as a ramp from the west door (14.5 114.5 -59.5) to the east door (46.0 124.4 -59.5); the
+#   old place (30 115.6 -61.3) was under the ramp, so Link fell and was put back. Painting 3 (41.87 122.0 -63.2) faces
+#   west, its "player near" Area 2.4 m in front (39.47 119.53 -61.29, half-height 1.9: floor ~117.6). Its room logic
+#   (ForestTemple_Level_Room_13_Prefab_48cb) shows Beth in the painting NEAR THE PLAYER (NearPlayerPictureA/B/C).
+# Meg (room 2): made by ForestTemple_Level_Room_02_Prefab_7182 (Dm_ForestTemple_0015, Eldest_Daughter_Generate) when
+#   the three Defeat flags are set and Link is IN the area round the elevator (0 100 -3.5, radius 7.5); the old place
+#   (-3 100.6 4) was 8.1 m out, so she was never made. Now both stand 2.5 m from the middle.
+# Painting facts (romfs Banc/ForestTemple): Amy's painting Obj_ForestTemple_GhostPicture_A_03 66.96 109.94 0.0, facing
+#   west, 6 m above the room 25 floor (103.9). Blocks: one placed Obj_MovableBox_BasePosAnchor (61.25 103.9 2.25);
+#   scrambled places A_01 57.5 -0.75, A_02 59.0 2.25, A_03 62.0 -0.75, A_04 60.5 -2.25.
+# Part 1 (row 175): A shoots Amy's painting; after the scramble B pushes A_03 west, then A pushes A_01 east.
+#   Shots: a-/b-before, a-aim1..7 (the reticle on the painting?), a-shot1..7, -scrambled, b-push1, a-seen-b, a-push1,
+#   b-seen-a. Log: "spawn: sent NormalArrow", "Pct_Die", "Dm_ForestTemple_0013", "world:" (moved here: sending / moved
+#   by another player / push node), "objects: share ... Poe_Amy" (owner).
+# Part 2 (row 176): both in room 18 by painting 3, 20 s; B shoots painting 3 (a sweep). Shots *-paint*, *-beth-*: is
+#   the Poe in the same painting on both? Does Beth come out on both after B's shot? Then A hits Beth (she has a life).
+#   Log: "Enemy_GhostPicturePerformer_Poe_Beth", "Enemy_Poe_Beth".
+# Part 3 (row 176): the three sisters set beaten, re-warp, both inside Meg's area; Dm_ForestTemple_0015 then Meg; A
+#   hits Meg once. Shots *-meg*: one Meg and her copies the same on both? Log: "Enemy_MiddleBoss_Poe_Meg", "_Dummy".
+# No PASS/FAIL: a research run. A and B keep the same timeline (B's waits match A's steps; a sweep is 1663 ticks).
+mark start
+setflag Sequence_IsChildhood 0
+setflag ForestTemple_AmyPuzzleBoxCleard 0
+setflag ForestTemple_DefeatAmy 0
+setflag ForestTemple_DefeatBeth 0
+setflag ForestTemple_Ghost_Appear_Block 0   # run 20261119-215630: arrows hit Amy's painting, but it was empty (no Amy):
+setflag HavePlayedEvent.Dm_ForestTemple_0010 1   # the room logic (Room_16_Prefab_90d8) reads both
+give bow
+wait 300                 # B loads the room first: its game owns Amy's painting
+warp ForestTemple
+wait 900
+mark arrived
+assign Bow
+place 55.9 104.1 0.0     # room 25, west of the puzzle, level with Amy's painting (z 0)
+wait 300
+face 66.96 0.0          # face Amy's painting (east wall) directly (forest-0118-6: the module's test `face`; the
+                         # camera-learnt `toward` left Link ~40 deg off in runs 223508 and 224356). Same 248 ticks
+wait 128                 # as the toward/place/toward it replaces, so B's timeline is unchanged
+wait 120
+mark a-before
+# --- the sweep (1663 ticks): ZL, draw, pitch up N ticks, let go (fires) ---
+press ZL 10
+wait 40
+hold ZR 30
+hold ZR 12 a-aim1
+wait 120
+mark a-shot1
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 5 ZR
+hold ZR 12 a-aim2
+wait 120
+mark a-shot2
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 10 ZR
+hold ZR 12 a-aim3
+wait 120
+mark a-shot3
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 15 ZR
+hold ZR 12 a-aim4
+wait 120
+mark a-shot4
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 20 ZR
+hold ZR 12 a-aim5
+wait 120
+mark a-shot5
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 26 ZR
+hold ZR 12 a-aim6
+wait 120
+mark a-shot6
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 33 ZR
+hold ZR 12 a-aim7
+wait 120
+mark a-shot7
+# --- end of the sweep ---
+wait 900
+mark a-scrambled
+place 55.9 104.1 -0.75   # back west of A_01 after the cutscene
+wait 240
+mark a-replaced
+wait 600                 # B pushes A_03 west meanwhile
+mark a-seen-b
+toward 58.5 -0.75 40     # walk up to A_01's face first (B's file: with A held on the walk B climbed its block)
+toward 58.5 -0.75 150 A  # A grabs and pushes A_01 east
+wait 240
+mark a-push1
+wait 600

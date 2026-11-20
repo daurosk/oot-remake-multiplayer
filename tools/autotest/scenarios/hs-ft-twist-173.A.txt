@@ -10,12 +10,13 @@
 # in a wall or falling, change A's place; if no Dm_ForestTemple_000[57] in A's log the run is VOID (aim), not a FAIL.
 # SAVE: an adult Forest Temple save with the bow (hs-ft-puzzles' lane save). Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-ft-twist-173
 # PASS (logs + shots):
-#  1. A: the twist event plays (A's log names Dm_ForestTemple_0005 or _0007; a-after: A's corridor turned).
+#  1. A: the twist event plays (A's log, LICHII_COOP_DEBUG_BOSS: "the game asked the event 'Dm_ForestTemple_0005'"
+#     or _0007); a-corridor (A inside corridor A_01 after it): A's corridor turned (vs B's b-before).
 #  2. B: NO start or join of that event ('story' / 'joined' lines naming it) and no EventTriggerRelocateTwistCorridor;
 #     b-before vs b-after/b-end: B's view of the corridor did not turn, B's Link stands (no fall, no void-out).
 #  3. B leaves and re-enters (b-back): the corridor as the shared flag says (turned like A's), B not inside it then.
-#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1,LICHII_COOP_OBJECTS_CHEAT=1
-#! timeout 600
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1,LICHII_COOP_OBJECTS_CHEAT=1
+#! timeout 900
 mark start
 setflag Sequence_IsChildhood 0
 give bow
@@ -24,7 +25,11 @@ wait 1200
 mark arrived
 assign Bow
 place -56.5 126.5 -2.0   # room 9, 8 m south (+z) of the relief, under it
-wait 300
+wait 120
+kill Enemy_Bubble_Blue   # run 082048: two Blue Bubbles in room 9 (y 126) killed A after the shot
+wait 60
+kill Enemy_Bubble_Blue
+wait 120
 toward -56.5 -10.1 10    # face it (-z)
 wait 60
 mark a-place
@@ -39,19 +44,15 @@ wait 40
 hold ZR 42 a-aim1
 wait 180
 mark a-shot1
-aim -56.5 132.5 -10.1
-wait 10
-press ZL 10
-wait 40
-hold ZR 42 a-aim2
-wait 180
-mark a-shot2
-aim -56.5 130.5 -10.1
-wait 10
-press ZL 10
-wait 40
-hold ZR 42 a-aim3
-wait 600
+# ONE arrow only: a second hit would twist the corridor back (run 082048: the first aimed arrow started an 11.9 s
+# event on the eye 0.1 s after it was put).
+wait 420
 mark a-after
-wait 1800
+place -56.5 126.5 -40.0  # into corridor A_01 (centre -50.3), 10 m past B: A's own view of the corridor after its twist
+wait 300
+face -56.5 -60.0         # down the corridor
+press ZL 10
+wait 60
+mark a-corridor
+wait 1500
 mark a-end

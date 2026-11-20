@@ -10,6 +10,7 @@
 #! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
 #! timeout 720
 mark start
+nofairy                  # every bottle emptied: a bottled fairy revives instead of downing (3 VOID runs, 2026-11-20)
 warp DodongoCavern StartPos_Get_StoneOfFire   # the dungeon scene (the bridge lands at its entrance; place moves Link into room 22) (DodongoStage is the Dream World rematch stage: Obj_DreamWorldTimerManager, molten floor, no intro)
 wait 1800
 mark title

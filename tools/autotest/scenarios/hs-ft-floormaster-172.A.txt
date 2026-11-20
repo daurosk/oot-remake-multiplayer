@@ -19,6 +19,7 @@
 #! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_CHEATS=1
 #! timeout 600
 mark start
+nofairy                  # every bottle emptied: a bottled fairy revives instead of downing (3 VOID runs, 2026-11-20)
 setflag Sequence_IsChildhood 0
 warp ForestTemple
 wait 1200

@@ -1,0 +1,31 @@
+# hs-ft-meg-late B side (see the A script's header): B waits at the entrance for 2.5 min (A's Dm_0015 held here past
+# kHoldUs while A, its starter, is in the scene), then is placed straight into Meg's area; then A kills Meg.
+#! switches LICHII_COOP_CHEATS=1,LICHII_COOP_OBJECTS_CHEAT=1
+mark start
+setflag Sequence_IsChildhood 0
+setflag ForestTemple_DefeatAmy 1
+setflag ForestTemple_DefeatBeth 1
+setflag ForestTemple_DefeatJoe 1
+setflag Eldest_Daughter_Generate 1
+warp ForestTemple
+wait 1200
+mark arrived
+wait 1500
+mark b-wait1
+wait 3000
+mark b-wait2
+wait 4200                # ~2.4 min after A's start (140 s: past kHoldUs)
+place 2.5 100.6 -3.5     # straight into her area (the late join or her room logic: theirs)
+wait 10
+toward 0.0 -3.5 10
+mark b-late1
+wait 900
+mark b-late2
+wait 1200                # A kills Meg meanwhile
+wait 600
+mark b-after1
+toward 0.0 -8.0 10       # the hall torches and the elevator
+wait 900
+mark b-after2
+wait 900
+mark b-after3

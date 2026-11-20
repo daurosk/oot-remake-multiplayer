@@ -1,0 +1,38 @@
+# hs-ft-meg-late (Hookshot, row 176 poe-hold-0118 + checks (3)/(4)): A starts Meg's fight (Dm_ForestTemple_0015) and
+# keeps it going; B stays at the entrance (81 m, same scene) for 2.5 min, past kHoldUs, then is placed into Meg's
+# area. Wanted in B's log: "... earlier, now near us: playing it here too (late)" or "... (held for us): theirs, not
+# sent", never "our game started the story cutscene Dm_ForestTemple_0015: sent", and no Meg share "owner 2" (one Meg,
+# A's; shots b-late*). Then A kills Meg: B's copy dies, B plays its own Dm_ForestTemple_0016 (the elevator rises, the
+# hall torch A_02 lights) and B's four hall torches burn (DefeatMeg live): shots *-after*.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane N -Scenario hs-ft-meg-late
+#! switches LICHII_COOP_CHEATS=1,LICHII_COOP_OBJECTS_CHEAT=1
+mark start
+setflag Sequence_IsChildhood 0
+setflag ForestTemple_DefeatAmy 1
+setflag ForestTemple_DefeatBeth 1
+setflag ForestTemple_DefeatJoe 1
+setflag Eldest_Daughter_Generate 1
+warp ForestTemple
+wait 1200
+mark arrived
+place -2.5 100.6 -3.5    # inside Meg's area: A starts Dm_0015
+wait 300
+toward 0.0 -3.5 10
+mark a-meg0
+wait 1200                # Dm_ForestTemple_0015 (the flames), then Meg
+mark a-meg1
+wait 3000
+mark a-meg2
+wait 3000
+mark a-meg3              # ~2.4 min after A's start: B still at the entrance
+wait 2400                # B is placed into her area meanwhile (B at ~9900 ticks)
+mark a-late1
+wait 900
+mark a-late2
+kill Enemy_MiddleBoss_Poe_Meg
+wait 600
+mark a-after1
+wait 900
+mark a-after2
+wait 900
+mark a-after3

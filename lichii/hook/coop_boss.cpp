@@ -454,8 +454,10 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
         if (local.link_dead.value_or(false) && !died_) {
             died_ = true;
             out.log.push_back("our Link died: a Game Over, not the boss's death");
-            const bool boss_gone = local.boss_alive.has_value() && !*local.boss_alive;
-            if (phase_ == Phase::outro && provisional_ && !boss_gone) {
+            // Only a body read at life 0 is the boss's death now: a Game Over takes the scene down, so the boss
+            // reads gone without one (kd-twist run 20261120-072018: King Dodongo untouched, the group told beaten).
+            const bool boss_died = local.boss_alive.has_value() && !*local.boss_alive && local.boss_read_dead;
+            if (phase_ == Phase::outro && provisional_ && !boss_died) {
                 provisional_ = false;
                 phase_ = Phase::fight;
                 fight_at_ = now_us;
@@ -517,8 +519,9 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
             }
             break;
         case Phase::fight:
-            if (rose && died_ && local.boss_alive.value_or(true)) {
-                // (The boss read gone at the same time is its death all the same: below.)
+            if (rose && died_ && !local.boss_read_dead) {
+                // The boss read gone with no reading at life 0 is the Game Over taking the scene down, not its
+                // death (run 20261120-072018); one read at life 0 at the same time is its death all the same: below.
                 out.log.push_back("an event while our Link is dead: the Game Over, not the boss's death");
             } else if (rose && !committed_ && local.boss_alive.value_or(true)) {
                 // The fight began here with no intro and nobody past the door
@@ -555,6 +558,14 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
                 // full life is a scene of the fight (Gohma's ceiling intro).
                 const bool untouched = local.boss_hurt.has_value() && !*local.boss_hurt;
                 const bool long_event = now_us - outro_at_ >= kLongEventUs && !untouched;
+                if (gone && died_ && !local.boss_read_dead) {
+                    // Gone at our Game Over without a reading at life 0: the scene going down, not the boss's death.
+                    provisional_ = false;
+                    phase_ = Phase::fight;
+                    out.log.push_back("the boss read gone while our Link is dead, never at life 0: the Game Over, "
+                                      "not the boss's death");
+                    break;
+                }
                 if (gone || (long_event && local.event)) {
                     provisional_ = false;
                     if (gone && local.boss_read_dead) {

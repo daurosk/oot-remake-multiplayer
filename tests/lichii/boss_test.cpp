@@ -1007,16 +1007,63 @@ TEST_CASE("boss: after a continue the fight and its win count again (boss-gameov
     CHECK(a.beaten_here);
 }
 
-TEST_CASE("boss: the boss read gone while our Link is dead is still its death (boss-gameover-b)") {
+TEST_CASE("boss: the boss read at life 0 while our Link is dead is still its death (boss-gameover-b)") {
+    auto read_dead = [](Local l) {
+        l.boss_read_dead = true;
+        return l;
+    };
     Sync s;
     ToFight(s);
     s.Tick(Dead(Forest().arrive, true, true, false), 30 * kS);
-    auto a = s.Tick(Dead(Forest().arrive, true, false, true), 31 * kS);
+    auto a = s.Tick(read_dead(Dead(Forest().arrive, true, false, true)), 31 * kS);
     CHECK(Has(a, proto::BossState::defeated));
+    CHECK(a.beaten_here);
     Sync t;
     ToFight(t);
-    a = t.Tick(Dead(Forest().arrive, true, false, true), 30 * kS);
+    a = t.Tick(read_dead(Dead(Forest().arrive, true, false, true)), 30 * kS);
     CHECK(Has(a, proto::BossState::defeated));
+    CHECK(a.beaten_here);
+}
+
+TEST_CASE("boss: the boss gone at our Game Over with no reading at life 0 is not its death (row 149, run 072018)") {
+    // kd-twist run 20261120-072018: A's Link died in King Dodongo's fight, untouched; the Game Over took the scene
+    // down, KD read gone without a body at life 0, and the group was told he was beaten (B: 'boss beaten in another
+    // game', its fight over while KD lived).
+    auto unread = [](Local l) {  // gone from the walk, never read at life 0
+        l.boss_read_dead = false;
+        return l;
+    };
+    for (const bool waiting_first : {false, true}) {
+        Sync s;
+        ToFight(s);
+        if (waiting_first) {  // an event of the fight began first (the outro wait), then the Game Over
+            s.Tick(Dead(Forest().arrive, true, true, false), 30 * kS);
+            REQUIRE(s.phase() == Sync::Phase::outro);
+        }
+        auto a = s.Tick(unread(Dead(Forest().arrive, true, false, true)), 31 * kS);
+        CHECK_FALSE(Has(a, proto::BossState::defeated));
+        CHECK_FALSE(a.beaten_here);
+        CHECK(s.phase() == Sync::Phase::fight);
+        for (std::uint64_t t = 32; t <= 60; t += 4) {  // the whole Game Over, the boss still not read
+            a = s.Tick(unread(Dead(Forest().arrive, true, false, true)), t * kS);
+            CHECK_FALSE(Has(a, proto::BossState::defeated));
+            a = s.Tick(Dead(Forest().arrive, true, std::nullopt, true), t * kS + kS);
+            CHECK_FALSE(Has(a, proto::BossState::defeated));
+        }
+        CHECK(s.phase() == Sync::Phase::fight);
+    }
+    // Alive again, the boss's real death still counts.
+    Sync u;
+    ToFight(u);
+    u.Tick(unread(Dead(Forest().arrive, true, false, true)), 30 * kS);
+    u.Tick(Dead(Forest().arrive, false, true, false), 45 * kS);
+    REQUIRE(u.phase() == Sync::Phase::fight);
+    u.Tick(Dead(Forest().arrive, true, true, false), 60 * kS);
+    Local l = Dead(Forest().arrive, true, false, false);
+    l.boss_read_dead = true;
+    auto a = u.Tick(l, 62 * kS);
+    CHECK(Has(a, proto::BossState::defeated));
+    CHECK(a.beaten_here);
 }
 
 TEST_CASE("boss: a late joiner is ready once its boss leaves the pre-battle phase, without its intro (boss-copy-b)") {

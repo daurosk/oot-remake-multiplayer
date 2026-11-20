@@ -137,14 +137,18 @@ TEST_CASE("boss: intro, fight and the boss's death") {
     a = s.Tick(At("ForestTemple", Forest().arrive, false), 20 * kS);
     CHECK(Has(a, proto::BossState::intro_end));
     CHECK(s.phase() == Sync::Phase::fight);
+    // The boss is never read here (no object walk): decided once the event is over and we are still in the room
+    // (a scene change unloads a boss too: row 149, review of 0cda04cf).
     a = s.Tick(At("ForestTemple", Forest().arrive, true), 60 * kS);
-    CHECK(Has(a, proto::BossState::defeated));
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
     CHECK(s.phase() == Sync::Phase::outro);
-    // No heartbeat after the boss is beaten.
-    a = s.Tick(At("ForestTemple", Forest().arrive, true), 70 * kS);
-    CHECK(a.send.empty());
-    s.Tick(At("ForestTemple", Forest().arrive, false), 80 * kS);
+    s.Tick(At("ForestTemple", Forest().arrive, true), 70 * kS);
+    a = s.Tick(At("ForestTemple", Forest().arrive, false), 80 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    a = s.Tick(At("ForestTemple", Forest().arrive, false), 82 * kS + kS / 2);
+    CHECK(Has(a, proto::BossState::defeated));
     CHECK(s.phase() == Sync::Phase::done);
+    // No heartbeat after the boss is beaten.
     CHECK(s.Tick(At("ForestTemple", Forest().arrive), 90 * kS).send.empty());
 }
 
@@ -482,7 +486,7 @@ TEST_CASE("boss: a long event with the boss at full life is not its death (Gohma
     CHECK(Has(a, proto::BossState::defeated));
 }
 
-TEST_CASE("boss: the boss dead when the event starts, or no reading, is the death at once") {
+TEST_CASE("boss: the boss dead when the event starts is the death at once; no reading, once the event is over here") {
     Sync s;
     ToFight(s);
     auto a = s.Tick(Alive(Forest().arrive, true, false), 30 * kS);
@@ -490,12 +494,17 @@ TEST_CASE("boss: the boss dead when the event starts, or no reading, is the deat
     Sync t;
     ToFight(t);
     a = t.Tick(Alive(Forest().arrive, true, std::nullopt), 30 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));  // no reading: a scene change looks the same (row 149)
+    t.Tick(Alive(Forest().arrive, false, std::nullopt), 31 * kS);
+    a = t.Tick(Alive(Forest().arrive, false, std::nullopt), 33 * kS + kS / 2);
     CHECK(Has(a, proto::BossState::defeated));
-    // A reading lost during the event: decided at its end, as before.
+    // A reading lost during the event: decided after its end, still in the room.
     Sync u;
     ToFight(u);
     u.Tick(Alive(Forest().arrive, true, true), 30 * kS);
     a = u.Tick(Alive(Forest().arrive, false, std::nullopt), 33 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    a = u.Tick(Alive(Forest().arrive, false, std::nullopt), 35 * kS + kS / 2);
     CHECK(Has(a, proto::BossState::defeated));
     CHECK(u.phase() == Sync::Phase::done);
 }
@@ -512,10 +521,12 @@ bool Recorded(const Actions& a) {
 }
 
 TEST_CASE("boss: a heuristic Defeat never reaches the record") {
-    // 1. An event in the fight with the boss not read (coop_boss.cpp: GuessedOver at the event's start).
+    // 1. An event in the fight with the boss not read (coop_boss.cpp: GuessedOver once it is over and we are still here).
     Sync s;
     ToFight(s);
-    auto a = s.Tick(Alive(Forest().arrive, true, std::nullopt), 30 * kS);
+    s.Tick(Alive(Forest().arrive, true, std::nullopt), 30 * kS);
+    s.Tick(Alive(Forest().arrive, false, std::nullopt), 31 * kS);
+    auto a = s.Tick(Alive(Forest().arrive, false, std::nullopt), 33 * kS + kS / 2);
     CHECK(Has(a, proto::BossState::defeated));  // the pull still ends
     CHECK_FALSE(Recorded(a));
     // 2. A long event with the boss hurt and still read alive (Morpha's grab, Phantom Ganon's paintings).
@@ -532,6 +543,8 @@ TEST_CASE("boss: a heuristic Defeat never reaches the record") {
     ToFight(u);
     u.Tick(Alive(Forest().arrive, true, true), 30 * kS);
     a = u.Tick(Alive(Forest().arrive, false, std::nullopt), 33 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));  // decided 2 s on, still here (review of 0cda04cf)
+    a = u.Tick(Alive(Forest().arrive, false, std::nullopt), 35 * kS + kS / 2);
     CHECK(Has(a, proto::BossState::defeated));
     CHECK_FALSE(Recorded(a));
     // 4. Gone without any reading at life 0 (a body never read this scene): a guess too.
@@ -549,7 +562,8 @@ TEST_CASE("boss: a heuristic Defeat never reaches the record") {
     Sync x;
     ToFight(x);
     x.Tick(Alive(Forest().arrive, true, true), 30 * kS);  // provisional
-    a = x.Tick(gone, 31 * kS);
+    x.Tick(gone, 31 * kS);                                 // gone in the event (gone.event is false here: it ended)
+    a = x.Tick(gone, 33 * kS + kS / 2);
     CHECK(Has(a, proto::BossState::defeated));
     CHECK_FALSE(Recorded(a));
     // A proven death (a body read at life 0) reaches it, once.
@@ -592,6 +606,9 @@ TEST_CASE("boss: an event right after a skipped intro is not the boss's death (i
     t.Tick(At("ForestTemple", Forest().arrive, false), 6 * kS);  // a 4 s intro (kMinIntroUs is 3 s)
     REQUIRE(t.phase() == Sync::Phase::fight);
     a = t.Tick(At("ForestTemple", Forest().arrive, true), 6 * kS + Sync::kMinFightUs);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));  // decided once it is over, still here (row 149)
+    t.Tick(At("ForestTemple", Forest().arrive, false), 7 * kS + Sync::kMinFightUs);
+    a = t.Tick(At("ForestTemple", Forest().arrive, false), 9 * kS + Sync::kMinFightUs + kS / 2);
     CHECK(Has(a, proto::BossState::defeated));
 }
 
@@ -895,10 +912,11 @@ TEST_CASE("boss: a player past the door who leaves before the win is told as lef
     s.Tick(At("ForestTemple", Forest().arrive, true), 60 * kS);  // our boss's death (outro)
     s.Tick(At("ForestTemple", Forest().arrive, true), 80 * kS);
     s.Tick(here(), 90 * kS);
+    s.Tick(here(), 92 * kS + kS / 2);  // decided 2 s after its end, still here (row 149)
     REQUIRE(s.phase() == Sync::Phase::done);
     s.Receive(From(4, Forest(), proto::BossState::left));
-    s.Tick(here(), 91 * kS);
-    CHECK(Said(s.Tick(here(), 93 * kS)) == std::vector<std::string>{"4 took the blue warp"});
+    s.Tick(here(), 93 * kS);
+    CHECK(Said(s.Tick(here(), 95 * kS)) == std::vector<std::string>{"4 took the blue warp"});
 }
 
 TEST_CASE("boss: no leave notice for our own player, a group that leaves together, or after our own warp (#50)") {
@@ -1147,5 +1165,72 @@ TEST_CASE("boss: the boss gone with no reading at life 0 in an event is decided 
         s.Tick(unread_gone(Forest().arrive, true), 30 * kS);
         s.Tick(Alive(Forest().arrive, false, true), 32 * kS);
         CHECK(s.phase() == Sync::Phase::fight);
+    }
+}
+
+TEST_CASE("boss: the boss lost in an event that began with it alive, or never read, waits for the event's end here (review of 0cda04cf)") {
+    // A respawn's, song warp's or Farore's map change unloads the boss a few frames after its event began.
+    auto unread_gone = [](Vec p, bool event) {
+        Local l = Alive(p, event, false);
+        l.boss_read_dead = false;
+        return l;
+    };
+    // 1. Alive at the rise, gone in the event, then the room is left: no 'beaten'.
+    {
+        Sync s;
+        ToFight(s);
+        auto a = s.Tick(Alive(Forest().arrive, true, true), 30 * kS);
+        REQUIRE(s.phase() == Sync::Phase::outro);
+        a = s.Tick(unread_gone(Forest().arrive, true), 30 * kS + kS / 10);
+        CHECK_FALSE(Has(a, proto::BossState::defeated));
+        a = s.Tick(Alive(kForestEntrance, true, std::nullopt), 33 * kS);
+        CHECK(Has(a, proto::BossState::left));
+        CHECK_FALSE(Has(a, proto::BossState::defeated));
+        a = s.Tick(Alive(kForestEntrance, false, std::nullopt), 40 * kS);
+        CHECK_FALSE(Has(a, proto::BossState::defeated));
+    }
+    // 2. The same, but the event ends in the room with the boss still gone: the guess, 2 s after.
+    {
+        Sync s;
+        ToFight(s);
+        s.Tick(Alive(Forest().arrive, true, true), 30 * kS);
+        auto a = s.Tick(unread_gone(Forest().arrive, true), 31 * kS);
+        CHECK_FALSE(Has(a, proto::BossState::defeated));
+        a = s.Tick(unread_gone(Forest().arrive, false), 35 * kS);
+        CHECK_FALSE(Has(a, proto::BossState::defeated));
+        a = s.Tick(unread_gone(Forest().arrive, false), 37 * kS + kS / 2);
+        CHECK(Has(a, proto::BossState::defeated));
+        CHECK_FALSE(a.beaten_here);
+    }
+    // 3. Read at life 0 in that event: its death, at once and proven.
+    {
+        Sync s;
+        ToFight(s);
+        s.Tick(Alive(Forest().arrive, true, true), 30 * kS);
+        auto a = s.Tick(Alive(Forest().arrive, true, false), 31 * kS);
+        CHECK(Has(a, proto::BossState::defeated));
+        CHECK(a.beaten_here);
+    }
+    // 4. Not read at the rise, then the room is left: no 'beaten'.
+    {
+        Sync s;
+        ToFight(s);
+        auto a = s.Tick(Alive(Forest().arrive, true, std::nullopt), 30 * kS);
+        CHECK_FALSE(Has(a, proto::BossState::defeated));
+        a = s.Tick(Alive(kForestEntrance, false, std::nullopt), 33 * kS);
+        CHECK(Has(a, proto::BossState::left));
+        CHECK_FALSE(Has(a, proto::BossState::defeated));
+    }
+    // 5. Alive at the rise, the event ends with the boss unread, then the room is left: no 'beaten'; staying: the guess.
+    for (const bool leave : {true, false}) {
+        Sync s;
+        ToFight(s);
+        s.Tick(Alive(Forest().arrive, true, true), 30 * kS);
+        auto a = s.Tick(Alive(Forest().arrive, false, std::nullopt), 31 * kS);
+        CHECK_FALSE(Has(a, proto::BossState::defeated));
+        a = s.Tick(leave ? Alive(kForestEntrance, false, std::nullopt) : Alive(Forest().arrive, false, std::nullopt),
+                   33 * kS + kS / 2);
+        CHECK(Has(a, proto::BossState::defeated) == !leave);
+        CHECK_FALSE(a.beaten_here);
     }
 }

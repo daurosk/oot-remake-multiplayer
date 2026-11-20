@@ -301,6 +301,15 @@ void Sync::GuessedOver(Actions& out, const char* why) {
     out.log.push_back("boss beaten (" + std::string(here_->outro) + ") (a guess: " + why + ")");
 }
 
+void Sync::SettleGone(Actions& out, const char* why, bool event, std::uint64_t now_us) {
+    phase_ = Phase::outro;
+    provisional_ = true;
+    gone_unread_ = true;
+    gone_settle_at_ = event ? 0 : now_us + kGoneSettleUs;  // the event over already: the wait starts now
+    gone_why_ = why;
+    out.log.push_back(std::string(why) + ": decided when the event is over here (leaving the room is no death)");
+}
+
 void Sync::Commit(Actions& out, const char* why) {
     if (committed_ || here_ == nullptr) {
         return;
@@ -550,13 +559,9 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
                 } else if (local.boss_alive.has_value()) {
                     // Its death, or our scene going down (a respawn's or a teleport's map change unloads it too):
                     // decided when the event is over and we are still here (kd-twist run 20261120-074938).
-                    provisional_ = true;
-                    gone_unread_ = true;
-                    gone_settle_at_ = 0;
-                    out.log.push_back("an event in the fight, the boss gone without a reading at life 0: decided "
-                                      "when it ends here (leaving the room is no death)");
+                    SettleGone(out, "an event in the fight, the boss gone without a reading at life 0", local.event, now_us);
                 } else {
-                    GuessedOver(out, "an event in the fight, the boss not read");
+                    SettleGone(out, "an event in the fight, the boss not read", local.event, now_us);
                 }
             }
             break;
@@ -580,7 +585,7 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
                 } else if (now_us >= gone_settle_at_) {
                     provisional_ = false;
                     gone_unread_ = false;
-                    GuessedOver(out, "the boss gone without a reading at life 0");
+                    GuessedOver(out, gone_why_);
                 }
                 if (provisional_) {
                     break;
@@ -602,23 +607,28 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
                                       "not the boss's death");
                     break;
                 }
+                if (gone && !local.boss_read_dead) {
+                    // Alive when the event began, gone since with no reading at life 0: a respawn's, song's or
+                    // Farore's map change unloads it a few frames in (review-0118-2 of 0cda04cf).
+                    SettleGone(out, "the boss gone without a reading at life 0", local.event, now_us);
+                    break;
+                }
                 if (gone || (long_event && local.event)) {
                     provisional_ = false;
-                    if (gone && local.boss_read_dead) {
-                        Died(out);
+                    if (gone) {
+                        Died(out);  // read at life 0
                     } else {
-                        GuessedOver(out, gone ? "the boss gone without a reading at life 0"
-                                              : "a long event with the boss hurt");
+                        GuessedOver(out, "a long event with the boss hurt");
                     }
                 } else if (fell) {
-                    provisional_ = false;
                     if (!local.boss_alive.has_value()) {
-                        GuessedOver(out, "the event ended with the boss not read");  // as before
-                    } else {
-                        phase_ = Phase::fight;
-                        out.log.push_back("the event is over and the boss is alive: the fight goes on");
+                        SettleGone(out, "the event ended with the boss not read", local.event, now_us);
                         break;
                     }
+                    provisional_ = false;
+                    phase_ = Phase::fight;
+                    out.log.push_back("the event is over and the boss is alive: the fight goes on");
+                    break;
                 }
             }
             if (fell && !provisional_ && phase_ == Phase::outro) {

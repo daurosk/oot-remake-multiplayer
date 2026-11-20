@@ -251,6 +251,9 @@ private:
     void EndFight(Actions& out);
     void Died(Actions& out);
     void GuessedOver(Actions& out, const char* why);
+    // A guess with the boss gone or unread: never at once (a scene change unloads it), but once the event is over and
+    // we are still in the room (the settle in Phase::outro); leaving the room first is no death (row 149).
+    void SettleGone(Actions& out, const char* why, bool event, std::uint64_t now_us);
     void Say(Actions& out, const Room& room, coop::protocol::BossState state);
     bool FightActive(const Room& room, std::uint64_t now_us) const;
     bool OtherFinishedIntro(const Room& room, std::uint64_t now_us) const;
@@ -264,6 +267,7 @@ private:
     // the room (gone_settle_at_: kGoneSettleUs after it ended); leaving the room first is no death (row 149).
     bool gone_unread_ = false;
     std::uint64_t gone_settle_at_ = 0;
+    const char* gone_why_ = "";  // the guess's reason, for the log
     // Our Link died in this room (the Game Over, then a continue or a reload): until he is up
     // again with no event, no event of ours is taken for the intro or the boss's death.
     bool died_ = false;

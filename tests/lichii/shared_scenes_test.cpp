@@ -141,15 +141,79 @@ TEST_CASE("in a dungeon a story cutscene started in another room is not played h
     h.room = 4;
     j.Started(1, "Dm_ForestTemple_0010", "ForestTemple", Vec3{15.0f, 0.0f, 10.0f}, 100, 7);
     CHECK_FALSE(j.Next(h, kNotPlayed));
-    CHECK(j.Waiting() == 0);  // skipped, not kept waiting
+    CHECK(j.Waiting() == 1);  // not played from here, held for when we come into their room (row 176)
     const auto notes = j.TakeNotes();
     REQUIRE(notes.size() == 1);
     CHECK(notes[0].find("another room of this dungeon") != std::string::npos);
-    // The same room: played.
+    CHECK(notes[0].find("held") != std::string::npos);
+    // The same room: played (the held one in the other room does not block it).
     j.Started(1, "Dm_ForestTemple_0011", "ForestTemple", Vec3{15.0f, 0.0f, 10.0f}, 200, 4);
     const auto got = j.Next(h, kNotPlayed);
     REQUIRE(got);
     CHECK(*got == "Dm_ForestTemple_0011");
+}
+
+TEST_CASE("row 176: a start we were too far from is held and joined when we come near while it is not played here") {
+    // Run 20261119-222229: player 2 was 81 m away when player 1 started Dm_ForestTemple_0015 (Meg); it walked into
+    // her area while the cutscene still played and its own room logic started a second one: two Megs, two owners.
+    const Vec3 kMeg{0.0f, 100.0f, -3.5f};
+    Joiner j;
+    Here far = Free(1'000'000, Vec3{0.0f, 101.0f, 77.0f}, "ForestTemple");  // the entrance, 81 m
+    far.dungeon = true;
+    far.room = 1;
+    j.Started(1, "Dm_ForestTemple_0015", "ForestTemple", kMeg, 900'000, 2);
+    CHECK_FALSE(j.Next(far, kNotPlayed));
+    CHECK(j.Waiting() == 1);
+    CHECK(j.TakeNotes().at(0).find("too far") != std::string::npos);
+    far.now_us = 5'000'000;
+    CHECK_FALSE(j.Next(far, kNotPlayed));
+    CHECK(j.TakeNotes().empty());  // noted once
+    // In the room now, but our game busy (a talk): it waits 3 s from when we came near, not from the start.
+    Here near = Free(20'000'000, Vec3{12.0f, 100.0f, -3.5f}, "ForestTemple");
+    near.dungeon = true;
+    near.room = 2;
+    near.can_start = false;
+    CHECK_FALSE(j.Next(near, kNotPlayed));
+    CHECK(j.Waiting() == 1);
+    near.can_start = true;
+    near.now_us = 21'000'000;
+    CHECK(j.Next(near, kNotPlayed) == std::optional<std::string>("Dm_ForestTemple_0015"));
+    CHECK(j.TakeNotes().back().find("now near us: playing it here too (late)") != std::string::npos);
+    CHECK_FALSE(j.Ours("Dm_ForestTemple_0015", "ForestTemple"));  // joined: not sent back
+}
+
+TEST_CASE("row 176: a held start is dropped once our save has it played, or after kHoldUs") {
+    const Vec3 kFar{0.0f, 0.0f, 200.0f};
+    Joiner j;
+    j.Started(1, "Dm_Kokiri_0030", "KokiriForest", kFar, 0);
+    CHECK_FALSE(j.Next(Free(10), kNotPlayed));
+    CHECK(j.Waiting() == 1);
+    // The starter's result came by the flags: never played here.
+    CHECK_FALSE(j.Next(Free(20), [](const std::string&) { return true; }));
+    CHECK(j.Waiting() == 0);
+    CHECK(j.TakeNotes().back().find("has it played already") != std::string::npos);
+
+    j.Started(1, "Dm_Kokiri_0045", "KokiriForest", kFar, 0);
+    CHECK_FALSE(j.Next(Free(10), kNotPlayed));
+    CHECK(j.Waiting() == 1);
+    CHECK_FALSE(j.Next(Free(CoopSharedScenes::kHoldUs + 1), kNotPlayed));
+    CHECK(j.Waiting() == 0);
+    CHECK(j.TakeNotes().back().find("too far") != std::string::npos);
+}
+
+TEST_CASE("row 176: our game starting a held start of another player is theirs late, not a new start sent out") {
+    Joiner j;
+    j.Started(2, "Dm_ForestTemple_0015", "ForestTemple", Vec3{0.0f, 100.0f, -3.5f}, 0);
+    Here far = Free(10, Vec3{0.0f, 101.0f, 77.0f}, "ForestTemple");
+    CHECK_FALSE(j.Next(far, kNotPlayed));
+    j.TakeNotes();
+    // A place into Meg's area: our room logic starts it before the join is asked.
+    CHECK_FALSE(j.Ours("Dm_ForestTemple_0015", "ForestTemple"));
+    CHECK(j.Waiting() == 0);
+    CHECK(j.TakeNotes().at(0).find("which player 2 started here earlier (held for us): theirs, not sent") !=
+          std::string::npos);
+    // Without a held start ours goes out as before.
+    CHECK(j.Ours("Dm_ForestTemple_0016", "ForestTemple"));
 }
 
 TEST_CASE("in a dungeon with no room known only a very near starter is joined") {

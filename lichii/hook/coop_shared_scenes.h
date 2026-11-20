@@ -102,6 +102,17 @@ inline constexpr float kNoRoomM = 8.0f;
 // menu, a pause, a load) before it is skipped: a cutscene joined later than
 // this would be far behind the starter's.
 inline constexpr std::uint64_t kJoinUs = 3'000'000;
+// Row 176 (Meg, run 20261119-222229): a start skipped only because we were not
+// near (too far, another room or scene, our room not known) is held this long,
+// or until our save has it played (the starter's result came by the flags), and
+// joined once we come near: player 2 walked into Meg's area while player 1's
+// Dm_ForestTemple_0015 still played, its own room logic started a second
+// Dm_ForestTemple_0015, and each game then ran its own Meg (two owners). Joined,
+// our game plays the starter's event (its actors act for the starter) and the
+// room logic does not start it again (its played flag is then set here).
+inline constexpr std::uint64_t kHoldUs = 120'000'000;
+// The reasons Why gives for a start we are only not near (held, kHoldUs).
+bool NotNearYet(std::string_view why);
 
 using Vec3 = std::array<float, 3>;
 
@@ -154,7 +165,9 @@ public:
                  std::optional<Vec3> starter, std::uint64_t now_us, std::optional<int> room = std::nullopt);
     // Our own game started `name` (found by our watch). Returns whether to
     // send it to the others: not when we only joined another player's start
-    // (it would come back to them) or already sent it this visit.
+    // (it would come back to them) or already sent it this visit, nor when
+    // another player's start of it is held for us here (kHoldUs): ours is then
+    // a late start of theirs (a place into the area beat the join), not a new one.
     bool Ours(const std::string& name, const std::string& scene);
     // Once a frame: the cutscene to ask our game for now, if any. `played`
     // says whether our game already has it played (HavePlayedEvent.<name>):
@@ -174,21 +187,37 @@ private:
     template <typename Played, typename Flag>
     std::optional<std::string> Next(const Here& here, Played&& played, Flag&& flag, bool gated) {
         Visit(here.scene);
-        while (!pending_.empty()) {
-            std::string why = Why(pending_.front(), here, played(pending_.front().name));
-            if (gated && (why.empty() || why == "wait") && !GateHolds(pending_.front().name, flag)) {
+        for (std::size_t i = 0; i < pending_.size();) {
+            Pending& p = pending_[i];
+            std::string why = Why(p, here, played(p.name));
+            if (p.held && p.near_us == 0 && !NotNearYet(why)) {
+                p.near_us = here.now_us;  // near now: a busy game gets its 3 s from here
+                why = Why(p, here, played(p.name));
+            }
+            if (gated && (why.empty() || why == "wait") && !GateHolds(p.name, flag)) {
                 why = "our story is not there yet";
+            }
+            if (NotNearYet(why) && here.now_us < p.at_us + kHoldUs) {
+                if (!p.held) {
+                    p.held = true;
+                    notes_.push_back("player " + std::to_string(p.player) + "'s story cutscene " + p.name +
+                                     " not played here yet (" + why + "): held, played here if we come near "
+                                     "while it is not played here");
+                }
+                ++i;
+                continue;
             }
             if (why == "wait") {
                 return std::nullopt;
             }
-            Pending taken = std::move(pending_.front());
-            pending_.erase(pending_.begin());
+            Pending taken = std::move(p);
+            pending_.erase(pending_.begin() + static_cast<std::ptrdiff_t>(i));
             if (why.empty()) {
                 done_.insert(taken.name);
                 joined_.insert(taken.name);
                 notes_.push_back("player " + std::to_string(taken.player) + " started the story cutscene " +
-                                 taken.name + " near us: playing it here too");
+                                 taken.name + (taken.held ? " earlier, now near us: playing it here too (late)"
+                                                          : " near us: playing it here too"));
                 return taken.name;
             }
             notes_.push_back("player " + std::to_string(taken.player) + "'s story cutscene " + taken.name +
@@ -210,6 +239,8 @@ private:
         std::optional<Vec3> starter;
         std::uint64_t at_us;
         std::optional<int> room;
+        bool held = false;           // skipped only for not being near: kept (kHoldUs)
+        std::uint64_t near_us = 0;   // when a held start was first near (its busy wait counts from then)
     };
     // "" to start now, "wait", or why it is skipped.
     std::string Why(const Pending& p, const Here& here, bool played) const;

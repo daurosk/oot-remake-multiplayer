@@ -1666,11 +1666,23 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
                 slot.phase = Phase::done;
             }
         } else if (slot.phase == Phase::live) {
+            if (CoopShotReflect::ReflectedBy(slot.copy_of.empty() ? slot.actor : slot.copy_of) != CoopShotReflect::Way::none) {
+                // PROBE 4: once per 20 ticks while a reflectable copy is live, what stops the block.
+                if ((slot.probe_seen++ % 20) == 0) {
+                    const Copy* w = Wanted(slot.key);
+                    Say(slot.actor + ": PROBE4 live tick " + std::to_string(slot.probe_seen) + " wanted " +
+                        std::to_string(w != nullptr) + " act " + std::to_string(w ? static_cast<int>(w->act) : -1) +
+                        " place " + std::to_string(w ? w->place : -1) + " stand_in " + std::to_string(slot.stand_in) +
+                        " reflected " + std::to_string(slot.reflected) + " our_link " +
+                        Hex(our_link_.load(std::memory_order_relaxed)));
+                }
+            }
             std::uint64_t vtable = 0;
             std::uint32_t state = 0;
             if (!ReadValue(guest, slot.taken, vtable) || vtable != slot.vtable ||
                 !ReadValue(guest, slot.taken + addr::kActorState, state) || Gone(state)) {
                 slot.phase = Phase::done;  // it went by itself (a fuse, a hit)
+                if (CoopShotReflect::ReflectedBy(slot.copy_of.empty() ? slot.actor : slot.copy_of) != CoopShotReflect::Way::none) { Say(slot.actor + ": PROBE4 slot ended after " + std::to_string(slot.probe_seen) + " ticks"); }
                 if (const Copy* c = Wanted(slot.key);
                     c != nullptr && c->act == Act::show && c->remakes != 0) {
                     Remade& r = remade_[slot.key];

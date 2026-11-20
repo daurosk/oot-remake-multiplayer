@@ -45,8 +45,8 @@ wait 150
 hit Enemy_DungeonBoss_PhantomGanon 1
 wait 150
 mark t4b
-goto -7.2 -65.8 0.4 300   # PROBE 2: right beside A (PG aims at A)
-toward -4.1 -57.6 10
+goto -3.9 -65.7 0.4 300   # PROBE 5: the 045339 geometry (4 balls came)
+toward 0 -63 10
 press ZL 10
 press Y 8
 wait 22
@@ -250,7 +250,7 @@ wait 22
 press Y 8
 wait 22
 mark t8
-# probe 3: no kill, so PG keeps throwing balls until the end
+kill Enemy_DungeonBoss_PhantomGanon
 wait 600
 mark after-turns
 wait 1800

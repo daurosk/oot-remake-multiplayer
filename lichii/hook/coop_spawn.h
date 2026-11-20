@@ -558,6 +558,7 @@ private:
         bool reflected = false;  // row 177: our Link sent this shot copy back (said once)
         int hits_noted = 0;      // row 177: its hit lists logged (at most 3 times, when not empty)
         int probe_frames = 0;    // PROBE (shot-reflect-probe only)
+        int probe_seen = 0;      // PROBE 4: ticks seen live
     };
     enum class Pending { none, malloc, create, take, drop, remove, search, emit };
 

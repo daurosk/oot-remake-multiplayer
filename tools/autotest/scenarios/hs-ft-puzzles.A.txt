@@ -1,0 +1,43 @@
+# hs-ft-puzzles (Hookshot, research for player row 175: "only one player can move the ghost image puzzle", Forest
+# Temple). Facts wanted, screenshots on both games:
+#  part 1, Amy's block puzzle (room 25: ForestTemple_MovableBox_Puzzle_Manager, Obj_ForestTemple_MovableBox_A_01..04,
+#    one shared Obj_MovableBox_BasePosAnchor at 61.2 103.9 2.2): A pushes A_01 (57.5 103.9 -0.8) east, then B pushes
+#    A_03 (62.0 103.9 -0.8) west, then A pushes again. Does B's push move B's block (shots b-push1/b-push2), does A
+#    see it (a-seen-b), and is anyone snapped back? Log lines: "world:" (mover, came to rest, push node), "objects:"
+#  part 2, Beth's paintings (room 18: MultipleGhostPicturesManager, Obj_ForestTemple_GhostPicture_A_02 x3, the
+#    performer Enemy_GhostPicturePerformer_Poe_Beth, object-synced with its own owner today): both stand facing the
+#    three paintings for 40 s; shots every 10 s on both: is the Poe in the same painting on both screens? Log lines
+#    "objects: share ... Enemy_GhostPicturePerformer_Poe_Beth" (owner, copy).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane N -Scenario hs-ft-puzzles
+# No PASS/FAIL: a research run (facts for the report reports/forest-0118.md).
+mark start
+setflag Sequence_IsChildhood 0
+warp ForestTemple
+wait 900                 # the warp's load
+mark arrived
+place 55.6 104.6 -0.8    # west of block A_01
+wait 300
+mark a-placed
+toward 57.5 -0.8 150     # walk into the block: a push east
+wait 240
+mark a-push1
+wait 600                 # B pushes A_03 west meanwhile
+mark a-seen-b
+toward 59.0 -0.8 150     # A pushes A_01 again (now in front of it, if it moved)
+wait 240
+mark a-push2
+wait 600
+mark a-end-blocks
+place 34.0 123.0 -52.0   # part 2: Beth's paintings, facing them (they hang at z -59.5 to -63.2)
+wait 300
+toward 34.0 -60.0 10
+press ZL 10
+mark a-paint0
+wait 600
+mark a-paint1
+wait 600
+mark a-paint2
+wait 600
+mark a-paint3
+wait 600
+mark a-paint4

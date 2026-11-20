@@ -259,6 +259,7 @@ public:
         bool shot = false;       // let go (its ammo count went down)
         bool made_up = false;    // its flight was sent from the shot, not its place
         unsigned bounces = 0;    // turned like a bounce (issue 166)
+        coop::protocol::Vec3 end{};  // where it was last seen (its last place before it left)
     };
     // The ones that left in the last Tick.
     const std::vector<Flight>& Flights() const { return flights_; }

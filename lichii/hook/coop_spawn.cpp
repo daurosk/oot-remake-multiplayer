@@ -557,7 +557,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         out.position = m.made_up ? ShotPlace(m, now_us) : m.position;
         send.emplace_back(out);
         flights_.push_back({m.id, m.name, lived, m.far, m.top_speed, out.reason,
-                            m.shot_at.has_value(), m.made_up, m.bounces});
+                            m.shot_at.has_value(), m.made_up, m.bounces, m.position});
         it = mine_.erase(it);
     }
     // Addresses the game may give to a new actor later.
@@ -2078,10 +2078,11 @@ public:
         for (const auto& f : sync_.Flights()) {
             LOG_INFO(Core,
                      "coop: shots: our {} #{:#x} gone (reason {}) after {} ms: went {:.2f} m from "
-                     "where it was made, top speed {:.1f} m/s{}, bounced {} times",
+                     "where it was made, top speed {:.1f} m/s{}, bounced {} times, last at {:.2f} {:.2f} {:.2f}",
                      f.name, f.id.value, static_cast<int>(f.reason), f.lived_us / 1000, f.far,
                      f.top_speed,
-                     f.made_up ? ", shot (flight made up)" : f.shot ? ", shot" : "", f.bounces);
+                     f.made_up ? ", shot (flight made up)" : f.shot ? ", shot" : "", f.bounces, f.end[0], f.end[1],
+                     f.end[2]);
             // PvP (coop_pvp_game.h): a shot that hit something or went off, where
             // its remove says it ended, may have reached another player's Link.
             const auto* info = CoopProjectiles::Find(f.name);

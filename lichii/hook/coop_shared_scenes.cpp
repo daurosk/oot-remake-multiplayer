@@ -168,6 +168,17 @@ void Joiner::Started(std::uint8_t player, const std::string& name, const std::st
     pending_.push_back(Pending{player, name, scene, starter, now_us, room});
 }
 
+bool Joiner::StarterStays(const Pending& p, const Here& here) {
+    if (!p.held) {
+        return false;  // only a start already held for us (it was in reach of the hold)
+    }
+    if (here.scene.empty()) {
+        return true;  // a load: its scene decides next frame (Visit drops it on a change)
+    }
+    return p.scene == here.scene &&
+           std::find(here.in_scene.begin(), here.in_scene.end(), p.player) != here.in_scene.end();
+}
+
 bool NotNearYet(std::string_view why) {
     return why == "we are in another scene" || why.starts_with("too far") ||
            why == "they are in another room of this dungeon" || why.starts_with("their room in this dungeon");

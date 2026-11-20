@@ -2787,6 +2787,19 @@ private:
         here.can_start = reading && !running &&
                          (status & (proto::status::paused | proto::status::in_menu | proto::status::loading)) == 0;
         here.now_us = now_us;
+        // Row 176: who is in our scene now, so a held start whose starter is still here outlasts kHoldUs.
+        // Read from presence directly (CoopPuppet::Collect would take the puppets' sounds).
+        if (shared_joiner_.Waiting() != 0 && !here.scene.empty()) {
+            session_->with_presence([&](coop::presence::Presence& p) {
+                for (const std::uint8_t n : p.players()) {
+                    const auto* player = p.player(n);
+                    if (player != nullptr && player->scene() == here.scene) {
+                        here.in_scene.push_back(n);
+                    }
+                }
+                return 0;
+            });
+        }
         // In a dungeon only a starter in our own room is joined (the other
         // rooms are not loaded here: a black picture until the cutscene ends).
         if (shared_joiner_.Waiting() != 0 && here.link && CoopDungeon::IsDungeonScene(here.scene)) {

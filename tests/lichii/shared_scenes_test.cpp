@@ -216,6 +216,91 @@ TEST_CASE("row 176: our game starting a held start of another player is theirs l
     CHECK(j.Ours("Dm_ForestTemple_0016", "ForestTemple"));
 }
 
+TEST_CASE("row 176: a held start outlasts kHoldUs while its starter is still in that scene") {
+    // The row 176 Forest playtest (0.11.7): Meg's fight ran past 2 min. Player 1 came to the hall after that and its own
+    // room logic started a second Dm_ForestTemple_0017 (a second Meg). Player 2, the starter, was still there.
+    const Vec3 kMeg{0.0f, 100.0f, -3.5f};
+    Joiner j;
+    j.Started(2, "Dm_ForestTemple_0017", "ForestTemple", kMeg, 0, 2);
+    Here far = Free(10, Vec3{60.0f, 104.0f, 0.0f}, "ForestTemple");  // Amy's room, 60 m
+    far.in_scene = {2};
+    CHECK_FALSE(j.Next(far, kNotPlayed));
+    CHECK(j.Waiting() == 1);
+    j.TakeNotes();
+    far.now_us = CoopSharedScenes::kHoldUs + 60'000'000;  // 3 min: the starter is still in the scene
+    CHECK_FALSE(j.Next(far, kNotPlayed));
+    CHECK(j.Waiting() == 1);
+    CHECK(j.TakeNotes().empty());
+    // Our room logic starts it as we come in: theirs, late, not sent.
+    CHECK_FALSE(j.Ours("Dm_ForestTemple_0017", "ForestTemple"));
+    CHECK(j.TakeNotes().at(0).find("which player 2 started here earlier (held for us): theirs, not sent") !=
+          std::string::npos);
+
+    // Or we come near and join it, 3 min late.
+    Joiner k;
+    k.Started(2, "Dm_ForestTemple_0015", "ForestTemple", kMeg, 0);
+    Here away = Free(10, Vec3{60.0f, 104.0f, 0.0f}, "ForestTemple");
+    away.in_scene = {1, 2};
+    CHECK_FALSE(k.Next(away, kNotPlayed));
+    Here near = Free(CoopSharedScenes::kHoldUs + 60'000'000, Vec3{3.0f, 100.0f, -3.5f}, "ForestTemple");
+    near.in_scene = {2};
+    CHECK(k.Next(near, kNotPlayed) == std::optional<std::string>("Dm_ForestTemple_0015"));
+    CHECK(k.TakeNotes().back().find("(late)") != std::string::npos);
+}
+
+TEST_CASE("row 176: past kHoldUs a held start is dropped once its starter left the scene") {
+    const Vec3 kMeg{0.0f, 100.0f, -3.5f};
+    Joiner j;
+    j.Started(2, "Dm_ForestTemple_0017", "ForestTemple", kMeg, 0);
+    Here far = Free(10, Vec3{60.0f, 104.0f, 0.0f}, "ForestTemple");
+    far.in_scene = {2};
+    CHECK_FALSE(j.Next(far, kNotPlayed));
+    j.TakeNotes();
+    // Still within kHoldUs: kept even with the starter gone (as before).
+    far.in_scene.clear();
+    far.now_us = 60'000'000;
+    CHECK_FALSE(j.Next(far, kNotPlayed));
+    CHECK(j.Waiting() == 1);
+    // Past it, with only another player here: their fight left with them, so ours is a new one, sent.
+    far.in_scene = {3};
+    far.now_us = CoopSharedScenes::kHoldUs + 1;
+    CHECK_FALSE(j.Next(far, kNotPlayed));
+    CHECK(j.Waiting() == 0);
+    CHECK(j.TakeNotes().back().find("its result comes by the flags") != std::string::npos);
+    CHECK(j.Ours("Dm_ForestTemple_0017", "ForestTemple"));
+
+    // A load (scene not known) past kHoldUs does not drop it; the next scene decides.
+    Joiner k;
+    k.Started(2, "Dm_ForestTemple_0015", "ForestTemple", kMeg, 0);
+    Here early = Free(10, Vec3{60.0f, 104.0f, 0.0f}, "ForestTemple");
+    early.in_scene = {2};
+    CHECK_FALSE(k.Next(early, kNotPlayed));
+    CHECK(k.Waiting() == 1);
+    Here load;
+    load.now_us = CoopSharedScenes::kHoldUs + 5;
+    CHECK_FALSE(k.Next(load, kNotPlayed));
+    CHECK(k.Waiting() == 1);
+    // A start first looked at only after kHoldUs (never held) is not kept by its starter alone.
+    Joiner m;
+    m.Started(2, "Dm_ForestTemple_0013", "ForestTemple", kMeg, 0);
+    Here late = Free(CoopSharedScenes::kHoldUs + 1, Vec3{60.0f, 104.0f, 0.0f}, "ForestTemple");
+    late.in_scene = {2};
+    CHECK_FALSE(m.Next(late, kNotPlayed));
+    CHECK(m.Waiting() == 0);
+}
+
+TEST_CASE("row 176: every Poe sister's cutscene is a shared story start, so the hold covers all four") {
+    // Amy 0013, Beth 0011/0021/0022, Joelle 0012/0031/0032, Meg 0017 (out of her painting) and 0015 (her fight).
+    for (const char* name : {"Dm_ForestTemple_0011", "Dm_ForestTemple_0012", "Dm_ForestTemple_0013",
+                             "Dm_ForestTemple_0015", "Dm_ForestTemple_0017", "Dm_ForestTemple_0021",
+                             "Dm_ForestTemple_0022", "Dm_ForestTemple_0031", "Dm_ForestTemple_0032"}) {
+        CAPTURE(name);
+        CHECK(CoopSharedScenes::Askable(name));
+        const auto names = CoopSharedScenes::Names();
+        CHECK(std::find(names.begin(), names.end(), std::string_view(name)) != names.end());
+    }
+}
+
 TEST_CASE("in a dungeon with no room known only a very near starter is joined") {
     Joiner j;
     Here h = Free(120, {15.0f, 0.0f, 22.0f}, "ForestTemple");

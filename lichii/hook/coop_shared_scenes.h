@@ -115,6 +115,13 @@ inline constexpr std::uint64_t kJoinUs = 3'000'000;
 // Dm_ForestTemple_0015, and each game then ran its own Meg (two owners). Joined,
 // our game plays the starter's event (its actors act for the starter) and the
 // room logic does not start it again (its played flag is then set here).
+// Row 176 again (the Forest playtest on 0.11.7): Meg's fight ran past 2 min
+// (Dm_ForestTemple_0017 to her death), so a partner who came after kHoldUs
+// still had its own room logic start a second Dm_0017 and a second Meg. So a
+// held start is also kept past kHoldUs while its starter is still in that scene
+// (Here::in_scene): their fight goes on there, and our late start is theirs. Once
+// they left the scene (or the session), what they started is gone with them, and
+// our own start of it is a new one of ours.
 inline constexpr std::uint64_t kHoldUs = 120'000'000;
 // The reasons Why gives for a start we are only not near (held, kHoldUs).
 bool NotNearYet(std::string_view why);
@@ -129,6 +136,9 @@ struct Here {
     bool dungeon = false;       // the scene is a dungeon (rooms loaded one by one)
     std::optional<int> room;    // our Link's room there, if known
     std::uint64_t now_us = 0;
+    // The other players in our scene now (their numbers); read only while a start
+    // waits. A held start whose starter is here is kept past kHoldUs.
+    std::vector<std::uint8_t> in_scene;
 };
 
 // Story order (intro-ocarina, a player report 2026-11-13): a story cutscene
@@ -202,7 +212,7 @@ private:
             if (gated && (why.empty() || why == "wait") && !GateHolds(p.name, flag)) {
                 why = "our story is not there yet";
             }
-            if (NotNearYet(why) && here.now_us < p.at_us + kHoldUs) {
+            if (NotNearYet(why) && (here.now_us < p.at_us + kHoldUs || StarterStays(p, here))) {
                 if (!p.held) {
                     p.held = true;
                     notes_.push_back("player " + std::to_string(p.player) + "'s story cutscene " + p.name +
@@ -249,6 +259,8 @@ private:
     };
     // "" to start now, "wait", or why it is skipped.
     std::string Why(const Pending& p, const Here& here, bool played) const;
+    // A held start whose starter is still in its scene (kept past kHoldUs).
+    static bool StarterStays(const Pending& p, const Here& here);
     void Visit(const std::string& scene);
     std::string scene_;
     std::vector<Pending> pending_;

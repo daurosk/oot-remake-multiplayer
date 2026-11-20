@@ -7,11 +7,11 @@
 # Obj_ForestTemple_TwistedCorridor_A_01 -56.5 126.0 -50.3 (room 10). A stands in room 9 south of the relief (+z),
 # faces it (-z) and shoots arrows at it with `aim` (3 heights); B stands INSIDE corridor A_01.
 # AIM NOT CHECKED IN A GAME: no floor data offline (floor taken as y 126 like the corridor's). If a-place shows Link
-# in a wall or falling, change A's place; if no Dm_ForestTemple_000[57] in A's log the run is VOID (aim), not a FAIL.
+# in a wall or falling, change A's place; if no ForestTemple_Room11_RoomSpin in A's log the run is VOID (aim), not a FAIL.
 # SAVE: an adult Forest Temple save with the bow (hs-ft-puzzles' lane save). Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-ft-twist-173
 # PASS (logs + shots):
-#  1. A: the twist event plays (A's log, LICHII_COOP_DEBUG_BOSS: "the game asked the event 'Dm_ForestTemple_0005'"
-#     or _0007); a-corridor (A inside corridor A_01 after it): A's corridor turned (vs B's b-before).
+#  1. A: the twist event plays (A's log, LICHII_COOP_DEBUG_BOSS: "the game asked the event 'ForestTemple_Room11_RoomSpin'"
+#     (run 20261120-083054: PASS); a-corridor (A inside corridor A_01 after it): A's corridor turned (vs B's b-before).
 #  2. B: NO start or join of that event ('story' / 'joined' lines naming it) and no EventTriggerRelocateTwistCorridor;
 #     b-before vs b-after/b-end: B's view of the corridor did not turn, B's Link stands (no fall, no void-out).
 #  3. B leaves and re-enters (b-back): the corridor as the shared flag says (turned like A's), B not inside it then.

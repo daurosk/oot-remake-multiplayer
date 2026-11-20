@@ -10,7 +10,7 @@
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
-#! timeout 1500
+#! timeout 1800
 mark start
 warp InsideTheDekuTree Entrance
 wait 1200               # the title screen
@@ -59,18 +59,26 @@ goto 12.0 68.5 1.5 600  # inside the room, 6.5 m west of her
 mark b-moved
 wait 1500
 mark b-fight
-hurt 80                  # B down mid-fight (the other player alive: downed, then co-op's respawn)
+hurt 80                  # 1st lethal hit: B's bottled fairy revives it (run 083405)
+wait 600
+hurt 80                  # 2nd: no fairy left, so B is downed (dbno), then co-op's respawn
 wait 600
 mark b-down
-wait 1800                # the respawn: to the entrance (a map change)
+wait 3600                # the bleed (45 s) and the respawn to the entrance (a map change)
 mark b-respawn
 place -12.0 48.5 67.5    # back to the corridor before the boss door
 wait 240
 goto -4.0 68.3 1.0 600
 goto 6.7 68.3 1.5 600    # through the door again
-wait 1200
+wait 600
 mark b-back
-kill Enemy_DungeonBoss_Gohma   # with A's
+goto 17.0 68.8 1.5 600   # under her ceiling spot: her drop (as hs-heart-181)
+rstick 0 1 60
+press ZL 10
+wait 900
+goto 12.0 68.5 1.5 600
+wait 1500
+kill Enemy_DungeonBoss_Gohma   # with A's, as hs-heart-181's PASS (055224)
 wait 120
 mark b-kill
 wait 900

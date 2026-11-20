@@ -1,0 +1,36 @@
+# hs-heart-137, B part 1: hs-boss-away-reset-kill.B with the pickup walked to the container itself (GohmaStage Banc
+# Obj_Heart_Container 0xf914fa367471a3e3 at 17.31 47.0 67.63; the old 7.5/9.0 centre is 8-10 m from it).
+# hs-boss-away-reset, B part 1 (see hs-boss-away-reset.steps.txt): B kills Gohma alone and walks to the centre.
+warp InsideTheDekuTree Entrance
+wait 2400
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossDie 0   # else the game drops her death event as played (hs-gohma-death)
+wait 120
+place -12.0 48.5 66.5
+wait 600
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600
+mark b-in
+wait 2400               # the door's event and the intro
+goto 17.0 67.8 1.5 600  # under her ceiling spot (18.49 59.97 67.79): her own trigger (as hs-gohma-death)
+rstick 0 1 60           # walk into the room (GohmaStage Banc: floor Area x 22.5 z 68.2)
+press ZL 10             # look up at her
+wait 900
+mark b-trigger          # her anim leaves Pre_Battle_Ceiling_* here, else the kill is VOID (no BossDie asked)
+mark b-fight
+include hs-gohma-kill.inc.txt   # her drop, then three kills in her floor time
+wait 120
+mark b-kill
+wait 2400               # her death and its event
+goto 7.5 67.2 1.5 900   # the room's centre, where the heart container falls
+wait 600
+goto 17.3 67.6 1.0 600   # onto the container (0xf914fa367471a3e3)
+wait 900
+mark b-pickup

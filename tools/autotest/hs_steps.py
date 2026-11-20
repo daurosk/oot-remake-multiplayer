@@ -547,8 +547,7 @@ class HookshotGames:
         hk, errs = self.hk, {}
         parsed = {}
         for x, f in files.items():
-            with open(os.path.join(HERE, "scenarios", f), encoding="utf-8-sig") as fh:
-                parsed[x] = hk.parse(fh.read())
+            parsed[x] = hk.parse(hk.read_script(os.path.join(HERE, "scenarios", f)))
 
         def one(x):
             try:

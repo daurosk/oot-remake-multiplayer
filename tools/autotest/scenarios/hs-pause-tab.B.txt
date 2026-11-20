@@ -1,5 +1,9 @@
 # hs-pause-tab, B (part of hs-pause-tab.steps.txt): the pause menu's Multiplayer tab and page in a joined game.
 # PLUS opens the menu; R four times reaches System (no wrap: it stops there); R once more shows our page.
+# (dungeon-sweep-0118-5, B #45 17:11) The strip is the game's own four tabs (pause_menu.py: Multiplayer is a System-page
+# button, docs/hookshot.md; no wrap, game-ui.md:468): R past System stays on System. So the page opens with DDOWN x4 from
+# Save to Multiplayer + A (rows Save, Load, Options, Special Actions, Multiplayer, ...), B gives System back (was L), A on
+# the still-focused Multiplayer button opens it again (was R). Not yet re-run with these steps.
 press PLUS
 wait 240
 press R
@@ -11,17 +15,25 @@ wait 90
 press R
 wait 120
 mark system
-press R
+press DDOWN
+wait 30
+press DDOWN
+wait 30
+press DDOWN
+wait 30
+press DDOWN
+wait 30
+press A                  # System's Multiplayer button: our page
 wait 120
 mark page
 press DDOWN
 wait 60
 mark page-down
-press L
+press B                  # System back
 wait 120
 mark system-back
 # The views (guest): Session, the Let in row (not pressed: a resync), Players, the host's player view.
-press R
+press A                  # the Multiplayer button again (System keeps it focused)
 wait 120
 press DUP
 wait 30
@@ -64,7 +76,7 @@ wait 60
 press B
 wait 60
 mark b-main-back
-press L
+press B                  # System back
 wait 120
 press PLUS
 wait 150

@@ -68,6 +68,33 @@ class ScriptError(Exception):
     pass
 
 
+INCLUDE_DEPTH = 4
+
+
+def read_script(path, _depth=0):
+    """A scenario file's text with each `include FILE` line replaced by that file's text (FILE beside it; an
+    include may include, at most INCLUDE_DEPTH deep). One copy of a step several scenarios share (the Gohma kill
+    timing: scenarios/hs-gohma-kill.inc.txt). Raises ScriptError("FILE line N: ...")."""
+    with open(path, encoding="utf-8-sig") as f:
+        text = f.read()
+    out = []
+    for number, raw in enumerate(text.split("\n"), 1):
+        w = raw.split("#", 1)[0].split()
+        if not w or w[0].upper() != "INCLUDE":
+            out.append(raw)
+            continue
+        where = "%s line %d" % (os.path.basename(path), number)
+        if len(w) != 2:
+            raise ScriptError(where + ": want: include FILE")
+        if _depth >= INCLUDE_DEPTH:
+            raise ScriptError(where + ": includes nest deeper than %d" % INCLUDE_DEPTH)
+        inner = os.path.join(os.path.dirname(os.path.abspath(path)), w[1])
+        if not os.path.isfile(inner):
+            raise ScriptError(where + ": no " + w[1])
+        out.append(read_script(inner, _depth + 1))
+    return "\n".join(out)
+
+
 class BridgeError(Exception):
     def __init__(self, reply):
         super().__init__("%s: %s" % (reply.get("error"), reply.get("message", "")))
@@ -1041,12 +1068,10 @@ def run(a):
     parsed = {}
     for x in tags:
         if scripts[x]:
-            with open(scripts[x], encoding="utf-8-sig") as f:
-                parsed[x] = parse(f.read())
+            parsed[x] = parse(read_script(scripts[x]))
     load = None
     if a.load:
-        with open(a.load, encoding="utf-8-sig") as f:
-            load = parse(f.read())   # (checked; the load itself is "A until play", see to_play)
+        load = parse(read_script(a.load))   # (checked; the load itself is "A until play", see to_play)
     procs, bridges, server, commands = {}, {}, None, {}
     failed = None
     try:
@@ -1292,20 +1317,18 @@ def main(argv=None):
     if a.what == "check":
         bad = 0
         for path in a.scripts:
-            with open(path, encoding="utf-8-sig") as f:
-                try:
-                    steps = parse(f.read())
-                except ScriptError as e:
-                    print("%s: %s" % (path, e))
-                    bad += 1
-                    continue
+            try:
+                steps = parse(read_script(path))
+            except ScriptError as e:
+                print("%s: %s" % (path, e))
+                bad += 1
+                continue
             module = sorted({s.kind for s in steps if s.kind in MODULE_ONLY})
             print("%s: %d steps%s" % (path, len(steps), (", through the module: " + " ".join(module)) if module
                                        else ""))
         return 1 if bad else 0
     if a.what == "play":
-        with open(a.script, encoding="utf-8-sig") as f:
-            steps = parse(f.read())
+        steps = parse(read_script(a.script))
         b = Bridge.connect(a.sock)
 
         def shot(name):

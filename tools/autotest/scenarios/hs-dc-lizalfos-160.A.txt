@@ -11,6 +11,19 @@
 #     room's own logic (Logic_Create <- AppearLizalfos) after room 1's fight (0x9cbd9c524b24df87 102.5 100.1 -55.4,
 #     0x1fa0074fddbc182 84.9 100.6 -45.7). NEXT: fight room 1 first (el-dc-lizalfos's entry + both test kills), then walk
 #     up into room 2's trigger before the kills here; or find AppearLizalfos' flag and set it before the warp.
+#  Run 20261120-064209 (LANE2) VOID: place 92.0 100.6 -44.0 is lava (Link at y 99.0, shot a-room1-A; el-dc-lizalfos
+#     20261119-111409 the same) and no Lizalfos existed ('none here with a life'): the pair is made when Link walks in.
+#     Now: in through room 1's door (DestinationAnchor 92.5 101.55 -31/-33) onto its floor (Lizalfos spots 82.75 100.6
+#     -44.5); room 2 in through its door (110.0 116.2 -17.25/-13.25). Lane saves checked offline: DC clear flags
+#     (Gimmick_DefeatEnemy_Open_DodongoCave_01/02, HavePlayedEvent ..DefeatLizalfos01/02) all 0, no Lizalfos keys.
+#  Run 3 setup (dungeon-sweep-0118-7, offline from the romfs): room 2's pair (Logic/Gimmick_DodongoCavern_MiddleBoss02_6dee)
+#     has Logic_Create <- OR-latch(its shutter's event output, DodongoCavern_AppearLizalfos_2F 0xaf24307b) and Logic_Delete
+#     <- Gimmick_DefeatEnemy_Open_DodongoCave_02. The lane saves get AppearLizalfos_2F = 1 (defeat flags 0), so the pair
+#     is made at the scene load: room 1 is skipped, both go straight to room 2's door.
+
+#  Run 20261120-130248 (LANE1) VOID: the pair was made (the _2F flag works), A killed 0x2345, but A's bottled fairy
+#     took 'hurt 80' (not downed), B's 'kill' (nearest to Link) hit B's kept copy of 0x2345, so 0x155c never died, and
+#     B's spot 106/-35 was lava. Now: A hurt twice, B stands by 0x155c's spot (116.1 -38.5) on its floor.
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
@@ -28,23 +41,19 @@ wait 300
 press A
 wait 2400
 mark in
-place 92.0 100.6 -44.0    # room 1 (el-dc-lizalfos): the fight starts, A owns its pair
-wait 30
-toward 95.0 -52.0 10
-wait 600
-mark a-room1
-kill Enemy_MiddleBoss_Lizalfos
+place 110.0 116.6 -13.0   # room 2's door (outside)
 wait 60
-kill Enemy_MiddleBoss_Lizalfos
-wait 1800                 # room 1's event, its shutters; room 2's pair is made by the room logic (Logic_Create, latched)
-mark a-room1-done
-place 108.0 116.0 -33.0   # room 2, between its pair
-wait 600
+goto 110.0 -22.0 1.0 240  # in through the door
+goto 108.0 -33.0 1.0 300  # between its pair
+place 108.0 116.6 -33.0   # inside if the walk fell short
+wait 300
 mark a-near
 kill Enemy_MiddleBoss_Lizalfos
 wait 300
 mark a-one
-hurt 80                   # the owner goes down with one Lizalfos left
+hurt 80                   # the owner goes down with one Lizalfos left (a bottled fairy takes the first)
+wait 400
+hurt 80                   # the second lethal hit: downed
 wait 600
 mark a-down
 wait 2400                 # B kills the last (b-last), the room event, the shutters

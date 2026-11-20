@@ -33,10 +33,8 @@ rstick 0 1 60           # walk into the room (GohmaStage Banc: floor Area x 22.5
 press ZL 10             # look up at her
 wait 900
 mark b-trigger          # her anim leaves Pre_Battle_Ceiling_* here, else the kill is VOID (no BossDie asked)
-goto 12.0 67.5 1.5 600  # back 6.5 m west of her
-wait 1500
 mark b-fight
-kill Enemy_DungeonBoss_Gohma
+include hs-gohma-kill.inc.txt   # her drop, then three kills in her floor time
 wait 120
 mark b-kill
 wait 2400               # her death and its event

@@ -1,0 +1,25 @@
+# hs-heart-137, A (host) System Load: the pause menu's System > Load (the strip is the game's own four tabs on every
+# game since pause_menu.py's System-page button design (docs/hookshot.md): Multiplayer is a System button, not a tab; R x3 stops on System; run 075304 VOID with hs-pause-tab's guest path R x3 + L, which landed on Items; its cursor rows Save, Load, Options, Special Actions, Title Screen), the slot list's first row, yes.
+press PLUS
+wait 240
+press R
+wait 90
+press R
+wait 90
+press R
+wait 120
+mark a-sys-tab
+press DDOWN                # the page opens on Save (its first row); no DUP (a wrap would land on Title Screen)
+wait 60
+mark a-sys-load
+press A
+wait 180
+mark a-sys-list
+press A
+wait 180
+mark a-sys-confirm
+press A
+wait 1800
+mark a-sys-loaded
+wait 900
+mark a-sys-late

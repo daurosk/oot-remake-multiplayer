@@ -60,11 +60,8 @@ rstick 0 1 60
 press ZL 10             # look up at her
 wait 900
 mark b-trigger
-goto 12.0 68.5 1.5 600  # inside the room, 6.5 m west of her
-mark b-moved
-wait 1500
 mark b-fight
-kill Enemy_DungeonBoss_Gohma   # with A's: whichever game owns her kills her (a kill on a copy is DAMAGE, held at 1 on the ceiling: run 023424)
+include hs-gohma-kill.inc.txt   # her drop, then three kills in her floor time
 wait 120
 mark b-kill
 wait 2400               # her death and its event

@@ -11,13 +11,26 @@
 #     room's own logic (Logic_Create <- AppearLizalfos) after room 1's fight (0x9cbd9c524b24df87 102.5 100.1 -55.4,
 #     0x1fa0074fddbc182 84.9 100.6 -45.7). NEXT: fight room 1 first (el-dc-lizalfos's entry + both test kills), then walk
 #     up into room 2's trigger before the kills here; or find AppearLizalfos' flag and set it before the warp.
+#  Run 20261120-064209 (LANE2) VOID: place 92.0 100.6 -44.0 is lava (Link at y 99.0, shot a-room1-A; el-dc-lizalfos
+#     20261119-111409 the same) and no Lizalfos existed ('none here with a life'): the pair is made when Link walks in.
+#     Now: in through room 1's door (DestinationAnchor 92.5 101.55 -31/-33) onto its floor (Lizalfos spots 82.75 100.6
+#     -44.5); room 2 in through its door (110.0 116.2 -17.25/-13.25). Lane saves checked offline: DC clear flags
+#     (Gimmick_DefeatEnemy_Open_DodongoCave_01/02, HavePlayedEvent ..DefeatLizalfos01/02) all 0, no Lizalfos keys.
+#  Run 3 setup (dungeon-sweep-0118-7, offline from the romfs): room 2's pair (Logic/Gimmick_DodongoCavern_MiddleBoss02_6dee)
+#     has Logic_Create <- OR-latch(its shutter's event output, DodongoCavern_AppearLizalfos_2F 0xaf24307b) and Logic_Delete
+#     <- Gimmick_DefeatEnemy_Open_DodongoCave_02. The lane saves get AppearLizalfos_2F = 1 (defeat flags 0), so the pair
+#     is made at the scene load: room 1 is skipped, both go straight to room 2's door.
+
+#  Run 20261120-130248 VOID (see A): B now kills 0x155c, the nearest from its spot (not its kept copy of 0x2345).
+#  Run 20261120-132403: a 'goto 111 -36' toward 0x2345 walked B into the lava gap between the room's two platforms
+#     (B burning when its counter finished, then down): B stays on 0x155c's platform now.
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
 #! timeout 600
 mark start
 warp DodongoCavern EntrancePos
-wait 1500
+wait 1500                 # 300 ticks behind A from here on
 mark title
 press A
 wait 180
@@ -28,16 +41,14 @@ wait 300
 press A
 wait 2400
 mark in
-place 78.0 100.6 -38.0    # room 1, outside its arena (el-dc-lizalfos B)
-wait 30
-toward 93.0 -50.0 6
-wait 2164                 # A fights room 1
-mark b-room1-done
-wait 120                  # A reaches room 2 first (owner)
-place 106.0 116.0 -35.0   # room 2, beside A
-wait 600
+wait 400                  # A reaches room 2 first (owns both)
+place 110.0 116.6 -13.0   # room 2's door (outside)
+wait 60
+goto 110.0 -22.0 1.0 240
+goto 113.5 -37.0 1.0 300  # by 0x155c's spot (116.1 -38.5), 13 m from 0x2345's
+place 113.5 116.2 -37.0   # inside, on its floor, if the walk fell short
 mark b-near
-wait 410                  # A kills one, then goes down
+wait 1400                 # A killed one and is down (two hurts; A's a-down <= ~2200 after its in)
 mark b-down
 kill Enemy_MiddleBoss_Lizalfos   # the last one, its owner down
 wait 120

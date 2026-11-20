@@ -60,11 +60,8 @@ rstick 0 1 60
 press ZL 10             # look up at her
 wait 900
 mark a-trigger
-goto 12.0 67.5 1.5 600  # inside the room, 6.5 m west of her
-mark a-moved
-wait 1500
 mark a-fight
-kill Enemy_DungeonBoss_Gohma   # with B's: run 023424 (LANE2) B's kill on its copy reached owner A while she was on the ceiling (CeilingMove: her clamp keeps 1); the owner's own test kill passes her stops
+include hs-gohma-kill.inc.txt   # her drop, then three kills in her floor time
 wait 120
 mark a-kill
 wait 2400               # her death and its event

@@ -5284,6 +5284,25 @@ private:
             if (IsShared(actor.name)) {  // enemies and breakables
                 Life(r, a, actor);
             }
+            // PROBE row 184 (not for main): every Hylian Shield's AS command per slot, on change.
+            if (actor.name.rfind("Weapon_Shield_Hylian", 0) == 0) {
+                std::string now;
+                const auto c = AsController(r, a);
+                for (s32 i = 0; c && i < c->second && i < 4; ++i) {
+                    const auto an = AnimationAt(r, a, i, true);
+                    now += (i ? " | " : "") + std::to_string(i) + ":" + (an ? an->name : std::string("-"));
+                }
+                if (!c) now = "no AS controller";
+                if (auto& was = hylian_as_[a]; was != now && hylian_lines_ < 300) {
+                    ++hylian_lines_;
+                    was = now;
+                    LOG_INFO(Core, "coop: PROBE184 {} {:#x} at {:.2f} {:.2f} {:.2f} state {}: {}", actor.name, a,
+                             r.Get<float>(a + kActorPosition).value_or(0.0f),
+                             r.Get<float>(a + kActorPosition + 4).value_or(0.0f),
+                             r.Get<float>(a + kActorPosition + 8).value_or(0.0f),
+                             r.Get<u32>(a + kActorState).value_or(0), now);
+                }
+            }
         }
         for (auto it = actors_.begin(); it != actors_.end();) {
             if (seen.contains(it->first) || ++it->second.missed < 2) {
@@ -5426,6 +5445,8 @@ private:
     u64 main_ = 0;
     bool first_ = true;
     std::unordered_map<u64, Actor> actors_;
+    std::unordered_map<u64, std::string> hylian_as_;  // PROBE row 184
+    int hylian_lines_ = 0;
 };
 
 Objects& Instance() {

@@ -1,0 +1,31 @@
+# hs-shield-tilt (row 184 probe, not for main): the Hylian Shield on the back of a puppet. The lane kit saves wear it (child).
+# Both child at the Deku Tree entrance: B walks ahead (A sees B's back: child sees child), then A walks past B (B sees A's back).
+# Then A sets Sequence_IsChildhood 0 and reloads the same map as an adult (A behind B: adult sees child), then walks past B
+# (child sees adult). Logs: "PROBE184 Weapon_Shield_Hylian <addr> at x y z state s: 0:<cmd> | 1:<cmd> ..." in both games
+# (own shield and puppets' shields; tell them apart by position vs each Link). Shots both games at every mark.
+# Run: run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-shield-tilt (lane's own saves)
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 200
+stick 0 0.6 60
+wait 340
+mark b-ahead
+wait 240
+mark b-sees-a-child
+wait 2400
+mark b-adult-a-behind
+wait 450
+mark b-sees-a-adult
+wait 600
+mark end

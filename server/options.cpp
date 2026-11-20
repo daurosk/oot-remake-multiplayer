@@ -34,6 +34,7 @@ const char* password_problem(std::string_view password) {
 std::optional<CommandLine> parse_command_line(const std::vector<std::string>& args,
                                               std::string& error) {
   CommandLine line;
+  bool list_room = false;   // --relay-list, with a name or without (the room's)
   for (std::size_t i = 0; i < args.size(); ++i) {
     const std::string& arg = args[i];
     bool has_value = i + 1 < args.size();
@@ -191,11 +192,15 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
       line.relay_room = *room;
       ++i;
     } else if (arg == "--relay-list") {
-      if (!has_value || !relay::listable_host_name(args[i + 1])) {
-        error = "--relay-list needs the host name to list the room under: 1 to 32 bytes, no control characters";
-        return std::nullopt;
+      // The name shown in the list is optional (the room name without one); the next option is never taken as it.
+      list_room = true;
+      if (has_value && args[i + 1].rfind("-", 0) != 0) {
+        if (!relay::listable_host_name(args[i + 1])) {
+          error = "--relay-list: the name to list the room under is 1 to 32 bytes, no control characters";
+          return std::nullopt;
+        }
+        line.relay_list = args[++i];
       }
-      line.relay_list = args[++i];
     } else if (arg == "--relay-key" || arg == "--relay-key-env") {
       if (!has_value || args[i + 1].empty() || args[i + 1].size() > 64) {
         error = arg + " needs a value of at most 64 characters";
@@ -211,7 +216,8 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
     error = "--relay-room is a name on a relay: it needs --relay-via";
     return std::nullopt;
   }
-  if (!line.relay_list.empty() && line.relay_room.empty()) {
+  if (list_room && line.relay_list.empty()) line.relay_list = line.relay_room;
+  if (list_room && line.relay_room.empty()) {
     error = "--relay-list lists a room: it needs --relay-room (and --relay-via)";
     return std::nullopt;
   }
@@ -269,9 +275,10 @@ const char* usage() {
          "  --relay-room NAME  with --relay-via, also hold this room name on the\n"
          "                   relay (3 to 24 letters, digits, - or _): players join\n"
          "                   with the name instead of the code\n"
-         "  --relay-list NAME  with --relay-room, put the room on the relay's\n"
-         "                   public room list under this host name (players and\n"
-         "                   version shown; never the password)\n"
+         "  --relay-list [NAME]  with --relay-room, put the room on the relay's\n"
+         "                   public room list, shown as NAME (the room name\n"
+         "                   without one; players and version shown too, never\n"
+         "                   the password)\n"
          "  --relay          run as a relay for hosts that use --relay-via\n"
          "                   (UDP port 27530 unless --port), not a game server\n"
          "  --relay-key TEXT | --relay-key-env NAME  the relay's host key: on the\n"

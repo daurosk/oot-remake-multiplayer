@@ -990,6 +990,59 @@ TEST_CASE("relay: the list comes in pages under a datagram, at most 50 rooms, an
   CHECK(f.relay.received(Endpoint{0x0600000Au, 3}, bare, 2000).empty());
 }
 
+TEST_CASE("relay: one address sends LIST_ROOM 30 times a minute and puts 6 rooms on the list in ten minutes") {
+  Fixture f;
+  REQUIRE(f.register_room(1, "Forest-Gang", host_at(1)).kind == Kind::kRegisteredName);
+  const std::uint64_t minute = RelayConfig{}.list_window_ms;
+
+  // 30 LIST_ROOM a minute from one address are taken; the next is not, until the minute is over.
+  for (std::uint32_t i = 0; i < RelayConfig{}.listings_per_window; ++i)
+    CHECK(f.relay.received(host_at(1), encode(list_room_message(1, true, "Saria", 1, 4)), 1000).empty());
+  CHECK(f.relay.listed() == 1);
+  CHECK(f.relay.received(host_at(1), encode(list_room_message(1, true, "Saria", 2, 4)), 1000).empty());
+  CHECK(f.relay.stats().listings_limited == 1);
+  auto page = ask_list(f, 0, kGuest, 1000);
+  REQUIRE(page.has_value());
+  REQUIRE(page->rooms.size() == 1);
+  CHECK(page->rooms[0].players == 1);   // (the 31st not taken)
+  CHECK(f.relay.received(host_at(1), encode(list_room_message(1, true, "Saria", 2, 4)), 1000 + minute).empty());
+  page = ask_list(f, 0, kGuest, 1000 + minute);
+  REQUIRE(page.has_value());
+  REQUIRE(page->rooms.size() == 1);
+  CHECK(page->rooms[0].players == 2);
+
+  // Over the limit, a listing from a token the relay does not know gets no refusal either.
+  const Endpoint forged{0x0700000Au, 5};
+  for (std::uint32_t i = 0; i < RelayConfig{}.listings_per_window; ++i)
+    CHECK(f.relay.received(forged, encode(list_room_message(99, true)), 2000).size() == 1);
+  CHECK(f.relay.received(forged, encode(list_room_message(99, true)), 2000).empty());
+
+  // Rooms put on the list: 6 from one address in ten minutes, each one taken off and listed again counted. The 7th
+  // stays off the list until the window is over; a host on another address is not held.
+  REQUIRE(f.register_room(2, "lake_gang", host_at(2)).kind == Kind::kRegisteredName);
+  REQUIRE(f.register_room(3, "quiet-room", host_at(3)).kind == Kind::kRegisteredName);
+  const std::uint64_t start = 10 * minute;
+  for (std::uint32_t i = 0; i < RelayConfig{}.new_listings_per_window; ++i) {
+    CHECK(f.relay.received(host_at(2), encode(list_room_message(2, true, "Ruto")), start).empty());
+    CHECK(f.relay.listed() == 2);
+    CHECK(f.relay.received(host_at(2), encode(list_room_message(2, false, "")), start).empty());
+    CHECK(f.relay.listed() == 1);
+  }
+  const std::uint64_t limited = f.relay.stats().listings_limited;
+  CHECK(f.relay.received(host_at(2), encode(list_room_message(2, true, "Ruto")), start).empty());
+  CHECK(f.relay.listed() == 1);
+  CHECK(f.relay.stats().listings_limited == limited + 1);
+  CHECK(f.relay.received(host_at(3), encode(list_room_message(3, true, "Malon")), start).empty());
+  CHECK(f.relay.listed() == 2);
+  const std::uint64_t later = start + RelayConfig{}.window_ms;
+  CHECK(f.relay.received(host_at(2), encode(list_room_message(2, true, "Ruto")), later).empty());
+  CHECK(f.relay.listed() == 3);
+
+  // The relay's tick drops the counts whose window is over: the same address starts again from none.
+  f.relay.tick(later + RelayConfig{}.window_ms);
+  CHECK(f.relay.received(forged, encode(list_room_message(99, true)), later + RelayConfig{}.window_ms).size() == 1);
+}
+
 TEST_CASE("relay loopback: a host's link lists its room, the game's list_rooms_on_relay reads it, a link without listing is not on it") {
   EnetLife enet;
   RelayServer relay_server(0, 0x7F000001u, RelayConfig{});  // (127.0.0.1 only)

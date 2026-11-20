@@ -216,6 +216,11 @@ void Relay::control(Endpoint from, const Message& m, std::uint64_t now_ms,
       return;
     }
     case Kind::kListRoom: {
+      // Over the limit: not taken and not answered (its host's link sends it again with its next keepalive).
+      if (over_limit(listings_, from.host, config_.listings_per_window, now_ms, true, config_.list_window_ms)) {
+        ++stats_.listings_limited;
+        return;
+      }
       auto it = sessions_.find(m.token);
       if (it == sessions_.end()) return refuse(Refusal::kUnknownSession);
       Session& s = it->second;
@@ -223,6 +228,11 @@ void Relay::control(Endpoint from, const Message& m, std::uint64_t now_ms,
       s.last_ms = now_ms;
       // Only a room is listed: a join code alone is not for everyone to see.
       const bool list_it = m.listed && !s.room.empty();
+      if (list_it && !s.listed &&
+          over_limit(new_listings_, from.host, config_.new_listings_per_window, now_ms, true)) {
+        ++stats_.listings_limited;
+        return;  // (it stays off the list until the window is over)
+      }
       if (list_it && !s.listed) {
         s.listed_since = ++list_order_;
         say("host " + address_text(from.host) + " lists room \"" + s.room + "\" (" + std::to_string(listed() + 1) +
@@ -394,9 +404,11 @@ std::vector<Outgoing> Relay::tick(std::uint64_t now_ms) {
     }
     it = next;
   }
-  // (the room list's asks have a window of their own: a forged sender's addresses must not pile up either)
+  // (the room list's asks and listings have a window of their own: a forged sender's addresses must not pile up
+  // either)
   for (auto [table, window] : {std::pair{&lookups_, config_.window_ms}, std::pair{&registers_, config_.window_ms},
-                               std::pair{&lists_, config_.list_window_ms}}) {
+                               std::pair{&new_listings_, config_.window_ms}, std::pair{&lists_, config_.list_window_ms},
+                               std::pair{&listings_, config_.list_window_ms}}) {
     for (auto t = table->begin(); t != table->end();) {
       if (now_ms - t->second.window_start >= window) {
         t = table->erase(t);

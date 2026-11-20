@@ -43,9 +43,9 @@ struct CommandLine {
   // --relay-room NAME: with --relay-via, also hold this room name on the relay
   // (players join with the name instead of the code).
   std::string relay_room;
-  // --relay-list NAME: with --relay-room, put the room on the relay's public
-  // room list under this host name (players, most players and the protocol
-  // version go with it; never the password).
+  // --relay-list [NAME]: with --relay-room, put the room on the relay's public
+  // room list, shown as NAME; without one, as the room name (players, most
+  // players and the protocol version go with it; never the password).
   std::string relay_list;
   // --relay-key / --relay-key-env: the relay's host key (on the relay: the one
   // hosts must give; with --relay-via: the one to give).

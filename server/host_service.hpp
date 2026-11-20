@@ -61,8 +61,8 @@ struct HostServiceConfig {
   std::string relay_key;
   std::string relay_room;             // a room name to hold on the relay; "" for none
   // Not empty (and a relay_room): the room goes on the relay's public room
-  // list under this host name, with the players and most players; never the
-  // password. Off ("") unless the host asks.
+  // list shown as this name (the room name when the host gives none), with the
+  // players and most players; never the password. Off ("") unless the host asks.
   std::string relay_list;
   // coop_server's window shows the invite code (the host copies it from
   // there). The game's log must not have it: it holds the join password and

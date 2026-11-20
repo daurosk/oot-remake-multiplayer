@@ -486,7 +486,7 @@ TEST_CASE("boss: a long event with the boss at full life is not its death (Gohma
     CHECK(Has(a, proto::BossState::defeated));
 }
 
-TEST_CASE("boss: the boss dead when the event starts is the death at once; no reading, once the event is over here") {
+TEST_CASE("boss: the boss dead when the event starts is the death at once, with no reading once the event is over here") {
     Sync s;
     ToFight(s);
     auto a = s.Tick(Alive(Forest().arrive, true, false), 30 * kS);

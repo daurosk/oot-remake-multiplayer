@@ -45,7 +45,7 @@ wait 150
 hit Enemy_DungeonBoss_PhantomGanon 1
 wait 150
 mark t4b
-goto -6.4 -67.4 0.4 300   # beside A: the balls aimed at A pass B
+goto -3.9 -65.7 0.4 300   # ~3 m from A toward the arena centre (beside A he chose the spear only, 021811); his balls aimed at A pass B
 toward 0 -63 10
 press ZL 10
 press Y 8

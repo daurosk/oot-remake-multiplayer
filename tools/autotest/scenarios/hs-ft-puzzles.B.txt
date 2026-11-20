@@ -39,7 +39,7 @@ wait 600
 mark b-paint1
 wait 600
 mark b-paint2
-# --- the sweep (1663 ticks) at painting 3 ---
+# --- the sweep (1663 ticks) at painting 3: run 20261119-214916's 10 ticks aimed above it from 4.8 m, so smaller steps ---
 press ZL 10
 wait 40
 hold ZR 30
@@ -49,45 +49,46 @@ mark b-shot1
 press ZL 10
 wait 40
 hold ZR 30
-rstick 0 1.0 5 ZR
+rstick 0 1.0 1 ZR
 hold ZR 12 b-aim2
 wait 120
 mark b-shot2
 press ZL 10
 wait 40
 hold ZR 30
-rstick 0 1.0 10 ZR
+rstick 0 1.0 2 ZR
 hold ZR 12 b-aim3
 wait 120
 mark b-shot3
 press ZL 10
 wait 40
 hold ZR 30
-rstick 0 1.0 15 ZR
+rstick 0 1.0 3 ZR
 hold ZR 12 b-aim4
 wait 120
 mark b-shot4
 press ZL 10
 wait 40
 hold ZR 30
-rstick 0 1.0 20 ZR
+rstick 0 1.0 4 ZR
 hold ZR 12 b-aim5
 wait 120
 mark b-shot5
 press ZL 10
 wait 40
 hold ZR 30
-rstick 0 1.0 26 ZR
+rstick 0 1.0 6 ZR
 hold ZR 12 b-aim6
 wait 120
 mark b-shot6
 press ZL 10
 wait 40
 hold ZR 30
-rstick 0 1.0 33 ZR
+rstick 0 1.0 8 ZR
 hold ZR 12 b-aim7
 wait 120
 mark b-shot7
+wait 85                  # (the smaller pitch steps: A's timeline stays the same)
 # --- end of the sweep ---
 mark b-beth-shot
 wait 600

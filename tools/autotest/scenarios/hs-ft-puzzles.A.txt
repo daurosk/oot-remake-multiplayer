@@ -1,6 +1,6 @@
 # hs-ft-puzzles (Hookshot, research for player rows 175 "only one player can move the ghost image (painting/block)
 # puzzle" and 176 "the Poe sisters' fight gets wonky", Forest Temple). Facts wanted, screenshots on both games.
-#! switches LICHII_COOP_CHEATS=1
+#! switches LICHII_COOP_CHEATS=1,LICHII_COOP_OBJECTS_CHEAT=1
 # Scenario fix (forest-0118-4, root cause of run 20261119-181519's 'none here with a life'): the test kill/hit
 # reaches only actors with a Life component. A painting performer (Enemy_GhostPicturePerformer_Poe_*) has none: it is
 # a hidden snapshot actor (its ainb: OneShotSnapshotTextureSetCameraPos/At) drawn into the painting on the wall,
@@ -107,7 +107,7 @@ wait 240
 mark a-push1
 wait 600
 mark a-blocks-end
-place 35.0 120.0 -61.3   # part 2: room 18, between paintings 2 and 3, above the floor (~117.6): it drops on it
+place 38.0 120.2 -60.2   # part 2: room 18 beside B (run 20261119-214916: B at 37.5 stood at y 120.0; 35.0 reverted)
 wait 300
 mark a-room18
 toward 29.44 -59.5 10    # A faces painting 2 (B faces painting 3)

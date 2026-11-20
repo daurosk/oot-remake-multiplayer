@@ -1713,6 +1713,20 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
                     // hit lists of the copy hold it; the owner's game sends its real shot back.
                     const std::string& shared = slot.copy_of.empty() ? slot.actor : slot.copy_of;
                     const auto way = CoopShotReflect::ReflectedBy(shared);
+                    if (way != CoopShotReflect::Way::none) {
+                        // PROBE (shot-reflect-probe): the copy's hit lists while our Link is near it.
+                        std::array<float, 3> lp{};
+                        const std::uint64_t lk = our_link_.load(std::memory_order_relaxed);
+                        if (lk != 0 && ReadValue(guest, lk + addr::kActorPosition, lp) && (++slot.probe_frames % 10) == 0) {
+                            const float dx = lp[0] - c->position[0], dy = lp[1] - c->position[1], dz = lp[2] - c->position[2];
+                            const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+                            if (d < 3.0f) {
+                                const std::string h = CoopShotReflect::Describe(guest, slot.taken);
+                                Say(shared + ": PROBE copy " + std::to_string(slot.key) + " dist " + std::to_string(d) +
+                                    " lists:" + (h.empty() ? std::string(" EMPTY") : h));
+                            }
+                        }
+                    }
                     if (way != CoopShotReflect::Way::none && slot.hits_noted < 3) {
                         if (const std::string hits = CoopShotReflect::Describe(guest, slot.taken); !hits.empty()) {
                             ++slot.hits_noted;

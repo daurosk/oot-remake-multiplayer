@@ -557,6 +557,7 @@ private:
         std::string copy_of;  // the shared actor's name (Copy::actor)
         bool reflected = false;  // row 177: our Link sent this shot copy back (said once)
         int hits_noted = 0;      // row 177: its hit lists logged (at most 3 times, when not empty)
+        int probe_frames = 0;    // PROBE (shot-reflect-probe only)
     };
     enum class Pending { none, malloc, create, take, drop, remove, search, emit };
 

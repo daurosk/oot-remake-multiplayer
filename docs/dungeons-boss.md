@@ -428,6 +428,7 @@ players, and the host's death left it "fully scuffed".
   `_Imitation` (the riders in the paintings, real and fake) were shared objects with their own owner: in the log
   they stayed with player 2 while the boss went to player 1, so a copy game's riders came from another game than
   its boss. They are now parts of his boss group (docs/objects.md, "Groups").
+- **A boss that falls out of its room comes back (row 178).** In the Forest playtest Phantom Ganon fell ~3 km after a mid-rush hand-over (a player went down), and every copy followed him there: after the next hand-over nobody had him in the room (a soft-lock). Now our own boss that drops 40 m below where it was first seen (`CoopBossNative::Table::kFallBelowStart`) is put back at that place with the same set-matrix call the copies are placed with (`Table::TakeReturns`), and its AI chooses again (at most 3 times, `kMaxFallRechoices`). A boss copy (`IsBoss`: a group's root, not its parts or plain enemies) is not put where its owner's samples say once that is 40 m below its first place (`Sync::kBossFallBelowStartM`): it keeps its place in the room, so the next owner has the boss there. Its 'gone' log line says `left (a boss that fell out of its room, row 178 ...)`.
 - **Not causes (checked):** `PhantomGanon_Bullet_Thunder_Sho(ckwave)` "refused at create" in a copy game: the copy
   of the owner's thunder ball makes its own shockwaves, and the owner's come as copies (one set, as for every
   enemy shot). The older rules' `moving in (try N)` / `could not move ... giving up` lines while the area rules

@@ -160,6 +160,13 @@ def _keys(text, step):
     return None
 
 
+# `nofairy`: every bottle's item (PlayerStatus.AssignableItem.BottleInfo.Bottle<A..E>.BottleItem, as hashes:
+# coop/host/game_items.hpp letters::kBottles) set to Empty through the game's own queue (setenum). A fairy in a
+# bottle makes a lethal hit the game's own death and revive, never down-but-out (coop_dbno: "a fairy in our
+# bottle"), so a scenario that downs a player starts with it (the lane saves have one: 3 VOID runs, 2026-11-20).
+BOTTLE_ITEMS = ("0x7d48df76", "0x1edd164a", "0xb80c70a8", "0xe4c1b1fc", "0x365e1953")
+
+
 def parse(text):
     """Our test script (coop_testinput.h) as a list of Steps. Raises ScriptError("line N: ...")."""
     steps = []
@@ -287,6 +294,16 @@ def parse(text):
             if len(w) != 3 or not w[2].lstrip("-").isdigit():
                 fail("want: setflag NAME VALUE (an Int or Bool flag, a whole number)")
             s.kind, s.name, s.start = "setflag", w[1], w[2]
+        elif cmd == "NOFAIRY":
+            if len(w) != 1:
+                fail("want: nofairy (no arguments)")
+            for item in BOTTLE_ITEMS[:-1]:
+                e = Step("timed", number)
+                e.kind, e.name, e.start = "setenum", item, "Empty"
+                e.text = "setenum %s Empty" % item
+                steps.append(e)
+            s.kind, s.name, s.start = "setenum", BOTTLE_ITEMS[-1], "Empty"
+            s.text = "setenum %s Empty" % BOTTLE_ITEMS[-1]
         elif cmd == "SETENUM":
             if len(w) != 3:
                 fail("want: setenum NAME VALUE (an Enum flag, or 0xHASH, and a value's name)")

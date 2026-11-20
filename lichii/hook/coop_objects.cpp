@@ -4957,7 +4957,15 @@ private:
         // A placed world object goes where coop_world says, or stays where
         // this game has it: the enemy sharing does not place those.
         std::erase_if(poses, [this](const PoseWrite& w) { return world_.Places(w.address); });
-        world_.Poses(now_us, poses);        auto& memory = system.ApplicationMemory();
+        world_.Poses(now_us, poses);
+        // Row 178: our own boss that fell out of its room goes back to its fight start, by the same call.
+        for (const auto& [actor, start] : CoopBossNative::TheTable().TakeReturns()) {
+            PoseWrite w;
+            w.address = actor;
+            w.position = start;
+            poses.push_back(w);
+        }
+        auto& memory = system.ApplicationMemory();
         Reader r(memory);
         std::unordered_map<u64, coop::protocol::Vec3> placed;
         std::vector<Mover::Pose> wish;

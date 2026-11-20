@@ -816,6 +816,7 @@ void Table::Fall(Entry& e, const Boss& b) {
     const float y = (*b.position)[1];
     if (!e.start_y) {
         e.start_y = y;  // (its first sighting: the fight's start)
+        e.start = *b.position;
         return;
     }
     const float below = *e.start_y - y;
@@ -833,8 +834,11 @@ void Table::Fall(Entry& e, const Boss& b) {
     }
     ++e.fall_rechoices;
     e.rechoose = true;
+    if (e.start && returns_.size() < kMaxWants) {
+        returns_.emplace_back(e.actor, *e.start);
+    }
     Note(b.name + ": fell " + std::to_string(static_cast<int>(below)) +
-         " m below its fight start (row 178): its AI chooses again");
+         " m below its fight start (row 178): put back at its fight start, its AI chooses again");
 }
 
 bool Table::WakesOwnBrain(std::uint64_t actor) const {
@@ -849,6 +853,11 @@ bool Table::WakesOwnBrain(std::uint64_t actor) const {
 std::vector<std::uint64_t> Table::TakeOwnWants() {
     std::lock_guard lock(mutex_);
     return std::exchange(wants_, {});
+}
+
+std::vector<std::pair<std::uint64_t, coop::protocol::Vec3>> Table::TakeReturns() {
+    std::lock_guard lock(mutex_);
+    return std::exchange(returns_, {});
 }
 
 void Table::Record(Entry& e, std::variant<BossBrain, BossAction> what) {

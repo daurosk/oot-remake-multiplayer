@@ -414,6 +414,23 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             step.kind = Kind::setflag;
             step.mark = std::string(w[1]);
             step.start = std::string(w[2]);
+        } else if (cmd == "NOFAIRY") {
+            // nofairy: every bottle emptied (each BottleItem Enum, coop/host game_items.hpp letters::kBottles, set to
+            // Empty: five setenum steps). A bottled fairy makes a lethal hit the game's own death and revive, never
+            // down-but-out, so a scenario that downs a player starts with it (tools/autotest/hookshot.py the same).
+            if (w.size() != 1) {
+                return fail("want: nofairy (no arguments)");
+            }
+            static constexpr std::string_view kBottleItems[] = {"0x7d48df76", "0x1edd164a", "0xb80c70a8",
+                                                                "0xe4c1b1fc", "0x365e1953"};
+            step.kind = Kind::setenum;
+            step.start = "Empty";
+            for (std::size_t i = 0; i + 1 < std::size(kBottleItems); ++i) {
+                Step bottle = step;
+                bottle.mark = std::string(kBottleItems[i]);
+                script.steps.push_back(std::move(bottle));
+            }
+            step.mark = std::string(kBottleItems[std::size(kBottleItems) - 1]);
         } else if (cmd == "SETENUM") {
             // setenum NAME VALUE: this game's Enum flag NAME (a GameDataList name,
             // or 0x and its hash: a Threads of Time quest's name is not in the

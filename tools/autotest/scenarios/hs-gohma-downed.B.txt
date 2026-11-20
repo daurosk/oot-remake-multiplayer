@@ -12,6 +12,7 @@
 #! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
 #! timeout 1500
 mark start
+nofairy                  # every bottle emptied: a bottled fairy revives instead of downing (3 VOID runs, 2026-11-20)
 warp InsideTheDekuTree Entrance
 wait 1200               # the title screen
 mark title

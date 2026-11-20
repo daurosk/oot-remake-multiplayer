@@ -926,5 +926,47 @@ class TestDelayTest(unittest.TestCase):
         self.assertEqual((a.test_delay_ms, a.test_jitter_ms), (0, 0))
 
 
+class NoFairyTest(unittest.TestCase):
+    """A bottled fairy turns a lethal hit into the game's own death and revive, never down-but-out (coop_dbno), so
+    scenarios that hurt a player empty the bottles first (3 VOID runs on 2026-11-20: the lane saves have a fairy)."""
+
+    def test_expands_to_every_bottle_set_empty(self):
+        steps = hs.parse("mark start\nnofairy\nwait 10\n")
+        sets = [s for s in steps if s.kind == "setenum"]
+        self.assertEqual(len(sets), 5)
+        self.assertEqual([s.name for s in sets], list(hs.BOTTLE_ITEMS))
+        self.assertTrue(all(s.start == "Empty" and s.text == "setenum %s Empty" % s.name for s in sets))
+        self.assertTrue(all(s.line == 2 for s in sets))
+        self.assertIn("setenum", hs.MODULE_ONLY)  # written to the module's commands file as each step's text
+        with self.assertRaises(hs.ScriptError):
+            hs.parse("nofairy now\n")
+
+    def test_bottle_hashes_are_the_hosts(self):
+        # coop/host/include/coop/host/game_items.hpp letters::kBottles: {IsValid, BottleItem} per bottle.
+        header = os.path.join(HERE, "..", "..", "..", "coop", "host", "include", "coop", "host", "game_items.hpp")
+        with open(header, encoding="utf-8") as f:
+            text = f.read()
+        block = text[text.index("kBottles{{"):]
+        block = block[:block.index("}};")]
+        items = [pair.split(",")[1].strip().rstrip("}") for pair in block.split("{")[3:]]
+        self.assertEqual(tuple(i.lower() for i in items), hs.BOTTLE_ITEMS)
+
+    def test_every_scenario_that_hurts_empties_the_bottles_first(self):
+        for f in sorted(glob.glob(os.path.join(HERE, "..", "scenarios", "*.txt"))):
+            if f.endswith(".steps.txt"):
+                continue
+            with open(f, encoding="utf-8") as fh:
+                text = fh.read()
+            if "BottleItem Fairy" in text:
+                continue  # puts a fairy in on purpose (hs-fairy-revive)
+            steps = hs.parse(text)
+            hurts = [i for i, s in enumerate(steps) if s.kind == "hurt"]
+            if not hurts:
+                continue
+            emptied = {s.name for s in steps[:hurts[0]] if s.kind == "setenum" and s.start == "Empty"}
+            with self.subTest(scenario=os.path.basename(f)):
+                self.assertTrue(set(hs.BOTTLE_ITEMS) <= emptied, "add `nofairy` before the first hurt")
+
+
 if __name__ == "__main__":
     unittest.main()

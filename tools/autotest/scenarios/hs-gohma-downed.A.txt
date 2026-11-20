@@ -3,7 +3,7 @@
 # in through the door, then the real kill: her death and the warp in BOTH games. Entry and fight as hs-heart-181.
 # PASS (logs + shots, both games):
 #  1. B: 'dbno: respawn' + the map change, then NO 'boss beaten' line before the kill; A: NO 'boss beaten in another game'
-#     before the kill; A stays in phase fight.
+#     before the kill (A waits outside in the corridor, standing, so B's bleed-out is a respawn, not a wipe).
 #  2. After the kill: 'boss beaten (Dm_Deku_BossOut)' (a reading at life 0) in the killer's game and the death on the other;
 #     a-death/b-death shots: Gohma's death (or gone) on both; a-warp/b-warp: the blue warp on both.
 #  VOID: no fight before b-down, or B not downed (no 'dbno' downed line).
@@ -50,27 +50,31 @@ wait 600
 mark a-intro
 wait 1800               # the door's event, the intro, Gohma's own appear event
 mark a-after-intro
-goto 17.0 67.8 1.5 600  # CONTROL + her drop: under her ceiling spot (her own trigger: GohmaStage floor area)
-rstick 0 1 60
-press ZL 10             # look up at her
-wait 900
-mark a-trigger
-goto 12.0 67.5 1.5 600  # inside the room, 6.5 m west of her
-mark a-moved
-wait 1500
-mark a-fight
-wait 1200                # B: two lethal hits (its fairy, then downed)
-mark a-b-down
-wait 5900                # B: bleed, respawn to the entrance, back in through the door
+goto -4.0 67.5 1.0 600   # back out through the door: A stays standing, out of her reach (run 084252: A idle in
+goto -12.0 66.5 1.0 600  # the room was killed twice, so B's bleed-out became a wipe, not co-op's respawn)
+mark a-out
+wait 4800                # B: 2 lethal hits (fairy, then downed), 45 s bleed, respawn to the entrance, back to the corridor
 mark a-b-back
-goto 17.0 67.8 1.5 600   # under her ceiling spot: her drop (as hs-heart-181)
-rstick 0 1 60
-press ZL 10
-wait 900
-goto 12.0 67.5 1.5 600
-wait 1500
-kill Enemy_DungeonBoss_Gohma   # the real kill (with B's), as hs-heart-181's PASS (055224)
-wait 120
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600    # through the door with B
+wait 1200
+mark a-in2
+kill Enemy_DungeonBoss_Gohma   # every 6 s: one lands while she walks (055224: her floor phase; 084252: ceiling = no effect)
+wait 360
+kill Enemy_DungeonBoss_Gohma
+wait 360
+kill Enemy_DungeonBoss_Gohma
+wait 360
+kill Enemy_DungeonBoss_Gohma
+wait 360
+kill Enemy_DungeonBoss_Gohma
+wait 360
+kill Enemy_DungeonBoss_Gohma
+wait 360
+kill Enemy_DungeonBoss_Gohma
+wait 360
+kill Enemy_DungeonBoss_Gohma
+wait 360
 mark a-kill
 wait 900
 mark a-death

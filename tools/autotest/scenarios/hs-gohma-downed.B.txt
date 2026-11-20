@@ -3,7 +3,7 @@
 # in through the door, then the real kill: her death and the warp in BOTH games. Entry and fight as hs-heart-181.
 # PASS (logs + shots, both games):
 #  1. B: 'dbno: respawn' + the map change, then NO 'boss beaten' line before the kill; A: NO 'boss beaten in another game'
-#     before the kill; A stays in phase fight.
+#     before the kill (A waits outside in the corridor, standing, so B's bleed-out is a respawn, not a wipe).
 #  2. After the kill: 'boss beaten (Dm_Deku_BossOut)' (a reading at life 0) in the killer's game and the death on the other;
 #     a-death/b-death shots: Gohma's death (or gone) on both; a-warp/b-warp: the blue warp on both.
 #  VOID: no fight before b-down, or B not downed (no 'dbno' downed line).
@@ -50,36 +50,38 @@ wait 600
 mark b-intro
 wait 1800               # the door's event, the intro, Gohma's own appear event
 mark b-after-intro
-goto 17.0 68.8 1.5 600  # CONTROL + her drop: under her ceiling spot (her own trigger: GohmaStage floor area)
-rstick 0 1 60
-press ZL 10             # look up at her
-wait 900
-mark b-trigger
-goto 12.0 68.5 1.5 600  # inside the room, 6.5 m west of her
-mark b-moved
-wait 1500
+goto 12.0 68.5 1.5 600   # B stays in the fight alone
 mark b-fight
-hurt 80                  # 1st lethal hit: B's bottled fairy revives it (run 083405)
+hurt 80                  # 1st lethal hit: B's bottled fairy revives it (084252)
 wait 600
-hurt 80                  # 2nd: no fairy left, so B is downed (dbno), then co-op's respawn
+hurt 80                  # 2nd: downed (dbno)
 wait 600
 mark b-down
-wait 3600                # the bleed (45 s) and the respawn to the entrance (a map change)
+wait 3600                # the 45 s bleed with A standing outside: co-op's respawn to the entrance (a map change)
 mark b-respawn
-place -12.0 48.5 67.5    # back to the corridor before the boss door
-wait 240
-goto -4.0 68.3 1.0 600
-goto 6.7 68.3 1.5 600    # through the door again
+place -12.0 48.5 67.5    # back to the corridor beside A
 wait 600
 mark b-back
-goto 17.0 68.8 1.5 600   # under her ceiling spot: her drop (as hs-heart-181)
-rstick 0 1 60
-press ZL 10
-wait 900
-goto 12.0 68.5 1.5 600
-wait 1500
-kill Enemy_DungeonBoss_Gohma   # with A's, as hs-heart-181's PASS (055224)
-wait 120
+goto -4.0 68.3 1.0 600
+goto 6.7 68.3 1.5 600    # through the door with A
+wait 1200
+mark b-in2
+kill Enemy_DungeonBoss_Gohma
+wait 360
+kill Enemy_DungeonBoss_Gohma
+wait 360
+kill Enemy_DungeonBoss_Gohma
+wait 360
+kill Enemy_DungeonBoss_Gohma
+wait 360
+kill Enemy_DungeonBoss_Gohma
+wait 360
+kill Enemy_DungeonBoss_Gohma
+wait 360
+kill Enemy_DungeonBoss_Gohma
+wait 360
+kill Enemy_DungeonBoss_Gohma
+wait 360
 mark b-kill
 wait 900
 mark b-death

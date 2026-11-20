@@ -9,6 +9,9 @@
 #    three paintings for 40 s; shots every 10 s on both: is the Poe in the same painting on both screens? Log lines
 #    "objects: share ... Enemy_GhostPicturePerformer_Poe_Beth" (owner, copy).
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Lane N -Scenario hs-ft-puzzles
+#  part 3 (row 176), Meg: the three sisters set beaten (ForestTemple_DefeatAmy/Beth/Joe), both in the central room;
+#    A hits Meg once (hit). Shots a-meg*/b-meg*: one Meg and her copies (Meg_Dummy, her group) the same on both?
+#    Log lines "objects: share ... Enemy_MiddleBoss_Poe_Meg" and "_Dummy".
 # No PASS/FAIL: a research run (facts for the report reports/forest-0118.md).
 mark start
 setflag Sequence_IsChildhood 0
@@ -41,3 +44,20 @@ wait 600
 mark a-paint3
 wait 600
 mark a-paint4
+setflag ForestTemple_DefeatAmy 1    # part 3 (row 176): the three sisters beaten, so Meg's fight is next
+setflag ForestTemple_DefeatBeth 1
+setflag ForestTemple_DefeatJoe 1
+place -3.0 100.6 4.0       # the central room 2, Meg's place 0 100.1 -3.5
+wait 300
+toward 0.0 -3.5 10
+press ZL 10
+mark a-meg0
+wait 600
+mark a-meg1
+hit Enemy_MiddleBoss_Poe_Meg 4   # A's hit on its own Meg (the owner's or a copy's)
+wait 300
+mark a-meg-hit
+wait 600
+mark a-meg2
+wait 600
+mark a-meg3

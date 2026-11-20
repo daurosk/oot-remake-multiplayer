@@ -32,3 +32,19 @@ wait 600
 mark b-paint3
 wait 600
 mark b-paint4
+setflag ForestTemple_DefeatAmy 1    # part 3 (row 176): the three sisters beaten, so Meg's fight is next
+setflag ForestTemple_DefeatBeth 1
+setflag ForestTemple_DefeatJoe 1
+place 3.0 100.6 4.0       # the central room 2, Meg's place 0 100.1 -3.5
+wait 300
+toward 0.0 -3.5 10
+press ZL 10
+mark b-meg0
+wait 600
+mark b-meg1
+wait 300
+mark b-meg-hit           # A hit Meg: one Meg (and her copies) the same on both screens?
+wait 600
+mark b-meg2
+wait 600
+mark b-meg3

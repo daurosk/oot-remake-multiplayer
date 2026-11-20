@@ -38,6 +38,18 @@
 //                          CoopBoss::MoveLink; needs LICHII_COOP_BOSS on, the
 //                          default), so a scenario reaches a room no walk
 //                          can; logs "coop: test place ...: done" or "failed"
+//   face 66.96 0.0         test only (row 175): turns Link on the spot to
+//                          face world x, z (its rotation written, as the
+//                          place's move; CoopBoss::FaceLink), for an aim the
+//                          camera-learnt `toward` cannot square; logs
+//                          "coop: test face ...: turned to yaw N deg"
+//   aim -56.5 131.5 -10.1  test only (row 173): as face, and our next arrow
+//                          (NormalArrow nocked within 10 s) is put, on the
+//                          first frame it flies, 0.6 m short of world x, y
+//                          (height), z on its line there and pointed at it,
+//                          so its own flight takes it in (the bow's pitch
+//                          comes from the camera, which no step can square);
+//                          logs "coop: test aim ...: arrow ... put" or why not
 //   kill Enemy_Skulltula_Gold test only: the nearest actor of that name to
 //                          Link takes a hit from Link through the game's own
 //                          damage (as a real kill, so it drops what it
@@ -132,6 +144,8 @@ enum class Kind {
     dress,   // test only: the game's own equip call for a slot, from the PlayerStatus.Equip* flags (re-dresses OUR Link)
     chat,    // test only: a chat line or command, as typed in the chat box (/teleport B)
     place,   // test only: Link put at x, y, z in this scene
+    face,    // test only: Link turned on the spot to face the world point x, z
+    aim,     // test only: as face, then our next arrow put on its way into the world point x, y, z
     kill,    // test only: the nearest actor of that name hit by our Link for all its life
     hurt,    // test only: our own Link hit for N quarter hearts (the game's own hit)
     hit,     // test only: the nearest actor of that name hit by our Link for N of its life (its Life step)
@@ -165,6 +179,16 @@ struct Script {
 // Reads a script. On a bad line returns nothing and sets `error` to
 // "line N: why".
 std::optional<Script> Parse(std::string_view text, std::string& error);
+
+// `aim` (row 173): where an arrow flying from `from` is put so it goes into `target`: `short_m` short of the target
+// on the line from `from` (at `from` when nearer than that), turned to face it (place, then the 3x3 rows, as the
+// actor's +0x31c..+0x34b: column 2 is the way it faces, column 1 the up nearest the world's). Nothing when the two
+// points are the same or not finite.
+std::optional<std::array<float, 12>> AimPlace(const std::array<float, 3>& from, const std::array<float, 3>& target,
+                                             float short_m);
+// `aim`: a nocked arrow is let go when it moves more than this between two frames (its flight is ~113 m/s, ~1.9 m
+// a frame at 60; a nocked one moves with Link's hands, well under it).
+inline constexpr float kAimLetGoM = 1.0f;
 
 // wear SLOT: the PlayerStatus flag name for weapon, shield, head, armor or
 // boots (any case), e.g. "EquipHeadArmor"; nothing for another word.

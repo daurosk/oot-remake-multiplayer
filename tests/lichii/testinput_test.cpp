@@ -602,3 +602,83 @@ TEST_CASE("test input: sync waits with every button let go until the games meet,
     CHECK_FALSE(Parse("sync title 9\n", bad).has_value());
     CHECK_FALSE(Parse("sync title\n", bad).has_value());
 }
+
+TEST_CASE("testinput: face X Z hands the hook the world point Link turns to (row 175)") {
+    std::string error;
+    CHECK_FALSE(Parse("face\n", error));
+    CHECK_FALSE(Parse("face 66.96\n", error));
+    CHECK_FALSE(Parse("face 66.96 0.0 1\n", error));
+    CHECK_FALSE(Parse("face east 0.0\n", error));
+    Runner r(Must("face 66.96 -0.5\nmark faced\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].kind == Kind::face);
+    CHECK(requests[0].at[0] == doctest::Approx(66.96f));
+    CHECK(requests[0].at[2] == doctest::Approx(-0.5f));
+    REQUIRE(log.size() == 1);
+    CHECK(log[0] == "mark faced");
+    CHECK(r.Done());
+}
+
+TEST_CASE("testinput: aim X Y Z hands the hook the world point our next arrow is put on its way into (row 173)") {
+    std::string error;
+    CHECK_FALSE(Parse("aim\n", error));
+    CHECK_FALSE(Parse("aim -56.5 131.5\n", error));
+    CHECK_FALSE(Parse("aim -56.5 131.5 -10.1 1\n", error));
+    CHECK_FALSE(Parse("aim eye 131.5 -10.1\n", error));
+    Runner r(Must("aim -56.5 131.5 -10.1\nmark aimed\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].kind == Kind::aim);
+    CHECK(requests[0].at[0] == doctest::Approx(-56.5f));
+    CHECK(requests[0].at[1] == doctest::Approx(131.5f));
+    CHECK(requests[0].at[2] == doctest::Approx(-10.1f));
+    REQUIRE(log.size() == 1);
+    CHECK(log[0] == "mark aimed");
+}
+
+TEST_CASE("testinput: AimPlace puts the arrow short of the target on its line, facing it (row 173)") {
+    // Row 173's relief: the arrow let go 2 m in front of Link (z -4.0 at bow height), the eye 6.1 m on and 5.3 m up.
+    const std::array<float, 3> from{-56.5f, 126.2f, -4.0f};
+    const std::array<float, 3> eye{-56.5f, 131.5f, -10.1f};
+    const auto t = AimPlace(from, eye, 0.6f);
+    REQUIRE(t.has_value());
+    const float d[3] = {eye[0] - from[0], eye[1] - from[1], eye[2] - from[2]};
+    const float len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    for (int i = 0; i < 3; ++i) {
+        const float f = d[i] / len;
+        CHECK((*t)[i] == doctest::Approx(eye[i] - f * 0.6f).epsilon(1e-4));  // 0.6 m short, on the line
+        CHECK((*t)[3 + i * 3 + 2] == doctest::Approx(f).epsilon(1e-4));      // column 2: the way to the eye
+    }
+    // The 3x3 is a rotation: columns of length 1, each square to the others; its up (column 1) is up-ish.
+    for (int c = 0; c < 3; ++c) {
+        float n = 0.0f;
+        for (int r = 0; r < 3; ++r) n += (*t)[3 + r * 3 + c] * (*t)[3 + r * 3 + c];
+        CHECK(n == doctest::Approx(1.0f).epsilon(1e-4));
+        for (int o = c + 1; o < 3; ++o) {
+            float dot = 0.0f;
+            for (int r = 0; r < 3; ++r) dot += (*t)[3 + r * 3 + c] * (*t)[3 + r * 3 + o];
+            CHECK(dot == doctest::Approx(0.0f).epsilon(1e-4));
+        }
+    }
+    CHECK((*t)[3 + 1 * 3 + 1] > 0.5f);
+    // A flat aim is face's turn: facing -z is the yaw of 180 degrees (face writes {c, 0, s, 0, 1, 0, -s, 0, c}).
+    const auto flat = AimPlace({0.0f, 1.0f, 0.0f}, {0.0f, 1.0f, -8.0f}, 0.6f);
+    REQUIRE(flat.has_value());
+    const float want[12] = {0.0f, 1.0f, -7.4f, -1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, -1.0f};
+    for (int i = 0; i < 12; ++i) CHECK((*flat)[i] == doctest::Approx(want[i]).epsilon(1e-4));
+    // Nearer than the short way: put where it is. Straight up: still a rotation. The same point or NaN: nothing.
+    const auto near = AimPlace({0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, -0.3f}, 0.6f);
+    REQUIRE(near.has_value());
+    CHECK((*near)[2] == doctest::Approx(0.0f));
+    const auto up = AimPlace({0.0f, 0.0f, 0.0f}, {0.0f, 5.0f, 0.0f}, 0.6f);
+    REQUIRE(up.has_value());
+    CHECK((*up)[1] == doctest::Approx(4.4f));
+    CHECK((*up)[3 + 1 * 3 + 2] == doctest::Approx(1.0f));
+    CHECK_FALSE(AimPlace(eye, eye, 0.6f).has_value());
+    CHECK_FALSE(AimPlace({std::nanf(""), 0.0f, 0.0f}, eye, 0.6f).has_value());
+}

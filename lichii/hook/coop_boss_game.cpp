@@ -27,6 +27,7 @@
 #include "coop_session_gate.h"
 #include "coop_objects.h"
 
+#include <cmath>
 #include <chrono>
 #include <cstdlib>
 #include <mutex>
@@ -60,6 +61,7 @@ constexpr std::uint64_t kForceSkip = 0x3b3af30;
 constexpr std::uint64_t kActorState = 0x2c;
 constexpr std::uint32_t kActorStatePresent = 4;
 constexpr std::uint64_t kActorPosition = 0x31c;
+constexpr std::uint64_t kActorRotation = 0x328;  // 9 x f32, rows of 3 (player-state-map.md)
 constexpr std::uint64_t kSetMatrix = 0x4c6580;  // vtable slot 0x218 of every actor seen
 constexpr int kCallerOrder = CoopCallerOrders::kBossRooms;  // after the puppets, spawn, fairy, objects, time
 // Ten times a second on the steady clock, not by presented frames (issue
@@ -91,6 +93,14 @@ public:
         main_ = main;
         move_ = Move{actor, to};
     }
+    // Test only (`face X Z`, row 175): our Link turned to face the world point (x, z), its rotation (actor
+    // +0x328, rows of 3; column 2 is the way it faces, as CoopObjects reads it) written as a plain turn about
+    // the up axis, then its matrix set from it as a move does.
+    void WantFace(std::uint64_t main, std::uint64_t actor, float x, float z) {
+        std::lock_guard lock(mutex_);
+        main_ = main;
+        face_ = Face{actor, x, z};
+    }
     void WantSkip(std::uint64_t main) {
         std::lock_guard lock(mutex_);
         main_ = main;
@@ -117,6 +127,30 @@ public:
                     c.x[1] = 0;
                     LOG_INFO(Core, "coop: boss: moved Link to {:.1f} {:.1f} {:.1f}", m.to.x, m.to.y, m.to.z);
                     return c;
+                }
+            }
+        }
+        if (face_) {
+            const Face f = *face_;
+            face_.reset();
+            std::uint32_t state = 0;
+            float at[3] = {};
+            if (!guest.Read(f.actor + kActorState, &state, 4) || state != kActorStatePresent ||
+                !guest.Read(f.actor + kActorPosition, at, sizeof(at))) {
+                LOG_WARNING(Core, "coop: test face: Link's actor is gone; not turned");
+            } else {
+                const float yaw = std::atan2(f.x - at[0], f.z - at[2]);
+                const float s = std::sin(yaw);
+                const float c = std::cos(yaw);
+                const float m[9] = {c, 0.0f, s, 0.0f, 1.0f, 0.0f, -s, 0.0f, c};
+                if (guest.Write(f.actor + kActorRotation, m, sizeof(m))) {
+                    CoopPuppet::Call call;
+                    call.function = main_ + kSetMatrix;
+                    call.x[0] = f.actor;
+                    call.x[1] = 0;
+                    LOG_INFO(Core, "coop: test face {:.2f} {:.2f}: Link at {:.2f} {:.2f} turned to yaw {:.1f} deg",
+                             f.x, f.z, at[0], at[2], yaw * 57.29578f);
+                    return call;
                 }
             }
         }
@@ -150,6 +184,12 @@ private:
         std::uint64_t actor = 0;
         Vec to;
     };
+    struct Face {
+        std::uint64_t actor = 0;
+        float x = 0.0f;
+        float z = 0.0f;
+    };
+    std::optional<Face> face_;
     std::mutex mutex_;
     std::uint64_t main_ = 0;
     std::optional<Move> move_;
@@ -224,6 +264,18 @@ struct Glue {
             return false;
         }
         mover.WantMove(main, *actor, to);
+        return true;
+    }
+
+    bool AskFace(Core::System& system, std::uint64_t main, float x, float z) {
+        CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main);
+        coop::host::PlayerReader reader(memory);
+        const auto actor = reader.find_player_actor();
+        if (!actor) {
+            LOG_INFO(Core, "coop: test face: Link's actor not found; not turned");
+            return false;
+        }
+        mover.WantFace(main, *actor, x, z);
         return true;
     }
 
@@ -520,6 +572,10 @@ bool AskSceneChange(Core::System& system, std::uint64_t main_base, std::string_v
 
 bool MoveLink(Core::System& system, std::uint64_t main_base, const Vec& to) {
     return main_base != 0 && TheGlue().on && TheGlue().AskMove(system, main_base, to);
+}
+
+bool FaceLink(Core::System& system, std::uint64_t main_base, float x, float z) {
+    return main_base != 0 && TheGlue().on && TheGlue().AskFace(system, main_base, x, z);
 }
 
 void OnEvent(const coop::net::Event& event) {

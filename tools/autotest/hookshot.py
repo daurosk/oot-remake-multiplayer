@@ -61,7 +61,7 @@ STICK_KEYS = {  # full stick directions: (stick, x, y)
     "RSTICK_UP": ("R", 0, 1), "RSTICK_DOWN": ("R", 0, -1), "RSTICK_LEFT": ("R", -1, 0), "RSTICK_RIGHT": ("R", 1, 0),
 }
 WEAR_SLOTS = ("weapon", "shield", "head", "armor", "boots", "hand")
-MODULE_ONLY = ("chat", "give", "wear", "dress", "assign", "place", "kill", "hit", "stun", "hurt", "setflag", "setenum", "menu")
+MODULE_ONLY = ("chat", "give", "wear", "dress", "assign", "place", "face", "aim", "kill", "hit", "stun", "hurt", "setflag", "setenum", "menu")
 
 
 class ScriptError(Exception):
@@ -223,6 +223,18 @@ def parse(text):
             else:
                 s.kind = "place"
                 s.x, s.y, s.z = (_number(v) for v in w[1:])
+        elif cmd == "FACE":
+            # Row 175: Link turned on the spot to face world X Z (the module's CoopBoss::FaceLink).
+            if len(w) != 3 or any(_number(v) is None for v in w[1:]):
+                fail("want: face X Z")
+            s.kind = "face"
+            s.x, s.z = (_number(v) for v in w[1:])
+        elif cmd == "AIM":
+            # Row 173: Link turned to world X Z, then our next arrow put on its way into X Y Z (CoopObjects::QueueTestAim).
+            if len(w) != 4 or any(_number(v) is None for v in w[1:]):
+                fail("want: aim X Y Z")
+            s.kind = "aim"
+            s.x, s.y, s.z = (_number(v) for v in w[1:])
         elif cmd == "CHAT":
             if len(w) < 2:
                 fail("want: chat TEXT")

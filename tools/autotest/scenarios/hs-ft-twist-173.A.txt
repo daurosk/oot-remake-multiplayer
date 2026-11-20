@@ -5,7 +5,7 @@
 # next load.
 # Banc ForestTemple_Static: Obj_ForestTemple_TwistRelief_A_01 (the eye to shoot) -56.5 131.5 -10.1 (room 9),
 # Obj_ForestTemple_TwistedCorridor_A_01 -56.5 126.0 -50.3 (room 10). A stands in room 9 south of the relief (+z),
-# faces it (-z) and shoots arrows up at it (3 tries, rising aim as hs-ft-puzzles); B stands INSIDE corridor A_01.
+# faces it (-z) and shoots arrows at it with `aim` (3 heights); B stands INSIDE corridor A_01.
 # AIM NOT CHECKED IN A GAME: no floor data offline (floor taken as y 126 like the corridor's). If a-place shows Link
 # in a wall or falling, change A's place; if no Dm_ForestTemple_000[57] in A's log the run is VOID (aim), not a FAIL.
 # SAVE: an adult Forest Temple save with the bow (hs-ft-puzzles' lane save). Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-ft-twist-173
@@ -29,25 +29,28 @@ toward -56.5 -10.1 10    # face it (-z)
 wait 60
 mark a-place
 wait 600                 # B goes into the corridor meanwhile
+# Aim (kd-twist-0118): `aim` turns Link to the relief and puts each arrow, the first frame it flies, 0.6 m short of
+# the point on its line (log 'coop: test aim ...: arrow ... put at'); runs 020527/020823/021114 missed by hand aim.
+# The eye's own point is not in the Banc (the relief's origin is): three heights, one arrow each.
+aim -56.5 131.5 -10.1
+wait 10
 press ZL 10
 wait 40
-hold ZR 30
-rstick 0.3 0.7 4 ZR   # run 020823 a-aim1: eye ~300 px right, ~200 px up of the crosshair; 0.35 x 20 ticks swung far past it
-hold ZR 12 a-aim1
+hold ZR 42 a-aim1
 wait 180
 mark a-shot1
+aim -56.5 132.5 -10.1
+wait 10
 press ZL 10
 wait 40
-hold ZR 30
-rstick 0.3 1.0 6 ZR
-hold ZR 12 a-aim2
+hold ZR 42 a-aim2
 wait 180
 mark a-shot2
+aim -56.5 130.5 -10.1
+wait 10
 press ZL 10
 wait 40
-hold ZR 30
-rstick 0.45 1.0 8 ZR
-hold ZR 12 a-aim3
+hold ZR 42 a-aim3
 wait 600
 mark a-after
 wait 1800

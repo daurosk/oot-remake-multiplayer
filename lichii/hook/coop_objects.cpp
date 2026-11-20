@@ -67,6 +67,7 @@
 #include "coop_dbno_body.h"
 #include "coop_dbno_game.h"
 #include "coop_svc.h"
+#include "coop_testinput.h"
 
 #include <algorithm>
 #include <limits>
@@ -348,6 +349,14 @@ constexpr u64 kLifeCopy = 0x1ca8;  // life and max as last mirrored
 constexpr u64 kActorPlacement = 0x3d8;
 constexpr u64 kPlacementHash = 0x88;
 constexpr std::size_t kMaxWalk = 8192;
+// What an actor's cached name was read with (row 172): its name pointer and its placement pointer. A new
+// actor at a reused address differs in at least one, and its name is read again.
+struct ActorStamp {
+    u64 name = 0;
+    u64 head = 0;  // the name's first 8 characters (a name kept inside the actor has the same pointer)
+    u64 placement = 0;
+    bool operator==(const ActorStamp&) const = default;
+};
 
 // LICHII_COOP_OBJECTS_CHEAT: what it sets is in coop_cheat_items.h.
 
@@ -545,6 +554,22 @@ public:
     };
 
     using Hit = CoopHitReplay::Hit;
+
+    // Test only (`aim X Y Z`, row 173): our next arrow is put on its way into `target` the first frame it flies.
+    void ArmAim(const std::array<float, 3>& target, u64 until_ms) {
+        std::lock_guard lock(mutex_);
+        aim_ = Aim{target, until_ms};
+    }
+    // The walk: a NormalArrow first seen (ours, nocked: another player's is a CoopShot_Arrow stand-in), taken
+    // while an aim waits for one.
+    void AimArrow(u64 actor, const std::array<float, 3>& at) {
+        std::lock_guard lock(mutex_);
+        if (aim_ && aim_->arrow == 0) {
+            aim_->arrow = actor;
+            aim_->last = at;
+            LOG_INFO(Core, "coop: test aim: our arrow {:#x} nocked at {:.2f} {:.2f} {:.2f}", actor, at[0], at[1], at[2]);
+        }
+    }
 
     // Any thread: the hit id we last wrote into this Life component (the walk never takes our own replay for
     // a hit of our game's).
@@ -807,6 +832,11 @@ public:
         }
         if (main_ == 0) {
             return std::nullopt;
+        }
+        if (!after_call && aim_) {
+            if (auto c = AimStep(guest)) {
+                return c;
+            }
         }
         while (next_wake_ < work_wakes_.size() && block_ != 0) {
             const auto [actor, name] = work_wakes_[next_wake_++];
@@ -1260,6 +1290,55 @@ private:
     // On the game thread, so the list cannot change under us: still on the
     // actor list (its node points back at it), awake, and an actor.
     // `asleep`: state 6 counts too (a copy moved to us from its far home).
+    // `aim` (row 173), each frame under mutex_: the nocked arrow is watched until it moves more than
+    // CoopTestInput::kAimLetGoM in a frame (let go: ~113 m/s), then put once on its line into the target, pointed
+    // at it, so its own flight takes it in; the place's set-matrix call is returned.
+    std::optional<CoopPuppet::Call> AimStep(CoopPuppet::Guest& guest) {
+        Aim& a = *aim_;
+        const auto target = a.target;
+        if (SteadyNowMs() > a.until_ms) {
+            LOG_INFO(Core, "coop: test aim {:.2f} {:.2f} {:.2f}: not put ({})", target[0], target[1], target[2],
+                     a.arrow ? "the arrow was never let go" : "no arrow of ours nocked");
+            aim_.reset();
+            return std::nullopt;
+        }
+        if (a.arrow == 0) {
+            return std::nullopt;
+        }
+        std::array<float, 3> at{};
+        if (!Alive(guest, a.arrow) || !guest.Read(a.arrow + kActorPosition, at.data(), sizeof(at))) {
+            LOG_INFO(Core, "coop: test aim {:.2f} {:.2f} {:.2f}: not put (arrow {:#x} gone first)", target[0],
+                     target[1], target[2], a.arrow);
+            aim_.reset();
+            return std::nullopt;
+        }
+        const float dx = at[0] - a.last[0];
+        const float dy = at[1] - a.last[1];
+        const float dz = at[2] - a.last[2];
+        const float moved = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (!(moved > CoopTestInput::kAimLetGoM)) {
+            a.last = at;
+            return std::nullopt;
+        }
+        const u64 arrow = a.arrow;
+        aim_.reset();
+        const auto put = CoopTestInput::AimPlace(at, target, kAimShortM);
+        if (!put || !guest.Write(arrow + kActorPosition, put->data(), sizeof(*put))) {
+            LOG_INFO(Core, "coop: test aim {:.2f} {:.2f} {:.2f}: not put (arrow {:#x} at {:.2f} {:.2f} {:.2f})",
+                     target[0], target[1], target[2], arrow, at[0], at[1], at[2]);
+            return std::nullopt;
+        }
+        LOG_INFO(Core,
+                 "coop: test aim {:.2f} {:.2f} {:.2f}: arrow {:#x} let go ({:.2f} m in a frame, at {:.2f} {:.2f} "
+                 "{:.2f}), put at {:.2f} {:.2f} {:.2f}",
+                 target[0], target[1], target[2], arrow, moved, at[0], at[1], at[2], (*put)[0], (*put)[1], (*put)[2]);
+        CoopPuppet::Call c;
+        c.function = main_ + kSetMatrix;
+        c.x[0] = arrow;
+        c.x[1] = 0;
+        return c;
+    }
+
     bool Alive(CoopPuppet::Guest& guest, u64 a, bool asleep = false) {
         u32 state = 0;
         u64 owner = 0;
@@ -1270,6 +1349,14 @@ private:
                guest.Read(a, &vtable, 8) && vtable == main_ + kActorVtable;
     }
 
+    struct Aim {
+        std::array<float, 3> target{};
+        u64 until_ms = 0;
+        u64 arrow = 0;               // our nocked arrow, from the walk (0: none yet)
+        std::array<float, 3> last{};  // its place the frame before
+    };
+    static constexpr float kAimShortM = 0.6f;  // the arrow is put this far short of the target
+    std::optional<Aim> aim_;                    // test only (`aim`)
     std::mutex mutex_;
     CoopHitReplay::Replayer replayer_;  // the hit replay: its own locks (Step runs it under mutex_)
     u64 main_ = 0;
@@ -2587,6 +2674,12 @@ public:
                 LOG_INFO(Core, "coop: dungeon: trigger: the kill of {:#x} kept for its event lands now", at->second);
                 sync_.Written(it->first, it->second.first.life, now_us);
                 writes.push_back(std::move(it->second.first));
+            } else {
+                // Row 160 (hiddenblitz 20261119-201953, room 1): a kept kill was dropped with no line. Harmless when
+                // the event was played elsewhere (its clear flag comes), but a stuck room must show it in the log.
+                LOG_INFO(Core, "coop: dungeon: trigger: the kill of {:#x} kept for its event is dropped: {}",
+                         it->second.second,
+                         at == hash_at.end() ? "its actor is gone from our walk" : "another actor is at its address");
             }
             trigger_kept_since_.erase(it->first);
             it = trigger_kept_.erase(it);
@@ -2676,6 +2769,7 @@ private:
             actors_.clear();
             first_ = true;
             names_.clear();
+            stamps_.clear();
             no_area_.clear();
             TheMover().ForgetReplayed();
 #ifdef COOP_HOOKSHOT
@@ -3402,6 +3496,7 @@ private:
         };
         std::vector<TalkScrub> talk_scrubs;
         std::unordered_map<u64, std::pair<std::string, u64>> names;
+        std::unordered_map<u64, ActorStamp> stamps;
         std::unordered_map<u64, u64> life_components;
         {
             // Difficulty: the extra enemies the director made so far (coop_difficulty.h Extras).
@@ -3424,15 +3519,30 @@ private:
         }
         const u64 now_ms = SteadyNowMs();
         for (const u64 a : actors) {
+            // Row 172 (run 053934): a scene change can put a new actor at an address an old one held without a
+            // walk between (our adult Link where the last scene's TerrainScenePermanent was): the cached name
+            // would stay the old one, and WriteLife found no Player (another player's kill not replayed). The
+            // cache holds only while the actor's name (pointer and first characters) and placement are the ones it
+            // was read with (the vtable is one generic class for every actor, main+0x4b25e18: no help).
+            const u64 name_at = r.Ptr(a + kActorName).value_or(0);
+            const ActorStamp stamp{name_at, name_at ? r.Get<u64>(name_at).value_or(0) : 0,
+                                   r.Ptr(a + kActorPlacement).value_or(0)};
+            stamps.emplace(a, stamp);
             auto it = names_.find(a);
+            const auto was = stamps_.find(a);
             std::pair<std::string, u64> known;
-            if (it != names_.end()) {
+            if (it != names_.end() && was != stamps_.end() && was->second == stamp) {
                 known = std::move(it->second);
             } else {
                 known.first = r.Name(a);
                 const auto placement = r.Ptr(a + kActorPlacement);
                 known.second = placement ? r.Get<u64>(*placement + kPlacementHash).value_or(0) : 0;
                 CoopPickups::Note(known.first, known.second);  // one-time pickups (docs/items.md)
+                if (known.first == "NormalArrow") {  // test only (`aim`): a new arrow of ours
+                    if (const auto at = r.Get<std::array<float, 3>>(a + kActorPosition)) {
+                        TheMover().AimArrow(a, *at);
+                    }
+                }
                 if (IsShared(known.first) && vtables_logged_.insert(known.first).second) {
                     // The set-matrix node (0x2622e50) writes +0x31c..+0x34b and
                     // then calls vtable slot 0x218 (actor, 0): what does it do?
@@ -3741,6 +3851,7 @@ private:
             names.emplace(a, std::move(known));
         }
         names_ = std::move(names);
+        stamps_ = std::move(stamps);
         life_components_ = std::move(life_components);
         CoopDbno::NoteEnemiesNear(player && CoopDbno::AnyNear(*player, foes));
         sync_.SetPlayer(player);
@@ -4421,6 +4532,14 @@ private:
         }
 #endif
         const LifeRouted routed = RouteLife(ask);
+        if (static std::atomic<int> said_why{0};
+            w.hurt > 0 && routed.route != LifeRoute::replay && said_why.fetch_add(1) < 40) {
+            // Row 172 (run 053413): another player's hit not replayed loses the game's kill consequences.
+            LOG_INFO(Core, "coop: objects: share life {:#x} '{}': P{}'s hit not replayed (route {}): replay {}, "
+                           "player {:#x} (our Link {:#x}, {} names), direct {}, out of reach {}",
+                     w.address, NameOf(w.address), w.hitter, static_cast<int>(routed.route), replay_, player,
+                     our_link_, names_.size(), w.direct, ask.out_of_reach);
+        }
         switch (routed.route) {
         case LifeRoute::replay: {
             Mover::Hit h;
@@ -5262,6 +5381,7 @@ private:
     std::size_t refused_logged_ = 0;
     std::uint8_t decider_logged_ = 0;
     std::unordered_map<u64, std::pair<std::string, u64>> names_;  // name, hash by actor
+    std::unordered_map<u64, ActorStamp> stamps_;  // what each cached name was read with (row 172)
     // Row 138(8): townspeople and animals (by actor, its placement hash) whose live logic has no area input.
     std::unordered_map<u64, u64> no_area_;
     static constexpr std::size_t kNoAreaMax = 4096;
@@ -5486,6 +5606,11 @@ std::optional<std::array<float, 3>> TestPlatformPlace(const std::string& name) {
         return std::nullopt;
     }
     return it->second;
+}
+
+void QueueTestAim(float x, float y, float z) {
+    TheMover().ArmAim({x, y, z}, SteadyNowMs() + 10000);
+    LOG_INFO(Core, "coop: test aim {:.2f} {:.2f} {:.2f}: waits for our next arrow (10 s)", x, y, z);
 }
 
 void QueueTestKill(std::string name) {

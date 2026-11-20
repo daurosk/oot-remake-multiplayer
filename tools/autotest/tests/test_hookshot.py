@@ -273,6 +273,19 @@ class ParseTest(unittest.TestCase):
                 hs.parse(bad)
             self.assertIn("want: place X Y Z, or place PLATFORM UP", str(e.exception))
 
+    def test_face_and_aim_go_to_the_module(self):  # rows 175, 173: a turn on the spot, an arrow put on its way
+        face, aim = hs.parse("face 66.96 -0.5\naim -56.5 131.5 -10.1\n")
+        self.assertEqual((face.kind, face.x, face.z), ("face", 66.96, -0.5))
+        self.assertEqual((aim.kind, aim.x, aim.y, aim.z), ("aim", -56.5, 131.5, -10.1))
+        self.assertEqual(aim.text.strip(), "aim -56.5 131.5 -10.1")
+        self.assertIn("face", hs.MODULE_ONLY)
+        self.assertIn("aim", hs.MODULE_ONLY)
+        for bad, want in (("face 1", "want: face X Z"), ("face 1 2 3", "want: face X Z"), ("face east 0", "want: face X Z"),
+                          ("aim 1 2", "want: aim X Y Z"), ("aim 1 2 3 4", "want: aim X Y Z"), ("aim eye 2 3", "want: aim X Y Z")):
+            with self.assertRaises(hs.ScriptError) as e:
+                hs.parse(bad)
+            self.assertIn(want, str(e.exception))
+
     def test_key_names(self):
         s = hs.parse("hold DUP+LCLICK+RCLICK+MINUS+RSTICK_LEFT 5")[0]
         self.assertEqual(s.buttons, ["UP", "LS", "RS", "MINUS"])

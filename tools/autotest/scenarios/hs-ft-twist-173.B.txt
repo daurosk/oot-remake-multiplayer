@@ -14,10 +14,8 @@
 #  2. B: NO start or join of that event ('story' / 'joined' lines naming it) and no EventTriggerRelocateTwistCorridor;
 #     b-before vs b-after/b-end: B's view of the corridor did not turn, B's Link stands (no fall, no void-out).
 #  3. B leaves and re-enters (b-back): the corridor as the shared flag says (turned like A's), B not inside it then.
-#! noload
-#! start coop: test warp done
-#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
-#! timeout 600
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
+#! timeout 900
 mark start
 setflag Sequence_IsChildhood 0
 warp ForestTemple
@@ -30,8 +28,8 @@ wait 1500                # A shoots the relief meanwhile
 mark b-after
 wait 600
 mark b-end
-place -56.5 126.5 -2.0   # out to room 9
-wait 600
-place -56.5 126.5 -30.0  # back in: the corridor as the shared flag says
+warp ForestTemple       # out and back in by a reload (run 082048: a place in the same scene loads nothing new)
+wait 1800
+place -56.5 126.5 -30.0  # back in: the corridor as the shared flag says (turned like A's)
 wait 600
 mark b-back

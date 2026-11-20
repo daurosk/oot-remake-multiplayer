@@ -1,0 +1,46 @@
+# hs-dc-lizalfos-160 (tracker rows 160/161, dc-doors-0118 9c1c58a5 + kept-kill-160): DC upper Lizalfos pair (el-dc-lizalfos pair 2,
+# 116.1/102.0 116 -38/-31), after room 1's fight (el-dc-lizalfos's entry; A kills that pair). A arrives first (owns both), A test-kills one, then A goes DOWN (hurt 80: the owner gone,
+# the report's death); B kills the last one. Rows 160/161: no game played the room event, so the shutters stayed locked
+# for one player. PASS (logs + shots, both games):
+#  1. exactly one game logs the room event start (DefeatLizalfos / "started the event") or "kept ... lands: ... our game
+#     plays the event"; the clear flag Gimmick_DefeatEnemy_Open_DodongoCave_0* reaches the other ("written here").
+#  2. a-end/b-end: no Lizalfos, shutters open (no bars) on both screens.
+#  3. any "kept for its event is dropped" line names why (kept-kill-160); no kept kill left waiting at the end.
+#  VOID: no Lizalfos near in a-near. Run 20261120-063510 (LANE2) was VOID that way: room 2's pair (Banc DodongoCavern_Static:
+#     0x155ce1b2ba5028cf 116.1 115.7 -38.5, 0x23456e4b5b005315 102.0 116.2 -31.0, the report's hashes) is made only by the
+#     room's own logic (Logic_Create <- AppearLizalfos) after room 1's fight (0x9cbd9c524b24df87 102.5 100.1 -55.4,
+#     0x1fa0074fddbc182 84.9 100.6 -45.7). NEXT: fight room 1 first (el-dc-lizalfos's entry + both test kills), then walk
+#     up into room 2's trigger before the kills here; or find AppearLizalfos' flag and set it before the warp.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
+#! timeout 600
+mark start
+warp DodongoCavern EntrancePos
+wait 1500
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark in
+place 78.0 100.6 -38.0    # room 1, outside its arena (el-dc-lizalfos B)
+wait 30
+toward 93.0 -50.0 6
+wait 2164                 # A fights room 1
+mark b-room1-done
+wait 120                  # A reaches room 2 first (owner)
+place 106.0 116.0 -35.0   # room 2, beside A
+wait 600
+mark b-near
+wait 410                  # A kills one, then goes down
+mark b-down
+kill Enemy_MiddleBoss_Lizalfos   # the last one, its owner down
+wait 120
+mark b-last
+wait 2300
+mark b-end

@@ -3365,3 +3365,84 @@ TEST_CASE("flag watcher: a reset hold lets a rise past the old value through, en
   w.reset();
   CHECK_FALSE(w.reset_lowered(kMaxLife));
 }
+
+namespace {
+
+// Row 159: a shared quest step as CoopQuests::Store shows it, an Int by the max rule (write keeps the higher,
+// write_exact sets it as it is).
+constexpr FlagKey kQuestStep{0x7d776b61u, 0};  // Get_StoneOfForest
+
+class QuestStore : public FakeStore {
+ public:
+  bool is_max(FlagKey key) override { return key == kQuestStep; }
+  bool write(const proto::FlagEntry& e) override {
+    const FlagKey key = key_of(e);
+    if (key == kQuestStep && values.contains(key) && values.at(key).value >= e.value) {
+      return !no_room.contains(key) && !unwritable.contains(key);  // ours as far or further: kept
+    }
+    return FakeStore::write(e);
+  }
+  bool write_exact(const proto::FlagEntry& e) override { return FakeStore::write(e); }
+};
+
+QuestStore quest_game(std::uint32_t step) {
+  QuestStore store;
+  store.values[kQuestStep] = entry(kQuestStep, step, proto::FlagKind::int32);
+  return store;
+}
+
+}  // namespace
+
+TEST_CASE("flag watcher: the host's save lowers a quest step a guest holds in a dungeon, at once (row 159)") {
+  // Run 042436: B killed Gohma (quest at GoToWarpPoint), the host loaded a save at GoToBossRoom. B was in the Deku
+  // Tree, where HoldFlagStore holds every quest step; write_exact let only a 0 through, the retry went through the
+  // max rule, and B kept GoToWarpPoint for good: its warp stayed while the shared quest made Gohma again.
+  QuestStore game_store = quest_game(9);
+  bool in_dungeon = true;
+  HoldFlagStore store(game_store, [&in_dungeon](FlagKey key) { return in_dungeon && key == kQuestStep; });
+  FlagWatcher w(SharedFlags({kQuestStep}), FlagRole::player);
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) w.frame(store);
+  CHECK(w.receive(proto::Message{proto::FlagReset{1, {entry(kQuestStep, 6, proto::FlagKind::int32)}}}));
+  CHECK(w.frame(store).empty());
+  CHECK(game_store.get(kQuestStep) == 6u);  // lowered in the dungeon, no wait
+  CHECK(w.stats().reset_applied == 1);
+  CHECK(w.reset_lowered(kQuestStep) == 6);
+  // Our game writes its old step back: put back, never sent (rows 136/137's hold).
+  game_store.values[kQuestStep] = entry(kQuestStep, 9, proto::FlagKind::int32);
+  CHECK(w.frame(store).empty());
+  CHECK(game_store.get(kQuestStep) == 6u);
+}
+
+TEST_CASE("flag watcher: the host's save raising a held quest step still waits, then lands exactly (row 159)") {
+  QuestStore game_store = quest_game(2);
+  bool in_dungeon = true;
+  HoldFlagStore store(game_store, [&in_dungeon](FlagKey key) { return in_dungeon && key == kQuestStep; });
+  FlagWatcher w(SharedFlags({kQuestStep}), FlagRole::player);
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) w.frame(store);
+  CHECK(w.receive(proto::Message{proto::FlagReset{1, {entry(kQuestStep, 6, proto::FlagKind::int32)}}}));
+  for (int i = 0; i < 3; ++i) CHECK(w.frame(store).empty());
+  CHECK(game_store.get(kQuestStep) == 2u);  // a step another game reached waits outside the dungeon, as before
+  CHECK(w.stats().write_failures == 0);
+  in_dungeon = false;
+  CHECK(w.frame(store).empty());
+  CHECK(game_store.get(kQuestStep) == 6u);
+}
+
+TEST_CASE("flag watcher: a FLAG_RESET's lower step refused for room is tried again exact, not by the max rule (row 159)") {
+  // The retry went through write(): the max rule kept our higher step and took the lower one as written.
+  QuestStore game_store = quest_game(9);
+  FlagWatcher w(SharedFlags({kQuestStep}), FlagRole::player);
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) w.frame(game_store);
+  game_store.no_room.insert(kQuestStep);
+  CHECK(w.receive(proto::Message{proto::FlagReset{1, {entry(kQuestStep, 6, proto::FlagKind::int32)}}}));
+  for (int i = 0; i < 3; ++i) CHECK(w.frame(game_store).empty());
+  CHECK(game_store.get(kQuestStep) == 9u);
+  CHECK(w.reset_lowered(kQuestStep) == 6);  // the hold is armed while the step waits
+  game_store.no_room.clear();
+  CHECK(w.frame(game_store).empty());
+  CHECK(game_store.get(kQuestStep) == 6u);
+  CHECK(w.stats().write_failures == 0);
+  // Co-op idle / plain play: a later step of our own is progress again once the game kept the save's step.
+  for (int i = 0; i <= FlagWatcher::kResetQuietFrames; ++i) CHECK(w.frame(game_store).empty());
+  CHECK_FALSE(w.reset_lowered(kQuestStep));
+}

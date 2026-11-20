@@ -626,6 +626,10 @@ bool SplitsAtZero(std::string_view name) {
     return name == "Enemy_Floormaster" || name == "Enemy_Floormaster_Truth";
 }
 
+bool IsSplitPart(std::string_view name) {
+    return name == "Enemy_Floormaster_Little" || name == "Enemy_Floormaster_Little_Truth";
+}
+
 std::string_view MinionMaker(std::string_view name) {
     // Made by the boss's own spawn action in the fight (Pack/Actor; the
     // Dodongo's: its AI node ExecuteDungeonBossDodongoSpawnBaby). The parts a
@@ -1262,7 +1266,9 @@ void Sync::Written(std::uint64_t address, std::int32_t life, std::uint64_t now_u
     o.late_left = 0;  // nothing of it may be put back as a second fall
     o.late_until = 0;
     if (o.life && *o.life > life) {
-        o.hurt_left += *o.life - life;
+        // The whole drop from the walk's life, counted once: a hurt held for less than kHurtWaitUs still has
+        // its own hurt_left from Lower (row 172: never twice, or it swallows a later hit of our Link's).
+        o.hurt_left = std::max(o.hurt_left, *o.life - life);
         o.hurt_target = life;
         // If the game does not take it, the life is written after kHurtWaitUs and hurt_left
         // is cleared, so it cannot swallow a later hit of our Link's.
@@ -2490,6 +2496,39 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 }
                 continue;
             }
+        } else if (IsSplitPart(s->name)) {
+            // Row 172: our Floormaster split here. A copy of another player's Little being made near: wait (it
+            // binds). Another player's brood near: that split is the one, ours goes. Else ours is shared.
+            const bool waiting = std::any_of(decided_.begin(), decided_.end(), [&](const auto& e) {
+                const Decided& d = e.second;
+                return d.address == 0 && !d.removed && d.name == s->name && now_us - d.got_us < kCreateWaitUs &&
+                       Distance(d.position, s->position) < kClaimDistance;
+            });
+            if (waiting) {
+                continue;
+            }
+            const bool other_brood = std::any_of(decided_.begin(), decided_.end(), [&](const auto& e) {
+                const Decided& d = e.second;
+                return !d.removed && d.id.kind == proto::ObjectKind::made && d.id.maker != self &&
+                       IsSplitPart(d.name) && Distance(d.position, s->position) < kSplitReachM;
+            });
+            if (other_brood) {
+                if (!refused_.contains(s->address)) {
+                    ++refused_count_;
+                    notes_.emplace_back("split here too, another player's brood is the one: ours deleted: " +
+                                        s->name);
+                }
+                refused.insert(s->address);
+                continue;
+            }
+            o.id = {proto::ObjectKind::made, self, ++made_counter_};
+            owners_[o.id] = {self, 0};
+            proto::ObjectSpawn spawn;
+            spawn.id = o.id;
+            spawn.actor = o.name;
+            spawn.state = StateOf(o, now_us);
+            send.emplace_back(std::move(spawn));
+            notes_.emplace_back("split here: shared " + s->name);
         } else if (const std::string_view maker = MinionMaker(s->name);
                    !maker.empty() && MinionOwner(maker, s->position) != 0) {
             if (MinionOwner(maker, s->position) == self) {
@@ -3338,9 +3377,40 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 continue;
             }
             if (made && (spawn->id.maker == self || spawn->id.maker == 0 ||
-                         !(IsRolled(spawn->actor) || IsHatchling(spawn->actor) ||
+                         !(IsRolled(spawn->actor) || IsHatchling(spawn->actor) || IsSplitPart(spawn->actor) ||
                            !MinionMaker(spawn->actor).empty()))) {
                 continue;
+            }
+            if (made && IsSplitPart(spawn->actor)) {
+                // Row 172: two games split the same Floormaster at once (each shared its brood). The lower player
+                // number's is the one: a higher one's is not made here (it removes its own when ours reaches it);
+                // ours goes for a lower one's (OBJECT_REMOVE gone: the others delete their copies of it).
+                std::vector<std::uint64_t> ours;
+                for (const auto& [address, o] : objects_) {
+                    if (o.id.kind == proto::ObjectKind::made && o.id.maker == self && IsSplitPart(o.name) &&
+                        o.dead_at == 0 && Distance(o.position, *spawn->state.position) < kSplitReachM) {
+                        ours.push_back(address);
+                    }
+                }
+                if (!ours.empty() && spawn->id.maker > self) {
+                    continue;
+                }
+                for (const std::uint64_t address : ours) {
+                    const auto it = objects_.find(address);
+                    proto::ObjectRemove r;
+                    r.id = it->second.id;
+                    if (const auto owner = owners_.find(r.id); owner != owners_.end()) {
+                        r.epoch = owner->second.epoch;
+                        owners_.erase(owner);
+                    }
+                    r.reason = proto::RemoveReason::gone;
+                    r.position = it->second.position;
+                    send.emplace_back(r);
+                    notes_.emplace_back("split by player " + std::to_string(spawn->id.maker) +
+                                        " too (the lower number's brood is the one): ours deleted: " +
+                                        it->second.name);
+                    objects_.erase(it);  // seen again, it is refused (another player's brood near)
+                }
             }
             const bool encounter = !made && IsLateEncounter(spawn->actor);
             // An encounter of ours that is dying (killed, or its copy killed

@@ -120,7 +120,7 @@ TEST_CASE("guard: a held change is dropped when its address holds another actor 
     CHECK(r.released == 1);
 }
 
-TEST_CASE("guard: two held hurts both land, and a hurt behind a written life becomes that life") {
+TEST_CASE("guard: two held hurts both land, a hurt behind a written life becomes that life, a written life behind a hurt keeps the hurt") {
     who = {{0x100, 0xa}};
     CoopGuard::Held<Life> held{[](Life& kept, Life&& newer) { CoopGuard::MergeLife(kept, std::move(newer)); }};
     const Local talking{true, Vec3{0, 0, 0}};
@@ -137,13 +137,67 @@ TEST_CASE("guard: two held hurts both land, and a hurt behind a written life bec
     REQUIRE(r.apply.size() == 1);
     CHECK(r.apply[0].life == 0);
     CHECK(r.apply[0].hurt == 0);
-    // A hurt then a written life: the written life.
+    // A hurt then a written life (row 172: the Sync's own fallback for that hurt, which was never
+    // given): the hurt stays a hurt, so it lands as the replayed hit, aiming at the lower life.
+    held.Pass({{0x100, 3, 1}}, talking, Where, Who);
+    held.Pass({{0x100, 3, 0}}, talking, Where, Who);
+    r = held.Pass({}, Local{false, Vec3{0, 0, 0}}, Where, Who);
+    REQUIRE(r.apply.size() == 1);
+    CHECK(r.apply[0].life == 3);
+    CHECK(r.apply[0].hurt == 1);
     held.Pass({{0x100, 3, 1}}, talking, Where, Who);
     held.Pass({{0x100, 0, 0}}, talking, Where, Who);
     r = held.Pass({}, Local{false, Vec3{0, 0, 0}}, Where, Who);
     REQUIRE(r.apply.size() == 1);
     CHECK(r.apply[0].life == 0);
+    CHECK(r.apply[0].hurt == 4);
+    // A hurt then a higher written life (a raise): the written life.
+    held.Pass({{0x100, 1, 1}}, talking, Where, Who);
+    held.Pass({{0x100, 4, 0}}, talking, Where, Who);
+    r = held.Pass({}, Local{false, Vec3{0, 0, 0}}, Where, Who);
+    REQUIRE(r.apply.size() == 1);
+    CHECK(r.apply[0].life == 4);
     CHECK(r.apply[0].hurt == 0);
+}
+
+// A life write with the fields of coop_objects_sync.h's LifeWrite that MergeLife reads.
+struct FullLife {
+    std::uint64_t address = 0;
+    std::int32_t life = 0;
+    std::int32_t hurt = 0;
+    std::uint8_t hitter = 0;
+    bool direct = false;
+    bool heal = false;
+    bool test_kill = false;
+};
+
+TEST_CASE("guard: a held kill keeps its hitter through the Sync's fallback write, a heal, a direct give or a test kill still win (row 172)") {
+    who = {{0x100, 0xa}};
+    CoopGuard::Held<FullLife> held{[](FullLife& kept, FullLife&& newer) { CoopGuard::MergeLife(kept, std::move(newer)); }};
+    const Local dying{true, Vec3{0, 0, 0}};  // our Link's own death event, the Little 2 m away
+    const Local after{false, Vec3{0, 0, 0}};
+    // Another player's killing blow (2 -> 0, P2), then 400 ms later the Sync's plain write of that target.
+    held.Pass({FullLife{0x100, 0, 2, 2}}, dying, Where, Who);
+    held.Pass({FullLife{0x100, 0, 0, 0}}, dying, Where, Who);
+    auto r = held.Pass({}, after, Where, Who);
+    REQUIRE(r.apply.size() == 1);
+    CHECK(r.released == 1);
+    CHECK(r.apply[0].hurt == 2);
+    CHECK(r.apply[0].hitter == 2);
+    CHECK(r.apply[0].life == 0);
+    // Not a plain write: the newer one wins as before.
+    for (const FullLife newer : {FullLife{0x100, 0, 2, 0, true}, FullLife{0x100, 2, 0, 0, false, true},
+                                 FullLife{0x100, 0, 0, 0, false, false, true}}) {
+        held.Pass({FullLife{0x100, 0, 2, 2}}, dying, Where, Who);
+        FullLife copy = newer;
+        held.Pass({std::move(copy)}, dying, Where, Who);
+        r = held.Pass({}, after, Where, Who);
+        REQUIRE(r.apply.size() == 1);
+        CHECK(r.apply[0].direct == newer.direct);
+        CHECK(r.apply[0].heal == newer.heal);
+        CHECK(r.apply[0].test_kill == newer.test_kill);
+        CHECK(r.apply[0].hitter == 0);
+    }
 }
 
 TEST_CASE("guard: removes, places and plays near our Link are left out while the event runs") {

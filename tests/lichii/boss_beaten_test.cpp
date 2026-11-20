@@ -932,3 +932,196 @@ TEST_CASE("boss beaten: the host alive box keeps the newest, once") {
     box.Clear();
     CHECK_FALSE(box.Take());
 }
+
+namespace {
+
+// The game's flags as the hook sees them: GameFlagStore reads Bools (and Ints, shared UInts) but no Enum; the game's
+// Enum getter reads the quests. Writes counted per kind.
+struct GameFlagsSeen {
+    Flags bools;
+    Flags enums;
+    int bool_writes = 0;
+    int enum_writes = 0;
+    CoopBossBeaten::GameIo Io() {
+        return CoopBossBeaten::GameIo{
+            [this](std::uint32_t h) { return bools(h); },
+            [this](std::uint32_t h) { return enums(h); },
+            [this](std::uint32_t h, bool v) {
+                ++bool_writes;
+                bools.v[h] = v ? 1 : 0;
+                return true;
+            },
+            [this](std::uint32_t h, std::uint32_t v) {
+                ++enum_writes;
+                enums.v[h] = v;
+                return true;
+            }};
+    }
+    // What the hook read before (the flag store alone): no quest.
+    std::function<std::optional<std::uint32_t>(std::uint32_t)> StoreOnly() {
+        return [this](std::uint32_t h) { return bools(h); };
+    }
+};
+
+GameFlagsSeen Seen(const Flags& f, const BeatenSet& s) {
+    GameFlagsSeen g;
+    for (const auto& [h, v] : f.v) {
+        (h == s.quest ? g.enums : g.bools).v[h] = v;
+    }
+    return g;
+}
+
+const char* Elsewhere(const BeatenSet& s) {
+    return s.room == 8 || s.room == 9 ? "KakarikoVillage" : "Graveyard_Child";
+}
+
+} // namespace
+
+TEST_CASE("boss beaten: the host's own save load clears the record when the save is in, a guest's and Try Again not") {
+    CHECK(CoopBossBeaten::OwnLoadClears(true, true, false));
+    CHECK_FALSE(CoopBossBeaten::OwnLoadClears(true, true, true));    // Game Over's Try Again: the group's values back
+    CHECK_FALSE(CoopBossBeaten::OwnLoadClears(false, true, false));  // a guest's load: the group's set reaches it
+    CHECK_FALSE(CoopBossBeaten::OwnLoadClears(true, false, false));  // no save load
+}
+
+TEST_CASE("boss beaten: row 159 run 022754, the idle host loads its save after a guest beat the boss: nothing given") {
+    // The host (not in the fight) loaded its save after B killed Gohma. The save was in at once, the FLAG_RESET only
+    // when the load window ended; in between the new scene (Graveyard_Child) was read and Apply gave the host
+    // Gohma's beaten set. Now the record is cleared when the save is in: every boss, any scene of the new save.
+    for (const BeatenSet& set : CoopBossBeaten::Sets()) {
+        CAPTURE(set.boss);
+        CoopBossBeaten::Record r;
+        r.Add(set.room);
+        Flags f = Alive(set);
+        Apply a;
+        CHECK(a.Check(std::nullopt, false, r.Rooms(), std::ref(f), kAway).empty());  // loading
+        if (CoopBossBeaten::OwnLoadClears(true, true, false)) {
+            r.Clear();  // the save is in
+        }
+        CHECK(a.Check(std::string(Elsewhere(set)), true, r.Rooms(), std::ref(f), kAway).empty());
+        if (const CoopBoss::Room* room = CoopBoss::RoomByIndex(set.room)) {
+            CHECK(a.Check(std::nullopt, false, r.Rooms(), std::ref(f), kAway).empty());
+            CHECK(a.Check(std::string(room->scene), true, r.Rooms(), std::ref(f), kAway).empty());
+        }
+        // A guest's own load keeps the record: its new scene gets the set (the group beat it).
+        CoopBossBeaten::Record g;
+        g.Add(set.room);
+        Apply b;
+        CHECK_FALSE(b.Check(std::string(Elsewhere(set)), true, g.Rooms(), std::ref(f), kAway).empty());
+    }
+}
+
+TEST_CASE("boss beaten: the quests are Enums: read and written through the game's Enum getter and setter (row 159)") {
+    for (const BeatenSet& set : CoopBossBeaten::Sets()) {
+        CAPTURE(set.boss);
+        GameFlagsSeen g = Seen(Alive(set), set);
+        const CoopBossBeaten::GameIo io = g.Io();
+        CHECK(CoopBossBeaten::Read(io, set.quest) == set.below.back());
+        CHECK_FALSE(g.StoreOnly()(set.quest));  // the flag store alone: never read
+        for (const auto& b : set.bools) {
+            CHECK(CoopBossBeaten::Read(io, b.hash) == (b.value ? 0u : 1u));
+        }
+        // The beaten set given: the quest step through the Enum setter, the Bools through the store.
+        Apply a;
+        const auto read = [&](std::uint32_t h) { return CoopBossBeaten::Read(io, h); };
+        const std::vector<std::uint8_t> beaten{set.room};
+        const std::vector<Write> w = a.Check(std::string(Elsewhere(set)), true, beaten, read, kAway);
+        REQUIRE(std::any_of(w.begin(), w.end(), [&](const Write& x) { return x.is_enum && x.hash == set.quest; }));
+        for (const Write& x : w) {
+            CHECK(CoopBossBeaten::WriteTo(io, x));
+        }
+        CHECK(g.enums(set.quest) == set.step);
+        CHECK(g.enum_writes == 1);
+        CHECK(g.bool_writes == static_cast<int>(w.size()) - 1);
+        CHECK_FALSE(g.bools(set.quest));  // never as a Bool
+    }
+    // A Bool write of a value past 1 is refused; nothing to write with: false.
+    GameFlagsSeen g;
+    CHECK_FALSE(CoopBossBeaten::WriteTo(g.Io(), Write{0, 1, false, 2, "x"}));
+    CHECK_FALSE(CoopBossBeaten::WriteTo(CoopBossBeaten::GameIo{}, Write{0, 1, true, 2, "x"}));
+    CHECK_FALSE(CoopBossBeaten::Read(CoopBossBeaten::GameIo{}, 1));
+}
+
+TEST_CASE("boss beaten: with the quests read, the host sends BOSS_ALIVE and the guest's put-back runs (row 159)") {
+    // Run 022754: the host never logged 'our save holds bosses' (AliveInSave read no quest through the store) and
+    // the guest's HostReset put-back waited for its quest to read, for ever. Through Read both run.
+    GameFlagsSeen host;
+    for (const BeatenSet& s : CoopBossBeaten::Sets()) {
+        host.enums.v[s.quest] = s.below.back();  // all alive in the host's save
+    }
+    CHECK(CoopBossBeaten::AliveInSave(host.StoreOnly()).known == 0);  // before: nothing to send
+    const CoopBossBeaten::GameIo hio = host.Io();
+    const CoopBossBeaten::AliveBits bits =
+        CoopBossBeaten::AliveInSave([&](std::uint32_t h) { return CoopBossBeaten::Read(hio, h); });
+    CHECK(bits.known == coop::protocol::kBossAliveMask);
+    CHECK(bits.alive != 0);
+    // The guest: Gohma beaten in its game, the host's FLAG_RESET put the shared quest back; in the boss room once no
+    // death of ours can run.
+    const BeatenSet& set = Gohma();
+    const CoopBoss::Room* room = CoopBoss::RoomByIndex(set.room);
+    REQUIRE(room != nullptr);
+    Flags beaten;
+    for (const auto& b : set.bools) {
+        beaten.v[b.hash] = b.value ? 1 : 0;
+    }
+    beaten.v[set.quest] = set.below.back();
+    GameFlagsSeen guest = Seen(beaten, set);
+    const std::function<bool(std::uint8_t)> no_death = [](std::uint8_t) { return false; };
+    Apply before;
+    before.HostReset(true);
+    for (int i = 0; i < 3; ++i) {
+        CHECK(before.Check(std::string(room->scene), true, {}, guest.StoreOnly(), kNear, no_death).empty());
+    }
+    const CoopBossBeaten::GameIo gio = guest.Io();
+    Apply after;
+    after.HostReset(true);
+    const std::vector<Write> w = after.Check(std::string(room->scene), true, {},
+                                             [&](std::uint32_t h) { return CoopBossBeaten::Read(gio, h); }, kNear,
+                                             no_death);
+    REQUIRE_FALSE(w.empty());
+    for (const Write& x : w) {
+        CHECK(CoopBossBeaten::WriteTo(gio, x));
+    }
+    for (const auto& b : set.bools) {
+        if (b.value && !std::string_view(b.name).ends_with("_BossIn")) {
+            CAPTURE(b.name);
+            CHECK(guest.bools(b.hash) == 0u);  // Gohma_DefeatBoss and her death's events: alive again (no warp)
+        }
+    }
+}
+
+TEST_CASE("boss beaten: the host's step reaching our quest a frame after its reset still puts the Bools back (row 159)") {
+    // Run 20261120-034533: the guest read its quest in the frame the reset was seen, still at the beaten step (the
+    // host's step comes through the flag watcher's store a moment later): the put-back was dropped there, the warp
+    // stayed while the shared quest made Gohma again. Now it waits until the quest reads alive. Every shared boss.
+    for (const BeatenSet& set : CoopBossBeaten::Sets()) {
+        const CoopBoss::Room* room = CoopBoss::RoomByIndex(set.room);
+        if (!Shared(set) || room == nullptr) {
+            continue;
+        }
+        CAPTURE(set.boss);
+        Flags f = BeatenThenReset(set, set.step);  // the reset seen, our quest not yet moved back
+        const std::function<bool(std::uint8_t)> no_death = [](std::uint8_t) { return false; };
+        Apply a;
+        a.HostReset(true);
+        CHECK(a.Check(std::string(room->scene), true, {}, std::ref(f), kNear, no_death).empty());
+        const std::vector<std::string> notes = a.TakeNotes();
+        CHECK(std::any_of(notes.begin(), notes.end(),
+                          [](const std::string& n) { return n.find("its quest reads beaten") != std::string::npos; }));
+        CHECK(a.Check(std::string(room->scene), true, {}, std::ref(f), kNear, no_death).empty());
+        CHECK(a.TakeNotes().empty());  // once
+        f.v[set.quest] = set.below.back();  // the host's step arrives
+        const std::vector<Write> w = a.Check(std::string(room->scene), true, {}, std::ref(f), kNear, no_death);
+        REQUIRE_FALSE(w.empty());
+        CHECK(std::all_of(w.begin(), w.end(), [](const Write& x) { return x.revert && !x.is_enum; }));
+        CHECK(a.Check(std::string(room->scene), true, {}, std::ref(f), kNear, no_death).empty());  // once
+    }
+    // A host save that really has the boss beaten: nothing written, however long.
+    const BeatenSet& g = Gohma();
+    Flags kept = BeatenThenReset(g, g.step);
+    Apply b;
+    b.HostReset(true);
+    for (int i = 0; i < 5; ++i) {
+        CHECK(b.Check(std::string("KokiriForest"), true, {}, std::ref(kept), kAway).empty());
+    }
+}

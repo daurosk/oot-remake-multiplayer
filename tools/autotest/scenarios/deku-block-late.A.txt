@@ -29,6 +29,9 @@ wait 300
 press A
 wait 2400
 mark after
+setflag InsideTheDekuTree_Level_RoomH_ClearBlock 0   # the lane save had the block solved at its goal (run 20261120-010147 VOID)
+warp InsideTheDekuTree Entrance   # same-map warp = reload: the room loads unsolved (run 010533: a set alone left it at its goal)
+wait 900
 place -51.06 79.9 50.2
 wait 240
 mark placed

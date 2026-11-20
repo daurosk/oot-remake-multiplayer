@@ -17,6 +17,7 @@
 #include "coop_hookshot.h"
 #include "coop_voice.h"
 #include "hos_coop_voice.h"
+#include "coop_export_guard.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -112,28 +113,34 @@ extern "C" {
 // hos_coop_start has run (the mixer finds the module as soon as it is
 // loaded): nothing here needs the game, and a 0 would be for good.
 COOP_HOOKSHOT_EXPORT int hos_coop_voice_attach(const HosCoopVoiceApi* api) {
-    // (a game made before the table had mic_list and mic_choose: voice as before, the Insert menu's microphone)
-    if (api == nullptr || api->version != HOS_COOP_VOICE_VERSION || api->size < offsetof(HosCoopVoiceApi, mic_list) ||
-        g_voice != nullptr) {
-        return 0;
-    }
-    g_voice = api;
-    CoopVoice::Backend b;
-    b.mic_start = [] { return g_voice->mic_start() != 0; };
-    b.mic_read = [](std::int16_t* out, int max) { return g_voice->mic_read(out, max); };
-    b.mic_stop = [] { g_voice->mic_stop(); };
-    b.codecs.encoder = [] { return std::make_unique<VoiceEncoder>(); };
-    b.codecs.decoder = [] { return std::make_unique<VoiceDecoder>(); };
-    b.now_us = [] { return g_voice->now_us(); };
-    b.key_down = KeyDown;
-    if (api->size >= sizeof(HosCoopVoiceApi) && api->mic_list != nullptr && api->mic_choose != nullptr) {
-        b.mic_list = MicList;
-        b.mic_choose = [](const std::string& name) { g_voice->mic_choose(name.c_str()); };
-    }
-    CoopVoice::SetBackend(std::move(b));
-    return 1;
+    static CoopBoundary::Site site{"hos_coop_voice_attach"};
+    return CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int {
+        // (a game made before the table had mic_list and mic_choose: voice as before, the Insert menu's microphone)
+        if (api == nullptr || api->version != HOS_COOP_VOICE_VERSION || api->size < offsetof(HosCoopVoiceApi, mic_list) ||
+            g_voice != nullptr) {
+            return 0;
+        }
+        g_voice = api;
+        CoopVoice::Backend b;
+        b.mic_start = [] { return g_voice->mic_start() != 0; };
+        b.mic_read = [](std::int16_t* out, int max) { return g_voice->mic_read(out, max); };
+        b.mic_stop = [] { g_voice->mic_stop(); };
+        b.codecs.encoder = [] { return std::make_unique<VoiceEncoder>(); };
+        b.codecs.decoder = [] { return std::make_unique<VoiceDecoder>(); };
+        b.now_us = [] { return g_voice->now_us(); };
+        b.key_down = KeyDown;
+        if (api->size >= sizeof(HosCoopVoiceApi) && api->mic_list != nullptr && api->mic_choose != nullptr) {
+            b.mic_list = MicList;
+            b.mic_choose = [](const std::string& name) { g_voice->mic_choose(name.c_str()); };
+        }
+        CoopVoice::SetBackend(std::move(b));
+        return 1;
+    });
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_voice_render(float* const* out, int channels, int frames) {
-    CoopVoice::Render(out, channels, frames);
+    static CoopBoundary::Site site{"hos_coop_voice_render"};
+    CoopExportGuard::Guard(site, [&] {
+        CoopVoice::Render(out, channels, frames);
+    });
 }
 }

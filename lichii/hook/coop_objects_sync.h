@@ -349,6 +349,15 @@ bool IsHatchling(std::string_view name);
 // animation in its AS), the Littles jump out, and a Little that is not killed in time grows it back
 // (FloormasterGrow). Its life 0 is read as a death only once every Little linked to it (its group) died too.
 bool SplitsAtZero(std::string_view name);
+// Row 172 (dungeon-sweep-0118-2): what such an enemy splits into (Enemy_Floormaster_Little, _Little_Truth). Only
+// a game whose own Floormaster's life read 0 splits (a copy is held at life 1 or more and runs none of it), and
+// the Littles have no placement hash, so nothing shared them: every other game had none, saw only the regrow, and
+// the Floormaster could be finished only in that one game. Now the game that split shares its Littles (OBJECT_SPAWN
+// of a made id, whoever owns the root; the group link then gives them the root's owner), and the others make
+// copies. A game that splits while another player's Littles are near deletes its own; two splits at once keep the
+// lower player number's (its spawn reaches the other, which removes its own: OBJECT_REMOVE gone).
+bool IsSplitPart(std::string_view name);
+inline constexpr float kSplitReachM = 30.0f;  // a brood's reach (its GroupPart's)
 
 // Boss minions (native boss sync, docs/dungeons-boss.md): an enemy a boss makes
 // in the fight (King Dodongo's babies, Big Octo's children). With native boss

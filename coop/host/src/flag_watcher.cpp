@@ -302,6 +302,7 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
   // Writes that failed before go first, so newer incoming values win. One
   // whose flag the game has changed by itself since is dropped instead: the
   // game's change is newer, and the diff below sends it.
+  std::erase_if(unwritten_exact_, [this](const FlagKey& key) { return !unwritten_.contains(key); });
   const Table retry = unwritten_;
   for (const auto& [key, entry] : retry) {
     // A count total is written on top of the game's own change (write()),
@@ -316,7 +317,11 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
         }
       }
     }
-    write(store, entry);
+    if (unwritten_exact_.contains(key)) {
+      write_exact(store, entry);
+    } else {
+      write(store, entry);
+    }
   }
   const auto deltas = std::move(unadded_);
   unadded_.clear();
@@ -591,8 +596,11 @@ void FlagWatcher::apply_reset(FlagStore& store, const std::vector<FlagEntry>& fl
     const std::optional<FlagEntry> had = entry.kind == protocol::FlagKind::int32 && store.is_max(key)
                                              ? store.read(key)
                                              : std::nullopt;
-    if (write_exact(store, entry)) {
-      ++stats_.reset_applied;
+    const bool written = write_exact(store, entry);
+    if (written) ++stats_.reset_applied;
+    // Also when the write waits (unwritten_exact_, row 159): the lowered value lands later, and our game's write-back
+    // of its higher one after that is still not progress.
+    if (written || unwritten_.contains(key)) {
       if (had && had->kind == protocol::FlagKind::int32 && as_int(had->value) > as_int(entry.value)) {
         reset_holds_[key] = ResetHold{static_cast<std::int32_t>(as_int(entry.value)),
                                       static_cast<std::int32_t>(as_int(had->value))};
@@ -641,6 +649,7 @@ bool FlagWatcher::write_exact(FlagStore& store, const FlagEntry& entry) {
   if (!store.write_exact(entry)) {
     note_write_failure(store, key, "write_exact", entry.value != 0);
     unwritten_[key] = entry;
+    unwritten_exact_.insert(key);
     if (!written_for_others_.empty() && written_for_others_.back() == key) {
       written_for_others_.pop_back();
     }
@@ -952,6 +961,7 @@ bool FlagWatcher::write(FlagStore& store, const FlagEntry& entry) {
   if (!store.write(to_write)) {
     note_write_failure(store, key, "write");
     unwritten_[key] = entry;
+    unwritten_exact_.erase(key);
     if (!written_for_others_.empty() && written_for_others_.back() == key) {
       written_for_others_.pop_back();  // not written: tried again later
     }

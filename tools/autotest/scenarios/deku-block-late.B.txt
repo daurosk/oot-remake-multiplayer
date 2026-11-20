@@ -29,6 +29,9 @@ wait 300
 press A
 wait 2400
 mark after
+setflag InsideTheDekuTree_Level_RoomH_ClearBlock 0   # the lane save had the block solved at its goal (run 20261120-010147 VOID)
+warp InsideTheDekuTree Entrance   # same-map warp = reload: the room loads unsolved (run 010533: a set alone left it at its goal)
+wait 900
 wait 240                # A is put in the basement now; B stays at the entrance (another room)
 mark b-away
 wait 1200               # A pushes the block one step meanwhile

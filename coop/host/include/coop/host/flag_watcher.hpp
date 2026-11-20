@@ -636,6 +636,9 @@ class FlagWatcher {
   Table last_;        // each shared flag as the game last had it
   Table pending_;     // player: own changes waiting for the host's answer
   Table unwritten_;   // incoming values whose write failed; tried again
+  // Row 159: the unwritten_ keys from an exact write (the host's save load, the join snapshot), tried again exact;
+  // through write() the max rule kept our higher value, and the lower one was taken as written.
+  std::set<FlagKey> unwritten_exact_;
   Table unadded_;     // host: count deltas whose write failed; tried again
   Table group_;         // each shared flag as the group last had it (set_loading)
   Table group_before_;  // an Int's value in our game just before group_ took it

@@ -124,6 +124,7 @@
 #include "coop_map_refresh.h"
 #include "coop_time.h"
 #include "coop_testinput.h"
+#include "coop_boundary.h"
 #include "coop_world.h"
 
 namespace CoopHook {
@@ -1323,6 +1324,16 @@ public:
             // guests once our game reads the quests again (BOSS_ALIVE, after the FLAG_RESET). Also with no flag
             // changed: a boss whose quest is each game's own changes no shared flag.
             boss_alive_due_ = true;
+            // Row 159 (dungeon-sweep-0118-2): our own save decides, from the moment it is in. The FLAG_RESET (and
+            // ForgetFights' clear of the record) comes only when the load window ends, after the new scene is read:
+            // in between Apply gave our game the group's beaten set, so the host's save took a boss the group beat
+            // after it (Gohma's Bools written into the host, then its quest put the boss back: the warp and Gohma).
+            // Not Game Over's Try Again: the group's values come back then, the record with them.
+            if (CoopBossBeaten::OwnLoadClears(report.hosting, report.save_load, report.save_load_retry)) {
+                CoopBossBeaten::TheRecord().Clear();
+                LOG_INFO(Core, "coop: boss: our own save load (host): bosses the group beat this session are not "
+                               "given to it (the save decides)");
+            }
         }
         // Issue 167: the host's save for the guests (coop_save.h): a guest asks
         // once, the host sends its newest save a part a frame, and again to
@@ -1444,10 +1455,23 @@ public:
             // record is empty.
             // In the boss's own dungeon scene: live, once our Link is out of the boss's area (rows 136/137), or in it
             // once no death of ours can run there (row 136: came in after the death, joined, a refused ask).
-            const auto read_flag = [&](std::uint32_t hash) {
-                const auto v = game_store->read(coop::protocol::FlagKey{hash, 0});
-                return v ? std::optional<std::uint32_t>(v->value) : std::nullopt;
-            };
+            // Row 159: the sets' quests are Enums, which the flag store neither reads nor writes: the game's Enum
+            // getter and setter for those (CoopBossBeaten::GameIo).
+            const CoopBossBeaten::GameIo boss_io{
+                [&](std::uint32_t hash) {
+                    const auto v = game_store->read(coop::protocol::FlagKey{hash, 0});
+                    return v && v->kind == coop::protocol::FlagKind::boolean ? std::optional<std::uint32_t>(v->value)
+                                                                             : std::nullopt;
+                },
+                [&](std::uint32_t hash) { return coop::host::GameFlags(*memory).get_enum(hash); },
+                [&](std::uint32_t hash, bool value) {
+                    return game_store->write(coop::protocol::FlagEntry{coop::protocol::FlagKey{hash, 0},
+                                                                       coop::protocol::FlagKind::boolean, value ? 1u : 0u});
+                },
+                [&](std::uint32_t hash, std::uint32_t value) {
+                    return coop::host::GameFlags::set_enum(*memory, hash, value);
+                }};
+            const auto read_flag = [&](std::uint32_t hash) { return CoopBossBeaten::Read(boss_io, hash); };
             // Row 159: the host's BOSS_ALIVE (guests), and ours to send after our own save load (host).
             if (const auto alive = CoopBossBeaten::TheHostAlive().Take()) {
                 boss_beaten_.HostAlive(alive->known, alive->alive, CoopQuests::On());
@@ -1479,9 +1503,7 @@ public:
                          // an event runs (or is unread): it may be the death; else what the Director knows
                          return !reading || reading->event_running.value_or(true) || CoopBoss::DeathMayRun(room);
                      })) {
-                const bool ok = game_store->write(coop::protocol::FlagEntry{
-                    coop::protocol::FlagKey{w.hash, 0},
-                    w.is_enum ? coop::protocol::FlagKind::uint32 : coop::protocol::FlagKind::boolean, w.value});
+                const bool ok = CoopBossBeaten::WriteTo(boss_io, w);
                 const CoopBossBeaten::BeatenSet* set = CoopBossBeaten::ForRoom(w.room);
                 if (w.revert) {
                     LOG_INFO(Core, "coop: boss: {} is alive in the host's save: {} {} {}", set->boss, w.name,
@@ -1492,6 +1514,9 @@ public:
                 LOG_INFO(Core, "coop: boss: {} was beaten by the group, not in this game: {} {} {}", set->boss, w.name,
                          w.is_enum ? std::string("-> ") + set->step_name : std::string("= ") + std::to_string(w.value),
                          ok ? "(written)" : "(could not write)");
+            }
+            for (const std::string& line : boss_beaten_.TakeNotes()) {
+                LOG_INFO(Core, "coop: boss: {}", line);
             }
         }
         {  // our own key spends, for the locks' give-back (docs/dungeon.md, "Locked doors")
@@ -3400,9 +3425,33 @@ void LocalFrameOff(Core::System& system, bool writes) {
                         full ? std::optional(full->position) : std::nullopt, event, nullptr, 0);
 }
 
+namespace {
+void OnFrameBody(Core::System& system);
+}
+
+// save-crash-0118: the frame's co-op work behind the guarded boundary: a throw (a std::bad_alloc at the PC's commit
+// limit, runs 081813 + 082906) ends this frame's co-op work, logged once, and never the game (solo too).
 void OnFrame(Core::System& system) {
+    static CoopBoundary::Site site{"CoopHook::OnFrame"};
+    CoopBoundary::Run(site, [&] { OnFrameBody(system); },
+                      [](const char* where, const char* what, std::uint64_t n) {
+                          LOG_ERROR(Core, "coop: {} threw ({}, {} so far): this frame's co-op work skipped", where,
+                                    what, n);
+                      });
+}
+
+namespace {
+void OnFrameBody(Core::System& system) {
     CoopObjects::OnFrame(system);
-    CoopSave::PollSlotOpens();   // player report 120: the slot our game plays (Hookshot's patch 0025; solo too)
+    {   // player report 120: the slot our game plays (Hookshot's patch 0025; solo too). Its own guard: a slot folder
+        // that throws (a path the PC's code page cannot hold, no memory) costs only the slot, not the frame's co-op.
+        static CoopBoundary::Site site{"CoopSave::PollSlotOpens"};
+        CoopBoundary::Run(site, [] { CoopSave::PollSlotOpens(); },
+                          [](const char* where, const char* what, std::uint64_t n) {
+                              LOG_ERROR(Core, "coop: {} threw ({}, {} so far): the played save slot not read this "
+                                              "frame", where, what, n);
+                          });
+    }
     CoopTestInput::OnFrame(system);
     Start();
     // g_coop only changes in Start (before this), End (which keeps the old
@@ -3459,6 +3508,7 @@ void OnFrame(Core::System& system) {
     }
     }
 }
+}  // namespace
 
 void Shutdown() {
     Stop(false);

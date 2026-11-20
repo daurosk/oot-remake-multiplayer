@@ -1,7 +1,7 @@
 # hs-heart-181 B (tracker row 181, heart-181-0118 74ceed22): after a boss, player 2 stuck in the Heart Container's
 # item get with the heart-increase sound repeating fast. Cause: the boss heart cap put MaxLife back while Link's Life
 # component kept the higher max and wrote it back every frame. A and B fight Gohma together (entry as
-# hs-boss-together-gohma), B test-kills her AFTER her pre-battle phase (82df7272), A walks onto the container FIRST,
+# hs-boss-together-gohma), both games test-kill her AFTER her pre-battle phase (82df7272; the owner's kill passes her ceiling clamp), A walks onto the container FIRST,
 # B onto its own copy 20 s later.
 # SAVE: as hs-boss-together-gohma (a pre-Gohma save in both lanes' baselines; the setflags clear the boss flags).
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-heart-181 [-Lane 1]
@@ -41,6 +41,11 @@ give PouchData.Weapon_Range_SlingShot.StockNum
 wait 120
 assign SlingShot
 wait 120
+setenum 0x7d776b61 GoToBossRoom   # LANE1 run 20261120-021438: Gohma never made (the lane save is past her: Delete_Gohma <- the quest)
+setflag HavePlayedEvent.InsideTheDekuTree_BossDie 0   # else her AI never asks her death (boss-die-0116-2)
+wait 60
+warp InsideTheDekuTree Entrance   # same-map warp = reload with the quest back
+wait 1800
 place -12.0 48.5 67.5   # the corridor, 11 m before the door (side by side)
 wait 240
 goto -4.0 68.3 1.0 600
@@ -59,7 +64,7 @@ goto 12.0 68.5 1.5 600  # inside the room, 6.5 m west of her
 mark b-moved
 wait 1500
 mark b-fight
-kill Enemy_DungeonBoss_Gohma
+kill Enemy_DungeonBoss_Gohma   # with A's: whichever game owns her kills her (a kill on a copy is DAMAGE, held at 1 on the ceiling: run 023424)
 wait 120
 mark b-kill
 wait 2400               # her death and its event

@@ -12,9 +12,10 @@
 #     shared as made' / 'got Enemy_Floormaster' lines stop after b-split).
 #  3. b-littles: the 3 Littles dead; then the Floormaster dead for both ('dead, said to the others: Enemy_Floormaster'
 #     or 'dead in its owner's game'); a-end/b-end: no hand, no Floormaster, nothing growing back.
+#  4. (held-kill-172) kills that reach A during its own death event: A "the event ended: N waiting changes made now"
+#     then "P2's killing blow replayed with our Link" for each (NOT "share life ...: 2 through the game's Life step");
+#     the root dies in both games (no Grow_Wait hand in a-end/b-end).
 #  VOID: A never placed in room 22 (a-near shows a wall/void) -> change the place y (floor about 104-107).
-#! noload
-#! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_CHEATS=1
 #! timeout 600
 mark start
@@ -27,14 +28,15 @@ wait 600
 mark b-near
 wait 240
 mark b-split
-wait 900                 # A goes down meanwhile: the hand-over at life 0
-mark b-handed
+wait 60                  # the game fuses unkilled Littles back after ~5 s (Grow_Fuse, run 051022): kill them now
 kill Enemy_Floormaster_Little
-wait 180
+wait 60
 kill Enemy_Floormaster_Little
-wait 180
+wait 60
 kill Enemy_Floormaster_Little
-wait 240
+wait 120
 mark b-littles
+wait 600                 # A goes down meanwhile (its root at life 0 already dead or dying)
+mark b-handed
 wait 1800
 mark b-end

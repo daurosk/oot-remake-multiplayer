@@ -68,6 +68,7 @@ add_executable(coop_tests
   lichii/enemy_shots_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_enemy_shots.cpp
   lichii/drops_test.cpp
   lichii/guard_test.cpp
+  lichii/boundary_test.cpp
   lichii/event_member_test.cpp
   lichii/snap_test.cpp
   lichii/follow_test.cpp

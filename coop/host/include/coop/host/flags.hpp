@@ -112,9 +112,11 @@ class HoldFlagStore final : public FlagStore {
   bool holds(FlagKey key) override { return hold_ && hold_(key); }
   bool busy(FlagKey key) override { return inner_.busy(key); }
   // The host's save load (docs/flags.md, "Saves"): a held 1 still waits, a
-  // 0 (the save has not played it) goes through.
+  // 0 (the save has not played it) goes through, and so does a max-rule Int
+  // no higher than our game's (row 159: a quest step a guest holds while in a
+  // dungeon, which the host's save lowers; held, the reset never lowered it).
   bool write_exact(const protocol::FlagEntry& entry) override {
-    if (entry.value != 0 && holds(key_of(entry))) {
+    if (entry.value != 0 && holds(key_of(entry)) && !lowers(entry)) {
       ++held_;
       if (held_keys_.size() < 64) held_keys_.push_back(key_of(entry));
       return false;
@@ -130,6 +132,14 @@ class HoldFlagStore final : public FlagStore {
     return inner_.write_load_back(entry);
   }
 
+  // A max-rule Int at or below our game's value (unread: not lowering).
+  bool lowers(const protocol::FlagEntry& entry) {
+    const FlagKey key = key_of(entry);
+    if (entry.kind != protocol::FlagKind::int32 || !inner_.is_max(key)) return false;
+    const std::optional<protocol::FlagEntry> now = inner_.read(key);
+    return now && now->kind == protocol::FlagKind::int32 &&
+           static_cast<std::int32_t>(entry.value) <= static_cast<std::int32_t>(now->value);
+  }
   // Writes refused so far, and their flags (at most 64).
   std::uint64_t held() const { return held_; }
   const std::vector<FlagKey>& held_keys() const { return held_keys_; }

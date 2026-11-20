@@ -4,6 +4,7 @@
 #include "coop_testinput.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <charconv>
 #include <cmath>
@@ -336,6 +337,16 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             } else if (w.size() != 4 || !Number(w[1], step.x) || !Number(w[2], step.y) || !Number(w[3], step.z)) {
                 return fail("want: place X Y Z, or place PLATFORM UP");
             }
+        } else if (cmd == "FACE") {
+            step.kind = Kind::face;
+            if (w.size() != 3 || !Number(w[1], step.x) || !Number(w[2], step.z)) {
+                return fail("want: face X Z");
+            }
+        } else if (cmd == "AIM") {
+            step.kind = Kind::aim;
+            if (w.size() != 4 || !Number(w[1], step.x) || !Number(w[2], step.y) || !Number(w[3], step.z)) {
+                return fail("want: aim X Y Z");
+            }
         } else if (cmd == "CHAT") {
             if (w.size() < 2) {
                 return fail("want: chat TEXT");
@@ -560,7 +571,7 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
             ++index_;
             continue;
         }
-        if (s.kind == Kind::place) {
+        if (s.kind == Kind::place || s.kind == Kind::face || s.kind == Kind::aim) {
             requests_.push_back(Request{s.kind, s.mark, {}, {s.x, s.y, s.z}});
             ++index_;
             continue;
@@ -676,6 +687,36 @@ void Runner::Steer(const Step& step, double now_s, std::optional<std::array<floa
                       static_cast<std::int32_t>(std::lround(std::sin(angle) * magnitude * kStickMax))};
     aimed_at_ = now_s;
     Hold(angle, now_s);
+}
+
+std::optional<std::array<float, 12>> AimPlace(const std::array<float, 3>& from, const std::array<float, 3>& target,
+                                             float short_m) {
+    const float d[3] = {target[0] - from[0], target[1] - from[1], target[2] - from[2]};
+    const float len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if (!std::isfinite(len) || len < 1e-3f || !std::isfinite(short_m)) {
+        return std::nullopt;
+    }
+    const float f[3] = {d[0] / len, d[1] / len, d[2] / len};  // the way it faces (column 2)
+    // Right (column 0): the world's up crossed with f, flat; straight up or down has none, so +x is taken.
+    float r[3] = {f[2], 0.0f, -f[0]};
+    const float rl = std::sqrt(r[0] * r[0] + r[2] * r[2]);
+    if (rl < 1e-4f) {
+        r[0] = 1.0f;
+        r[2] = 0.0f;
+    } else {
+        r[0] /= rl;
+        r[2] /= rl;
+    }
+    const float u[3] = {f[1] * r[2] - f[2] * r[1], f[2] * r[0] - f[0] * r[2], f[0] * r[1] - f[1] * r[0]};  // f x r
+    const float back = std::min(std::max(short_m, 0.0f), len);
+    std::array<float, 12> t{};
+    for (int i = 0; i < 3; ++i) {
+        t[i] = target[i] - f[i] * back;
+        t[3 + i * 3 + 0] = r[i];
+        t[3 + i * 3 + 1] = u[i];
+        t[3 + i * 3 + 2] = f[i];
+    }
+    return t;
 }
 
 } // namespace CoopTestInput
@@ -1207,6 +1248,18 @@ void OnFrame(Core::System& system) {
                                                CoopBoss::Vec{request.at[0], request.at[1], request.at[2]});
             LOG_INFO(Core, "coop: test place {:.2f} {:.2f} {:.2f}: {}", request.at[0], request.at[1],
                      request.at[2], ok ? "done" : "failed");
+        } else if (request.kind == Kind::face) {
+            const bool ok = CoopBoss::FaceLink(system, g_state.main, request.at[0], request.at[2]);
+            if (!ok) {
+                LOG_INFO(Core, "coop: test face {:.2f} {:.2f}: failed", request.at[0], request.at[2]);
+            }  // done: logged where it is turned
+        } else if (request.kind == Kind::aim) {
+            // Row 173: Link turned to the target (as face), then our next arrow put on its way into it.
+            if (!CoopBoss::FaceLink(system, g_state.main, request.at[0], request.at[2])) {
+                LOG_INFO(Core, "coop: test aim {:.2f} {:.2f} {:.2f}: Link not turned", request.at[0], request.at[1],
+                         request.at[2]);
+            }
+            CoopObjects::QueueTestAim(request.at[0], request.at[1], request.at[2]);
         } else if (request.kind == Kind::kill) {
             CoopObjects::QueueTestKill(request.name);  // logged where it is done
         } else if (request.kind == Kind::hit) {

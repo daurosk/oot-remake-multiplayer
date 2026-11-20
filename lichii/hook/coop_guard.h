@@ -108,9 +108,24 @@ inline std::uint64_t Who(std::uint64_t hash, std::string_view name, std::optiona
 // `life`, the life it should end at, and `hurt`, above 0 when the game is to take that much
 // itself). Two hurts: both hits land (the hurts add up; the newer target). A hurt behind a
 // written life: the target is written as life (the game has not taken the first one yet).
+// A plain written life (not a heal, not a direct Life-step give, not a test kill) behind a held
+// hurt never replaces it (row 172, run 051351): the Sync gives a hurt kHurtWaitUs to be taken
+// and then writes its target itself, but a held hurt was never given; that write is its own
+// fallback, and the hurt must still land as the replayed hit (its hitter and hit record: a
+// killing blow's consequences, a Floormaster's count of its Littles). The hurt keeps its replay
+// and aims at the lower of the two lives; a higher life (a raise) still wins.
 // Otherwise the newer one wins.
 template <typename Change>
 void MergeLife(Change& kept, Change&& newer) {
+    bool plain = newer.hurt <= 0;
+    if constexpr (requires { newer.heal; newer.direct; newer.test_kill; }) {
+        plain = plain && !newer.heal && !newer.direct && !newer.test_kill;
+    }
+    if (kept.hurt > 0 && plain && newer.life <= kept.life) {
+        kept.hurt += kept.life - newer.life;
+        kept.life = newer.life;
+        return;
+    }
     if (newer.hurt > 0 && kept.hurt > 0) {
         newer.hurt += kept.hurt;
     } else if (newer.hurt > 0) {

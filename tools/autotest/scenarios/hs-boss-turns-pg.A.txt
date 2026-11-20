@@ -1,6 +1,6 @@
 # hs-boss-turns-pg (boss-target-0118, 0.11.8 boss turns; owner: "Phantom Ganon ... alternate between targeting
 # players"). A is the host and owns him first, B the guest; both warp into PhantomGanonStage. A hits him into
-# phase 2 (t1..t4, 6 a turn: life 40 -> 16, the light balls). Then both stand and watch 80 s (w1..w16, a mark every
+# phase 2 (t1..t5, 6 a turn: life 42 -> 12, the light balls; run 141109 stopped at 18 with four). Then both stand and watch 80 s (w1..w16, a mark every
 # 5 s); nobody else hits, so his turns go round by number (A -> B -> A ...).
 # PASS (both logs + server, screenshots both games):
 #  1. Hand-overs between moves: A's log "share owner <PG id> is player 2" and B's "Enemy_DungeonBoss_PhantomGanon:
@@ -45,6 +45,9 @@ mark t3
 hit Enemy_DungeonBoss_PhantomGanon 6
 wait 600
 mark t4
+hit Enemy_DungeonBoss_PhantomGanon 6
+wait 600
+mark t5
 hit Enemy_DungeonBoss_PhantomGanon 6
 wait 600
 mark w1

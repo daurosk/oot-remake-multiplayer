@@ -1,0 +1,51 @@
+# kd-gameover B (boss-gameover 3ae01349, found in kd-roll run 20261120-072018): one Link's Game Over mid-fight must not end
+# the fight for the group. Setup as kd-roll (KD room in DodongoCavern, intro trigger, back by the door facing the arena).
+# Then A takes a hit of its whole life (hurt 16: the game's own hit) and has its Game Over; B keeps standing there.
+# PASS (logs + shots, both games):
+#  1. A: 'our Link died: a Game Over', NO 'boss beaten' line; B: NO 'boss beaten in another game'; B stays in phase fight.
+#  2. b-after1/2 shots: KD still in B's arena (alive, moving); a-after shots: A back after its continue, KD there too.
+#  VOID: no intro (no 'phase fight' in B), or A not dead (no Game Over line).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 720
+mark start
+warp DodongoCavern StartPos_Get_StoneOfFire   # the dungeon scene (the bridge lands at its entrance; place moves Link into room 22) (DodongoStage is the Dream World rematch stage: Obj_DreamWorldTimerManager, molten floor, no intro)
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+setflag HavePlayedEvent.Dm_DodongoCave_BossIn 0   # run 013205: in the arena but no intro and no KD (he appears only with his intro: IsIntendedForEventAppear)
+setflag HavePlayedEvent.Dm_DodongoCave_BossOut 0
+setflag Enemy_DungeonBoss_Dodongo_BossAppear 0
+setflag DodongoCavern_BossGroundChange 0
+setenum 0x1002b466 DungeonStart   # Get_StoneOfFire back before the fight (the lane save is at KakarikoVillageNpc, before the dungeon), as Gohma's GoToBossRoom
+setflag HavePlayedEvent.Get_StoneOfFire_DefeatBoss 0
+wait 60
+warp DodongoCavern StartPos_Get_StoneOfFire   # same-map warp = reload with the flags
+wait 3000               # the module own warp took >25 s in run 013912
+place 25.5 73.6 -76.0   # run 070704: the bridge warp lands at the entrance (destination 20) whatever the start named; into room 22 beside A
+wait 300
+goto 25.5 -66.8 1.0 600   # in to the intro trigger (Area 24.0 -63.05 scale 5, edge z -68.05; see the A file)
+wait 900
+goto 26.0 -74.0 1.0 1200   # back beside A by the door, out of the burning floor (run 072018: z -70.9 burnt both Links) (run 071338: the old spot was in it)
+wait 30
+face 24.0 -63.0          # look at the arena (run 073709: every shot showed the wall behind)
+press ZL 10
+wait 1200
+mark b-fight
+wait 900
+mark b-after1             # A's Game Over is about 10 s in (it enters the room 10 s after B)
+wait 1200
+mark b-after2
+wait 1200
+mark b-after3
+wait 900
+mark b-end

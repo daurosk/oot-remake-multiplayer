@@ -197,6 +197,163 @@ TEST_CASE("coop i18n: a pickup notice, clause by clause (coop/host/src/notify.cp
     CHECK(CoopI18n::Tr(hans, "Saria got lost") == "Saria got lost");
 }
 
+TEST_CASE("coop i18n: a chest opened elsewhere, and the one heart container") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    // The notice's extra_ (lichii/hook/coop_hook.cpp) had no line at all.
+    CHECK(CoopI18n::Tr(hans, "ROGX opened a chest") == "ROGX 打开了一个宝箱");
+    CHECK(CoopI18n::Tr(hant, "ROGX opened a chest") == "ROGX 打開了一個寶箱");
+    // The boss room's chat line (coop_boss_scenes.cpp) had none either.
+    CHECK(CoopI18n::Tr(hans, "ROGX got the heart container for everyone") ==
+          "ROGX 拿到了心之容器，人人有份");
+    CHECK(CoopI18n::Tr(hant, "ROGX got the heart container for everyone") ==
+          "ROGX 拿到了心之容器，人人有份");
+}
+
+TEST_CASE("coop i18n: the pickup names Spell() would have misspelled") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    // These reached ItemName (a line of kItems each, now) and were spelled from
+    // the id before: "4090 拿到了 Gauntlet Goron", "Quiver Small, the Arrow
+    // Normal". A pickup that is one notice with two names has each of them
+    // translated, and the ", the " between them too.
+    CHECK(CoopI18n::Tr(hans, "4090 got the Goron's Bracelet - you got one too!") ==
+          "4090 拿到了哥隆手环 —— 你也得到了一个！");
+    CHECK(CoopI18n::Tr(hans, "4090 got the Small Quiver, the Arrows - you got them too!") ==
+          "4090 拿到了小箭袋、箭 —— 你也得到了！");
+    CHECK(CoopI18n::Tr(hant, "4090 got the Small Quiver, the Arrows - you got them too!") ==
+          "4090 拿到了小箭袋、箭 —— 你也得到了！");
+    // A name the table does not know stays whole, in its own spelling: the join
+    // is the table's, the name is not.
+    CHECK(CoopI18n::Tr(hans, "4090 got the Small Quiver, the Nothing At All - you got them too!") ==
+          "4090 拿到了小箭袋、Nothing At All —— 你也得到了！");
+}
+
+TEST_CASE("coop i18n: 0.11.7's rows and help bodies") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    // The rows the 0.11.7 menu added (coop_pause_menu.cpp: PageRow("Local co-op", "2 players"),
+    // PageRow("Customize Link", "Colours"), Choice("Saves", "Solo")).
+    CHECK(CoopI18n::Tr(hans, "2 players") == "2 人");
+    CHECK(CoopI18n::Tr(hant, "2 players") == "2 人");
+    CHECK(CoopI18n::Tr(hans, "Colours") == "颜色");
+    CHECK(CoopI18n::Tr(hant, "Colours") == "顏色");
+    CHECK(CoopI18n::Tr(hans, "Solo") == "单人");
+    CHECK(CoopI18n::Tr(hant, "Solo") == "單人");
+    CHECK(CoopI18n::Tr(hans, "Co-op Settings") == "联机设置");
+    CHECK(CoopI18n::Tr(hant, "Co-op Settings") == "連線設定");
+    CHECK(CoopI18n::Tr(hans, "Options") == "选项");
+    CHECK(CoopI18n::Tr(hant, "Options") == "選項");
+    // New Game+'s two help bodies: the locked one is a line, the unlocked one is built
+    // around the hearts kept and the level now (a split shape).
+    CHECK(CoopI18n::Tr(hans, "Beat Ganon to unlock it: then play again with the hearts you had and tougher enemies.") ==
+          "击败加农后解锁：之后可以用当时的心数重玩，敌人也更强。");
+    CHECK(CoopI18n::Tr(hant, "Locked: beat Ganon") == "未解鎖：擊敗加農");
+    const std::string ng = CoopI18n::Tr(
+        hans, "Start a new file with this on: you keep your 4+1 hearts, and enemies and bosses get 50% more life "
+              "and 25% more damage for each level (up to NG+ 2 now). In a game you host your level counts for "
+              "everyone. Off: the game as it is.");
+    CHECK(ng.find("保留你的 4+1 颗心") != std::string::npos);
+    CHECK(ng.find("最高 NG+ 2") != std::string::npos);
+    CHECK(ng.find("Start a new file") == std::string::npos);
+    // The Saves row's help, whole.
+    const std::string saves = CoopI18n::Tr(
+        hans, "Solo: your own saves. Multiplayer: a separate set of saves for playing together (made from your "
+              "solo saves the first time), so co-op progress never mixes with your own. When you join a friend "
+              "from the title screen you play the host's save, copied beside your multiplayer saves; your saves "
+              "are not touched. Switched on the title screen with no file loaded.");
+    CHECK(saves.rfind("单人：你自己的存档。", 0) == 0);
+    CHECK(saves.find("联机：一套单独用于一起游玩的存档") != std::string::npos);
+}
+
+TEST_CASE("coop i18n: the pause menu's Multiplayer tab (the game's own page)") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    // The rows (coop_pause_tab.cpp's RowTexts, translated as they are handed to the game): the words
+    // are the tab's own, one line each, and the rows with a value are the table's shapes.
+    CHECK(CoopI18n::Tr(hans, "Hosting") == "房间已开");
+    CHECK(CoopI18n::Tr(hant, "Hosting") == "房間已開");
+    CHECK(CoopI18n::Tr(hans, "Copy invite code") == "复制邀请码");
+    CHECK(CoopI18n::Tr(hans, "Players: just you") == "人数：只有你");
+    CHECK(CoopI18n::Tr(hans, "Let in: nobody asks") == "放行：没人申请");
+    CHECK(CoopI18n::Tr(hans, "Stop hosting") == "停止房间");
+    CHECK(CoopI18n::Tr(hans, "Host a game") == "创建房间");
+    CHECK(CoopI18n::Tr(hans, "Join a game") == "加入房间");
+    CHECK(CoopI18n::Tr(hans, "Find a game") == "找房间");
+    CHECK(CoopI18n::Tr(hans, "Auto-rejoin: Off") == "自动重连：关");
+    CHECK(CoopI18n::Tr(hans, "Auto-rejoin: trying...") == "自动重连：重试中…");
+    // The rows with a value: the whole row is the shape's line.
+    CHECK(CoopI18n::Tr(hans, "Room: 7QK-2") == "房间：7QK-2");
+    CHECK(CoopI18n::Tr(hans, "Copy room: 7QK-2") == "复制房间：7QK-2");
+    CHECK(CoopI18n::Tr(hans, "Players: 3") == "人数：3");
+    CHECK(CoopI18n::Tr(hans, "Let in Saria") == "放行 Saria");
+    CHECK(CoopI18n::Tr(hans, "Let in Saria (+2)") == "放行 Saria（+2）");
+    CHECK(CoopI18n::Tr(hant, "Let in Saria (+2)") == "放行 Saria（+2）");
+    CHECK(CoopI18n::Tr(hans, "More players (2/3)") == "更多玩家（2/3）");
+    CHECK(CoopI18n::Tr(hans, "Local games (2)") == "本机房间（2）");
+    CHECK(CoopI18n::Tr(hans, "Next page (2/3)") == "下一页（2/3）");
+    CHECK(CoopI18n::Tr(hans, "Kick Saria") == "踢出 Saria");
+    CHECK(CoopI18n::Tr(hans, "A again: ban Saria") == "再按A：封禁 Saria");
+    CHECK(CoopI18n::Tr(hans, "Refuse Saria") == "拒绝 Saria");
+    CHECK(CoopI18n::Tr(hans, "+2 more ask") == "还有 2 人申请");
+    CHECK(CoopI18n::Tr(hans, "Join Saria again") == "再次加入 Saria");
+    CHECK(CoopI18n::Tr(hans, "Joined Saria") == "已加入 Saria");
+    CHECK(CoopI18n::Tr(hans, "With 3 players") == "与 3 人");
+    CHECK(CoopI18n::Tr(hans, "With 1 player") == "与 1 人");
+    CHECK(CoopI18n::Tr(hans, "Teleport to Saria") == "传送到 Saria");
+    CHECK(CoopI18n::Tr(hans, "Saria (you)") == "Saria（你）");
+}
+
+TEST_CASE("coop i18n: the commands' help, the save notices and the teleport refusals") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    // The Longshot menu's Commands page (coop_pause_menu.cpp's Commands): the two new in 0.11.7.
+    CHECK(CoopI18n::Tr(hans, "The host only: turns away the player who asks to join. Add always to keep them out "
+                              "until you stop hosting.") .rfind("仅房主：", 0) == 0);
+    CHECK(CoopI18n::Tr(hant, "The host only, when a player asks to join (approve_joins = on in coop-options.ini): "
+                              "lets them in (the one who asked first, or by name). Add always to let them in "
+                              "without asking until you stop hosting.").rfind("僅房主：", 0) == 0);
+    // The guest's save lines (coop/host/src/save_transfer.cpp's GuestNotices; the chat draws them).
+    CHECK(CoopI18n::Tr(hans, "The host's save is coming: load a save once the chat says Success.") ==
+          "房主的存档马上到：等聊天显示 Success 再载入存档。");
+    CHECK(CoopI18n::Tr(hant, "The host's save did not come: play on, or join again to get it.") ==
+          "房主的存檔沒有送到：繼續玩，或重新加入來取得。");
+    // The teleport's refusals (lichii/hook/coop_teleport.cpp's RefusedLine) had no lines at all.
+    CHECK(CoopI18n::Tr(hans, "teleport: 4090 is busy (loading, a cutscene, a talk or in the air); try again soon") ==
+          "传送：4090 正忙（读盘、过场、对话或空中）；稍后再试");
+    CHECK(CoopI18n::Tr(hans, "teleport: 4090 said no") == "传送：4090 拒绝了");
+    CHECK(CoopI18n::Tr(hans, "teleport: 4090 is in a boss fight; no teleport there") ==
+          "传送：4090 正在打 BOSS；那里不能传送");
+    CHECK(CoopI18n::Tr(hans, "teleport: 4090 is not in the game") == "传送：4090 不在游戏里");
+    CHECK(CoopI18n::Tr(hans, "teleport: 4090 refused (reason 3)") == "传送：4090 拒绝了（原因 3）");
+}
+
+TEST_CASE("coop i18n: the saves that switch folders, and the settings' own labels") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    // lichii/hook/coop_save.cpp's chat lines (the save set switches at the title).
+    CHECK(CoopI18n::Tr(hans, "Go back to the title screen first: the saves switch there.") ==
+          "先回标题画面：存档是在那里切换的。");
+    CHECK(CoopI18n::Tr(hans, "Multiplayer saves: load a save to play them.") == "联机存档：载入一个存档来玩。");
+    CHECK(CoopI18n::Tr(hant, "Resync from host: the host's save is already on its way.") ==
+          "重新取得房主存檔：房主的存檔已經在路上。");
+    CHECK(CoopI18n::Tr(hans, "The saves could not be switched (see the log).") == "存档切换不了（见日志）。");
+    // The Settings page's own row labels (Choice("Saves"...), Choice("New Game+"...), and the
+    // microphone row), which the page titles around them had translated before them.
+    CHECK(CoopI18n::Tr(hans, "Saves") == "存档");
+    CHECK(CoopI18n::Tr(hans, "New Game+") == "新游戏+");
+    CHECK(CoopI18n::Tr(hant, "Microphone") == "麥克風");
+    CHECK(CoopI18n::Tr(hans, "New Game+ off.") == "新游戏+：关");
+    CHECK(CoopI18n::Tr(hans, "New Game+ 2: start a new file to play it (your hearts carry over).") ==
+          "新游戏+ 2：开个新存档才能玩（心数会带过去）。");
+    // The game browser's own cells (coop_pause_tab.cpp: ListLines, ListValue, coop_room_list.cpp).
+    CHECK(CoopI18n::Tr(hans, "Game") == "游戏");
+    CHECK(CoopI18n::Tr(hans, "Looking for games...") == "正在找房间…");
+    CHECK(CoopI18n::Tr(hans, "No rooms listed") == "没有列出的房间");
+    CHECK(CoopI18n::Tr(hans, "Other version") == "版本不同");
+    CHECK(CoopI18n::Tr(hans, "Full") == "满员");
+}
+
 TEST_CASE("coop i18n: the difficulty line fits the chat's room") {
     const CoopI18n::Lang* hans = ByCode("zh-Hans");
     const char* en =

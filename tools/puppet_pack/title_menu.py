@@ -35,6 +35,23 @@ MARKER = "Pa_CoopMenu_00"     # the hidden part that says this pack has the menu
 # The menu's texts (CoopTitleMenu::kMenuLabels): 0100..0102 are the older packs' rows too.
 ROWS = (("0100", "Host"), ("0101", "Join"), ("0102", "Co-op Settings"), ("0103", "Start"),
         ("0104", "Multiplayer"), ("0105", "Options"), ("0106", "Back"))
+# The same rows for the languages whose game text is Chinese (the kit's Chinese layer keeps the
+# game's own tables, as its menus and messages do): the pack carries these words in that
+# language's Title_00.msbt, since the module only names the label (CoopTitleMenu::kMenuLabels)
+# and the game reads the text from the message file of the language the game runs in.
+ROWS_BY_LANGUAGE = {
+    "CNzh": (("0100", "创建房间"), ("0101", "加入房间"), ("0102", "联机设置"), ("0103", "开始"),
+             ("0104", "联机"), ("0105", "选项"), ("0106", "返回")),
+    "TWzh": (("0100", "建立房間"), ("0101", "加入房間"), ("0102", "連線設定"), ("0103", "開始"),
+             ("0104", "連線"), ("0105", "選項"), ("0106", "返回")),
+}
+
+
+def rows_for(rel):
+    """The menu's rows for a language's message file ("Mals/CNzh.Product.110.sarc.zs"): that
+    language's words when it has them, the English above otherwise."""
+    name = rel.replace("\\", "/").rsplit("/", 1)[-1]
+    return ROWS_BY_LANGUAGE.get(name.split(".", 1)[0], ROWS)
 
 TitleMenuError = ui_pack.UiPackError   # one error for the rows and the library they use
 _sections = ui_pack.sections
@@ -111,7 +128,8 @@ def make(reader, dicts, recompress):
         msgs = sarc.read_entries(plain)
         if not any(name == MSG_FILE for name, _ in msgs):
             continue
-        packed = sarc.write([(name, add_rows(data) if name == MSG_FILE else data) for name, data in msgs],
+        rows = rows_for(rel)
+        packed = sarc.write([(name, add_rows(data, rows) if name == MSG_FILE else data) for name, data in msgs],
                             data_align=16)
         growth.append((rel, len(plain), len(packed), True))
         files[rel] = recompress(dicts, raw, packed)

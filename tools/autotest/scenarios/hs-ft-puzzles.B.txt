@@ -24,6 +24,7 @@ mark b-scrambled
 place 63.6 104.1 -0.75   # back east of A_03 after the cutscene
 wait 240
 mark b-replaced
+toward 61.0 -0.75 40     # walk up to A_03's face first: run 20261119-222229 held A on the walk and climbed it
 toward 61.0 -0.75 150 A  # B grabs and pushes A_03 west
 wait 240
 mark b-push1
@@ -36,6 +37,7 @@ mark b-blocks-end
 place 44.5 124.6 -59.5   # part 2: room 18 through its east switch shutter (see the A file: Beth is drawn only after
 goto 47.8 -59.5 0.6 240  # the shutter set's event), then into painting 3's near area (floor ~117.6)
 goto 37.5 -61.3 1.0 600
+place 37.5 120.0 -61.3   # down to painting 3's near area (the walk in stays on the upper level, y 124.5)
 wait 300
 toward 41.87 -63.2 20    # face painting 3 (faces west, 122.0 high)
 mark b-paint0
@@ -107,7 +109,10 @@ setflag ForestTemple_DefeatJoe 1
 setflag Eldest_Daughter_Generate 1
 warp ForestTemple
 wait 1200
-place 2.5 100.6 -3.5     # the central room 2, inside Meg's area (0 100 -3.5, radius 7.5)
+wait 600                 # row 176 (meg-join-0118): stay at the entrance (81 m) while A starts Dm_0015: held here
+place 11.0 100.6 -3.5    # into the hall, outside Meg's area (radius 7.5): near now, so A's start is joined late
+wait 300
+goto 2.5 -3.5 1.0 300    # then into her area (her room logic must not start a second Dm_0015)
 wait 300
 toward 0.0 -3.5 10
 mark b-meg0

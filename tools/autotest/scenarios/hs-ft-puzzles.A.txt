@@ -1,56 +1,79 @@
-# hs-ft-puzzles (Hookshot, research for player row 175: "only one player can move the ghost image puzzle", Forest
-# Temple). Facts wanted, screenshots on both games:
-#  part 1, Amy's block puzzle (room 25: ForestTemple_MovableBox_Puzzle_Manager, Obj_ForestTemple_MovableBox_A_01..04,
-#    one shared Obj_MovableBox_BasePosAnchor at 61.2 103.9 2.2): A pushes A_01 (57.5 103.9 -0.8) east, then B pushes
-#    A_03 (62.0 103.9 -0.8) west, then A pushes again. Does B's push move B's block (shots b-push1/b-push2), does A
-#    see it (a-seen-b), and is anyone snapped back? Log lines: "world:" (mover, came to rest, push node), "objects:"
-#  part 2, Beth's paintings (room 18: MultipleGhostPicturesManager, Obj_ForestTemple_GhostPicture_A_02 x3, the
-#    performer Enemy_GhostPicturePerformer_Poe_Beth, object-synced with its own owner today): both stand facing the
-#    three paintings for 40 s; shots every 10 s on both: is the Poe in the same painting on both screens? Log lines
-#    "objects: share ... Enemy_GhostPicturePerformer_Poe_Beth" (owner, copy).
+# hs-ft-puzzles (Hookshot, research for player rows 175 "only one player can move the ghost image (painting/block)
+# puzzle" and 176 "the Poe sisters' fight gets wonky", Forest Temple). Facts wanted, screenshots on both games.
+# Read first (romfs Banc/ForestTemple + the player log geno-forest-20261120, P2):
+#  - Amy's room 25: the Before layout (BeforeShotPicture_01..04, the picture at the answer anchors) loads until
+#    Amy's painting performer `Enemy_GhostPicturePerformer_Poe_Amy` (66.7 119.2 0.4) is shot: its Pct_Die starts
+#    Dm_ForestTemple_0013 (the scramble). Pushed in a 1.5 m grid from ONE placed Obj_MovableBox_BasePosAnchor
+#    (61.25 103.9 2.25); scrambled places A_01 57.5 -0.75, A_02 59.0 2.25, A_03 62.0 -0.75, A_04 60.5 -2.25.
+#    In the player's P2 log every push was P1's (no "moved here: sending" in P2's log at all).
+#  - The performers are object-synced with an owner of their own ("rolled ... shared as made"), while each game's
+#    MultipleGhostPicturesManager / MovableBox_Puzzle_Manager drives its own: the lead (row 114's pattern).
+#  - Room 18 (Beth): paintings 23.9 127.2 -62.9, 29.4 122.0 -59.5, 41.9 122.0 -63.2, floor ~114.5-115.4.
+#  - Meg (room 2, 0 100.1 -3.5) is made at the room's load when Amy, Beth and Joe are beaten: setflags + re-warp.
+# Part 1 (row 175): A shoots Amy's performer (kill); after the scramble B pushes A_03 west, then A pushes A_01 east.
+#   Shots: a-/b-before, -shot, -scrambled, b-push1, a-seen-b, a-push1, b-seen-a. Did B's push move B's block, does A
+#   see it, does B see A's? Log: "world:" (moved here: sending / moved by another player / push node), "objects:
+#   share ... Poe_Amy" (owner), "Dm_ForestTemple_0013".
+# Part 2 (row 176): both in Beth's room facing the paintings 20 s, then B (likely not the performer's owner) shoots
+#   Beth's performer, then A hits Beth. Shots *-paint*, *-beth-*: one Poe in the same painting on both? Does Beth come
+#   out on both after B's shot? Log: "Enemy_GhostPicturePerformer_Poe_Beth", "Enemy_Poe_Beth".
+# Part 3 (row 176): the three sisters set beaten, re-warp, both in the central room; A hits Meg once. Shots *-meg*:
+#   one Meg and her copies (Meg_Dummy) the same on both? Log: "Enemy_MiddleBoss_Poe_Meg" and "_Dummy".
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Lane N -Scenario hs-ft-puzzles
-#  part 3 (row 176), Meg: the three sisters set beaten (ForestTemple_DefeatAmy/Beth/Joe), both in the central room;
-#    A hits Meg once (hit). Shots a-meg*/b-meg*: one Meg and her copies (Meg_Dummy, her group) the same on both?
-#    Log lines "objects: share ... Enemy_MiddleBoss_Poe_Meg" and "_Dummy".
-# No PASS/FAIL: a research run (facts for the report reports/forest-0118.md).
+# No PASS/FAIL: a research run (facts for reports/forest-0118-3.md). A and B keep the same timeline.
 mark start
 setflag Sequence_IsChildhood 0
-warp ForestTemple
-wait 900                 # the warp's load
+setflag ForestTemple_AmyPuzzleBoxCleard 0
+setflag ForestTemple_DefeatAmy 0
+setflag ForestTemple_DefeatBeth 0
+warp ForestTemple        # again with the flags: the room loads unsolved (a same-map warp is a reload on Hookshot)
+wait 1200
 mark arrived
-place 55.6 104.6 -0.8    # west of block A_01
+place 55.9 104.1 -0.75   # room 25, west of the puzzle
 wait 300
-mark a-placed
-toward 57.5 -0.8 150     # walk into the block: a push east
+toward 66.7 0.4 10       # face Amy's painting (east wall)
+wait 120
+mark a-before
+kill Enemy_GhostPicturePerformer_Poe_Amy   # A's "arrow": Pct_Die -> Dm_ForestTemple_0013
+wait 300
+mark a-shot
+wait 900
+mark a-scrambled
+place 55.9 104.1 -0.75   # back west of A_01 after the cutscene
 wait 240
-mark a-push1
+mark a-replaced
 wait 600                 # B pushes A_03 west meanwhile
 mark a-seen-b
-toward 59.0 -0.8 150     # A pushes A_01 again (now in front of it, if it moved)
+toward 58.5 -0.75 150 A  # A grabs and pushes A_01 east
 wait 240
-mark a-push2
+mark a-push1
 wait 600
-mark a-end-blocks
-place 34.0 123.0 -52.0   # part 2: Beth's paintings, facing them (they hang at z -59.5 to -63.2)
+mark a-blocks-end
+place 30.0 115.6 -61.3   # part 2: Beth's room 18, on its floor
 wait 300
-toward 34.0 -60.0 10
-press ZL 10
+toward 41.9 -63.2 10
 mark a-paint0
 wait 600
 mark a-paint1
 wait 600
 mark a-paint2
+wait 300                 # B shoots Beth's performer here
+mark a-beth-shot
 wait 600
-mark a-paint3
+mark a-beth-out
+hit Enemy_Poe_Beth 4
+wait 300
+mark a-beth-hit
 wait 600
-mark a-paint4
-setflag ForestTemple_DefeatAmy 1    # part 3 (row 176): the three sisters beaten, so Meg's fight is next
+mark a-beth-end
+setflag ForestTemple_DefeatAmy 1    # part 3 (row 176): the three sisters beaten, so Meg is made at the load
 setflag ForestTemple_DefeatBeth 1
 setflag ForestTemple_DefeatJoe 1
-place -3.0 100.6 4.0       # the central room 2, Meg's place 0 100.1 -3.5
+warp ForestTemple
+wait 1200
+place -3.0 100.6 4.0     # the central room 2, Meg's place 0 100.1 -3.5
 wait 300
 toward 0.0 -3.5 10
-press ZL 10
 mark a-meg0
 wait 600
 mark a-meg1

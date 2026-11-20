@@ -48,6 +48,9 @@ toward 66.96 0.0 60      # face Amy's painting (east wall). 60 ticks, not 10 (ru
                          # turned, a-aim3 faced the door wall): the stick is camera-relative and hookshot.py
                          # learns the camera from how Link moves; a first toward has nothing learnt (angle 0),
                          # so 10 ticks pushed blind. 60 ticks learn, correct and end against A_01's west face
+place 55.9 104.1 0.0     # run 20261119-223508: pressed on A_01 Link ended ~40 deg off (a-aim1: the painting top left);
+wait 60                  # back to the spot, then a short turn with the camera now learnt: square to the painting
+toward 66.96 0.0 8
 wait 120
 mark a-before
 # --- the sweep (1663 ticks): ZL, draw, pitch up N ticks, let go (fires) ---
@@ -113,8 +116,9 @@ wait 240
 mark a-push1
 wait 600
 mark a-blocks-end
-place 44.5 124.6 -59.5   # part 2: room 18 through its east switch shutter (46.0 124.5 -59.5), as a player comes in.
-goto 47.8 -59.5 0.6 240  # Room_13_Prefab_48cb: the picture manager that draws Beth (MultipleGhostPicturesManager) is
+place 47.3 124.7 -59.5   # part 2: room 18 through its east switch shutter (46.0 124.5 -59.5), as a player comes in:
+goto 43.5 -59.5 0.6 240  # from the doorway outside its bars (run 20261119-223508: the bars are shut from inside, the walk
+                         # out timed out, no event). Room_13_Prefab_48cb: the picture manager that draws Beth is
 goto 38.0 -60.2 1.0 600  # driven by the shutter set's IsFinishEvent; a place inside never ran that event
 place 38.0 120.2 -60.2   # run 20261119-222229: the walk in stays on the upper level (y 124.5); Beth's near area is
                          # on the lower floor (~117.6), where this place held in run 20261119-215630

@@ -14,7 +14,7 @@ mark arrived
 assign Bow
 place 63.6 104.1 -0.75   # room 25, east of the puzzle
 wait 300
-toward 57.0 -0.75 10     # face the blocks
+toward 57.0 -0.75 60     # face the blocks (60 ticks: the camera is learnt from Link's moves; see the A file)
 wait 120
 mark b-before
 wait 1663                # A's sweep at Amy's painting
@@ -33,9 +33,11 @@ wait 390                 # A pushes A_01 east
 mark b-seen-a
 wait 600
 mark b-blocks-end
-place 37.5 120.0 -61.3   # part 2: room 18, in painting 3's near area (floor ~117.6: it drops on it)
+place 44.5 124.6 -59.5   # part 2: room 18 through its east switch shutter (see the A file: Beth is drawn only after
+goto 47.8 -59.5 0.6 240  # the shutter set's event), then into painting 3's near area (floor ~117.6)
+goto 37.5 -61.3 1.0 600
 wait 300
-toward 41.87 -63.2 10    # face painting 3 (faces west, 122.0 high)
+toward 41.87 -63.2 20    # face painting 3 (faces west, 122.0 high)
 mark b-paint0
 wait 600
 mark b-paint1
@@ -102,6 +104,7 @@ mark b-beth-end
 setflag ForestTemple_DefeatAmy 1
 setflag ForestTemple_DefeatBeth 1
 setflag ForestTemple_DefeatJoe 1
+setflag Eldest_Daughter_Generate 1
 warp ForestTemple
 wait 1200
 place 2.5 100.6 -3.5     # the central room 2, inside Meg's area (0 100 -3.5, radius 7.5)

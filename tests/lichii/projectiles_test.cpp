@@ -1462,3 +1462,58 @@ TEST_CASE("objects: issue 133, a lifeless enemy's copy that died here sends the 
     plain.Tick(kScene, 1, 50 * kMs, {Lifeless(0x200, "Wait")}, send, writes);
     CHECK(Of<proto::ObjectRemove>(send).empty());
 }
+
+TEST_CASE("objects: row 175, a Poe sister's painting that died here sends the kill at once and keeps its own death") {
+    using CoopObjects::PictureDeathHere;
+    CHECK(PictureDeathHere("Enemy_GhostPicturePerformer_Poe_Amy", false, true, "Pct_Die", "Pct_Wait"));
+    CHECK_FALSE(PictureDeathHere("Enemy_GhostPicturePerformer_Poe_Amy", false, false, "Pct_Die", "Pct_Wait"));  // ours
+    CHECK_FALSE(PictureDeathHere("Enemy_GhostPicturePerformer_Poe_Amy", false, true, "Pct_Die", "Pct_Die"));  // owner's
+    CHECK_FALSE(PictureDeathHere("Enemy_GhostPicturePerformer_Poe_Amy", false, true, "Pct_Wait", "Pct_Wait"));
+    CHECK_FALSE(PictureDeathHere("Enemy_GhostPicturePerformer_Poe_Amy", true, true, "Pct_Die", "Pct_Wait"));  // a life
+    CHECK_FALSE(PictureDeathHere("Enemy_GhostPicturePerformer_PhantomGanon", false, true, "Die", "Wait"));  // the boss's
+    CHECK_FALSE(PictureDeathHere("Enemy_Tailpasaran", false, true, "Die", "Wait"));  // issue 133's (on leaving)
+
+    const auto painting = [](const char* animation) {
+        CoopObjects::Seen s;
+        s.address = 0x300;
+        s.name = "Enemy_GhostPicturePerformer_Poe_Amy";
+        s.hash = 0x29b1;
+        s.position = {66.66f, 119.18f, 0.43f};
+        s.animation = proto::Animation{animation, 0.0f, 1.0f};
+        return s;
+    };
+    // The hitter (player 1): its copy of player 2's painting dies here and stays in the walk.
+    CoopObjects::Sync hitter;
+    std::vector<proto::Message> send;
+    std::vector<CoopObjects::LifeWrite> writes;
+    hitter.Tick(kScene, 1, 0, {painting("Pct_Wait")}, send, writes);
+    const proto::ObjectId id = *hitter.IdOf(0x300);
+    hitter.Receive(proto::ObjectOwner{id, 2, 0, 0});
+    hitter.Tick(kScene, 1, 10 * kMs, {painting("Pct_Wait")}, send, writes);
+    send.clear();
+    for (std::uint64_t t = 100; t <= 400; t += 100) {
+        hitter.Tick(kScene, 1, t * kMs, {painting("Pct_Die")}, send, writes);
+    }
+    const auto damage = Of<proto::Damage>(send);
+    REQUIRE(damage.size() == 1);  // once, while it is still in the walk
+    CHECK(damage[0].id == id);
+    CHECK(damage[0].cause == static_cast<std::uint8_t>(proto::DamageCause::killed));
+
+    // The owner says it dead: ours is not deleted (its own death runs the room logic here).
+    proto::ObjectRemove dead;
+    dead.id = id;
+    dead.player_number = 2;
+    dead.reason = proto::RemoveReason::dead;
+    hitter.Receive(dead);
+    send.clear();
+    for (std::uint64_t t = 500; t <= 5000; t += 500) {
+        hitter.Tick(kScene, 1, t * kMs, {painting("Pct_Die")}, send, writes);
+        CHECK(hitter.Removes().empty());
+    }
+    CHECK(Of<proto::Damage>(send).empty());  // no second kill
+    // ...nor when it leaves the walk after its death.
+    for (std::uint64_t t = 5500; t <= 6000; t += 100) {
+        hitter.Tick(kScene, 1, t * kMs, {}, send, writes);
+    }
+    CHECK(Of<proto::Damage>(send).empty());
+}

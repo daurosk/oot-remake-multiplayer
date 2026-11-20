@@ -35,6 +35,8 @@ setflag Sequence_IsChildhood 0
 setflag ForestTemple_AmyPuzzleBoxCleard 0
 setflag ForestTemple_DefeatAmy 0
 setflag ForestTemple_DefeatBeth 0
+setflag ForestTemple_Ghost_Appear_Block 0   # run 20261119-215630: arrows hit Amy's painting, but it was empty (no Amy):
+setflag HavePlayedEvent.Dm_ForestTemple_0010 1   # the room logic (Room_16_Prefab_90d8) reads both
 give bow
 warp ForestTemple        # again with the flags: the room loads unsolved (a same-map warp is a reload on Hookshot)
 wait 1200

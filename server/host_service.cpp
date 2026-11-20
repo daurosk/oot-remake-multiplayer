@@ -339,14 +339,15 @@ void HostService::say_counts() {
   // Enemy counts (issues 105, 133), at most every 5 s while they change.
   const std::uint64_t enemies =
       now.group_links + now.group_refused + now.damage_relayed + now.damage_dropped + now.damage_returned +
-      now.damage_held + now.dead_told;
+      now.damage_held + now.dead_told + now.turns_attack + now.turns_idle;
   if (config_.counts && enemies != shown_enemies_ && now_ms() - enemies_at_ >= 5000) {
     shown_enemies_ = enemies;
     enemies_at_ = now_ms();
     say("enemies: group entries taken " + count(now.group_links) + ", refused " + count(now.group_refused) +
         "; damage relayed " + count(now.damage_relayed) + ", dropped " + count(now.damage_dropped) +
         ", given back across a hand-over " + count(now.damage_returned) + ", kept through the owner hold " +
-        count(now.damage_held) + "; kills told late " + count(now.dead_told));
+        count(now.damage_held) + "; kills told late " + count(now.dead_told) + "; boss turns " +
+        count(now.turns_attack) + " after an attack, " + count(now.turns_idle) + " idle");
   }
 }
 

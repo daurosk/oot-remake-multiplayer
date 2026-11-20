@@ -79,21 +79,27 @@ inline constexpr std::uint64_t kNoHitValues = 0x28;
 inline constexpr std::uint64_t kNoHitSlots = 0x34;
 inline constexpr std::int32_t kNoHitMaxSlots = 1024;  // (a sanity bound for the read)
 inline constexpr std::uint64_t kBsaBrainVerb = 0x28;      // s32, the current brain verb
-// Boss turns (0.11.8): the BSA's current action verb attribute bits, as the AI query
-// QueryBSAIsActionVerbAttribute tests them (its calc main+0x29bd000): 16-byte entries from +0x1650, the entry of
-// the s32 at +0x28 when it is below 63 (unsigned), else the first; the u64 at entry +8; attribute i is bit i, in
-// the order of the actor's ActionVerbAttributesSetting (Attack, murmur3 4009472201, is bit 0: AttributeFlag 1 on
-// every verb whose Attributes list Attack, e.g. Phantom Ganon's Default setting).
-inline constexpr std::uint64_t kBsaVerbAttributes = 0x1650;
-inline constexpr std::uint64_t kBsaVerbAttributeStride = 0x10;
-inline constexpr std::uint64_t kBsaVerbAttributeBits = 0x8;
-inline constexpr std::uint32_t kBsaVerbAttributeEntries = 63;
+// Boss turns (0.11.8): the attributes of the BSA's current action verbs, as the game's own "has action verb
+// attribute" reads them (main+0x507be0, called by QueryBSAIsLastFrameActionVerbAttributeOn and the other action
+// queries): five s32 action verbs at +0x54 (one per action slot: main, sub, SP, SP2, SP3), each looked up in the
+// action verb table at +0x1a40 (16-byte entries, 282 verbs: the entry of a verb below 282, else the first), the
+// u64 at entry +8; the five words OR-ed. Attribute i is bit i in the order of the actor's
+// ActionVerbAttributesSetting (Attack, murmur3 4009472201, is bit 0: AttributeFlag 1 on every verb whose
+// Attributes list Attack). (The table at +0x1650, 63 entries indexed by the brain verb at +0x28, is the brain
+// verb's: its bit 0 is Battle, murmur3 82424555; lane run 20261120-141109 read that one and held "attacking" on
+// for the whole fight.)
+inline constexpr std::uint64_t kBsaActionVerbs = 0x54;
+inline constexpr std::size_t kBsaActionSlots = 5;
+inline constexpr std::uint64_t kBsaActionAttributes = 0x1a40;
+inline constexpr std::uint64_t kBsaAttributeStride = 0x10;
+inline constexpr std::uint64_t kBsaAttributeBits = 0x8;
+inline constexpr std::uint32_t kActionVerbCount = 282;
 inline constexpr std::uint64_t kAttributeAttack = 1u << 0;
-// Where the bits are for a BSA whose s32 at +0x28 reads `index` (the game's own choice of entry).
-constexpr std::uint64_t VerbAttributesAt(std::uint64_t bsa, std::int32_t index) {
-    const auto i = static_cast<std::uint32_t>(index);
-    return bsa + kBsaVerbAttributes + (i < kBsaVerbAttributeEntries ? i * kBsaVerbAttributeStride : 0) +
-           kBsaVerbAttributeBits;
+// Where action slot `slot`'s verb is, and where the attribute bits of action verb `verb` are.
+constexpr std::uint64_t ActionVerbAt(std::uint64_t bsa, std::size_t slot) { return bsa + kBsaActionVerbs + 4 * slot; }
+constexpr std::uint64_t ActionAttributesAt(std::uint64_t bsa, std::int32_t verb) {
+    const auto i = static_cast<std::uint32_t>(verb);
+    return bsa + kBsaActionAttributes + (i < kActionVerbCount ? i * kBsaAttributeStride : 0) + kBsaAttributeBits;
 }
 constexpr bool IsAttack(std::uint64_t bits) { return (bits & kAttributeAttack) != 0; }
 inline constexpr std::uint64_t kSetBrainVerb = 0x6733b0;       // main+

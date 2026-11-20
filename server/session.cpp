@@ -2199,7 +2199,13 @@ void Session::step_turn(const ObjectId& oid, Object& o, std::uint64_t now_us) {
   const ObjectState& st = *o.last_state;
   const bool attacking = st.state && (*st.state & object_state::attacking) != 0;
   // Only an enemy whose owner's game reads its attacks takes turns (a newer hook; never a world object).
-  if (!st.state || (*st.state & object_state::attack_read) == 0) return;
+  if (!st.state || (*st.state & object_state::attack_read) == 0) {
+    if (o.boss && now_us - o.turn_note_at >= 10'000'000) {
+      o.turn_note_at = now_us;
+      log("boss turns: " + o.actor + ": its owner's samples do not read its attacks (an older build): one owner");
+    }
+    return;
+  }
   if (attacking) o.turn_attacked = true;
   if (!o.turn.known || o.turn.epoch != o.epoch) o.turn_aggro.clear();
   const auto& anim = st.animation;
@@ -2212,7 +2218,19 @@ void Session::step_turn(const ObjectId& oid, Object& o, std::uint64_t now_us) {
                (st.state && (*st.state & object_state::in_event) != 0) ||
                (anim && (coop::protocol::anim::IsEvent(anim->name) || coop::protocol::anim::IsStun(anim->name)));
   const turns::Why why = turns::Step(o.turn, in, now_us, tc);
-  if (why == turns::Why::none) return;
+  if (why == turns::Why::none) {
+    // Debug for the lane proofs: why a turn is not over yet, every 10 s while one runs long.
+    if (o.boss && now_us - o.turn.started_at >= tc.idle_us && now_us - o.turn_note_at >= 10'000'000) {
+      o.turn_note_at = now_us;
+      const auto oc = connections_.find(*o.owner);
+      log("boss turns: " + o.actor + " of player " +
+          std::to_string(oc == connections_.end() ? 0 : oc->second.number) + " (epoch " +
+          std::to_string(o.epoch) + "): no turn yet: attacking " + (attacking ? "yes" : "no") + ", attacks " +
+          std::to_string(o.turn.attacks) + ", in a fight " + (in.in_fight ? "yes" : "no") + ", blocked " +
+          (in.blocked ? "yes" : "no") + (anim ? " (" + anim->name + ")" : std::string()));
+    }
+    return;
+  }
   if (!o.boss && !o.turn_attacked) return;  // a plain enemy that never attacked here: the old rules
   auto owner = connections_.find(*o.owner);
   if (owner == connections_.end()) return;
@@ -2229,6 +2247,16 @@ void Session::step_turn(const ObjectId& oid, Object& o, std::uint64_t now_us) {
     players.push_back(p);
   }
   const auto next = turns::Next(players, owner->second.number, o.boss ? tc.boss_reach_m : tc.plain_reach_m);
+  std::string seen;
+  for (const turns::Player& p : players) {
+    seen += " P" + std::to_string(p.number) + (p.fit ? "" : " unfit") +
+            (p.distance ? " " + std::to_string(static_cast<int>(*p.distance)) + " m" : " place unknown") +
+            (p.aggro ? " aggro " + std::to_string(p.aggro) : "") + ";";
+  }
+  log("boss turns: " + o.actor + " of player " + std::to_string(owner->second.number) + ": " + turns::WhyText(why) +
+      (next ? ": to player " + std::to_string(connections_.at(static_cast<ConnectionId>(*next)).number)
+            : ": nobody else") +
+      " (" + (seen.empty() ? std::string("no other player has it") : seen) + ")");
   if (!next) {
     o.turn = turns::State{};  // nobody else: a new turn for the owner (one player: the game as it is)
     return;

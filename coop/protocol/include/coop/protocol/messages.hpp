@@ -825,7 +825,7 @@ inline constexpr std::uint8_t asleep = 1u << 2;
 // event's result reaches it (its flags). An older build ignores the bit.
 inline constexpr std::uint8_t in_event = 1u << 3;
 // Boss turns (0.11.8): the owner's enemy is in an attack, read from its game's own action verb attribute Attack
-// (its BSA's current attribute bits, the word QueryBSAIsActionVerbAttribute tests; main+0x29bd000). The server
+// (the attributes of its BSA's current action verbs, as the game's own method main+0x507be0 reads them). The server
 // hands the enemy to the next player when it falls (server/boss_turns.hpp). An older build ignores the bit.
 inline constexpr std::uint8_t attacking = 1u << 4;
 // The sender reads attacks (the bit above means something): set on every sample of an enemy whose BSA it reads.

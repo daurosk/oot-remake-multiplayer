@@ -757,6 +757,7 @@ class Session {
     turns::State turn;
     std::map<ConnectionId, std::int64_t> turn_aggro;
     bool turn_attacked = false;  // its owner's samples said it attacked once (a hook that reads attacks)
+    std::uint64_t turn_note_at = 0;  // the last "no turn yet" log line (every 10 s at most)
   };
   using Objects = std::map<protocol::ObjectId, Object>;
 

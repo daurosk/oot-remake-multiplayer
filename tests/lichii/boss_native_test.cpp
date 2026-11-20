@@ -2096,13 +2096,17 @@ TEST_CASE("native boss: row 178: our boss fallen far below its fight start choos
     }
 }
 
-TEST_CASE("native boss: boss turns: the game's own Attack attribute word of the BSA, as its AI query reads it") {
-    // QueryBSAIsActionVerbAttribute (main+0x29bd000): the entry of the s32 at +0x28 below 63, else the first.
-    CHECK(addr::VerbAttributesAt(kBsa, 0) == kBsa + 0x1650 + 8);
-    CHECK(addr::VerbAttributesAt(kBsa, 6) == kBsa + 0x1650 + 6 * 16 + 8);
-    CHECK(addr::VerbAttributesAt(kBsa, 62) == kBsa + 0x1650 + 62 * 16 + 8);
-    CHECK(addr::VerbAttributesAt(kBsa, 63) == kBsa + 0x1650 + 8);
-    CHECK(addr::VerbAttributesAt(kBsa, -1) == kBsa + 0x1650 + 8);  // (unsigned: past the table)
+TEST_CASE("native boss: boss turns: the attributes of the BSA's action verbs, as the game's own method reads them") {
+    // main+0x507be0: five action slots' s32 verbs from +0x54, each verb's u64 at +0x1a40 + 16 x verb + 8 (below 282).
+    CHECK(addr::ActionVerbAt(kBsa, 0) == kBsa + 0x54);
+    CHECK(addr::ActionVerbAt(kBsa, 4) == kBsa + 0x64);
+    CHECK(addr::ActionAttributesAt(kBsa, 0) == kBsa + 0x1a40 + 8);
+    CHECK(addr::ActionAttributesAt(kBsa, 103) == kBsa + 0x1a40 + 103 * 16 + 8);
+    CHECK(addr::ActionAttributesAt(kBsa, 281) == kBsa + 0x1a40 + 281 * 16 + 8);
+    CHECK(addr::ActionAttributesAt(kBsa, 282) == kBsa + 0x1a40 + 8);  // (past the table: the first entry)
+    CHECK(addr::ActionAttributesAt(kBsa, -1) == kBsa + 0x1a40 + 8);
+    // The brain verb table (63 x 16 from +0x1650, bit 0 Battle) ends where the action verb table starts.
+    CHECK(0x1650 + 63 * 16 == addr::kBsaActionAttributes);
     // Attack is attribute 0 (AttributeFlag 1; 513 = Attack and attribute 9 together).
     CHECK(addr::IsAttack(1));
     CHECK(addr::IsAttack(513));

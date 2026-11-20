@@ -16,6 +16,7 @@
 #! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
 #! timeout 600
 mark start
+nofairy                  # every bottle emptied: a bottled fairy revives instead of downing (3 VOID runs, 2026-11-20)
 warp DodongoCavern EntrancePos
 wait 1200
 mark title

@@ -39,7 +39,12 @@ warp DodongoCavern StartPos_Get_StoneOfFire   # same-map warp = reload with the 
 wait 3000               # the module own warp took >25 s in run 013912
 place 24.0 73.6 -76.0   # run 070704: the bridge warp lands at the entrance (destination 20, DodongoCavern_MountainTrailSide) whatever the start named; into room 22 at StartPos_Get_StoneOfFire (24.0 73.41 -77.6)
 wait 300
-goto 22.0 -74.0 1.0 1200   # beside the door, out of the burning floor (run 072018: at z -70.9 both Links burnt to a Game Over; the 21 m Area at 24.0 -60.5 reaches z -71); 11 m from the pit centre (run 071338: the old goto 24.0 -63.0 walked both Links into the lava pit, scale-5 Area + EldinHardLavaPlane at 24.0 -63.0: DmF_SY_FallDown, Game Over)
+goto 24.0 -68.5 1.0 600   # in to the intro trigger (run 071338: B started Dm_DodongoCave_BossIn at z -68; run 073709 by the door: no intro, no KD)
+wait 900
+goto 22.0 -74.0 1.0 1200   # back beside the door, out of the burning floor (run 072018: at z -70.9 both Links burnt to a Game Over; the 21 m Area at 24.0 -60.5 reaches z -71); 11 m from the pit centre (run 071338: the old goto 24.0 -63.0 walked both Links into the lava pit, scale-5 Area + EldinHardLavaPlane at 24.0 -63.0: DmF_SY_FallDown, Game Over)
+wait 30
+face 24.0 -63.0          # look at the arena (run 073709: every shot showed the wall behind)
+press ZL 10
 wait 1800
 mark a-fight
 wait 420

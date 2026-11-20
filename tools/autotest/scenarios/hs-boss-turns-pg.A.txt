@@ -10,6 +10,8 @@
 #     PhantomGanon light ball name) and B's Link's life falls (a hit taken in B's own game).
 #  3. Screenshots on BOTH games at a w-mark in B's turn: PG throwing at / the ball flying to B (B's Link in B's
 #     game, B's puppet in A's).
+#  5. Then the Forest Temple Octorok (west courtyard) with both players near: it shoots (screenshots o1..o4), its
+#     samples carry attack_read, any turn hand-over between its spits, no crash (plain shooters' turns, C #48 (4)).
 #  4. No crash, no stall ("stuck in one move") in either game.
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-boss-turns-pg -Server <boss-target coop_server>
 #! noload
@@ -78,5 +80,21 @@ wait 300
 mark w16
 wait 300
 mark after
-wait 1800
+kill Enemy_DungeonBoss_PhantomGanon   # his death (the turns part is over)
+wait 2400               # his death
+mark d1
+setflag Sequence_IsChildhood 0
+warp ForestTemple       # plain shooter check (C #48 (4)): Octorok within 15 m of both
+wait 1200
+mark ft-in
+place -41.7 99.0 -38.3   # 6 m south of the west courtyard Octorok
+wait 600
+mark o1
+wait 600
+mark o2
+wait 600
+mark o3
+wait 600
+mark o4
+wait 600
 mark end

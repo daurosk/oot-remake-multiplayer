@@ -56,5 +56,20 @@ wait 300
 mark w16
 wait 300
 mark after
-wait 1800
+wait 2400               # his death
+mark d1
+setflag Sequence_IsChildhood 0
+warp ForestTemple       # plain shooter check (C #48 (4)): Octorok within 15 m of both
+wait 1200
+mark ft-in
+place -41.7 99.0 -50.3   # 6 m north of it
+wait 600
+mark o1
+wait 600
+mark o2
+wait 600
+mark o3
+wait 600
+mark o4
+wait 600
 mark end

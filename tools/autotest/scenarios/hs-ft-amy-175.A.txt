@@ -1,0 +1,52 @@
+# hs-ft-amy-175 (row 175, LANE1 turn 6, kd-twist-0118-4): Amy's block puzzle with the hit from the game that does NOT
+# own her painting, then one push from each game. hs-ft-amy (forest-175-0118) with the roles swapped: A loads the room
+# first (A's game owns the painting), B (a copy) shoots it, so the scramble must start from B's copy hit
+# (amy-hit-0118 32e9d198 + amy-replay-once 98d1f678). Then A (the owner, not the shooter) pushes A_03 west and B pushes
+# A_04 north: each push must show on the other game ("moved here: sending" / "moved by another player").
+#! switches LICHII_COOP_CHEATS=1,LICHII_COOP_OBJECTS_CHEAT=1
+# Banc facts (dump/romfs/Banc/ForestTemple, read 2026-11-20): after the scramble five pieces stand on a 0.75 m grid off
+# the shared Obj_MovableBox_BasePosAnchor (61.25 103.9 2.25), each linked to one Obj_Gimmick_AnswerPosAnchor:
+#   A_01 57.50 -0.75 -> 57.50 -0.75 (already there)    A_02 59.00  2.25 -> 59.73 -0.75 (south 3.0, east 0.75)
+#   A_03 62.00 -0.75 -> 59.65  0.80 (west 2.25, north 1.5)  A_04 60.50 -2.25 -> 58.15 -0.75 (west 2.25, north 1.5)
+#   A_05 59.75  0.00 -> 59.75  0.00 (already there)
+# A_03 west and A_04 north are both moves the answer needs (A_01, the handoff's first pick, is already on its answer).
+# The full solve (Dm_ForestTemple_0014 + ForestTemple_AmyPuzzleBoxCleard) needs the push step per hold, unknown until
+# this run's shots: so a solve here is a bonus, not the PASS.
+# PASS: Dm_ForestTemple_0013 on both games from B's copy hit; A's push of A_03 'moved here: sending' (A) + 'moved by
+# another player' (B); B's push of A_04 the same the other way; NO 'came to rest ... base anchor ... moved' for the
+# shared anchor (anchor-guard 5335b746 logs 'another block's or a shared grid base: left'). Shots on both games.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-ft-amy-175
+mark start
+setflag Sequence_IsChildhood 0
+setflag ForestTemple_AmyPuzzleBoxCleard 0
+setflag ForestTemple_DefeatAmy 0
+setflag ForestTemple_DefeatBeth 0
+setflag ForestTemple_Ghost_Appear_Block 0
+setflag HavePlayedEvent.Dm_ForestTemple_0010 1   # the room logic (Room_16_Prefab_90d8) reads both
+give bow
+warp ForestTemple        # A first: A's game owns Amy's painting (B warps 300 ticks later)
+wait 1200
+mark arrived
+place 63.6 104.1 -0.75   # room 25, east of the puzzle (out of B's line of fire: B shoots from the west at z 0)
+wait 300
+toward 57.0 -0.75 60
+wait 68
+wait 120
+mark a-before
+wait 1663                # B's sweep at Amy's painting
+mark a-shot
+wait 900
+mark a-scrambled
+place 63.6 104.1 -0.75   # back east of A_03 (62.0 -0.75) after the cutscene
+wait 240
+mark a-replaced
+toward 61.0 -0.75 40     # walk up to A_03's east face first (a held A on the walk climbs it)
+toward 61.0 -0.75 150 A  # A grabs and pushes A_03 west
+wait 240
+mark a-push1
+wait 210
+mark a-push1-after
+wait 390                 # B pushes A_04 north
+mark a-seen-b
+wait 600
+mark a-blocks-end

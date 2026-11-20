@@ -1,0 +1,82 @@
+# hs-ft-amy-175 B side (see the A file): B loads the room 300 ticks after A, so its Amy is a COPY; B shoots the
+# painting (the hs-ft-puzzles sweep), then pushes A_04 north after A's push of A_03.
+mark start
+setflag Sequence_IsChildhood 0
+setflag ForestTemple_AmyPuzzleBoxCleard 0
+setflag ForestTemple_DefeatAmy 0
+setflag ForestTemple_DefeatBeth 0
+setflag ForestTemple_Ghost_Appear_Block 0
+setflag HavePlayedEvent.Dm_ForestTemple_0010 1
+give bow
+wait 300                 # A loads the room first: A's game owns Amy's painting
+warp ForestTemple
+wait 900
+mark arrived
+assign Bow
+place 55.9 104.1 0.0     # room 25, west of the puzzle, level with Amy's painting (z 0)
+wait 300
+face 66.96 0.0           # face Amy's painting (east wall)
+wait 128
+wait 120
+mark b-before
+press ZL 10
+wait 40
+hold ZR 30
+hold ZR 12 b-aim1
+wait 120
+mark b-shot1
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 5 ZR
+hold ZR 12 b-aim2
+wait 120
+mark b-shot2
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 10 ZR
+hold ZR 12 b-aim3
+wait 120
+mark b-shot3
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 15 ZR
+hold ZR 12 b-aim4
+wait 120
+mark b-shot4
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 20 ZR
+hold ZR 12 b-aim5
+wait 120
+mark b-shot5
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 26 ZR
+hold ZR 12 b-aim6
+wait 120
+mark b-shot6
+press ZL 10
+wait 40
+hold ZR 30
+rstick 0 1.0 33 ZR
+hold ZR 12 b-aim7
+wait 120
+mark b-shot7
+wait 900
+mark b-scrambled
+place 60.5 104.1 -3.8    # south of A_04 (60.5 -2.25)
+wait 240
+mark b-replaced
+wait 450                 # A walks up to and pushes A_03 west (40 + 150 + 240 + 210 ticks... B waits for it)
+mark b-seen-a
+toward 60.5 -1.0 40      # walk up to A_04's south face
+toward 60.5 -1.0 150 A   # B grabs and pushes A_04 north
+wait 200
+mark b-push1
+wait 600
+mark b-blocks-end

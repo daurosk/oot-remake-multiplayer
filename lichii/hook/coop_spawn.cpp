@@ -1679,6 +1679,15 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
             }
             std::uint64_t vtable = 0;
             std::uint32_t state = 0;
+            if (slot.actor.find("LightBall") != std::string::npos && slot.probe_seen < 12) {
+                // PROBE 177-5: each of its first ticks: its place and actor state.
+                std::array<float, 3> at{};
+                std::uint32_t st = 0;
+                guest.Read(slot.taken + 0x31c, at.data(), 12);
+                ReadValue(guest, slot.taken + addr::kActorState, st);
+                Say(slot.actor + ": PROBE5 tick " + std::to_string(slot.probe_seen) + " at " + std::to_string(at[0]) +
+                    " " + std::to_string(at[1]) + " " + std::to_string(at[2]) + " state " + std::to_string(st));
+            }
             if (!ReadValue(guest, slot.taken, vtable) || vtable != slot.vtable ||
                 !ReadValue(guest, slot.taken + addr::kActorState, state) || Gone(state)) {
                 slot.phase = Phase::done;  // it went by itself (a fuse, a hit)
@@ -1949,6 +1958,18 @@ std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::ui
             copy.rotation.value_or(std::array<float, 9>{1, 0, 0, 0, 1, 0, 0, 0, 1});
         const Vec3 scale{1.0f, 1.0f, 1.0f};
         std::memcpy(arg.data() + 0x00, copy.position.data(), 12);
+        // PROBE 177-5 (not for main): every second light-ball copy is made 1.5 m above the owner's spawn
+        // (out of its boss's body: does it then live?).
+        if (copy.actor.find("LightBall") != std::string::npos) {
+            static unsigned probe_balls = 0;
+            if ((probe_balls++ % 2) == 1) {
+                float up = copy.position[1] + 1.5f;
+                std::memcpy(arg.data() + 0x04, &up, 4);
+                Say(copy.actor + ": PROBE5 made 1.5 m up (ball " + std::to_string(probe_balls) + ")");
+            } else {
+                Say(copy.actor + ": PROBE5 made at the owner's spawn (ball " + std::to_string(probe_balls) + ")");
+            }
+        }
         std::memcpy(arg.data() + 0x0c, rotation.data(), 36);
         std::memcpy(arg.data() + 0x30, scale.data(), 12);
         std::memcpy(arg.data() + 0x40, &create_default, 8);

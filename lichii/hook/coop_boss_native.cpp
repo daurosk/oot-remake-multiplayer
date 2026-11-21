@@ -237,6 +237,7 @@ void Table::Publish(const std::vector<Boss>& bosses) {
                 e.hold_since = steps_;
                 e.hold_asks = 0;
                 e.hold_rechoices = 0;
+                e.stall_rechoices = 0;  // (another game's turn since: judged anew)
                 ForgetOwnAsks(e);  // (row 177 review: learnt again as a copy from its own asks)
                 if (b.role == Role::copy) {
                     e.restart_action.reset();
@@ -355,7 +356,13 @@ void Table::Hold(Entry& e, const Boss& b) {
         e.hold_brain = e.mine.brain_verb;
         e.hold_action = action;
         e.hold_life = b.life;
-        e.hold_rechoices = 0;
+        if (e.stall_rechoices != 0 && b.life != e.stall_life) {
+            e.stall_rechoices = 0;  // a hit since: its fight goes on, nothing stuck is remembered
+        }
+        // Back in the move it was re-chosen out of (the re-choice's own short move between): the count goes on.
+        const bool stuck_again = e.stall_rechoices != 0 && b.animation == e.stall_animation &&
+                                 e.mine.brain_verb == e.stall_brain && action == e.stall_action;
+        e.hold_rechoices = stuck_again ? e.stall_rechoices : 0;
     }
     if (!same || event_ || e.dying || !StallJudged(b.animation, b.life)) {
         // A new move, or none to judge (our event's, its death's, a cutscene's, nothing read): counted from now.
@@ -367,6 +374,11 @@ void Table::Hold(Entry& e, const Boss& b) {
         return;
     }
     ++e.hold_rechoices;
+    e.stall_animation = e.hold_animation;
+    e.stall_brain = e.hold_brain;
+    e.stall_action = e.hold_action;
+    e.stall_life = e.hold_life;
+    e.stall_rechoices = e.hold_rechoices;
     e.hold_since = steps_;
     e.hold_asks = 0;
     e.rechoose = true;

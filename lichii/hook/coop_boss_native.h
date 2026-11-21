@@ -105,11 +105,33 @@ constexpr std::uint64_t ActionAttributesAt(std::uint64_t bsa, std::int32_t verb)
 }
 // Interrupt (murmur3 4112727460) is attribute 1: the reaction moves (a hit, a stun's start) that cut a move.
 inline constexpr std::uint64_t kAttributeInterrupt = 1u << 1;
-// In its attack sequence: an attack, or a reaction that cut one (Interrupt). A turn passes only when this falls,
-// so a boss is never handed over in the middle of its own reaction: lane run 20261120-180245, Phantom Ganon's
-// RideJumpAttack cut by a hit fell into verb 134 (attributes 0x6, Interrupt); the hand-over there started 134 over
-// in the new owner's game and he held 'Run' in his painting ~75 s, never attacking again.
+// An attack, or a reaction that cut one (Interrupt): one frame's reading, with no memory.
 constexpr bool IsAttack(std::uint64_t bits) { return (bits & (kAttributeAttack | kAttributeInterrupt)) != 0; }
+// Boss turns: a boss's attack sequence over the frames, as its samples send it (object_state::attacking). A turn
+// passes only where this falls, and it falls only where an attack ENDS BY ITSELF (the Attack attribute falls into
+// a plain move: Phantom Ganon's RideJumpAttack 115 into 96, each good turn of run 20261120-184021).
+// A reaction (Interrupt) cuts the sequence: the plain move after it is the reaction's own tail, not a choice of
+// the boss's AI, and the game hands it nothing to end it with in another game. Phantom Ganon hit into verb 134
+// went on into 'Run' (verb 40, attributes 0: his retreat into a painting); handed over there (run
+// 20261120-184021, and at the reaction's start in 20261120-180245) the new owner's game started that Run over
+// and nothing ever ended it. So after a reaction the sequence stays on until the boss's own next attack, and the
+// turn passes at THAT attack's end. `cut` is that memory, kept per actor by the walk.
+// Only a boss (`latch`): a plain enemy's turn may also end on the idle rule (server/boss_turns.hpp idle_us),
+// which needs its quiet time read as quiet.
+struct AttackSequence {
+    bool cut = false;  // a reaction ran since its last attack
+};
+constexpr bool InAttackSequence(AttackSequence& s, std::uint64_t bits, bool latch) {
+    if ((bits & kAttributeAttack) != 0) {
+        s.cut = false;  // its own next attack: the sequence ends where this attack does
+        return true;
+    }
+    if ((bits & kAttributeInterrupt) != 0) {
+        s.cut = latch;
+        return true;
+    }
+    return s.cut;
+}
 inline constexpr std::uint64_t kSetBrainVerb = 0x6733b0;       // main+
 inline constexpr std::uint64_t kRequestActionVerb = 0xc08f0;   // main+
 inline constexpr std::uint64_t kMalloc = 0x14c6c90;            // main+, as coop_puppet.h
@@ -588,6 +610,16 @@ private:
         std::uint64_t hold_asks = 0;
         int hold_rechoices = 0;
         bool rechoose = false;
+        // The move last re-chosen as stuck, and how often. The re-choice itself makes its AI ask another move
+        // for a moment before it falls back into the stuck one (Phantom Ganon: 'Run' verb 40, then 96 for 22
+        // frames, then 40 again; run 20261120-184021), which read as a new move and started the count over: "1
+        // of 3" four times, 100 s, and the server's hand-over (after kMaxStallRechoices) never came. Back in this
+        // same move at the same life, the count goes on. A hit that took life forgets it.
+        std::string stall_animation;
+        std::int32_t stall_brain = 0;
+        std::optional<std::int32_t> stall_action;
+        std::optional<std::int32_t> stall_life;
+        int stall_rechoices = 0;
         // Row 178: a copy made ours in the middle of a move (put_action) whose AI did not run its body: that move
         // asked again as ours with kReqStartOver, naming the node its own AI names for it (restart_ask), so its
         // module runs it from its start in our game (its own sub-state, physics and animation events) and its AI

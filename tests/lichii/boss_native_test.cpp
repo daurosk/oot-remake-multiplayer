@@ -1348,6 +1348,101 @@ TEST_CASE("native boss: row 149: our boss stuck in one move with no hit chooses 
     CHECK(HoldMove(t, g, Table::kStallSteps + 2, "Rolling_Start"));
 }
 
+TEST_CASE("native boss: row 149: the stall count goes on through the re-choice's own short move, to 3 of 3") {
+    // Run 20261120-184021: Phantom Ganon stuck in 'Run' (verb 40); each re-choice made his AI ask verb 96 for 22
+    // frames and then 40 again, and the count started over: "1 of 3" four times.
+    Table t;
+    t.SetOn(true, true);
+    FakeGuest g;
+    const std::int32_t brain = 12;
+    g.Write(kBsa + addr::kBsaBrainVerb, &brain, 4);
+    t.Publish({Dodongo(Role::owner, "Rolling_Loop", 24)});
+    CHECK_FALSE(t.OnBrainVerb(kBsa, brain, false, false));
+    const auto said = [&](const char* text) {
+        bool found = false;
+        for (const std::string& n : t.TakeNotes()) {
+            found = found || n.find(text) != std::string::npos;
+        }
+        return found;
+    };
+    const auto rechosen = [&] {  // the re-choice's call runs, then its short other move
+        CHECK_FALSE(t.Step(g, true, 0, kMain));
+        CHECK_FALSE(HoldMove(t, g, 22, "Rolling_Start"));
+    };
+    REQUIRE(HoldMove(t, g, Table::kStallSteps + 2));
+    CHECK(said("(1 of 3)"));
+    rechosen();
+    REQUIRE(HoldMove(t, g, Table::kStallSteps + 2));
+    CHECK(said("(2 of 3)"));
+    rechosen();
+    REQUIRE(HoldMove(t, g, Table::kStallSteps + 2));
+    CHECK(said("(3 of 3)"));
+    rechosen();
+    // No fourth: left to the server's hand-over (boss_stall_us).
+    CHECK_FALSE(HoldMove(t, g, Table::kStallSteps * 2));
+    CHECK(t.Totals().owner_stalls == 3);
+    SUBCASE("a hit that took life forgets it: the same move stuck later is judged anew") {
+        CHECK_FALSE(HoldMove(t, g, 2, "Rolling_Loop", true, 0));  // life 20
+        t.TakeNotes();
+        std::optional<CoopPuppet::Call> c;
+        for (std::uint64_t i = 0; i < Table::kStallSteps + 2 && !c; ++i) {
+            CHECK_FALSE(t.OnActionVerb(kBsa, GameRequest(5, kNode), false, false));
+            t.Publish({Dodongo(Role::owner, "Rolling_Loop", 20)});
+            c = t.Step(g, false, 0, kMain);
+        }
+        CHECK(c);
+        CHECK(said("(1 of 3)"));
+    }
+    SUBCASE("another move that sticks is counted from 1") {
+        REQUIRE(HoldMove(t, g, Table::kStallSteps + 2, "Rolling_Start"));
+        CHECK(said("(1 of 3)"));
+    }
+}
+
+TEST_CASE("native boss: boss turns: after a reaction the attack sequence stays on until its own next attack ends") {
+    // Phantom Ganon, run 20261120-184021: RideJumpAttack 115 (Attack), SmallDamage 134 (0x6, Interrupt), 'Run' 40
+    // (0), the ride 96 (0).
+    constexpr std::uint64_t kAttack = 0x800000000001, kReaction = 0x6, kPlain = 0, kRun = 0x800000000000;
+    {
+        // An attack that ends by itself: the sequence falls at its end (the turn's edge).
+        addr::AttackSequence s;
+        CHECK_FALSE(addr::InAttackSequence(s, kPlain, true));
+        CHECK(addr::InAttackSequence(s, kAttack, true));
+        CHECK_FALSE(addr::InAttackSequence(s, kPlain, true));
+    }
+    {
+        // An attack cut by a hit: on through the reaction, its tail and the plain moves after, until the next
+        // attack; the edge is that attack's end.
+        addr::AttackSequence s;
+        CHECK(addr::InAttackSequence(s, kAttack, true));
+        CHECK(addr::InAttackSequence(s, kReaction, true));
+        CHECK(addr::InAttackSequence(s, kPlain, true));  // 'Run' after SmallDamage: no edge (the 184021 hand-over)
+        CHECK(addr::InAttackSequence(s, kRun, true));
+        CHECK(addr::InAttackSequence(s, kPlain, true));
+        CHECK(addr::InAttackSequence(s, kAttack, true));
+        CHECK_FALSE(addr::InAttackSequence(s, kPlain, true));
+        CHECK_FALSE(addr::InAttackSequence(s, kRun, true));
+    }
+    {
+        // Hit between attacks (no attack cut): the same.
+        addr::AttackSequence s;
+        CHECK_FALSE(addr::InAttackSequence(s, kPlain, true));
+        CHECK(addr::InAttackSequence(s, kReaction, true));
+        CHECK(addr::InAttackSequence(s, kPlain, true));
+        CHECK(addr::InAttackSequence(s, kAttack, true));
+        CHECK(addr::InAttackSequence(s, kReaction, true));  // cut again
+        CHECK(addr::InAttackSequence(s, kPlain, true));
+    }
+    {
+        // A plain enemy: no memory, so its quiet time after a hit reads as quiet (the server's idle turn).
+        addr::AttackSequence s;
+        CHECK(addr::InAttackSequence(s, kReaction, false));
+        CHECK_FALSE(addr::InAttackSequence(s, kPlain, false));
+        CHECK(addr::InAttackSequence(s, kAttack, false));
+        CHECK_FALSE(addr::InAttackSequence(s, kPlain, false));
+    }
+}
+
 TEST_CASE("native boss: row 149: a hit, an idle boss, our event, no life read or a copy never stall") {
     FakeGuest g;
     const std::int32_t brain = 12;

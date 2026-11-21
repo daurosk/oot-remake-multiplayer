@@ -236,6 +236,20 @@ cp "$tmp/build.py.good" "$D/tools/puppet_pack/build.py"
 : >"$log"
 bash "$kit/scripts/build.sh" </dev/null >"$tmp/pack5.txt" 2>&1; export CODE=$?
 check 'pack: the tool fixed: the next start makes the pack' bash -c '[ $CODE -eq 0 ] && grep -q "^puppet_pack" "$2" && [ -f "$3/.coop-stamp" ]' _ "$tmp/pack5.txt" "$log" "$P"
+# (review of row 210: the pack there is kept while a new one is made, so a make that fails puts it back, with its own
+# stamp: the game keeps its pack, and the next start tries again)
+printf 'import sys\nprint("BuildError: disk full")\nsys.exit(1)\n' >"$D/tools/puppet_pack/build.py"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/pack6.txt" 2>&1; export CODE=$?
+check 'pack: a pack there and the tool fails: the pack from before stays (its own stamp), said plainly' \
+    bash -c '[ $CODE -eq 0 ] && grep -q "BuildError: disk full" "$1" && grep -q "could not be made again (the lines above say why): the one from before stays" "$1" &&
+        [ -f "$2/coop_puppet.json" ] && [ -f "$2/.coop-stamp" ]' _ "$tmp/pack6.txt" "$P"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/pack7.txt" 2>&1
+check 'pack: still the broken tool: the next start tries again' bash -c 'grep -q "BuildError: disk full" "$1" && [ -f "$2/coop_puppet.json" ]' _ "$tmp/pack7.txt" "$P"
+cp "$tmp/build.py.good" "$D/tools/puppet_pack/build.py"
+: >"$log"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/pack8.txt" 2>&1; export CODE=$?
+check 'pack: the tool back: the pack from before (made by this tool) is current again, not made again' \
+    bash -c '[ $CODE -eq 0 ] && ! grep -q "^puppet_pack" "$2" && grep -q "puppet pack: built already" "$1"' _ "$tmp/pack8.txt" "$log"
 
 # OoT Character Select by Snail (data/longshot/CHARACTER-SELECT.txt): fetched from his release onto the PC, never
 # carried. Offline with his zip and characters.json already in data/builder/charsel (their SHA-256 match): no network.
@@ -318,14 +332,26 @@ sed -i 's/^character_select = yes$/character_select = no/' "$D/coop-options.ini"
 check 'Character Select: character_select = no keeps the Characters page, takes the NPC part out, no download' \
     bash -c '[ $CODE -eq 0 ] && [ ! -e "$2/romfs/Model/Player_Child_C000.Player_Child.bfres.zs" ] && [ ! -e "$2/romfs/Tex" ] && [ -f "$2/romfs/UI/LayoutArchiveCategory.Product.100.byml.zs" ] &&
         grep -q "^v1 .* ui cz1$" "$2/coop-charsel.txt" && grep -q "exefs=OoT Character Select/exefs/" "$3/game/coop-built-from.txt" && ! grep -q downloading "$1"' _ "$tmp/build-cs4.txt" "$CS" "$D"
-check 'Character Select pack: full -> UI-only (NPC models taken out) makes the puppet pack again' bash -c 'grep -q "^puppet_pack" "$1"' _ "$log"
-# The mod switched off in the Mods tab, then on again: the pack each time (its characters follow the list).
+# (player report 210: the UI-only pack was kept in data/pack-variants when the full one was made: put back, not made)
+check 'Character Select pack: full -> UI-only (NPC models taken out) puts the UI-only pack made before back (not made again)' \
+    bash -c '! grep -q "^puppet_pack" "$1" && grep -q "puppet pack: the one made before for these characters is put back" "$2"' _ "$log" "$tmp/build-cs4.txt"
+built_on=$(cat "$D/game/coop-built-from.txt")
+# The mod switched off in the Mods tab, then on again: the pack and the game made the first time, put back the second.
 printf 'coop-mods 1\noff OoT Character Select\n' >"$D/game/mods/coop-mods.list"; : >"$log"
-OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >/dev/null 2>&1
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs5.txt" 2>&1
 check 'Character Select pack: switched off in the Mods tab makes the puppet pack again' bash -c 'grep -q "^puppet_pack" "$1" && grep -q "list:off" "$2/.coop-stamp"' _ "$log" "$P"
-rm -f "$D/game/mods/coop-mods.list"; : >"$log"
-OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >/dev/null 2>&1
-check 'Character Select pack: switched on again makes it again' bash -c 'grep -q "^puppet_pack" "$1" && grep -q "list:on" "$2/.coop-stamp"' _ "$log" "$P"
+check 'Character Select game: switched off in the Mods tab: built without its code, the build before kept, the line says why' \
+    bash -c 'grep -q "^make_game .*--out" "$1" && grep -q "Building the game: the mods. code patches changed" "$2" &&
+        grep -q "is kept, so going back to these mods takes seconds" "$2" && [ -f "$(ls -1d "$3"/game-variants/*/ | head -n 1)stamp.txt" ]' _ "$log" "$tmp/build-cs5.txt" "$D"
+# (on again as the Mods tab writes it: an "on" row, which the game reads as no row: the same stamp as before the switch)
+printf 'coop-mods 1\non OoT Character Select\n' >"$D/game/mods/coop-mods.list"; : >"$log"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs6.txt" 2>&1
+rm -f "$D/game/mods/coop-mods.list"
+check 'Character Select pack: switched on again puts the pack made before back (not made again)' \
+    bash -c '! grep -q "^puppet_pack" "$1" && grep -q "list:on" "$2/.coop-stamp" && grep -q "is put back (seconds" "$3"' _ "$log" "$P" "$tmp/build-cs6.txt"
+check 'Character Select game: switched on again puts the build made before back (no make_game), with its stamp' \
+    bash -c '! grep -q "^make_game" "$1" && grep -q "putting back the build made before with these mods" "$2" && [ "$(cat "$3/game/coop-built-from.txt")" = "$4" ] &&
+        [ -x "$3/game/longshot" ] && [ -f "$3/game/image.bin" ] && ! ls "$3"/game/*.new >/dev/null 2>&1' _ "$log" "$tmp/build-cs6.txt" "$D" "$built_on"
 : >"$log"
 OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >/dev/null 2>&1
 check 'Character Select pack: nothing changed -> the pack is not made again' bash -c '! grep -q "^puppet_pack" "$1"' _ "$log"
@@ -459,6 +485,18 @@ check 'build: a hand-put seed older than the pack stays as it is' \
 rm -rf "$G/mods/randomizer-KL"
 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-r2.txt" 2>&1
 check 'build: the next start leaves the rebuilt seed alone' bash -c '! grep -q "randomizer: seed" "$1"' _ "$tmp/build-r2.txt"
+# (player report 210: by content, not by date) the seed keeps what it was built beside; the pack's table written again
+# with the same bytes (newer date) builds nothing, the table changed with an older date (a pack put back) builds it again.
+check 'build: a seed built again keeps its tables by content (coop-seed-tables.txt)' \
+    grep -q '^contents/0400486024DEC000/coop-puppet/romfs/System/Resource/T.rsizetable.zs [0-9a-f]\{64\}$' "$G/mods/randomizer-AB/coop-seed-tables.txt"
+touch -d '1 minute' "$G/mods/contents/0400486024DEC000/coop-puppet/$R/T.rsizetable.zs"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-r3.txt" 2>&1
+check 'build: the pack table dated newer with the same bytes -> the seed is not built again' bash -c '! grep -q "randomizer: seed" "$1"' _ "$tmp/build-r3.txt"
+echo pack2 >"$G/mods/contents/0400486024DEC000/coop-puppet/$R/T.rsizetable.zs"
+touch -d '2 hours ago' "$G/mods/contents/0400486024DEC000/coop-puppet/$R/T.rsizetable.zs"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-r4.txt" 2>&1
+check 'build: the pack table changed but dated older (a pack put back) -> the seed is built again' \
+    bash -c 'grep -q "seed randomizer-AB built again" "$1" && grep -qx pack2 "$2/mods/oot-remake-randomizer/staged.txt"' _ "$tmp/build-r4.txt" "$G"
 rm -rf "$G/tools/ootrr" "$G/romfs" "$G/mods/randomizer-AB" "$G/mods/oot-remake-randomizer" "$G/mods/_off"
 
 # A new patch set: refreshed in place, the game built again.

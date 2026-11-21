@@ -774,8 +774,11 @@ try {
     # (the stamp hashes only the list's rows that name a mod with code patches, Get-KitCodeModsListHash)
     Write-File (Join-Path $g 'mods\coop-mods.list') "coop-mods 1`noff Romfs Only`n"
     Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: a mod without code patches switched off -> nothing'
+    # (player report 210: an "on" row for it changes nothing the game reads, as no row: no build)
+    Write-File (Join-Path $g 'mods\coop-mods.list') "coop-mods 1`noff Romfs Only`noff oot character select`n"
+    Check ((Get-KitHookshotNeed $hk) -eq 'mods') 'hookshot need: the code mod named "off" in the list (any case) -> mods'
     Write-File (Join-Path $g 'mods\coop-mods.list') "coop-mods 1`noff Romfs Only`non oot character select`n"
-    Check ((Get-KitHookshotNeed $hk) -eq 'mods') 'hookshot need: the code mod named in the list (any case) -> mods'
+    Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: the code mod named "on" in the list (any case), as without a row -> nothing'
     Write-File (Join-Path $g 'coop-built-from.txt') (Get-KitHookshotStamp $hk)
     Write-File (Join-Path $g 'mods\coop-mods.list') "coop-mods 1`non OoT Character Select`non Romfs Only`noff oot character select`n"
     Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: the list moved a mod without code patches, a repeated row is not read -> nothing'

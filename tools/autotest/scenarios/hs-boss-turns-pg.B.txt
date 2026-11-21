@@ -1,0 +1,77 @@
+mark start
+nofairy                  # every bottle emptied: no fairy revive in the proof
+warp PhantomGanonStage PhantomGanonStage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark b-in
+wait 2400               # the intro, then the fight
+press ZL 10
+wait 600
+mark t1
+wait 600
+mark t2
+wait 600
+mark t3
+wait 600
+mark t4
+wait 600
+mark t5
+wait 600
+mark w1
+wait 300
+mark w2
+wait 300
+mark w3
+wait 300
+mark w4
+wait 300
+mark w5
+wait 300
+mark w6
+wait 300
+mark w7
+wait 300
+mark w8
+wait 300
+mark w9
+wait 300
+mark w10
+wait 300
+mark w11
+wait 300
+mark w12
+wait 300
+mark w13
+wait 300
+mark w14
+wait 300
+mark w15
+wait 300
+mark w16
+wait 300
+mark after
+wait 2400               # his death
+mark d1
+setflag Sequence_IsChildhood 0
+warp ForestTemple       # plain shooter check (C #48 (4)): Octorok within 15 m of both
+wait 1200
+mark ft-in
+place -41.7 99.0 -50.3   # 6 m north of it
+wait 600
+mark o1
+wait 600
+mark o2
+wait 600
+mark o3
+wait 600
+mark o4
+wait 600
+mark end

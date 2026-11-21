@@ -53,8 +53,9 @@ void SetOurLifeComponent(std::uint64_t component);
 std::uint64_t OurLifeComponent();
 // The objects walk: our Link's BSA and PerceptionEmitter components (0:
 // none), for the crawl and unseen (coop_dbno_body.h), and whether our Link
-// is Player_Adult (no crawl animations: Body::DownVerb). Any thread.
-void SetOurComponents(std::uint64_t bsa, std::uint64_t emitter, bool adult);
+// is Player_Adult (no crawl animations: Body::DownVerb), and our Link itself
+// (the adult's lying pose, Body::kLyingPose; 0: none). Any thread.
+void SetOurComponents(std::uint64_t bsa, std::uint64_t emitter, bool adult, std::uint64_t actor = 0);
 
 // The Life step hook (any game thread): the sum to take off `component`,
 // whose life is `life`, when the frame's own sum is `sum`. Our Link's goes

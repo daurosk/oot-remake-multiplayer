@@ -145,29 +145,35 @@ function Get-ProblemCrashRecords([string[]]$GameDirs, [string[]]$Known) {
     @($found | Sort-Object Name | Select-Object -Last 3)
 }
 
-# A crash record, masked as a problem line is (Protect-LogText, then the address gate drops a line), at most 64 KB.
+# A crash record, masked as a problem line is: Protect-LogText, players' names (those in $Names, from the sessions' logs,
+# and any the record itself gives where the module writes one) as <name>, then the address gate drops a line. 64 KB at
+# most (the first 4000 lines).
 function Get-ProblemCrashText([string]$Path, [hashtable]$Mask, [string]$UserName = $env:USERNAME,
-                              [string]$PcName = $env:COMPUTERNAME) {
+                              [string]$PcName = $env:COMPUTERNAME, [System.Collections.Generic.HashSet[string]]$Names = $null) {
+    if ($null -eq $Names) { $Names = New-Object 'System.Collections.Generic.HashSet[string]' }
+    $raw = New-Object System.Collections.Generic.List[string]
     $stream = Open-ProblemLog $Path
     try {
         $reader = New-Object System.IO.StreamReader($stream, (New-Object System.Text.UTF8Encoding $false), $true)
-        $out = New-Object System.Text.StringBuilder
         try {
-            while ($null -ne ($line = $reader.ReadLine())) {
-                $m = Protect-LogText $line $Mask $UserName $PcName
-                if (Test-ProblemHasAddress $m) { $m = '(a line with an address was left out)' }
-                if ($out.Length + $m.Length + 2 -gt $script:SendMaxCrashBytes) { [void]$out.Append("(cut)`r`n"); break }
-                [void]$out.Append($m).Append("`r`n")
-            }
+            while ($raw.Count -lt 4000 -and $null -ne ($line = $reader.ReadLine())) { Add-ProblemNames $line $Names; $raw.Add($line) }
         } finally { $reader.Dispose() }
-        $out.ToString()
     } finally { $stream.Dispose() }
+    $out = New-Object System.Text.StringBuilder
+    foreach ($line in $raw) {
+        $m = Protect-ProblemNames (Protect-LogText $line $Mask $UserName $PcName) $Names
+        if (Test-ProblemHasAddress $m) { $m = '(a line with an address was left out)' }
+        if ($out.Length + $m.Length + 2 -gt $script:SendMaxCrashBytes) { [void]$out.Append("(cut)`r`n"); break }
+        [void]$out.Append($m).Append("`r`n")
+    }
+    $out.ToString()
 }
 
 # The zip to send for one report: its problem-report.txt (from the report zip problem-report.ps1 just made, or a short
 # one when only a crash is new) and the new crash records as crash-record-<n>.txt. $null when there is nothing new.
 function New-ProblemSendZip([string]$ReportZip, [System.IO.FileInfo[]]$Crashes, [string]$OutZip, [string]$Version = '',
-                            [string]$UserName = $env:USERNAME, [string]$PcName = $env:COMPUTERNAME) {
+                            [string]$UserName = $env:USERNAME, [string]$PcName = $env:COMPUTERNAME,
+                            [System.Collections.Generic.HashSet[string]]$Names = $null) {
     if (-not $ReportZip -and @($Crashes).Count -eq 0) { return $null }
     $stage = Join-Path ([System.IO.Path]::GetTempPath()) ("coop-send-" + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
@@ -188,7 +194,7 @@ function New-ProblemSendZip([string]$ReportZip, [System.IO.FileInfo[]]$Crashes, 
         $n = 0
         foreach ($c in @($Crashes)) {
             $n++
-            $text = "$($c.Name -replace '-\d+-\d+(?=\.txt$)', '')`r`n" + (Get-ProblemCrashText $c.FullName $mask $UserName $PcName)
+            $text = "$($c.Name -replace '-\d+-\d+(?=\.txt$)', '')`r`n" + (Get-ProblemCrashText $c.FullName $mask $UserName $PcName $Names)
             [System.IO.File]::WriteAllText((Join-Path $stage "crash-record-$n.txt"), $text, (New-Object System.Text.UTF8Encoding $false))
         }
         $dir = Split-Path -Parent $OutZip
@@ -367,10 +373,13 @@ function Add-ProblemSendReport([string]$Kit, [string]$Version = '', [string[]]$L
         $rs = Read-ProblemState $rf
         $sf = Get-ProblemSendStateFile $Kit
         $ss = Read-ProblemSendState $sf
-        $report = New-ProblemReport $Logs $rs (Join-Path $Kit 'logs') $Version $UserName $PcName
+        $names = New-Object 'System.Collections.Generic.HashSet[string]'
+        $report = New-ProblemReport $Logs $rs (Join-Path $Kit 'logs') $Version $UserName $PcName $names
         $crashes = @(Get-ProblemCrashRecords $GameDirs $ss.crashes)
+        # (a crash record is masked with every player's name in the logs, also those of sessions read before)
+        if ($crashes) { Get-ProblemLogNames $Logs $names }
         $out = Join-Path (Get-ProblemSendDir $Kit) ((Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + (New-ProblemSendId) + '.zip')
-        $zip = New-ProblemSendZip $(if ($report) { $report.Zip } else { '' }) $crashes $out $Version $UserName $PcName
+        $zip = New-ProblemSendZip $(if ($report) { $report.Zip } else { '' }) $crashes $out $Version $UserName $PcName $names
         Write-ProblemState $rf $rs
         if ($crashes) {
             $ss.crashes = @($ss.crashes) + @($crashes | ForEach-Object { $_.Name }); Write-ProblemSendState $sf $ss

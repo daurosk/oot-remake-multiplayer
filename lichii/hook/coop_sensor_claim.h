@@ -77,7 +77,7 @@ inline std::optional<bool> InArea(const std::vector<CoopLogicProbe::Plug>& plugs
 // our game only: its AS plays the game's `Lifted` command there (the copy's own AS slot 0). The owner's place and
 // animation are put over a copy (Sync::Poses, the Mover), so a Cucco another player owns is pulled out of our hands. Of every AS in the
 // romfs, `cmd_Lifted` exists only in Animal_Cucco, Animal_SuperCucco and Animal_FlockCucco. The NPCs'
-// `Act_LiftRest` is their common set's, and only Ruto (each game's own, IsOwnPuzzle) is carried. Pots and rocks
+// `Act_LiftRest` is their common set's, and only Ruto (each game's own, IsOwnFollower) is carried. Pots and rocks
 // in Link's hands have their own path (WORLD_MOVE, docs/world.md), and bombs theirs (BOMB_TAKE). While our copy
 // plays `Lifted`, the sync claims it as it claims an area (Sync::AreaClaim): the claim keeps the owner's motion off
 // our copy, so `Lifted` holds while our Link carries it. The server hands the copy over, and our game then runs the

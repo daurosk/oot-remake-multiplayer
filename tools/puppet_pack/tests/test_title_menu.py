@@ -105,6 +105,25 @@ class LayoutTest(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<I", n, 8)[0], len(n))
         self.assertEqual(n[:len(d)][0x800:], d[0x800:])   # the old strings unchanged
 
+    def test_the_list_buttons_and_the_hint_after_the_marker_stored_hidden(self):
+        d = tm.add_marker(make_layout())
+        n = tm.add_menu(make_layout())
+        panes, parts = tm.read_layout(n)
+        names = [p[0] for p in panes]
+        want = ["Pa_Button_%02d" % i for i in range(4, 4 + tm.LIST_BUTTONS)] + [tm.HINT]
+        self.assertEqual(names, PANES + [tm.MARKER] + want)
+        self.assertEqual([p[0] for p in parts][-len(want):], want)
+        self.assertEqual([p[1] for p in panes[:8]], [p[1] for p in tm.read_layout(d)[0]])   # (nothing moves)
+        for i, name in enumerate(want):
+            rec = panes[names.index(name)][1]
+            self.assertEqual(struct.unpack_from("<I", n, rec + 0x28)[0], 2)   # (the buttons' alignment pane)
+            self.assertAlmostEqual(struct.unpack_from("<f", n, rec + 0x20)[0], -395.0 + tm.ROW_STEP_Y * (i + 1))
+            self.assertEqual(struct.unpack_from("<I", n, rec + 0x38)[0] & 1, 0)   # (stored hidden)
+        with self.assertRaises(tm.TitleMenuError):
+            tm.add_list(n)
+        with self.assertRaises(tm.TitleMenuError):
+            tm.add_list(make_layout())   # (no marker)
+
     def test_refuses_a_layout_that_has_them(self):
         with self.assertRaises(tm.TitleMenuError):
             tm.add_marker(tm.add_marker(make_layout()))
@@ -120,9 +139,9 @@ class MsbtTest(unittest.TestCase):
         self.assertEqual(tm.write_msbt(h, s, labels, texts), m)
         h, s, labels, texts = tm.read_msbt(tm.add_rows(m))
         self.assertEqual(labels["0100"], 3)
-        self.assertEqual([t[:-1].decode() for t in texts], ["New Game", "Continue", "Options", "Host", "Join",
+        self.assertEqual([t[:-1].decode() for t in texts], ["New Game", "Continue", "Options", "Host a game", "Join a game",
                                                             "Co-op Settings", "Start", "Multiplayer", "Options",
-                                                            "Back"] + ["." * 64] * 4)   # (the live texts' placeholders)
+                                                            "Back"] + ["." * 64] * (len(tm.LIVE) - 1) + ["." * 160])   # (the live texts' placeholders)
         self.assertEqual(struct.unpack_from("<I", tm.add_rows(m), 0x12)[0], len(tm.add_rows(m)))
 
     def test_labels_land_in_their_hash_bucket(self):
@@ -196,7 +215,7 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(set(written), set(made))
         layouts = [d for n, d in sarc.read_entries(written[tm.TITLE_ARCHIVE]) if n == tm.TITLE_LAYOUT]
         self.assertEqual(len(layouts), 2)
-        self.assertTrue(all(len(tm.read_layout(d)[0]) == len(PANES) + 1 for d in layouts))
+        self.assertTrue(all(len(tm.read_layout(d)[0]) == len(PANES) + 2 + tm.LIST_BUTTONS for d in layouts))
         _, _, labels, _ = tm.read_msbt(sarc.read(written["Mals/JPja.Product.110.sarc.zs"])[tm.MSG_FILE])
         self.assertIn("0106", labels)
         self.assertTrue(all(sizes[k] > before[k] for k in before))
@@ -215,10 +234,12 @@ class LanguageTest(unittest.TestCase):
         self.assertEqual(cn["0100"], "创建房间")
         self.assertEqual(dict(tm.rows_for("Mals/TWzh.Product.110.sarc.zs"))["0104"], "連線")
         en = dict(tm.rows_for("Mals/USen.Product.110.sarc.zs"))
-        self.assertEqual(en["0100"], "Host")
+        self.assertEqual(en["0100"], "Host a game")
         for rows in (cn, en):
             for label, _ in tm.LIVE:
                 self.assertIn(label, rows)
+            self.assertIn("Coop_Live_T13", rows)
+            self.assertIn("Coop_Live_Hint", rows)
 
 
 if __name__ == "__main__":

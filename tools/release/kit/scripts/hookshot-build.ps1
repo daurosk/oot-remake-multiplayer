@@ -229,6 +229,19 @@ function Invoke-PuppetPackStep([string]$exeDir) {
     $mod = Join-Path $exeDir 'mods\contents\0400486024DEC000\coop-puppet'
     $oldMod = Join-Path $exeDir 'mods\coop-puppet'
     if (Test-Path -LiteralPath (Join-Path $oldMod 'coop_puppet.json')) { Remove-Item -LiteralPath $oldMod -Recurse -Force }
+    # (player report 210: the pack was made again at the end of every build and module step, 1 to 4 minutes each, also
+    # when nothing it is made from had changed. Now only when Test-KitPuppetPackStale says so (none, incomplete, another
+    # pack tool, other Character Select characters), and a pack kept from before for exactly these goes back in seconds.
+    # make-puppet-pack.cmd (-PackOnly) always makes it.)
+    $packDir = Join-Path $kit 'tools\puppet_pack'
+    if (-not $PackOnly -and -not (Test-KitPuppetPackStale (Join-Path $mod 'coop_puppet.json') $packDir)) {
+        Write-Host '  puppet pack: up to date (made again only when the pack tool, the Character Select characters or a pack file change)'
+        return $true
+    }
+    if (-not $PackOnly) {
+        $back = Restore-KitPuppetPack $kit $mod $packDir
+        if ($back) { Write-Host $back; return $true }
+    }
     $packFrom = $Game
     if (-not $packFrom) {
         $last = Join-Path $hs 'game-files.txt'
@@ -280,7 +293,12 @@ function Invoke-PuppetPackStep([string]$exeDir) {
         }
     }
     if ($packFrom -and (Test-Path -LiteralPath $packFrom) -and (Test-Path -LiteralPath $packTool)) {
-        Write-Host '  Making the puppet pack (how you see the other players; about a minute) ...'
+        # (why, in one line: Get-PuppetPackHint's reason; and about how long: 1 to 4 minutes, measured 3:19 on a fast PC)
+        $why = if (Test-Path -LiteralPath (Join-Path $mod 'coop_puppet.json')) { Get-PuppetPackHint (Join-Path $mod 'coop_puppet.json') $packDir } else { 'Puppet pack: none yet.' }
+        if ($why) { Write-Host "  $(($why -split '\. ')[0])." }
+        Write-Host '  Making the puppet pack (how you see the other players; 1 to 4 minutes) ...'
+        # (the pack there is kept for later: switching Character Select back puts it back in seconds)
+        $keptPack = if (-not $PackOnly) { Save-KitPuppetPack $kit $mod } else { '' }
         $ErrorActionPreference = 'Continue'
         # The kit's pack command (kit-paths.ps1 Get-KitPackArgs: with the title's rows and the pause menu's tab), the
         # same one the test kits run. As the Linux kit's build.sh.
@@ -290,7 +308,18 @@ function Invoke-PuppetPackStep([string]$exeDir) {
         $made = $true
         $ErrorActionPreference = 'Stop'
         if ($code -eq 0) { Remove-Item -LiteralPath (Join-Path $hs 'pack-asked.txt') -Force -ErrorAction SilentlyContinue }
-        if ($code -ne 0) { Write-Host '  The puppet pack could not be made (the lines above say why): the game starts, and the other players show as names only until it is made. Every start tries again.' -ForegroundColor Yellow }
+        if ($code -ne 0) {
+            # (the pack there before goes back in, so a make that failed, a full disk or a tool error, leaves the pack the game had)
+            if ($keptPack -and (Test-Path -LiteralPath (Join-Path $keptPack 'coop-puppet\coop_puppet.json'))) {
+                if (Test-Path -LiteralPath $mod) { Remove-Item -LiteralPath $mod -Recurse -Force -ErrorAction SilentlyContinue }
+                if (Move-KitFolder (Join-Path $keptPack 'coop-puppet') $mod) {
+                    Remove-Item -LiteralPath $keptPack -Recurse -Force -ErrorAction SilentlyContinue
+                    Write-Host '  The puppet pack could not be made again (the lines above say why): the one from before stays, so the game starts with it. Every start tries again.' -ForegroundColor Yellow
+                    $code = -1
+                }
+            }
+            if ($code -ne -1) { Write-Host '  The puppet pack could not be made (the lines above say why): the game starts, and the other players show as names only until it is made. Every start tries again.' -ForegroundColor Yellow }
+        }
     } else {
         Write-Host '  No puppet pack this time: the other players show as names only.' -ForegroundColor Yellow
     }
@@ -509,6 +538,24 @@ if (-not $Rebuild -and -not $CheckOnly -and $Out -ieq $defaultOut -and -not (Fin
         $global:LASTEXITCODE = 0
     }
 }
+# The game built from another stamp than this start wants (player report 210: a mod with code patches switched on or
+# off on the Mods tab, an update, Revert.bat): the build there is kept first (kit-paths.ps1 Save-KitGameVariant, a
+# copy of the files a build makes), and one of exactly this stamp kept from before is put back instead of a build
+# (seconds where a build is 5 to 45 minutes). Switching Character Select off and on again built the game twice.
+$gameStampFile = Join-Path $Out 'coop-built-from.txt'
+$stampWas = if (Test-Path -LiteralPath $gameStampFile) { [System.IO.File]::ReadAllText($gameStampFile) } else { '' }
+if (-not $Rebuild -and -not $CheckOnly -and (Find-HookshotExe $Out) -and $stampWas -and $stampWas -ne $gameWant) {
+    Write-Host ''
+    Write-Host '  Keeping the game as it is built now, for later (about 650 MB, a few seconds) ...'
+    $line = Save-KitGameVariant $kit $Out
+    if ($line) { Write-Host $line }
+    $kept = if ($wantDlss -eq (Test-KitHookshotDlss $Out)) { Find-KitGameVariant $kit $gameWant $wantDlss } else { '' }
+    if ($kept) {
+        Step 'The game: putting back the build made before with these mods (seconds, instead of building it again)'
+        if (Restore-KitGameVariant $kept $Out) { Write-Host "  Put back into $Out." }
+        else { Write-Host '  It could not be put back (a file in use?): the game is built again instead.' -ForegroundColor Yellow }
+    }
+}
 # The game built for another Longshot release or commit (a kit gone back to an older version, Revert.bat): when this
 # PC's game cache (Find-KitHookshotCachedGame) holds a build made from exactly this kit's release, pin and patches,
 # it is copied over the game instead of building it again (15 to 45 minutes). Never copied: the player's files
@@ -716,7 +763,8 @@ if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
     if ($free -and $free -lt 60GB -and -not (Test-Path -LiteralPath (Join-Path $work 'sa'))) {
         Write-Host ('Warning: {0:N0} GB free on {1}; the first build wants about 60 GB.' -f ($free / 1GB), $drive) -ForegroundColor Yellow
     }
-    Step 'Building the game (10 to 45 minutes; the PC stays usable)'
+    # (why this build runs and about how long, in one line: player report 210, "a whole long process that takes forever")
+    Step "Building the game: $(Get-KitBuildWhyText $stampWas $gameWant) The PC stays usable."
     $buildLog = Join-Path $hs 'build.log'
     $buildArgs = $gameArgs + @('--out', $Out, '--work', $work, '--language', $Language)
     if ($Jobs) { $buildArgs += @('--jobs', "$Jobs") }

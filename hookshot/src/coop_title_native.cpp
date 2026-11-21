@@ -68,38 +68,78 @@ Look TypingLook(const CoopPauseMenu::View& v, char letter, int key) {
     return out;
 }
 
-Look LookFor(const CoopPauseMenu::View& v, int top) {
-    Look l;
-    std::vector<int> shown;   // (the view's rows the buttons may show: all but headings)
-    int at = -1;
+namespace {
+
+// The view's rows the buttons may show (all but headings), and where the selected one is among them (-1: none).
+std::vector<int> Shown(const CoopPauseMenu::View& v, int* at) {
+    std::vector<int> shown;
+    *at = -1;
     for (std::size_t i = 0; i < v.rows.size(); ++i) {
         if (v.rows[i].kind == CoopPauseMenu::RowKind::kHeading) continue;
-        if (static_cast<int>(i) == v.selected) at = static_cast<int>(shown.size());
+        if (static_cast<int>(i) == v.selected) *at = static_cast<int>(shown.size());
         shown.push_back(static_cast<int>(i));
     }
+    return shown;
+}
+
+}  // namespace
+
+Look LookFor(const CoopPauseMenu::View& v, int top, int buttons) {
+    Look l;
+    buttons = std::clamp(buttons, kButtons, kMaxButtons);
+    const int per_page = buttons - 1;   // (the last button: Back)
+    l.per_page = per_page;
+    int at = -1;
+    const std::vector<int> shown = Shown(v, &at);
     const int n = static_cast<int>(shown.size());
-    top = std::clamp(top, 0, std::max(0, n - kRowButtons));
-    if (at >= 0 && at < top) top = at;
-    if (at >= top + kRowButtons) top = at - kRowButtons + 1;
-    l.top = top;
-    for (int b = 0; b < kRowButtons && top + b < n; ++b) {
-        const int row = shown[static_cast<std::size_t>(top + b)];
+    l.pages = std::max(1, (n + per_page - 1) / per_page);
+    // (the page that holds the selected row; nothing selected: the page shown before)
+    l.page = std::clamp(at >= 0 ? at / per_page : std::max(0, top) / per_page, 0, l.pages - 1);
+    l.top = l.page * per_page;
+    const int on_page = std::clamp(n - l.top, 0, per_page);
+    for (int b = 0; b < on_page; ++b) {
+        const int row = shown[static_cast<std::size_t>(l.top + b)];
         l.rows[static_cast<std::size_t>(b)] = row;
         l.texts[static_cast<std::size_t>(b)] = RowText(v.rows[static_cast<std::size_t>(row)]);
+        l.dim[static_cast<std::size_t>(b)] = v.rows[static_cast<std::size_t>(row)].fixed;
     }
-    // (fewer rows than buttons: Back right under the last, the buttons after it not shown; a page of one row had Back
-    // three rows down, a tester's "super janky")
-    // (never under three buttons: with two shown, the game put its own word on the second, "Join" for our Back)
-    const int shown_rows = std::max(1, std::min(kRowButtons, n - top));
-    l.back = std::max(kRowButtons - 1, shown_rows < kRowButtons ? shown_rows : kButtons - 1);
+    // (Back right under the page's last row, the buttons after it not shown; never under the third button: with two
+    // shown, the game put its own word on the second, "Join" for our Back. A page of one row had Back three rows
+    // down, a tester's "super janky")
+    l.back = std::max(kRowButtons - 1, on_page);
     l.buttons = l.back + 1;
-    for (int b = 0; b < kButtons; ++b) {
+    for (int b = 0; b < l.back; ++b) {
         if (l.texts[static_cast<std::size_t>(b)].empty()) l.texts[static_cast<std::size_t>(b)] = " ";
     }
     l.texts[static_cast<std::size_t>(l.back)] = "Back";
     l.rows[static_cast<std::size_t>(l.back)] = -1;
-    l.focus = at >= 0 ? at - top : l.back;
+    l.focus = at >= 0 ? at - l.top : l.back;
+    // (more than one page: the page first, then what the row does)
+    const std::string paged =
+        l.pages > 1 ? "Page " + std::to_string(l.page + 1) + " of " + std::to_string(l.pages) + " (ZL/ZR)" : std::string();
+    l.hint = Fit(paged.empty() ? v.help : v.help.empty() ? paged : paged + "   " + v.help, kHintBytes);
     return l;
+}
+
+float ColumnRaise(float lowest, float highest, float raised, float scale) {
+    if (scale <= 0.0f) scale = 1.0f;
+    float want = raised;
+    if (lowest < kScreenFoot) want += (kScreenFoot - lowest) / scale;            // (the foot: up by what is under it)
+    else if (lowest > kScreenFoot + 1.0f) want -= (lowest - kScreenFoot) / scale;   // (room under it: back down)
+    // (the top kept on the screen: the column taller than the screen is never raised past its first row)
+    const float top_after = highest + (want - raised) * scale;
+    if (top_after > kScreenTop) want -= (top_after - kScreenTop) / scale;
+    return std::max(0.0f, want);
+}
+
+int PageJump(const CoopPauseMenu::View& v, const Look& l, int dir) {
+    int at = -1;
+    const std::vector<int> shown = Shown(v, &at);
+    const int page = l.page + (dir < 0 ? -1 : 1);
+    if (dir == 0 || l.pages <= 1 || page < 0 || page >= l.pages) return -1;
+    const int per_page = std::max(1, l.per_page);
+    const std::size_t first = static_cast<std::size_t>(page) * static_cast<std::size_t>(per_page);
+    return first < shown.size() ? shown[first] : -1;
 }
 
 }  // namespace CoopTitleNative

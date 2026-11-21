@@ -317,6 +317,25 @@ def copy_animation_param(members, item, actor):
     return animation_param_path(actor), byml.dumps(out)
 
 
+# Row 198 (0.11.9): the game parses a param in a heap of its size-table entry, and an AnimationParam's entry grows with
+# its fields: the game's own (rsizetable 111) take 5344 bytes for one resource with no IsRetarget and 5376 with it,
+# 5464 / 5528 for two resources (0x20 a resource that has the field). Row 184's copies were sized as the item's
+# (5344), 0x20 short: the game refused to make the copy (its equip call still returned 1) and the puppet kept the
+# game's own shield, whose textures your own colours are drawn over (your Customize colours on the other players'
+# puppets). Each IsRetarget a copy adds gets this much room, twice the game's.
+RETARGET_ROOM = 0x40
+
+
+def copy_animation_param_entry(members, item, item_entry, data, margin):
+    """The size-table entry of a copy's AnimationParam (copy_animation_param's `data`): the item's entry
+    `item_entry` with RETARGET_ROOM for each resource the copy gave IsRetarget, or the file's bytes and `margin`
+    when that is more."""
+    found = item_animation_param(members, item)
+    res = found[1].get("AnimationResources") if found else None
+    added = sum(1 for r in res if isinstance(r, dict) and "IsRetarget" not in r) if isinstance(res, list) else 0
+    return max(item_entry + RETARGET_ROOM * added, len(data) + margin)
+
+
 def info_row(row, item, slot):
     """The copy's ActorInfo row: the item's, under the copy's name and model project."""
     return info_row_as(row, actor_name(item, slot))

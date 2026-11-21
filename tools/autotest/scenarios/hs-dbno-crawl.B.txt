@@ -14,6 +14,7 @@ wait 300
 press A
 wait 2400
 mark after
+nofairy                  # every bottle emptied: a bottled fairy revives instead of downing (VOID 2026-11-21)
 place -68.0 82.5 3.5     # beside the Baba (-71.33 82.21 3.50; lower floor, a straight goto from the entrance hits a 1F wall)
 wait 240
 toward -71.33 3.5 20
@@ -22,6 +23,7 @@ wait 1800
 mark bitten1
 wait 1800
 mark bitten2
+hurt 80                  # downed for sure (the bites alone left B up at a high difficulty life, VOID 2026-11-21); the guard holds the lethal hit while A is up
 wait 1800
 mark down
 wait 900

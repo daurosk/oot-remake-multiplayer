@@ -1593,8 +1593,9 @@ class FullBuildTest(unittest.TestCase):
         with open(p, "wb") as f:
             f.write(data)
 
-    def add_hylian_shield(self):
-        """The Hylian Shield in the test romfs: its pack, model, texture and ActorInfo rows."""
+    def add_hylian_shield(self, anim_entry=None):
+        """The Hylian Shield in the test romfs: its pack, model, texture and ActorInfo rows. `anim_entry`: also its
+        AnimationParam (one resource, as the game's), with this size-table entry."""
         from puppet_pack import zs
         plain = zstandard.ZstdCompressor()
         item = "Weapon_Shield_Hylian"
@@ -1603,6 +1604,15 @@ class FullBuildTest(unittest.TestCase):
         members = {f"Actor/{item}.engine__actor__ActorParam.bgyml": byml.dumps(ap),
                    info: byml.dumps({"FmdbName": item, "ModelProjectName": item}),
                    "Component/ShieldParam/X.bgyml": byml.dumps({"A": 1})}
+        if anim_entry is not None:
+            anim = f"Component/AnimationParam/{item}.engine__component__AnimationParam.bgyml"
+            ap["Components"]["AnimationRef"] = "?" + anim
+            members[f"Actor/{item}.engine__actor__ActorParam.bgyml"] = byml.dumps(ap)
+            members[anim] = byml.dumps({"AnimationResources": [{"ModelProjectName": f"{item}_Animation"}]})
+            path = os.path.join(self.romfs, "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs")
+            t = rstb.Rstb.loads(zs.Dicts.from_romfs(self.romfs).decompress(build.read(path)))
+            t.set(anim, anim_entry)
+            self.write("System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs", plain.compress(t.dumps()))
         self.write(f"Pack/Actor/{item}.pack.zs", plain.compress(sarc.write(members)))
         model = b"FRES" + bytes(12) + b"\x1b\x00Mt_Weapon_Shield_Hylian_Alb\x00" + f"{item}\x00".encode()
         self.write(f"Model/{item}.{item}.bfres.zs", plain.compress(model))
@@ -1905,6 +1915,43 @@ class FullBuildTest(unittest.TestCase):
         ma, mb = (json.loads(build.read(os.path.join(d, "coop_puppet.json"))) for d in (a, b))
         self.assertEqual(mb["look_items"]["actors"], [item])
         self.assertEqual(ma["look_items"], mb["look_items"])
+
+    def test_look_copy_animation_param_has_room(self):
+        # Row 198 (0.11.9): a copy's AnimationParam adds IsRetarget (row 184), and the game parses a param in a heap
+        # of its size-table entry, which grows with its fields (the game's own: 5344 for one resource, 5376 with
+        # IsRetarget). Sized as the item's, the game refused to make every shield copy (the puppets kept the game's
+        # shield, drawn in your own colours). Every copy, the neutral one too, gets room for what it adds.
+        from puppet_pack import look_items, zs
+        item, _, _ = self.add_hylian_shield(anim_entry=5344)
+        mod = os.path.join(self.dir, "mod")
+        said = []
+        m = build.build(self.romfs, mod, log=said.append, tunics=("red",), look_slots=2)
+        self.assertIsNotNone(m["look_items"], said)
+        d = zs.Dicts.from_romfs(self.romfs)
+        out = os.path.join(mod, "romfs")
+        t = rstb.Rstb.loads(d.decompress(build.read(os.path.join(
+            out, "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"))))
+        for k in range(1, m["look_items"]["neutral"] + 1):
+            actor = look_items.actor_name(item, k)
+            files = sarc.read(d.decompress(build.read(os.path.join(out, f"Pack/Actor/{actor}.pack.zs"))))
+            path = look_items.animation_param_path(actor)
+            self.assertEqual(byml.loads(files[path])["AnimationResources"],
+                             [{"IsRetarget": True, "ModelProjectName": f"{item}_Animation"}])
+            self.assertEqual(t.get(path), 5344 + look_items.RETARGET_ROOM, actor)
+            self.assertGreaterEqual(t.get(path), 5376)   # (the game's own entry of that shape)
+        # The rule alone: one resource without the field gets the room; one that had it, or none, gets nothing more.
+        an = "Component/AnimationParam/{}.engine__component__AnimationParam.bgyml"
+        ap = "Actor/{}.engine__actor__ActorParam.bgyml"
+
+        def members(resources):
+            return {ap.format(item): byml.dumps({"Components": {"AnimationRef": "?" + an.format(item)}}),
+                    an.format(item): byml.dumps({"AnimationResources": resources})}
+        two = members([{"ModelProjectName": "A"}, {"IsRetarget": False, "ModelProjectName": "B"}])
+        self.assertEqual(look_items.copy_animation_param_entry(two, item, 5464, b"x", 0),
+                         5464 + look_items.RETARGET_ROOM)
+        self.assertEqual(look_items.copy_animation_param_entry(members([{"IsRetarget": True, "ModelProjectName": "A"}]),
+                                                               item, 5376, b"x", 0), 5376)
+        self.assertEqual(look_items.copy_animation_param_entry(two, item, 10, b"x" * 100, 0x1000), 100 + 0x1000)
 
     def test_look_item_names(self):
         from puppet_pack import look_items, look_live

@@ -1602,6 +1602,11 @@ void Session::on_object_present(ConnectionId id, Connection& c, const ObjectPres
     } else {
       o.unready.erase(id);
     }
+    if (e.flags & object_presence::takes_turns) {
+      o.takes_turns.insert(id);
+    } else {
+      o.takes_turns.erase(id);
+    }
     // Tell a newcomer who owns it and the epoch to send with; its own made
     // enemy it knows.
     if (refresh || (fresh && !(o.made && o.owner == id))) {
@@ -1812,7 +1817,7 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
     if ((d.amount == 0 || config_.boss_hit_handover) && root->owner && *root->owner != id &&
         !root->ask && !busy(c) &&
         has_loaded(id, *root) && !root->unready.contains(id) &&
-        (root->changed_at == 0 || now_us - root->changed_at >= config_.boss_hitter_cooldown_us) &&
+        (root->hitter_changed_at == 0 || now_us - root->hitter_changed_at >= config_.boss_hitter_cooldown_us) &&
         !owner_hit_lately(*root, now_us) && !owner_hit_lately(o, now_us)) {
       ask_handover(root_id, *root, id, now_us);
       ++stats_.boss_to_hitter;
@@ -2042,6 +2047,7 @@ void Session::drop_presence(ConnectionId id, std::uint8_t number, const ObjectId
   o.present.erase(id);
   o.chased_by.erase(id);
   o.unready.erase(id);  // its next presence says again whether it is ready
+  o.takes_turns.erase(id);
   if (o.candidate == id) o.candidate.reset();
   if (o.made) {
     if (o.owner != id) return;
@@ -2102,6 +2108,11 @@ std::optional<double> Session::distance_to(const Connection& c, const Object& o,
     return std::nullopt;
   }
   return metres(*c.position, *o.last_state->position);
+}
+
+bool Session::unfit_boss_owner(const Connection& c, std::uint64_t now_us) const {
+  if (c.dead_since != 0 && now_us - c.dead_since >= config_.boss_owner_dead_us) return true;
+  return c.paused_since != 0 && now_us - c.paused_since >= config_.boss_owner_paused_us;
 }
 
 bool Session::unfit_owner(const Connection& c, std::uint64_t now_us) const {
@@ -2198,15 +2209,9 @@ std::optional<ConnectionId> Session::next_turn(Object& o, ConnectionId owner, st
       return std::nullopt;
     }
   }
-  // Nor while a shot of its owner's game flies there (Phantom Ganon's ball in
-  // a rally): a shot is never handed over, so its rally would go on in the old
-  // owner's game alone. A shot whose end was lost counts for 10 s at most.
-  for (const auto& [sid, s] : objects_) {
-    if (s.projectile && !s.removed && s.owner == owner && s.scene == o.scene && s.first_at != 0 &&
-        now_us - s.first_at < config_.boss_turn_shot_us) {
-      return std::nullopt;
-    }
-  }
+  // A shot of its owner's game in the air does not hold the turn: the edge above comes right after a shooting
+  // attack, while its shots fly (Phantom Ganon's bolt and shockwaves: a hold on them meant no turn at all), and a
+  // shot stays with the game that made it. His rally ball is each game's own (a split shot, coop_enemy_shots.h).
   // The next player by number after the owner, round: in the boss's area,
   // ready (its intro played), up and playing.
   const auto own = connections_.find(owner);
@@ -2216,6 +2221,8 @@ std::optional<ConnectionId> Session::next_turn(Object& o, ConnectionId owner, st
   std::optional<ConnectionId> first;  // the lowest number of all (round)
   for (ConnectionId other : o.present) {
     if (other == owner || !has_loaded(other, o) || o.unready.contains(other)) continue;
+    // An older build (no takes_turns) would keep it for the rest of the fight: it sends no attack end.
+    if (!o.takes_turns.contains(other)) continue;
     const Connection& pc = connections_.at(other);
     if (busy(pc)) continue;
     const auto d = distance_to(pc, o, now_us);
@@ -2323,6 +2330,7 @@ void Session::finish_handover(const ObjectId& oid, Object& o, const ObjectState*
   const ConnectionId to = o.ask->to;
   const std::int64_t hits_after_ask = o.ask->hits;
   const bool bomb = o.ask->bomb;
+  const bool turn = o.ask->turn;
   o.ask.reset();
   // The player it was for left, changed scene or unloaded it meanwhile: the
   // owner keeps it. A bomb is a projectile, listed by nobody: its asker only
@@ -2378,7 +2386,9 @@ void Session::finish_handover(const ObjectId& oid, Object& o, const ObjectState*
   if (auto it = connections_.find(*o.owner); it != connections_.end()) {
     old_owner = it->second.number;
   }
+  const std::uint64_t hitter_changed_at = o.hitter_changed_at;
   change_owner(oid, o, to, old_owner, now_us);
+  if (turn) o.hitter_changed_at = hitter_changed_at;  // a boss turn starts no hitter cooldown
 }
 
 void Session::change_owner(const ObjectId& oid, Object& o, std::optional<ConnectionId> next,
@@ -2390,6 +2400,7 @@ void Session::change_owner(const ObjectId& oid, Object& o, std::optional<Connect
   o.last_owner = old_owner;
   ++o.epoch;
   o.changed_at = stamp(now_us);
+  o.hitter_changed_at = o.changed_at;  // (finish_handover keeps the old one for a boss turn)
   o.owner_hit_at = 0;  // the new owner has not hit it yet
   o.candidate.reset();
   o.ask.reset();
@@ -2599,8 +2610,8 @@ void Session::run_ownership(std::uint64_t now_us) {
       continue;
     }
 
-    // An owner whose game stands still gives it up, fight or not.
-    if (unfit_owner(oc, now_us)) {
+    // An owner whose game stands still gives it up, fight or not; a boss's sooner (its AI fights its Link alone).
+    if (unfit_owner(oc, now_us) || (o.boss && unfit_boss_owner(oc, now_us))) {
       if (o.fish) {
         fish_owner(oid, o, owner, true, now_us);  // a hooked fish waits for it
       } else if (auto next = best_other(o, owner, true, now_us)) {
@@ -2651,6 +2662,7 @@ void Session::run_ownership(std::uint64_t now_us) {
               std::to_string(to->second.number) + " (turn " + std::to_string(stats_.boss_turns) + ")");
         }
         ask_handover(oid, o, *next, now_us);
+        if (o.ask) o.ask->turn = true;  // no hitter cooldown from a turn (hitter_changed_at)
         continue;
       }
     }

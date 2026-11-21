@@ -46,6 +46,17 @@ constexpr std::array<Shot, 5> kBossShots{{
     {"DungeonBossGanon_Bullet_", {"Enemy_DungeonBoss_Ganon"}},
 }};
 
+// Split shots (docs/boss-multiplayer.md): every game keeps the shot its own copy of the boss fires and the owner's
+// is not sent, so the attack is real in every game and hits every player as it would alone. Phantom Ganon's leap
+// out of a painting (stage 1): his thunder bolt to the room's middle and the four shockwaves it sends out in a
+// cross. As copies flown on the owner's path the shockwaves hurt nobody but the owner's Link. Stage 2: his
+// rally ball (Ganondorf's the same): each player rallies their own; the owner's Ganon sends it back as alone, a
+// copy cannot (its AI runs in the owner's game), so a ball sent back into a copy stuns him there, and the stun
+// hands him to that player (the stun hand-over) for the sword: the first ball back stuns him for the group.
+// Each game sees only its own: none is sent.
+constexpr std::array<std::string_view, 3> kSplit{
+    {"PhantomGanon_Bullet_Thunder", "DungeonBossPhantomGanon_Bullet_", "DungeonBossGanondrof_Bullet_"}};
+
 const Shot* Find(std::string_view name) {
     if (name.ends_with("_MirrorShieldReflect")) {
         return nullptr;  // sent back by Link's shield: his, not the boss's
@@ -117,9 +128,21 @@ float MakerRange(std::string_view shot) {
     return 10.0f;
 }
 
+bool IsSplitShot(std::string_view name) {
+    if (!SplitOn() || !IsEnemyShot(name)) {
+        return false;
+    }
+    for (const std::string_view s : kSplit) {
+        if (name.starts_with(s)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 Verdict Decide(std::string_view shot, const Vec3& at, std::span<const Shooter> shooters) {
     const auto makers = MakersOf(shot);
-    if (makers.empty()) {
+    if (makers.empty() || IsSplitShot(shot)) {
         return Verdict::keep;
     }
     const float range = MakerRange(shot);
@@ -171,7 +194,8 @@ void NoteShooters(std::vector<Shooter> shooters, std::uint64_t now_us) {
 }
 
 bool StopAtCreate(std::string_view shot, const Vec3& at, std::uint64_t shooter) {
-    if (!IsEnemyShot(shot) || !On() || !HideOn() || !StopOn() || KeepsCopyShot(shot, KeepCopyOn())) {
+    if (!IsEnemyShot(shot) || IsSplitShot(shot) || !On() || !HideOn() || !StopOn() ||
+        KeepsCopyShot(shot, KeepCopyOn())) {
         return false;
     }
     std::unique_lock lock(g_mutex, std::try_to_lock);
@@ -251,6 +275,11 @@ bool KeepCopyOn() {
 
 bool KeepsCopyShot(std::string_view shot, bool on) {
     return on && SwordReturned(shot);
+}
+
+bool SplitOn() {
+    static const bool on = !EnvOff("LICHII_COOP_SPLIT_SHOTS");
+    return on;
 }
 
 } // namespace CoopEnemyShots

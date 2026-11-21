@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <string_view>
 #include <utility>
@@ -132,6 +133,35 @@ std::pair<std::uint64_t, std::uint64_t> Sizes(const std::vector<std::shared_ptr<
     // A storage is the image's own size (the pack's texels), or its layout
     // rounded up a little.
     return {smallest, largest + kStorageSlack};
+}
+
+std::string PlacesLine(const std::vector<Place>& places, const Texels* names) {
+    std::string line;
+    char buf[64];
+    for (const Place& p : places) {
+        if (!line.empty()) line += ' ';
+        if (names != nullptr && p.texture < names->size()) {
+            line += (*names)[p.texture].name;
+        } else {
+            line += '#' + std::to_string(p.texture);
+        }
+        std::snprintf(buf, sizeof buf, "@0x%llx/%llu+%llu", static_cast<unsigned long long>(p.address),
+                      static_cast<unsigned long long>(p.serial), static_cast<unsigned long long>(p.size));
+        line += buf;
+    }
+    return line;
+}
+
+std::vector<std::pair<std::size_t, std::size_t>> Overlaps(const std::vector<Place>& a, const std::vector<Place>& b) {
+    std::vector<std::pair<std::size_t, std::size_t>> out;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        for (std::size_t j = 0; j < b.size(); ++j) {
+            if (a[i].address < b[j].address + b[j].size && b[j].address < a[i].address + a[i].size) {
+                out.emplace_back(i, j);
+            }
+        }
+    }
+    return out;
 }
 
 std::vector<std::pair<std::size_t, std::size_t>> Repeated(const std::vector<Place>& places) {
@@ -434,6 +464,15 @@ void Wardrobe::Step(std::uint64_t now_ms) {
     for (Place& p : places_) {
         if (p.drawn != target_ && Draw(*host_.textures, p, target_)) {
             ++drawn;
+        }
+    }
+    if (drawn != 0 && said_places_count_ < kPlacesSaid) {
+        // (row 198: where your colours are drawn, so a log shows whose texture each override lies on)
+        std::string line = PlacesLine(places_, target_.get());
+        if (line != said_places_) {
+            ++said_places_count_;
+            host_.log("coop: look: " + host_.what + " places: " + line);
+            said_places_ = std::move(line);
         }
     }
     if (drawn != 0) {

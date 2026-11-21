@@ -2176,8 +2176,11 @@ public:
             LOG_INFO(Core, "coop: shots: {}", note);
         }
         for (const auto& d : sync_.EnemyShotsDecided()) {
+            const char* verdict = CoopEnemyShots::IsSplitShot(d.name)
+                                      ? "kept here (a split shot: each game's own, never sent)"
+                                      : CoopEnemyShots::NameOf(d.verdict);
             LOG_INFO(Core, "coop: shots: enemy shot {} at {:.2f} {:.2f} {:.2f}: {}", d.name,
-                     d.position[0], d.position[1], d.position[2], CoopEnemyShots::NameOf(d.verdict));
+                     d.position[0], d.position[1], d.position[2], verdict);
         }
         TheDirector().SetDoomed(sync_.Doom());
         TheDirector().SetWatched(sync_.Watch());

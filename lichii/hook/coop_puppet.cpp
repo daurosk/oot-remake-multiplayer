@@ -1442,6 +1442,33 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
     return std::nullopt;
 }
 
+// Row 198: a worn copy the game did not make (CopyRefused): said once per copy,
+// after kRefusedForMs (a piece just worn may still be the old one).
+void Director::RefusedCopy(Slot& slot, Guest& guest, std::size_t i, std::uint64_t piece, std::uint64_t now_ms) {
+    std::uint64_t text = 0;
+    std::array<char, 96> name{};   // (zeros: the last one ends the name, only size - 1 read)
+    if (!ReadValue(guest, piece + addr::kActorName, text) || text == 0 ||
+        !guest.Read(text, name.data(), name.size() - 1)) {
+        return;
+    }
+    const std::string made(name.data());
+    if (!CopyRefused(slot.worn[i], made)) {
+        slot.refused_since_ms[i] = 0;
+        return;
+    }
+    if (slot.refused_since_ms[i] == 0) {
+        slot.refused_since_ms[i] = std::max<std::uint64_t>(now_ms, 1);
+        return;
+    }
+    if (now_ms - slot.refused_since_ms[i] < kRefusedForMs || slot.refused_said[i] == slot.worn[i]) {
+        return;
+    }
+    slot.refused_said[i] = slot.worn[i];
+    Say("P" + std::to_string(slot.number) + " " + kGearNames[i] + " copy '" + slot.worn[i] +
+        "' was not made by the game: the puppet still wears '" + made +
+        "' (row 198: its colours are the viewer's own; make the puppet pack again)");
+}
+
 // A worn sword or shield far from its puppet does not follow it: the game
 // made it while the puppet was parked under the floor (Show::hide), or it
 // stayed behind when the puppet came back up. It is worn again, so the game
@@ -1477,6 +1504,7 @@ void Director::LeftBehind(Slot& slot, Guest& guest, std::uint64_t now_ms) {
             !ReadValue(guest, piece + addr::kActorPosition, at)) {
             continue;
         }
+        RefusedCopy(slot, guest, i, piece, now_ms);
         const float far = std::sqrt((at[0] - own[0]) * (at[0] - own[0]) +
                                     (at[1] - own[1]) * (at[1] - own[1]) +
                                     (at[2] - own[2]) * (at[2] - own[2]));

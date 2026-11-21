@@ -116,10 +116,7 @@ struct HudBlock {
     std::string place;        // the place's name, or ""
     std::vector<int> hearts;  // quarters filled in each (CoopHudHearts::Quarters)
     bool dim = false;         // not connected
-    bool here = false;        // in our own area (listed first)
-    std::uint32_t colour = 0; // their colour (0xRRGGBB), the compact row's marker
-    int life = -1, max = 0;   // quarter hearts (compact row's bar); life -1: not known
-    CoopVoice::Icon voice = CoopVoice::Icon::none;   // the voice icon after the name (CoopVoice::IconFor)
+    CoopVoice::Icon voice = CoopVoice::Icon::none;   // the voice state after the name, as words (CoopVoice::IconFor)
 };
 
 // The item cheats panel, when it is open.
@@ -190,8 +187,7 @@ struct Scene {
     std::optional<TitleView> title;
     std::optional<CheatsView> cheats;
     std::vector<HudBlock> hud;
-    bool hud_compact = false;   // compact rows (CoopHudLayout::CompactFor), not the full blocks
-    // Our own voice icon (CoopVoice::IconFor): not none, a "You" row with it
+    // Our own voice state (CoopVoice::IconFor): not none, a "You" row with it as words
     // over the HUD blocks (only when there are any).
     CoopVoice::Icon own_voice = CoopVoice::Icon::none;
     // Row 141: the bottom of the game's own top-left HUD this frame, as a fraction of the picture height

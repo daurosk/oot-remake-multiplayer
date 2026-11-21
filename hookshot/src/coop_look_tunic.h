@@ -109,6 +109,12 @@ struct Place {
 // own Link has one of each; a second is a copy holding the game's own texels (a puppet's, unmarked), which your
 // colour would be drawn over too.
 std::vector<std::pair<std::size_t, std::size_t>> Repeated(const std::vector<Place>& places);
+// Row 198 (gear-colour-0119): where the places lie, for the log: "<name>@0x<address>/<serial>+<size>" each, in
+// order; `names` gives a texture index its name (none: "#<index>").
+std::string PlacesLine(const std::vector<Place>& places, const Texels* names);
+// Row 198: the places of `a` whose storage range [address, address + size) overlaps one of `b`'s (two wardrobes
+// drawing over one texture: one player's colours on another's). Pairs of indexes into a and b.
+std::vector<std::pair<std::size_t, std::size_t>> Overlaps(const std::vector<Place>& a, const std::vector<Place>& b);
 
 struct Search {
     std::vector<Place> places;
@@ -135,6 +141,8 @@ Search Find(const Textures& textures, const std::vector<Live>& listed,
 bool Draw(Textures& textures, Place& place, const std::shared_ptr<const Texels>& colour);
 
 // Keeps your Link's tunic (or gear) in the colour asked for.
+inline constexpr int kPlacesSaid = 40;
+
 class Wardrobe {
 public:
     struct Host {
@@ -213,6 +221,8 @@ private:
     std::string said_;                        // the last "no texture" line (said again when it changes)
     int said_count_ = 0;
     std::string said_repeated_;   // (row 198's guard: the repeats last logged)
+    std::string said_places_;     // (row 198: the places last logged)
+    int said_places_count_ = 0;   // ... how many times (at most kPlacesSaid)
     int said_taken_ = 0;                      // "override(s) taken away" lines said (at most 20)
 };
 

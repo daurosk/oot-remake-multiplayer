@@ -478,7 +478,15 @@ exefs_stamp() {
             seen[$fold]=1
             [[ -n ${code[$fold]+x} ]] && kept+=("$sw $fold")
         done < "$mods/coop-mods.list"
-        ((${#kept[@]})) && list=$(printf '%s' "$(printf '%s\n' "${kept[@]}")" | sha256sum | cut -d' ' -f1)
+        # (rows that change nothing are no change, player report 210: the game puts the mods the list does not name under
+        # the named ones, by folded name, on; rows all "on" in that same order, as Character Select switched off and on
+        # again leaves, read as no list. kit-paths.ps1 Get-KitCodeModsListHash)
+        if ((${#kept[@]})); then
+            local sorted=() i same=1
+            mapfile -t sorted < <(printf '%s\n' "${!code[@]}" | LC_ALL=C sort)
+            for i in "${!kept[@]}"; do [[ ${kept[$i]} == "on ${sorted[$i]-}" ]] || { same=0; break; }; done
+            ((same)) || list=$(printf '%s' "$(printf '%s\n' "${kept[@]}")" | sha256sum | cut -d' ' -f1)
+        fi
     fi
     printf ' exefs=%s;list=%s' "$(printf '%s\n' "${rows[@]}" | LC_ALL=C sort | paste -sd, -)" "$list"
 }
@@ -516,6 +524,100 @@ if ((ready && want_dlss != game_dlss && (want_dlss || no_dlss))); then
     else say 'NVIDIA DLSS off: the game is built again without it.'; fi
     ready=0
 fi
+# The game built from another stamp than this start wants (player report 210: a mod with code patches switched on or
+# off on the Mods tab, an update): the build there is kept first (a copy of the files a build makes: the ones Longshot's
+# finish copies in, .longshot_installed.json, and exefs_patches.txt; copies, never hard links), and one of exactly this
+# stamp kept from before is put back instead of a build (seconds where a build is 5 to 60 minutes). The newest 3 stay
+# in data/game-variants. As the Windows kit's Save-KitGameVariant and Restore-KitGameVariant.
+variants=$DATA/game-variants
+variant_files() {
+    if [[ -f $GAME/.longshot_installed.json ]]; then
+        "$PY" -I -B -c 'import json, sys
+for k in sorted(json.load(open(sys.argv[1], encoding="utf-8"))): print(k)' "$GAME/.longshot_installed.json" 2>/dev/null || true
+    else
+        printf '%s\n' longshot longshot_vk.so libSDL2-2.0.so.0 image.bin
+    fi
+    printf 'exefs_patches.txt\n.longshot_installed.json\n'   # (the note too: a build kept after a put back still knows its files)
+}
+variant_text() { printf '%s\ndlss=%s' "$(printf '%s\n' "$1" | tr -d '\r' | sed 's/[[:space:]]*$//')" "$2"; }
+variant_dir() { printf '%s/%s' "$variants" "$(printf '%s' "$1" | sha256sum | cut -c1-20)"; }
+variant_save() {
+    local have text dir part f bytes=0 free_kb
+    have=$(cat "$game_stamp" 2>/dev/null) || return 0
+    [[ -n $have && -n $(kit_game_exe) ]] || return 0
+    text=$(variant_text "$have" "$game_dlss")
+    dir=$(variant_dir "$text")
+    if [[ -f $dir/stamp.txt && $(cat "$dir/stamp.txt") == "$text" ]]; then touch "$dir/stamp.txt"; return 0; fi
+    while IFS= read -r f; do [[ -n $f && -f $GAME/$f ]] && bytes=$((bytes + $(stat -c %s "$GAME/$f"))); done < <(variant_files)
+    mkdir -p "$variants"
+    free_kb=$(df -Pk "$variants" | awk 'NR == 2 { print $4 }')
+    if [[ -n $free_kb ]] && ((free_kb < bytes / 1024 + 5 * 1024 * 1024)); then
+        say "  (this build is not kept for later: only $((free_kb / 1024 / 1024)) GB free)"; return 0
+    fi
+    part=$dir.part
+    rm -rf "$part"
+    while IFS= read -r f; do
+        [[ -n $f && $f != /* && /$f/ != */../* && -f $GAME/$f ]] || continue
+        { mkdir -p "$part/files/$(dirname -- "$f")" && cp -f -- "$GAME/$f" "$part/files/$f"; } ||
+            { rm -rf "$part"; say '  (this build is not kept for later: the copy failed)'; return 0; }
+    done < <(variant_files)
+    [[ -f $part/files/longshot && -f $part/files/image.bin ]] || { rm -rf "$part"; return 0; }
+    cp -f "$game_stamp" "$part/built-from.txt"
+    printf '%s' "$text" >"$part/stamp.txt"   # (last: a copy stopped half way is a .part folder, never taken)
+    { rm -rf "$dir" && mv "$part" "$dir"; } || return 0
+    rm -rf "$variants"/*.part
+    ls -1t "$variants"/*/stamp.txt 2>/dev/null | tail -n +4 | while IFS= read -r f; do rm -rf "$(dirname -- "$f")"; done
+    say "  The game as it was built ($((bytes / 1024 / 1024)) MB of it) is kept, so going back to these mods takes seconds."
+}
+variant_restore() {   # $1: a kept build: staged as <name>.new, then swapped in; its stamp last
+    local d=$1/files f staged=()
+    while IFS= read -r f; do
+        { mkdir -p "$GAME/$(dirname -- "$f")" && cp -f -- "$d/$f" "$GAME/$f.new"; } ||
+            { for f in "${staged[@]}"; do rm -f "$GAME/$f.new"; done; return 1; }
+        staged+=("$f")
+    done < <(cd "$d" && find . -type f | sed 's|^\./||')
+    ((${#staged[@]})) || return 1
+    for f in "${staged[@]}"; do mv -f -- "$GAME/$f.new" "$GAME/$f"; done
+    [[ -f $d/exefs_patches.txt ]] || rm -f "$GAME/exefs_patches.txt"
+    # (Longshot's note comes back with them: its file list for the next keep; its stats differ from the copies, so its next
+    # build copies those files again, as after any copy)
+    [[ -f $d/.longshot_installed.json ]] || rm -f "$GAME/.longshot_installed.json"
+    cp -f "$1/built-from.txt" "$game_stamp"
+    touch "$1/stamp.txt"
+}
+if ((!ready && !rebuild && !check_only)) && [[ -n $(kit_game_exe) && -f $game_stamp && $(cat "$game_stamp") != "$game_want" ]]; then
+    say ''
+    say '  Keeping the game as it is built now, for later (about 650 MB, a few seconds) ...'
+    variant_save
+    kept_text=$(variant_text "$game_want" "$want_dlss")
+    kept=$(variant_dir "$kept_text")
+    if ((want_dlss == game_dlss)) && [[ -f $kept/stamp.txt && $(cat "$kept/stamp.txt") == "$kept_text" && -f $kept/built-from.txt && -f $kept/files/image.bin ]]; then
+        step 'The game: putting back the build made before with these mods (seconds, instead of building it again)'
+        if variant_restore "$kept" && [[ $(cat "$game_stamp") == "$game_want" ]]; then
+            ready=1
+            say "  Put back into $GAME."
+        else
+            warn 'the kept build could not be put back: the game is built again instead.'
+        fi
+    fi
+fi
+# Why the game is built now and about how long (player report 210: "a whole long process that takes forever").
+build_why() {
+    local have want
+    have=$(tr -d '\r' <"$game_stamp" 2>/dev/null) || have=''
+    want=$(printf '%s' "$game_want" | tr -d '\r')
+    if [[ -z $have ]]; then
+        printf 'the first build of the co-op game (15 to 60 minutes, once).'
+    elif [[ ${have%% *} != "${want%% *}" ]]; then   # (the first word is the builder's SHA-256, LINUX.txt: the Longshot release)
+        printf 'another Longshot version than the game was built for (about 15 to 45 minutes).'
+    elif [[ $have == "$want" ]]; then
+        printf 'built again as asked (5 to 60 minutes).'
+    elif [[ ${have%% exefs=*} == "${want%% exefs=*}" ]]; then
+        printf "the mods' code patches changed (a mod with an exefs folder, such as Character Select, put in, changed, or switched on the Mods tab), about 5 to 25 minutes. This build is kept: switching back later takes seconds."
+    else
+        printf "this update changes the co-op game's code (about 5 to 20 minutes)."
+    fi
+}
 remembered=$DATA/game-files.txt
 
 if [[ -z $game ]] && ((!ready || rebuild || check_only)); then
@@ -583,7 +685,7 @@ game_build() {
         if [[ -n $free_kb && $free_kb -lt $((60 * 1024 * 1024)) && ! -d $WORK/sa ]]; then
             warn "only $((free_kb / 1024 / 1024)) GB free here; the first build wants about 60 GB."
         fi
-        step 'Building the game (15 to 60 minutes, once; the PC stays usable)'
+        step "Building the game: $(build_why) The PC stays usable."
         build_args=("${game_args[@]}" --out "$GAME" --work "$WORK" --language "$language" --log "$LOGS/build.log")
         [[ -n $jobs ]] && build_args+=(--jobs "$jobs")
         # (NVIDIA DLSS: make_game.py fetches NVIDIA's SDK into data/work/ngx-sdk, only what is missing, and builds the
@@ -709,7 +811,9 @@ pack_from=$game
 mod=$GAME/mods/contents/0400486024DEC000/coop-puppet
 # (the pack tool's own files too: a pack made by another version of the tool is made again, as the
 # Windows kit's Test-KitPuppetPackStale does; the look files and the copies' marks change with it)
-pack_stamp="$src_stamp menus:1 tool:$(cd "$DATA/tools/puppet_pack" && LC_ALL=C sha256sum -- *.py | sha256sum | cut -d' ' -f1)"
+# (not Longshot's patches, src_stamp: the pack is made from the game file and the pack tool only, and every update that
+# changed a patch made it again, 1 to 4 minutes; player report 210. The Windows kit never keyed it on them.)
+pack_stamp="pack:2 menus:1 tool:$(cd "$DATA/tools/puppet_pack" && LC_ALL=C sha256sum -- *.py | sha256sum | cut -d' ' -f1)"
 # (the Character Select mod's characters.json, its NPC models there and its row in the Mods tab's list: the pack's
 # character puppets follow all three (tools/puppet_pack find_characters), so putting the mod in, replacing it, taking
 # its NPC part out or in (charsel_step: ui / full), or switching it in the Mods tab makes the pack again, as the Windows
@@ -760,6 +864,36 @@ find_pack_game() {
 }
 # The drag prompt is asked once, not at every start: data/pack-asked.txt keeps what it asked about (the game file named
 # and the pack tool's hash), so a new game file or tool asks again; start-squadala.sh --pack removes it and asks.
+# A pack made before for exactly this stamp (player report 210: Character Select switched off and on again on the Mods
+# tab made the pack twice, 1 to 4 minutes each): kept in data/pack-variants when the pack is made again (pack_save,
+# moved: no copy), and moved back here. The newest 2 stay. start-squadala.sh --pack (OOT_COOP_PACK_FRESH) always makes it.
+pack_keep=$DATA/pack-variants
+pack_keep_dir() { printf '%s/%s' "$pack_keep" "$(printf '%s' "$1" | sha256sum | cut -c1-20)"; }
+pack_saved=''
+pack_save() {
+    local s d
+    [[ -f $mod/coop_puppet.json && -f $mod/.coop-stamp && -z $(pack_gap) ]] || return 0
+    s=$(cat "$mod/.coop-stamp")
+    d=$(pack_keep_dir "$s")
+    rm -rf "$d"
+    { mkdir -p "$d" && mv "$mod" "$d/coop-puppet" && printf '%s' "$s" >"$d/key.txt"; } || { rm -rf "$d"; return 0; }
+    pack_saved=$d
+    ls -1t "$pack_keep"/*/key.txt 2>/dev/null | tail -n +3 | while IFS= read -r s; do rm -rf "$(dirname -- "$s")"; done
+}
+if [[ -z ${OOT_COOP_PACK_FRESH-} ]] && ! [[ -f $mod/coop_puppet.json && $(cat "$mod/.coop-stamp" 2>/dev/null) == "$pack_stamp" && -z $(pack_gap) ]]; then
+    kd=$(pack_keep_dir "$pack_stamp")
+    if [[ -f $kd/key.txt && $(cat "$kd/key.txt") == "$pack_stamp" && -f $kd/coop-puppet/coop_puppet.json ]]; then
+        pack_save
+        rm -rf "$mod"
+        mkdir -p "$(dirname -- "$mod")"
+        if mv "$kd/coop-puppet" "$mod" && [[ -z $(pack_gap) ]]; then
+            rm -rf "$kd"
+            # (its size tables dated now: a seed the game built beside another pack's tables is built again below)
+            find "$mod/romfs/System/Resource" -name '*.rsizetable.zs' -type f -exec touch {} + 2>/dev/null || true
+            say '  puppet pack: the one made before for these characters is put back (seconds, instead of making it again)'
+        fi
+    fi
+fi
 pack_asked=$DATA/pack-asked.txt
 ask_key="${pack_from:-}|${pack_stamp##* tool:}"
 if [[ ! -e ${pack_from:-} ]] && ! [[ -f $mod/coop_puppet.json && $(cat "$mod/.coop-stamp" 2>/dev/null) == "$pack_stamp" && -z $(pack_gap) ]]; then
@@ -795,13 +929,24 @@ if [[ -f $mod/coop_puppet.json && $(cat "$mod/.coop-stamp" 2>/dev/null) == "$pac
     say '  puppet pack: built already'
 elif [[ -n $pack_from && -e $pack_from ]]; then
     [[ -n $gap && -f $mod/coop_puppet.json ]] && say "  puppet pack: incomplete ($gap is missing): made again"
-    say '  Making the puppet pack (how you see the other players; about a minute) ...'
+    if [[ ! -f $mod/coop_puppet.json ]]; then say '  puppet pack: none yet'
+    elif [[ $(cat "$mod/.coop-stamp" 2>/dev/null) != "$pack_stamp" ]]; then say '  puppet pack: made for another pack tool or other Character Select characters'
+    fi
+    say '  Making the puppet pack (how you see the other players; 1 to 4 minutes) ...'
+    [[ -n ${OOT_COOP_PACK_FRESH-} ]] || pack_save   # (kept: switching Character Select back puts it back in seconds)
     if "$PY" -I -B "$DATA/tools/puppet_pack/build.py" --romfs "$pack_from" --mod-dir "$mod" --title-rows --pause-tab 2>&1 | sed 's/^/    /'; then
         printf '%s' "$pack_stamp" >"$mod/.coop-stamp"
         rm -f "$pack_asked"
     else
         rm -f "$mod/.coop-stamp"
-        warn 'the puppet pack could not be made (the lines above say why): the game starts, and the other players show as names only until it is made. Every start tries again.'
+        # (the pack there before goes back in, so a make that failed, a full disk or a tool error, leaves the pack the game
+        # had; with its own stamp, another one, so the next start tries again)
+        if [[ -n $pack_saved && -f $pack_saved/coop-puppet/coop_puppet.json ]] && rm -rf "$mod" && mv "$pack_saved/coop-puppet" "$mod"; then
+            rm -rf "$pack_saved"
+            warn 'the puppet pack could not be made again (the lines above say why): the one from before stays, so the game starts with it. Every start tries again.'
+        else
+            warn 'the puppet pack could not be made (the lines above say why): the game starts, and the other players show as names only until it is made. Every start tries again.'
+        fi
     fi
 else
     if [[ -n $pack_from ]]; then
@@ -822,12 +967,27 @@ rando_tables() {   # the size tables of the mods the game loads besides the seed
     done < <(find "$GAME/mods" -mindepth 4 -maxdepth 7 -path '*/romfs/System/Resource/*.rsizetable.zs' -type f 2>/dev/null)
 }
 pack_table=$(ls -t "$mod"/romfs/System/Resource/*.rsizetable.zs 2>/dev/null | head -n 1 || true)
+# What a seed is built beside, by content (data/game/mods/randomizer-*/coop-seed-tables.txt, written below; the Windows
+# kit's Get-KitSeedTablesText): a seed with it is built again only when one of those tables changed (player report 210:
+# a pack put back with an older date, or a table written again with the same entries). One without it: the date rule.
+seed_tables_text() {
+    local t
+    while IFS= read -r t; do
+        [[ -n $t ]] && printf '%s %s\n' "${t#"$GAME/mods/"}" "$(sha256_of "$t")"
+    done < <(rando_tables) | LC_ALL=C sort
+}
+seed_tables_now=''
 for seed_dir in "$GAME"/mods/randomizer-*/; do
     # (only seeds the game built, coop-rando.txt: one put in by hand gets the pack's entries from merge_tables.py)
     [[ -n $pack_table && -f ${seed_dir}coop-seed.txt && -f ${seed_dir}coop-rando.txt ]] || continue
     seed_name=$(basename "$seed_dir")
     seed_table=$(ls "${seed_dir}"romfs/System/Resource/*.rsizetable.zs 2>/dev/null | head -n 1 || true)
-    [[ -n $seed_table && ! $pack_table -nt $seed_table ]] && continue
+    if [[ -f ${seed_dir}coop-seed-tables.txt ]]; then
+        [[ -n $seed_tables_now ]] || seed_tables_now=$(seed_tables_text)
+        [[ $(cat "${seed_dir}coop-seed-tables.txt") == "$seed_tables_now" ]] && continue
+    elif [[ -n $seed_table && ! $pack_table -nt $seed_table ]]; then
+        continue
+    fi
     control=$GAME/mods/oot-remake-randomizer stage=$GAME/mods/oot-remake-randomizer/_seed-build
     rm -rf "$stage"
     ok=''
@@ -844,6 +1004,8 @@ for seed_dir in "$GAME"/mods/randomizer-*/; do
             for keep in coop-rando.txt spoiler.txt settings.txt; do
                 [[ -f ${seed_dir}$keep ]] && cp "${seed_dir}$keep" "$stage/$seed_name/"
             done
+            [[ -n $seed_tables_now ]] || seed_tables_now=$(seed_tables_text)
+            printf '%s\n' "$seed_tables_now" >"$stage/$seed_name/coop-seed-tables.txt"
             rm -rf "$seed_dir" && mv "$stage/$seed_name" "$GAME/mods/$seed_name" && ok=1
         fi
     fi

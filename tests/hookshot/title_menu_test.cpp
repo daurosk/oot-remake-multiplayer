@@ -946,15 +946,15 @@ TEST_CASE("title menu: Start, Multiplayer, Options on the game's three, Multipla
     CHECK(std::string(l.rows[1].label) == "0105");
     CHECK(l.rows[1].action == TitleDo::kGame);
     CHECK(l.rows[2].action == TitleDo::kMultiplayer);
-    // The submenu: the game's fourth slot shown, all four the module's, the cursor on Host.
+    // The submenu: the game's fourth slot shown, all four the module's, the cursor on Join (first).
     for (const bool any : {true, false}) {
         for (const bool one : {true, false}) {
             l = MenuFor(any, true, one);
             CHECK(l.btn_num_frame == 4);
             CHECK(l.count == 4);
             CHECK(l.focus == 0);
-            CHECK(l.rows[0].action == TitleDo::kHost);
-            CHECK(l.rows[1].action == TitleDo::kJoin);
+            CHECK(l.rows[0].action == TitleDo::kJoin);
+            CHECK(l.rows[1].action == TitleDo::kHost);
             CHECK(l.rows[2].action == TitleDo::kSettings);
             CHECK(l.rows[3].action == TitleDo::kBack);
         }

@@ -1028,6 +1028,44 @@ class MergeMembersTest(unittest.TestCase):
         self.assertEqual(read(os.path.join(self.mod, "romfs", *MALS.split("/"))), self.mod_raw)
         self.assertFalse(os.path.isdir(os.path.join(self.mod, mt.MEMBERS_KEEP)))
 
+    def test_a_menu_layout_both_changed_gets_co_ops_part_made_on_the_winners(self):
+        # lane R1 (0.11.9): Character Select and the pack both change MenuOverlay_00.buil; his alone lost co-op's tabs.
+        from unittest import mock
+        common = mt.pause_menu.COMMON_ARCHIVE
+        game = {"PlusMenu_00.buil": b"game pages", "MenuOverlay_00.buil": b"game strip", "Y.buil": b"game Y"}
+        self.put(os.path.join(self.romfs, *common.split("/")), self.archive(game))
+        self.put(os.path.join(self.pack, "romfs", *common.split("/")), self.archive(
+            dict(game, **{"MenuOverlay_00.buil": b"pack strip", "Y.buil": b"pack Y"})))
+        self.put(os.path.join(self.mod, "romfs", *common.split("/")), self.archive(
+            dict(game, **{"MenuOverlay_00.buil": b"his strip", "Y.buil": b"his Y"})))
+        with mock.patch.object(mt.pause_menu, "shown_page", lambda pages: ((pages, 1.0), (2.0, 3.0))),                 mock.patch.object(mt.pause_menu, "add_tab", lambda d: d + b"+tabs"),                 mock.patch.object(mt.pause_menu, "add_minus_page", lambda d, place, size: d + b"+page"):
+            self.merge()
+        raw = read(os.path.join(self.mod, "romfs", *common.split("/")))
+        got = sarc.read(zstandard.ZstdDecompressor().decompressobj().decompress(raw))
+        self.assertEqual(got["MenuOverlay_00.buil"], b"his strip+tabs+page")   # his panes, then co-op's
+        self.assertEqual(got["Y.buil"], b"his Y")                              # no co-op edit of it: his kept
+        line = next(l for l in self.lines if common in l)
+        self.assertIn("Both changed MenuOverlay_00.buil: co-op's part made on", line)
+        self.assertIn("Both changed Y.buil:", line)
+
+    def test_a_message_file_both_changed_gets_co_ops_labels_added_to_the_winners(self):
+        from unittest import mock
+        added = lambda d, labels, replace=False: d + b"+" + ",".join(sorted(labels)).encode()
+        with mock.patch.object(mt.ui_pack, "load_strings", lambda language, *a: {"Hdr.msbt": {"Coop_Row": "x"}}),                 mock.patch.object(mt.ui_pack, "add_labels", added):
+            self.merge()
+        self.assertEqual(self.served()["Hdr.msbt"], b"mod header+Coop_Row")
+        self.assertIn("Both changed Hdr.msbt: co-op's part made on", self.lines[0])
+
+    def test_a_layout_edit_that_fails_keeps_the_winners_and_says_why(self):
+        from unittest import mock
+        def fails(*a, **k):
+            raise mt.ui_pack.UiPackError("no such pane")
+        with mock.patch.object(mt.ui_pack, "load_strings", lambda language, *a: {"Hdr.msbt": {"Coop_Row": "x"}}),                 mock.patch.object(mt.ui_pack, "add_labels", fails):
+            self.merge()
+        self.assertEqual(self.served()["Hdr.msbt"], b"mod header")
+        self.assertTrue(any("could not be made" in l and "no such pane" in l for l in self.lines))
+        self.assertTrue(any("Both changed Hdr.msbt: " in l and "kept" in l for l in self.lines))
+
     def test_a_new_pack_merges_again_from_the_mods_own_copy(self):
         self.merge()
         self.put(os.path.join(self.pack, "romfs", *MALS.split("/")), self.archive(

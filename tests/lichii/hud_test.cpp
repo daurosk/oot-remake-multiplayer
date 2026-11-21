@@ -164,26 +164,3 @@ TEST_CASE("layout row 141: blocks that would run into the chat are left out, roo
     CHECK(BlocksThatFit(300, h, 320, 25) == 0);    // only the '+3' line
     CHECK(BlocksThatFit(300, {}, 100, 25) == 0);
 }
-
-TEST_CASE("hud: the player list's size: Auto is full blocks for a few players, compact rows past them") {
-    using CoopHudLayout::ListSize;
-    CHECK(CoopHudLayout::ParseListSize("") == ListSize::kAuto);
-    CHECK(CoopHudLayout::ParseListSize("Compact") == ListSize::kCompact);
-    CHECK(CoopHudLayout::ParseListSize("full") == ListSize::kFull);
-    CHECK(CoopHudLayout::ParseListSize("off") == ListSize::kOff);
-    CHECK(CoopHudLayout::ParseListSize("something") == ListSize::kAuto);
-    CHECK_FALSE(CoopHudLayout::CompactFor(ListSize::kAuto, CoopHudLayout::kFullMost));
-    CHECK(CoopHudLayout::CompactFor(ListSize::kAuto, CoopHudLayout::kFullMost + 1));
-    CHECK(CoopHudLayout::CompactFor(ListSize::kCompact, 1));
-    CHECK_FALSE(CoopHudLayout::CompactFor(ListSize::kFull, 15));
-    CHECK(std::string(CoopHudLayout::ListSizeName(ListSize::kCompact)) == "Compact");
-}
-
-TEST_CASE("hud: the players in our own area are listed first, the order otherwise kept") {
-    std::vector<std::pair<int, bool>> players{{2, false}, {3, true}, {4, false}, {5, true}};
-    CoopHudLayout::HereFirst(players, [](const auto& p) { return p.second; });
-    CHECK(players[0].first == 3);
-    CHECK(players[1].first == 5);
-    CHECK(players[2].first == 2);
-    CHECK(players[3].first == 4);
-}

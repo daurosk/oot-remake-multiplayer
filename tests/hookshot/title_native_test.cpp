@@ -64,7 +64,7 @@ TEST_CASE("title native: a field typed into turns the four buttons into its keys
     CHECK(Letters().back() == ' ');
 }
 
-TEST_CASE("title native: three rows a time and Back, scrolled to the selection, headings left out") {
+TEST_CASE("title native: three rows a page and Back, the page that holds the selection, headings left out") {
     View v;
     v.rows = {R("Settings", "", RowKind::kHeading), R("Your name", "Link"), R("Link's look", "Green", RowKind::kChoice),
               R("Players when you host", "4", RowKind::kChoice), R("Port when you host", "27510"),
@@ -78,21 +78,33 @@ TEST_CASE("title native: three rows a time and Back, scrolled to the selection, 
     CHECK(l.rows[3] == -1);
     CHECK(l.focus == 0);
     CHECK(l.top == 0);
-    v.selected = 4;   // (Port: the fourth shown row, so the rows scroll one)
+    CHECK(l.pages == 2);
+    CHECK(l.hint == "Page 1 of 2 (ZL/ZR)");
+    v.selected = 4;   // (Port: the fourth shown row, the next page; never a scroll)
     l = LookFor(v, l.top);
-    CHECK(l.top == 1);
-    CHECK(l.rows[2] == 4);
-    CHECK(l.focus == 2);
+    CHECK(l.top == 3);
+    CHECK(l.page == 1);
+    CHECK(l.rows[0] == 4);
+    CHECK(l.rows[1] == 5);
+    CHECK(l.focus == 0);
+    CHECK(l.hint == "Page 2 of 2 (ZL/ZR)");
+    CHECK(l.texts[2] == "Back");   // (two rows on the last page: Back right under them)
+    CHECK(l.back == 2);
     v.selected = 5;
     l = LookFor(v, l.top);
-    CHECK(l.top == 2);
-    CHECK(l.focus == 2);
-    v.selected = 1;   // (back up: the window follows)
+    CHECK(l.top == 3);
+    CHECK(l.focus == 1);
+    CHECK(PageJump(v, l, -1) == 1);    // (ZL: the first row of the page before)
+    CHECK(PageJump(v, l, +1) == -1);   // (no page after)
+    v.selected = 1;   // (back up: the page before)
     l = LookFor(v, l.top);
     CHECK(l.top == 0);
     CHECK(l.focus == 0);
+    CHECK(PageJump(v, l, +1) == 4);
     CHECK(l.back == kButtons - 1);   // (three rows or more: Back on the fourth)
     CHECK(l.buttons == kButtons);
+    v.selected = -1;   // (nothing selected: the page shown before stays)
+    CHECK(LookFor(v, 3).page == 1);
     // Fewer rows than buttons: Back right under the last row, the buttons after it not shown.
     View s;
     s.rows = {R("Host now")};
@@ -113,4 +125,48 @@ TEST_CASE("title native: three rows a time and Back, scrolled to the selection, 
     none.selected = -1;
     CHECK(LookFor(none, 0).focus == LookFor(none, 0).back);
     CHECK(LookFor(none, 0).back == 2);
+}
+
+TEST_CASE("title native: with the pack's list, every row on one page, Back right under the last") {
+    View v;
+    for (int i = 0; i < 9; ++i) v.rows.push_back(R("Game " + std::to_string(i), "2/4"));
+    v.rows.push_back(R("Enter a code or address"));
+    v.selected = 8;
+    v.help = "Joins this game.";
+    Look l = LookFor(v, 0, kMaxButtons);
+    CHECK(l.pages == 1);
+    CHECK(l.texts[9] == "Enter a code or address");
+    CHECK(l.texts[10] == "Back");
+    CHECK(l.back == 10);
+    CHECK(l.buttons == 11);   // (buttons 11..13 hidden)
+    CHECK(l.focus == 8);
+    CHECK(l.hint == "Joins this game.");
+    CHECK(PageJump(v, l, 1) == -1);
+    for (int i = 0; i < 20; ++i) v.rows.push_back(R("More " + std::to_string(i)));
+    v.selected = 20;   // (13 rows a page: the second page)
+    l = LookFor(v, 0, kMaxButtons);
+    CHECK(l.pages == 3);
+    CHECK(l.page == 1);
+    CHECK(l.rows[0] == 13);
+    CHECK(l.focus == 7);
+    CHECK(l.texts[13] == "Back");
+    CHECK(l.hint == "Page 2 of 3 (ZL/ZR)   Joins this game.");   // (the page first, then what the row does)
+    CHECK(PageJump(v, l, 1) == 26);
+    CHECK(PageJump(v, l, -1) == 0);
+    CHECK(LookFor(v, 0, 99).buttons == kMaxButtons);   // (never more than the pack has)
+}
+
+TEST_CASE("title native: the column is raised until its lowest box ends on the screen, never below its own place") {
+    // (the game's four: their foot above the screen's: no raise)
+    CHECK(ColumnRaise(-920.0f, -470.0f, 0.0f, 1.0f) == 0.0f);
+    // (eleven buttons and the hint: 600 units under the foot, 1.1 screen units a pane unit: raised 600 / 1.1)
+    const float r = ColumnRaise(kScreenFoot - 600.0f, -470.0f, 0.0f, 1.1f);
+    CHECK(r == doctest::Approx(600.0f / 1.1f));
+    // (drawn with that raise, the foot is on the screen's: it stays)
+    CHECK(ColumnRaise(kScreenFoot, -470.0f + 600.0f, r, 1.1f) == doctest::Approx(r));
+    // (back to fewer rows: the foot well above, the raise goes down to the game's place, never under it)
+    CHECK(ColumnRaise(-300.0f, 900.0f, r, 1.1f) == 0.0f);
+    // (a column taller than the screen: never raised past its first row's top)
+    const float tall = ColumnRaise(kScreenFoot - 900.0f, 500.0f, 0.0f, 1.0f);
+    CHECK(500.0f + tall <= kScreenTop + 0.01f);
 }

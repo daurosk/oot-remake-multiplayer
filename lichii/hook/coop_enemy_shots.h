@@ -33,6 +33,12 @@ using coop::protocol::Vec3;
 
 // The actor names of enemy and boss shots that are shared.
 bool IsEnemyShot(std::string_view name);
+// A split shot (docs/boss-multiplayer.md): an attack that is real in every game. Each game keeps the one its own
+// copy of the boss fires (never stopped, never deleted) and the owner's is not sent (Decide says keep), so it
+// hits every player as it would alone. Phantom Ganon's stage 1 thunder bolt and its four shockwaves.
+// LICHII_COOP_SPLIT_SHOTS=0: off (one bolt, the owner's, as before).
+bool IsSplitShot(std::string_view name);
+bool SplitOn();
 // What its maker's name starts with ("Enemy_Octorok" for Octorok_Bullet),
 // one or more; empty for a name that is no enemy shot.
 std::vector<std::string_view> MakersOf(std::string_view shot);

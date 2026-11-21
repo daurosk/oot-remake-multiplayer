@@ -108,6 +108,7 @@ inline constexpr std::int32_t kMaxAsSlots = 8;  // slots synced from slot 0
 // piece in a slot kind, as the game's own GameData path does.
 inline constexpr std::uint64_t kEquip = 0x2df7b20;
 inline constexpr std::uint64_t kActorParts = 0x270;
+inline constexpr std::uint64_t kActorName = 0x260;  // -> the actor's name, a C string
 inline constexpr std::uint64_t kPartsEquipmentUser = 0x200;
 // In hand or put away: 0xe34c40(eu, slot, state) is the game's own change of
 // an equipment slot's state (the shield node 0x2797850 calls it with slot 4,
@@ -274,6 +275,18 @@ constexpr bool GearIsCarried(std::size_t i) {
 constexpr bool GearIsUnsafe(std::string_view name) {
     return name.find("Hookshot") != std::string_view::npos ||
            name.find("Longshot") != std::string_view::npos;
+}
+// Row 198 (0.11.9): a coloured copy the puppet wears (`<item>_Look<k>`, or a
+// wearer copy `<item>_Blade<n>`) that the game did not make: the piece in its
+// equipment slot is another actor (`made`, the game's own item kept from
+// before). The equip call returns 1 all the same: the 0.11.9 pack sized the
+// copies' AnimationParam too small, the game refused every shield copy, and a
+// puppet kept the game's shield, drawn in the viewer's own colours. Said once
+// per piece so a refused copy is seen in the log.
+constexpr bool CopyRefused(std::string_view worn, std::string_view made) {
+    const bool copy = worn.find("_Look") != std::string_view::npos ||
+                      worn.find("_Blade") != std::string_view::npos;
+    return copy && !made.empty() && made != worn;
 }
 // The equipment slot each of them lands in (seen in the game: the sword in
 // slot 0, the shield in slot 4, the slingshot in slot 3); -1: not a piece
@@ -556,6 +569,7 @@ public:
     static constexpr std::uint64_t kHoldCheckMs = 500;
     static constexpr std::uint64_t kRewearMs = 1000;  // at most once a second
     static constexpr std::uint64_t kFarForMs = 100;   // far on two readings this far apart
+    static constexpr std::uint64_t kRefusedForMs = 2000;   // a copy not made on readings this far apart: said
     static constexpr std::uint8_t kRewearTries = 3;   // then given up, with one line
     static constexpr std::uint64_t kTakeOffMs = 1500;  // a slot empty this long: the piece is taken off
     // A create waits until the game has drawn this long without a break,
@@ -646,6 +660,8 @@ private:
         std::uint64_t rewear_ms = 0;        // no new "left behind" check before this
         std::array<std::uint64_t, kGearCount> far_since_ms{};  // first far reading of each piece; 0 near
         std::array<std::uint8_t, kGearCount> rewear_tries{};   // re-wears since the piece was last near
+        std::array<std::uint64_t, kGearCount> refused_since_ms{};  // first reading of a copy not made (CopyRefused)
+        std::array<std::string, kGearCount> refused_said{};         // the copy whose refusal was said
         // A worn piece its player took off: armor (mask, tunic, boots,
         // gauntlets) with the game's own call (addr::kUnequipArmor); a sword
         // or a shield, for which no call is known, or armor the call
@@ -713,6 +729,7 @@ private:
     std::optional<Call> Hold(Slot& slot, const Target& target, Guest& guest,
                              std::uint64_t now_ms);
     void LeftBehind(Slot& slot, Guest& guest, std::uint64_t now_ms);
+    void RefusedCopy(Slot& slot, Guest& guest, std::size_t i, std::uint64_t piece, std::uint64_t now_ms);
     std::optional<Call> Move(Slot& slot, Guest& guest);
     std::optional<Call> SetFrame(Slot& slot, std::uint64_t controller, float frame);
     static std::uint64_t Controller(Guest& guest, std::uint64_t actor);

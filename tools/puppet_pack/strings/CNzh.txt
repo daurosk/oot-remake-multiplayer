@@ -12,15 +12,8 @@ Pa_Category_06-T_Text_00 = 模组
 [LayoutMsg/PlusMenu_00.msbt]
 # The Multiplayer page's five rows. The co-op module writes the live words over them while the page
 # shows (the session's state, the room, who asks to join); these are what a pack shows before that.
-Pa_Coop_00-Pa_Button_00-T_Btn_00 = 房间
-Pa_Coop_00-Pa_Button_01-T_Btn_00 = 邀请码
-Pa_Coop_00-Pa_Button_02-T_Btn_00 = 人数
-Pa_Coop_00-Pa_Button_03-T_Btn_00 = 放行
-Pa_Coop_00-Pa_Button_04-T_Btn_00 = 离开
 # System's buttons of ours: Longshot Settings, Multiplayer and Customize Link (the tab strip stays the game's own).
 Pa_System_00-Pa_Button_05-T_Btn_00 = Longshot 设置
-Pa_System_00-Pa_Button_06-T_Btn_00 = 联机
-Pa_System_00-Pa_Button_07-T_Btn_00 = 自定义林克
 # Longshot Settings' five rows: Longshot's options by their tab in its own menu.
 Pa_Settings_00-Pa_Button_00-T_Btn_00 = 画面
 Pa_Settings_00-Pa_Button_01-T_Btn_00 = 声音

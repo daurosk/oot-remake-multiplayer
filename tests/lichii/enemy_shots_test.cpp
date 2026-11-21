@@ -171,6 +171,33 @@ TEST_CASE("enemy shots: a copy enemy's own shot is stopped at the game's create 
     CHECK_FALSE(es::StopAtCreate("Octorok_Bullet", {11.0f, 0.0f, 0.5f}));
 }
 
+TEST_CASE("enemy shots: Phantom Ganon's thunder and rally ball are split shots: every game keeps its own") {
+    CHECK(es::IsSplitShot("PhantomGanon_Bullet_Thunder"));
+    CHECK(es::IsSplitShot("PhantomGanon_Bullet_Thunder_Shockwave"));
+    CHECK(es::IsSplitShot("DungeonBossPhantomGanon_Bullet_LightBall"));  // stage 2's rally ball
+    CHECK(es::IsSplitShot("DungeonBossGanondrof_Bullet_LightBall"));     // (Ganondorf's rally the same)
+    CHECK_FALSE(es::IsSplitShot("Ganondorf_Bullet_Spread"));             // his other shots stay one, shared
+    CHECK_FALSE(es::IsSplitShot("Octorok_Bullet"));
+    CHECK_FALSE(es::IsSplitShot("Item_Bomb"));
+    const std::vector<es::Shooter> theirs{{"Enemy_DungeonBoss_PhantomGanon", {0.0f, 5.0f, 0.0f}, Owner::theirs, 0x1000}};
+    const std::vector<es::Shooter> ours{{"Enemy_DungeonBoss_PhantomGanon", {0.0f, 5.0f, 0.0f}, Owner::ours, 0x1000}};
+    // A copy's bolt and shockwaves: kept (not deleted), never stopped at their create.
+    CHECK(es::Decide("PhantomGanon_Bullet_Thunder", {1.0f, 5.0f, 0.0f}, theirs) == Verdict::keep);
+    es::NoteShooters(theirs, 9'000'000);
+    CHECK_FALSE(es::StopAtCreate("PhantomGanon_Bullet_Thunder", {1.0f, 5.0f, 0.0f}, 0x1000));
+    CHECK_FALSE(es::StopAtCreate("PhantomGanon_Bullet_Thunder_Shockwave", {1.0f, 0.0f, 0.0f}, 0x1000));
+    // The owner's: kept, not sent (the others make their own).
+    CHECK(es::Decide("PhantomGanon_Bullet_Thunder_Shockwave", {1.0f, 0.0f, 0.0f}, ours) == Verdict::keep);
+    // His rally ball: each game's own as well.
+    CHECK_FALSE(es::StopAtCreate("DungeonBossPhantomGanon_Bullet_LightBall", {1.0f, 5.0f, 0.0f}, 0x1000));
+    CHECK(es::Decide("DungeonBossPhantomGanon_Bullet_LightBall", {1.0f, 5.0f, 0.0f}, ours) == Verdict::keep);
+    // A shot that is no split shot is still one, shared: the copy's stopped, the owner's sent.
+    const std::vector<es::Shooter> octo{{"Enemy_Octorok", {0.0f, 0.0f, 0.0f}, Owner::theirs, 0x2000}};
+    es::NoteShooters(octo, 9'200'000);
+    CHECK(es::StopAtCreate("Octorok_Bullet", {0.5f, 0.0f, 0.0f}, 0x2000));
+    es::NoteShooters({}, 9'500'000);
+}
+
 TEST_CASE("enemy shots: the shooter the game's shoot code names decides, not the place") {
     // Two Octoroks side by side, ours nearer the shot's place than the copy that fires it.
     es::NoteShooters({{"Enemy_Octorok", {10.0f, 0.0f, 0.0f}, Owner::theirs, 0x1000},

@@ -976,6 +976,10 @@ inline constexpr std::uint8_t targeting = 1u << 2;  // targeting our player
 // pre-battle phase (Gohma on the ceiling), so it must not own the boss; its AI
 // would hold every game's boss there.
 inline constexpr std::uint8_t unready = 1u << 3;
+// Boss turns (boss-turns-older-0119): this game reads its bosses' attacks (object_state::attack_read in its
+// samples when it owns one) and takes turns. An older build never sets it: the server gives it no turn, as a
+// boss it owned would never send an attack end and keep its one owner for the rest of the fight.
+inline constexpr std::uint8_t takes_turns = 1u << 4;
 }  // namespace object_presence
 
 struct ObjectPresence {

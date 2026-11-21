@@ -30,6 +30,9 @@ void ApplyKitOptions();
 // The coop-options.ini ApplyKitOptions reads: the kit's, or the one beside longshot.exe (a game with no kit of its own);
 // none when neither is there.
 std::optional<std::filesystem::path> KitOptionsFile();
+// The file Link's look is saved to (SaveLook) and read from at the start (coop_look_live): KitOptionsFile, else
+// coop.ini. One place, so the two never differ (row 198).
+std::filesystem::path LookFile();
 // The look the player chose in the pause menu (coop_look.h), written to the
 // kit's coop-options.ini (else coop.ini) so the next start keeps it (the
 // title's Settings page reads the files when it opens). The calc thread.

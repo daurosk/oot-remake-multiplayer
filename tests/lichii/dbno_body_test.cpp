@@ -2,6 +2,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <map>
@@ -43,6 +44,8 @@ constexpr std::uint64_t kEmitter = 0x4000;
 constexpr std::uint64_t kNode = 0x3000;
 constexpr std::uint64_t kMain = 0x80000000;
 constexpr std::uint64_t kBlock = 0x9000;
+constexpr std::uint64_t kActor = 0x50000;   // our Link (the adult's lying pose)
+constexpr std::uint64_t kActor2 = 0x60000;  // another Link (an age change, a reload)
 
 bn::Request Req(std::int32_t v, std::int32_t slot = 0, std::uint64_t node = kNode) {
     coop::protocol::BossAction a;
@@ -52,9 +55,10 @@ bn::Request Req(std::int32_t v, std::int32_t slot = 0, std::uint64_t node = kNod
     return bn::RequestFromAction(a, node);
 }
 
-Crawl::Wanted Want(bool lying, bool event = false, bool adult = false) {
+Crawl::Wanted Want(bool lying, bool event = false, bool adult = false, std::uint64_t actor = 0) {
     Crawl::Wanted w;
     w.lying = lying;
+    w.actor = actor;
     w.event = event;
     w.adult = adult;
     w.bsa = kBsa;
@@ -79,7 +83,37 @@ struct Made {
     std::uint64_t function = 0;  // main+
     std::uint64_t x0 = 0, x1 = 0, x2 = 0;
     std::int32_t verb = 0;  // an action request's verb
+    std::string as;         // an AS play's command
+    float rate = -1.0f;     // ... and rate
 };
+
+// An actor's AS controller as the game keeps it (CoopPuppet::addr::kControllerPath; slot 0 only).
+void SetAs(Guest& g, const std::string& name, float rate, std::uint64_t actor = kActor) {
+    const std::uint64_t slot = actor + 0x5000, text = actor + 0x6000;
+    std::array<char, 64> buf{};
+    std::memcpy(buf.data(), name.data(), std::min(name.size(), buf.size() - 1));
+    g.Write(text, buf.data(), buf.size());
+    g.Write(slot + addr::kAsSlotRate, &rate, sizeof rate);
+}
+void MakeAs(Guest& g, const std::string& name, float rate, std::uint64_t actor = kActor) {
+    namespace pa = CoopPuppet::addr;
+    std::uint64_t at = actor;
+    std::uint64_t next = actor + 0x100;
+    for (const std::uint64_t step : pa::kControllerPath) {
+        g.Write(at + step, &next, sizeof next);
+        at = next;
+        next += 0x100;
+    }
+    const std::int32_t count = 2;
+    const std::uint64_t slots = actor + 0x4000, slot = actor + 0x5000, text = actor + 0x6000;
+    const float frame = 0.0f;
+    g.Write(at + pa::kSlotCount, &count, sizeof count);
+    g.Write(at + pa::kSlots, &slots, sizeof slots);
+    g.Write(slots, &slot, sizeof slot);
+    g.Write(slot + pa::kSlotName, &text, sizeof text);
+    g.Write(slot + pa::kSlotFrame, &frame, sizeof frame);
+    SetAs(g, name, rate, actor);
+}
 
 // One frame of the caller: action requests answered `result`, the malloc
 // kBlock, the rest 0. Returns every call made.
@@ -87,11 +121,30 @@ std::vector<Made> RunFrame(Crawl& c, Guest& g, std::uint64_t now_ms, std::uint64
     std::vector<Made> made;
     auto call = c.Next(g, false, 0, now_ms, kMain);
     while (call) {
-        Made m{call->function - kMain, call->x[0], call->x[1], call->x[2], 0};
+        Made m{call->function - kMain, call->x[0], call->x[1], call->x[2], 0, std::string(), -1.0f};
         std::uint64_t r = 0;
         if (m.function == bn::addr::kMalloc) {
             CHECK(call->x[0] == addr::kBlockSize);
             r = kBlock;
+        } else if (m.function == CoopPuppet::addr::kPlayAs) {
+            // The game's play call: the command goes on the actor's slot 0 at the rate.
+            CHECK(m.x0 == kBlock + addr::kBlockPlay);
+            std::uint64_t actor = 0, text = 0;
+            float frame_from = 0.0f, blend = 0.0f;
+            g.Read(m.x0, &actor, sizeof actor);
+            g.Read(m.x0 + 8, &text, sizeof text);
+            g.Read(m.x0 + 0x14, &m.rate, sizeof m.rate);
+            g.Read(m.x0 + 0x18, &frame_from, sizeof frame_from);
+            g.Read(m.x0 + 0x1c, &blend, sizeof blend);
+            CHECK(frame_from == -1.0f);
+            CHECK(blend == -1.0f);
+            CHECK(text == kBlock + addr::kBlockText);
+            std::array<char, addr::kTextSize> name{};
+            g.Read(text, name.data(), name.size());
+            REQUIRE(name.back() == 0);
+            m.as = name.data();
+            CHECK(actor != 0);
+            SetAs(g, m.as, m.rate, actor);
         } else if (m.function == bn::addr::kRequestActionVerb) {
             CHECK_FALSE(call->copy_game);  // our own downed Link: what it makes is ours (#189 is copies only)
             CHECK(m.x0 == kBsa);
@@ -129,6 +182,16 @@ std::vector<std::int32_t> Verbs(const std::vector<Made>& made) {
     for (const Made& m : made) {
         if (m.function == bn::addr::kRequestActionVerb) {
             out.push_back(m.verb);
+        }
+    }
+    return out;
+}
+
+std::vector<Made> Plays(const std::vector<Made>& made) {
+    std::vector<Made> out;
+    for (const Made& m : made) {
+        if (m.function == CoopPuppet::addr::kPlayAs) {
+            out.push_back(m);
         }
     }
     return out;
@@ -353,24 +416,135 @@ TEST_CASE("dbno body (row 190): a crawl the game does not take on the spot is no
     }
 }
 
-TEST_CASE("dbno body: an adult is asked the same Crawl and Wait (the HugeHit of 11-16 is not used)") {
+TEST_CASE("dbno body: the verbs by age (Crawl down for both, up: Wait, or LDamageStandUp from the adult's pose)") {
     CHECK(DownVerb(false) == verb::kCrawl);
     CHECK(DownVerb(true) == verb::kCrawl);
     CHECK(UpVerb(false) == verb::kWait);
-    CHECK(UpVerb(true) == verb::kWait);
+    CHECK(UpVerb(true) == verb::kLDamageStandUp);
+    CHECK(std::string(VerbName(verb::kLDamageStandUp)) == "LDamageStandUp");
+    CHECK(PoseWanted(true, true, false, true, false));
+    CHECK_FALSE(PoseWanted(false, true, false, true, false));  // a child: the crawl's own clips
+    CHECK_FALSE(PoseWanted(true, false, false, true, false));  // up
+    CHECK_FALSE(PoseWanted(true, true, true, true, false));    // an event drives him
+    CHECK_FALSE(PoseWanted(true, true, false, false, false));  // the crawl not taken (yet, or a fall)
+    CHECK_FALSE(PoseWanted(true, true, false, true, true));    // on a horse
+    CHECK(Riding("HorseWait"));
+    CHECK(Riding("HorseMove"));
+    CHECK(Riding("AimHorseLowerF"));
+    CHECK(Riding("RideonRunHorse"));
+    CHECK(Riding("RideOnDirectHorse"));
+    CHECK(Riding("DismountHorse"));
+    CHECK_FALSE(Riding("Wait"));
+    CHECK_FALSE(Riding("Crouch"));
+    CHECK_FALSE(Riding(std::string(kLyingPose)));
+}
+
+TEST_CASE("dbno body: slot 0 is read as the puppets read it") {
     Guest g;
+    CHECK_FALSE(ReadSlot0(g, kActor));  // no AS controller
+    CHECK_FALSE(ReadSlot0(g, 0));
+    MakeAs(g, "Crouch", 1.0f);
+    const auto s = ReadSlot0(g, kActor);
+    REQUIRE(s);
+    CHECK(s->name == "Crouch");
+    CHECK(s->rate == 1.0f);
+    SetAs(g, "DamageLStand", 0.0f);
+    CHECK(ReadSlot0(g, kActor)->name == "DamageLStand");
+    CHECK(ReadSlot0(g, kActor)->rate == 0.0f);
+}
+
+TEST_CASE("dbno body: a downed adult in Crawl lies in the game's DamageLStand held at frame 0, and gets up with it") {
+    Guest g;
+    MakeAs(g, "Wait", 1.0f);
     Crawl c;
-    c.Want(Want(false, false, true));
+    c.Want(Want(false, false, true, kActor));
     c.Skip(kBsa, Req(verb::kWait, 2), false);
-    c.Want(Want(true, false, true));
-    CHECK(Verbs(RunFrame(c, g, 984)).empty());
+    c.Want(Want(true, false, true, kActor));
+    auto f = RunFrame(c, g, 984);
+    CHECK(Verbs(f).empty());
+    CHECK(Plays(f).empty());  // not in our Crawl yet: nothing played
     CHECK(c.Skip(kBsa, Req(verb::kWait, 2), false));
-    CHECK(Verbs(RunFrame(c, g, 1000)) == std::vector<std::int32_t>{verb::kCrawl});
-    CHECK(Verbs(RunFrame(c, g, 1100)).empty());        // taken: held
-    CHECK(c.Skip(kBsa, Req(85), false));               // the game's LDamageStandUp: skipped like any other
-    CHECK(c.Skip(kBsa, Req(136), false));              // ... and a HugeHit of the game's (it would throw our Link)
-    c.Want(Want(false, false, true));
-    CHECK(Verbs(RunFrame(c, g, 2000)) == std::vector<std::int32_t>{verb::kWait});
+    f = RunFrame(c, g, 1000);
+    CHECK(Verbs(f) == std::vector<std::int32_t>{verb::kCrawl});
+    CHECK(Plays(f).empty());
+    SetAs(g, "Crouch", 1.0f);  // the crawl's own command (no clips on an adult: he stood upright)
+    f = RunFrame(c, g, 1100);
+    REQUIRE(Plays(f).size() == 1);
+    CHECK(Plays(f)[0].as == "DamageLStand");
+    CHECK(Plays(f)[0].rate == 0.0f);  // held: frame 0 is him lying
+    CHECK(ReadSlot0(g, kActor)->name == "DamageLStand");
+    CHECK(RunFrame(c, g, 1200).empty());  // held: nothing more
+    CHECK(RunFrame(c, g, 1300).empty());
+    // The game plays its own on slot 0 (the crawl's move): played again, held.
+    SetAs(g, "Crouch", 1.0f);
+    f = RunFrame(c, g, 1400);
+    REQUIRE(Plays(f).size() == 1);
+    CHECK(Plays(f)[0].rate == 0.0f);
+    CHECK(c.Totals().poses == 2);
+    CHECK(c.Skip(kBsa, Req(verb::kLDamageStandUp, 2), false));  // the game's own stand-up while down: skipped
+
+    // Revived (held A): the game's own Walk / Wait on our slot is skipped from
+    // the up frame on, the pose plays on at rate 1 (the game's stand-up) and
+    // the game's LDamageStandUp is asked.
+    c.Want(Want(false, false, true, kActor));
+    CHECK(c.Skip(kBsa, Req(verb::kWait, 2), false));
+    CHECK_FALSE(c.Skip(kBsa, Req(134, 1), false));  // another slot's: the game's
+    f = RunFrame(c, g, 2000);
+    REQUIRE(Plays(f).size() == 1);
+    CHECK(Plays(f)[0].rate == 1.0f);
+    CHECK(Verbs(f) == std::vector<std::int32_t>{verb::kLDamageStandUp});
+    CHECK(c.Totals().releases == 1);
+    // Taken: the game's own run again, nothing more is asked or played.
+    CHECK_FALSE(c.Skip(kBsa, Req(verb::kWait, 2), false));
+    CHECK(RunFrame(c, g, 2100).empty());
+    SetAs(g, "Wait", 1.0f);
+    CHECK(RunFrame(c, g, 2200).empty());
+    CHECK(RunFrame(c, g, 2300).empty());
+}
+
+TEST_CASE("dbno body: getting up, a stand-up the game keeps held is played on again (bounded), a busy slot asked again") {
+    Guest g;
+    MakeAs(g, "Wait", 1.0f);
+    Crawl c;
+    c.Want(Want(false, false, true, kActor));
+    c.Skip(kBsa, Req(verb::kWait, 2), false);
+    c.Want(Want(true, false, true, kActor));
+    RunFrame(c, g, 984);
+    c.Skip(kBsa, Req(verb::kWait, 2), false);
+    REQUIRE(Verbs(RunFrame(c, g, 1000)) == std::vector<std::int32_t>{verb::kCrawl});
+    REQUIRE(Plays(RunFrame(c, g, 1100)).size() == 1);
+    c.Want(Want(false, false, true, kActor));
+    auto f = RunFrame(c, g, 2000, CoopDbno::Body::Crawl::kSlotBusy);  // 3: asked again next frame
+    CHECK(Verbs(f) == std::vector<std::int32_t>{verb::kLDamageStandUp});
+    CHECK(c.Skip(kBsa, Req(verb::kWait, 2), false));  // still left to ours
+    SetAs(g, "DamageLStand", 0.0f);  // the game's own ask of the same command kept it held
+    f = RunFrame(c, g, 2100);
+    CHECK(Plays(f).size() == 1);
+    CHECK(Verbs(f) == std::vector<std::int32_t>{verb::kLDamageStandUp});
+    int plays = 0;
+    for (std::uint64_t ms = 2200; ms < 4000; ms += 100) {
+        SetAs(g, "DamageLStand", 0.0f);
+        plays += static_cast<int>(Plays(RunFrame(c, g, ms)).size());
+    }
+    CHECK(plays + 2 <= kMaxReleases);  // never played for ever
+    CHECK(c.Totals().releases <= static_cast<std::uint64_t>(kMaxReleases));
+    CHECK_FALSE(c.Skip(kBsa, Req(verb::kWait, 2), false));  // the round is over: the game's own runs
+}
+
+TEST_CASE("dbno body: a refused stand-up leaves the game's own Wait to stand the adult up") {
+    Guest g;
+    MakeAs(g, "Wait", 1.0f);
+    Crawl c;
+    c.Want(Want(false, false, true, kActor));
+    c.Skip(kBsa, Req(verb::kWait, 2), false);
+    c.Want(Want(true, false, true, kActor));
+    RunFrame(c, g, 984);
+    c.Skip(kBsa, Req(verb::kWait, 2), false);
+    RunFrame(c, g, 1000);
+    RunFrame(c, g, 1100);
+    c.Want(Want(false, false, true, kActor));
+    CHECK(Verbs(RunFrame(c, g, 2000, 2)) == std::vector<std::int32_t>{verb::kLDamageStandUp});
+    CHECK_FALSE(c.Skip(kBsa, Req(verb::kWait, 2), false));
     CHECK(Verbs(RunFrame(c, g, 2100)).empty());
 }
 
@@ -429,6 +603,131 @@ TEST_CASE("dbno body (row 190 + PR #308): slot-busy waits are noted three times 
     CHECK(noted == 3);
     CHECK(c.Totals().busy >= 20);
     CHECK(c.Totals().refused == 0);  // (3 is not a refusal)
+}
+
+TEST_CASE("dbno body: a child is never played a pose (the crawl has its own clips)") {
+    Guest g;
+    MakeAs(g, "Wait", 1.0f);
+    Crawl c;
+    c.Want(Want(false, false, false, kActor));
+    c.Skip(kBsa, Req(verb::kWait, 2), false);
+    c.Want(Want(true, false, false, kActor));
+    RunFrame(c, g, 984);
+    c.Skip(kBsa, Req(verb::kWait, 2), false);
+    CHECK(Verbs(RunFrame(c, g, 1000)) == std::vector<std::int32_t>{verb::kCrawl});
+    for (std::uint64_t ms = 1100; ms < 3000; ms += 100) {
+        SetAs(g, "Crouch", 1.0f);
+        CHECK(Plays(RunFrame(c, g, ms)).empty());
+    }
+    c.Want(Want(false, false, false, kActor));
+    CHECK_FALSE(c.Skip(kBsa, Req(verb::kWait, 2), false));  // no stand-up round for a child
+    const auto f = RunFrame(c, g, 4000);
+    CHECK(Plays(f).empty());
+    CHECK(Verbs(f).empty());  // (the game's own Wait took the slot this frame: it stands him up)
+    CHECK(c.Totals().poses == 0);
+}
+
+TEST_CASE("dbno body: an age change or a new Link while down: the pose goes with the Link it was put on") {
+    Guest g;
+    MakeAs(g, "Wait", 1.0f);
+    Crawl c;
+    c.Want(Want(false, false, true, kActor));
+    c.Skip(kBsa, Req(verb::kWait, 2), false);
+    c.Want(Want(true, false, true, kActor));
+    RunFrame(c, g, 984);
+    c.Skip(kBsa, Req(verb::kWait, 2), false);
+    RunFrame(c, g, 1000);
+    REQUIRE(Plays(RunFrame(c, g, 1100)).size() == 1);
+    // The age change is an event (the Master Sword's pedestal, the Song of
+    // Time): nothing played meanwhile.
+    c.Want(Want(true, true, true, kActor));
+    SetAs(g, "EvtWait", 1.0f);
+    CHECK(Plays(RunFrame(c, g, 1200)).empty());
+    // A child after it (a new Link actor): the crawl asked again (kAskEveryMs after the last), no pose.
+    MakeAs(g, "Wait", 1.0f, kActor2);
+    c.Want(Want(true, false, false, kActor2));
+    CHECK(c.Skip(kBsa, Req(verb::kWait, 2), false));
+    auto f = RunFrame(c, g, 1600);
+    CHECK(Verbs(f) == std::vector<std::int32_t>{verb::kCrawl});
+    CHECK(Plays(f).empty());
+    CHECK(Plays(RunFrame(c, g, 1700)).empty());
+    // Back to an adult (a new Link again): laid down on that one.
+    MakeAs(g, "Crouch", 1.0f, kActor);
+    c.Want(Want(true, false, true, kActor));
+    f = RunFrame(c, g, 1800);
+    REQUIRE(Plays(f).size() == 1);
+    CHECK(Plays(f)[0].rate == 0.0f);
+    // A reload (Game Over, a scene's re-entry) gives a new Link that is up:
+    // no stand-up, nothing played on it.
+    MakeAs(g, "Wait", 1.0f, kActor2);
+    c.Want(Want(false, false, true, kActor2));
+    CHECK_FALSE(c.Skip(kBsa, Req(verb::kWait, 2), false));
+    f = RunFrame(c, g, 1900);
+    CHECK(Plays(f).empty());
+    for (const auto v : Verbs(f)) {
+        CHECK(v != verb::kLDamageStandUp);
+    }
+}
+
+TEST_CASE("dbno body: a downed adult on a horse is asked no crawl until he is off it") {
+    Guest g;
+    MakeAs(g, "Wait", 1.0f);
+    Crawl c;
+    c.Want(Want(false, false, true, kActor));
+    c.Skip(kBsa, Req(verb::kWait, 2), false);
+    SetAs(g, "HorseMove", 1.0f);
+    c.Want(Want(true, false, true, kActor));
+    int asks = 0;
+    for (std::uint64_t ms = 1000; ms < 5000; ms += 100) {
+        const auto f = RunFrame(c, g, ms);
+        asks += static_cast<int>(Verbs(f).size());
+        CHECK(Plays(f).empty());
+        CHECK_FALSE(c.Skip(kBsa, Req(verb::kWait, 2), false));  // the game's ride goes on
+    }
+    CHECK(asks == 0);
+    CHECK(c.Totals().riding > 0);
+    SetAs(g, "Wait", 1.0f);  // off the horse
+    RunFrame(c, g, 5000);    // (the game's Wait of the last frame took the slot)
+    CHECK(c.Skip(kBsa, Req(verb::kWait, 2), false));
+    CHECK(Verbs(RunFrame(c, g, 5100)) == std::vector<std::int32_t>{verb::kCrawl});
+    SetAs(g, "Crouch", 1.0f);
+    CHECK(Plays(RunFrame(c, g, 5200)).size() == 1);
+}
+
+TEST_CASE("dbno body: a fall while the adult lies: the game's own plays, laid down again on the ground") {
+    Guest g;
+    MakeAs(g, "Wait", 1.0f);
+    Crawl c;
+    c.Want(Want(false, false, true, kActor));
+    c.Skip(kBsa, Req(verb::kWait, 2), false);
+    c.Want(Want(true, false, true, kActor));
+    RunFrame(c, g, 984);
+    c.Skip(kBsa, Req(verb::kWait, 2), false);
+    RunFrame(c, g, 1000);
+    REQUIRE(Plays(RunFrame(c, g, 1100)).size() == 1);
+    CHECK_FALSE(c.Skip(kBsa, Req(verb::kFall, 2), false));
+    SetAs(g, "Fall", 1.0f);
+    for (std::uint64_t ms = 1200; ms < 2000; ms += 100) {
+        CHECK(Plays(RunFrame(c, g, ms, 2)).empty());  // the game's fall plays
+    }
+    SetAs(g, "Land", 1.0f);
+    CHECK(c.Skip(kBsa, Req(verb::kWait, 2), false));
+    CHECK(Verbs(RunFrame(c, g, 2000)) == std::vector<std::int32_t>{verb::kCrawl});
+    CHECK(Plays(RunFrame(c, g, 2100)).size() == 1);  // lying again
+}
+
+TEST_CASE("dbno body: solo or up, an adult with no downed state is never read or played") {
+    Guest g;
+    MakeAs(g, "Wait", 1.0f);
+    Crawl c;
+    c.Want(Want(false, false, true, kActor));
+    for (std::uint64_t ms = 0; ms < 3000; ms += 100) {
+        CHECK(RunFrame(c, g, ms).empty());
+        CHECK_FALSE(c.Skip(kBsa, Req(verb::kWait, 2), false));
+        CHECK_FALSE(c.Skip(kBsa, Req(verb::kLDamageStandUp, 2), false));
+    }
+    CHECK(c.Totals().poses == 0);
+    CHECK(c.Totals().releases == 0);
 }
 
 TEST_CASE("dbno body: a fall or water while crawling passes, and the crawl is asked again on the ground") {

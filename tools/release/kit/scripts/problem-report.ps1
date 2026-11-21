@@ -130,33 +130,59 @@ function Get-ProblemRunKey([System.IO.Stream]$Stream) {
     finally { $sha.Dispose() }
 }
 
+# The players' names a line gives where the module writes a name (Protect-ProblemNames' patterns), added to $Names.
+function Add-ProblemNames([string]$Line, [System.Collections.Generic.HashSet[string]]$Names) {
+    if ($Line.Contains('player ') -or $Line.Contains("name '")) { [void](Protect-ProblemNames $Line $Names) }
+}
+
+# The players' names in whole logs (the name lines only, nothing kept but the names): for text that is not a log line of
+# a session read now (a crash record after a session read before). A log that cannot be read is skipped.
+function Get-ProblemLogNames([string[]]$Logs, [System.Collections.Generic.HashSet[string]]$Names) {
+    foreach ($log in $Logs) {
+        try {
+            $stream = Open-ProblemLog $log
+            try {
+                $reader = New-Object System.IO.StreamReader($stream, (New-Object System.Text.UTF8Encoding $false), $true)
+                try { while ($null -ne ($line = $reader.ReadLine())) { Add-ProblemNames $line $Names } }
+                finally { $reader.Dispose() }
+            } finally { $stream.Dispose() }
+        } catch { }
+    }
+}
+
 # One session's log: its key and its problems, masked. A session in $Known is not read past its start (Events is $null);
-# the rest is read a line at a time.
+# the rest is read a line at a time. Players' names are masked once the whole session is read, with every name it gave
+# (a problem line before the player's join line too) and those in $Names (other sessions read now); the session's names
+# are added to $Names.
 function Read-ProblemRun([string]$Path, [hashtable]$Mask, [string]$UserName = $env:USERNAME,
-                         [string]$PcName = $env:COMPUTERNAME, [string[]]$Known = @()) {
+                         [string]$PcName = $env:COMPUTERNAME, [string[]]$Known = @(),
+                         [System.Collections.Generic.HashSet[string]]$Names = $null) {
+    if ($null -eq $Names) { $Names = New-Object 'System.Collections.Generic.HashSet[string]' }
     $stream = Open-ProblemLog $Path
     try {
         $key = Get-ProblemRunKey $stream
         if ($Known -contains $key) { return @{ Key = $key; Events = $null } }
-        $names = New-Object 'System.Collections.Generic.HashSet[string]'
-        $events = [ordered]@{}
+        $lines = [ordered]@{}   # each problem line once (address-masked), with its count
         $reader = New-Object System.IO.StreamReader($stream, (New-Object System.Text.UTF8Encoding $false), $true)
         $isProblem = $script:ProblemLineRx
         $isRoutine = $script:ProblemRoutineRx
         try {
             while ($null -ne ($line = $reader.ReadLine())) {
                 # (Test-ProblemLine, inline: a call a line is most of the time on a large log)
-                if (-not $isProblem.IsMatch($line) -or $isRoutine.IsMatch($line)) {
-                    if ($line.Contains('player ') -or $line.Contains("name '")) { [void](Protect-ProblemNames $line $names) }
-                    continue
-                }
-                $masked = Protect-ProblemNames (Protect-LogText $line.Trim() $Mask $UserName $PcName) $names
-                if (Test-ProblemHasAddress $masked) { continue }
-                $fp = Get-ProblemFingerprint $masked
-                if ($events.Contains($fp)) { $events[$fp].Count++ }
-                else { $events[$fp] = @{ Line = $masked.Substring(0, [Math]::Min(300, $masked.Length)); Count = 1 } }
+                if ($line.Contains('player ') -or $line.Contains("name '")) { [void](Protect-ProblemNames $line $Names) }
+                if (-not $isProblem.IsMatch($line) -or $isRoutine.IsMatch($line)) { continue }
+                $t = $line.Trim()
+                if ($lines.Contains($t)) { $lines[$t]++ } elseif ($lines.Count -lt 20000) { $lines[$t] = 1 }
             }
         } finally { $reader.Dispose() }
+        $events = [ordered]@{}
+        foreach ($t in $lines.Keys) {
+            $masked = Protect-ProblemNames (Protect-LogText $t $Mask $UserName $PcName) $Names
+            if (Test-ProblemHasAddress $masked) { continue }
+            $fp = Get-ProblemFingerprint $masked
+            if ($events.Contains($fp)) { $events[$fp].Count += $lines[$t] }
+            else { $events[$fp] = @{ Line = $masked.Substring(0, [Math]::Min(300, $masked.Length)); Count = $lines[$t] } }
+        }
         @{ Key = $key; Events = $events }
     } finally { $stream.Dispose() }
 }
@@ -164,14 +190,17 @@ function Read-ProblemRun([string]$Path, [hashtable]$Mask, [string]$UserName = $e
 # The new problems of the logs not read before, as a zip in $OutDir (coop-report-<date>.zip; the newest
 # $ProblemZipsKept are kept), or $null when there is none. A log that cannot be read is skipped (and tried again next
 # time); the others are still read. The state's runs and sent are brought up to date (the caller writes it).
+# $Names: the players' names met (filled; problem-send.ps1 masks the crash records with them).
 function New-ProblemReport([string[]]$Logs, [hashtable]$State, [string]$OutDir, [string]$Version = '',
-                           [string]$UserName = $env:USERNAME, [string]$PcName = $env:COMPUTERNAME) {
+                           [string]$UserName = $env:USERNAME, [string]$PcName = $env:COMPUTERNAME,
+                           [System.Collections.Generic.HashSet[string]]$Names = $null) {
+    if ($null -eq $Names) { $Names = New-Object 'System.Collections.Generic.HashSet[string]' }
     $mask = New-MaskState
     $new = [ordered]@{}
     $read = @()
     foreach ($log in $Logs) {
         if (-not (Test-Path -LiteralPath $log)) { continue }
-        try { $run = Read-ProblemRun $log $mask $UserName $PcName (@($State.runs) + $read) }
+        try { $run = Read-ProblemRun $log $mask $UserName $PcName (@($State.runs) + $read) $Names }
         catch { continue }
         if ($null -eq $run.Events) { continue }
         $read += $run.Key

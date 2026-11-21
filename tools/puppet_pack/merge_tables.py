@@ -47,13 +47,14 @@ Prints what it did, one line each. Exit 0 also when there is nothing to do; 1 wh
 import argparse
 import os
 import shutil
+import struct
 import sys
 
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from puppet_pack import byml, rstb, sarc, tunic, tunic_extra, ui_pack, zs  # noqa: E402
+    from puppet_pack import byml, pause_menu, rstb, sarc, tunic, tunic_extra, ui_pack, zs  # noqa: E402
 else:
-    from . import byml, rstb, sarc, tunic, tunic_extra, ui_pack, zs
+    from . import byml, pause_menu, rstb, sarc, tunic, tunic_extra, ui_pack, zs
 
 LIST_FILE = "coop-mods.list"
 KEEP_DIR = "_coop-size-table"
@@ -669,6 +670,34 @@ def add_snail_placeholders(entries):
     return out, changed
 
 
+def pack_edit(rel, name, theirs):
+    """The pack's own change of member `name` of archive `rel` made again on the winner's copies (theirs: {name:
+    [bytes]}), when both changed it: [bytes] or None (no such edit: the winner's is kept). 0.11.9, lane R1: Character
+    Select and the pack both change MenuOverlay_00.buil (the - menu's strip); keeping his alone lost co-op's tabs. The
+    pause menu's layouts get pause_menu's edits on his copy (his panes kept, ours added); a message file gets co-op's
+    labels (strings/<language>) added to his. Raises ui_pack.UiPackError (or the parsers' errors) when it cannot."""
+    if rel == pause_menu.COMMON_ARCHIVE:
+        if name == pause_menu.OVERLAY_LAYOUT:
+            pages = theirs.get(pause_menu.PAGES_LAYOUT) or []
+            if not pages:
+                raise ui_pack.UiPackError("no %s to place the - menu's page by" % pause_menu.PAGES_LAYOUT)
+            place, size = pause_menu.shown_page(pages[0])
+            edit = lambda d: pause_menu.add_minus_page(pause_menu.add_tab(d), place, size)
+        elif name == pause_menu.PAGES_LAYOUT:
+            edit = pause_menu.add_page
+        elif name == pause_menu.SYSTEM_LAYOUT:
+            edit = pause_menu._system_layout
+        else:
+            return None
+        return [edit(d) for d in theirs[name]]
+    if rel.startswith("Mals/") and name.endswith(".msbt"):
+        ours = ui_pack.load_strings(ui_pack.language_of(rel)).get(name)
+        if not ours:
+            return None
+        return [ui_pack.add_labels(d, ours, replace=True) for d in theirs[name]]
+    return None
+
+
 ARCHIVE_DIRS = (("Mals",), ("UI", "Layout2Archive"))
 ARCHIVE_TAILS = (".sarc.zs", ".blarc.zs")
 
@@ -716,7 +745,7 @@ def merge_members_one(root, codec, rel, win_name, win_path, pack_path, game, say
     games, _ = _members(game_data)
     # The other mods, the one nearer the winner first (SHARED_NOTE), then the pack (under the mods the list names):
     # a member two of them changed is the nearer one's, as it was when that mod won the file.
-    take, both, lengths = {}, [], []
+    take, both, lengths, ontop = {}, [], [], []
     for mod_path, file in list(reversed([(p, t) for (_, p), t in zip(others, more)])) + (
             [(pack_path, pack_file)] if pack_file else []):
         with open(file, "rb") as f:
@@ -728,7 +757,17 @@ def merge_members_one(root, codec, rel, win_name, win_path, pack_path, game, say
             if theirs.get(name, games.get(name)) == games.get(name):
                 take[name] = datas   # (the winner left it as the game has it, or has none)
             elif name not in both:
-                both.append(name)    # (both changed it: the winner's stays)
+                made = None
+                if mod_path == pack_path:   # (the pack's change made again on the winner's: both kept)
+                    try:
+                        made = pack_edit(rel, name, {**games, **theirs})
+                    except (ui_pack.UiPackError, OSError, ValueError, KeyError, IndexError, struct.error) as e:
+                        say(f"Menus: co-op's {name} could not be made on {win_name}'s ({e}).")
+                if made is not None:
+                    take[name] = made
+                    ontop.append(name)
+                else:
+                    both.append(name)    # (both changed it: the winner's stays)
     out, done = [], set()
     for n, d in entries:
         if n in take:
@@ -755,6 +794,8 @@ def merge_members_one(root, codec, rel, win_name, win_path, pack_path, game, say
     write_atomic(path, data)
     say(f"Menus: the game reads {win_name}'s {rel}; merged in {whose} members ({len(take)}: "
         f"{', '.join(sorted(take)) or 'none'}). Its own copy is kept in {win_name}/{MEMBERS_KEEP}."
+        + (f" Both changed {', '.join(sorted(ontop))}: co-op's part made on {win_name}'s (both kept)."
+           if ontop else "")
         + (f" Both changed {', '.join(sorted(both))}: {win_name}'s kept (the co-op part of it is missing)."
            if both else "")
         + (" Its Customize screen's messages got co-op's placeholders (co-op's customization in it)."

@@ -257,12 +257,11 @@ struct SessionConfig {
   // loaded, has played its intro and stands within boss_turn_m of it. Only at
   // a calm moment: no hit on it for boss_turn_quiet_us (none passed on, and
   // not the owner's own, boss_owner_hit_hold_us), its life above 0, and its
-  // owner's animation no death and no cutscene, and no shot of the owner's
-  // game flying in its scene (made within boss_turn_shot_us and not ended:
-  // Phantom Ganon's ball mid-rally). 0: off.
-  std::uint64_t boss_turn_us = 20'000'000;
+  // owner's animation no death and no cutscene. 0: off.
+  // Every attack (2026-11-21, "constantly changing its target between attacks"): the attack-end edge below
+  // decides; boss_turn_us is only the least time with one owner, so a quick combo is not split.
+  std::uint64_t boss_turn_us = 4'000'000;
   std::uint64_t boss_turn_quiet_us = 3'000'000;
-  std::uint64_t boss_turn_shot_us = 10'000'000;
   float boss_turn_m = 40.0f;
   // ...and only right at the end of the boss's own attack (boss-turns-0119): its owner's samples say an attack
   // ran (object_state::attacking, the hook's addr::InAttackSequence: after a reaction it stays on until the
@@ -289,6 +288,11 @@ struct SessionConfig {
   // to another player who has them, fight or not.
   std::uint64_t owner_paused_us = 6'000'000;
   std::uint64_t owner_dead_us = 10'000'000;
+  // A boss (its group's root) leaves an owner who died at once and one paused this long: its AI fights only its
+  // owner's Link, and a dead or paused one is nobody to fight (the boss stood idle until owner_dead_us). It goes to
+  // a player up and playing (best_other, fit only); a downed owner already loses it at once (dbno).
+  std::uint64_t boss_owner_dead_us = 0;
+  std::uint64_t boss_owner_paused_us = 2'000'000;
   // A player position older than this is not used for distances.
   std::uint64_t position_stale_us = 5'000'000;
   // Proximity voice (docs/protocol.md, "Voice"): VOICE_FRAME goes to the
@@ -743,6 +747,10 @@ class Session {
     // an enemy went round P2, P3, P4, P2 ... when only the last one was kept).
     std::map<ConnectionId, std::uint64_t> gave_up;
     std::uint64_t changed_at = 0;  // the last change of owner; 0: never
+    // The last change of owner that was no boss turn (next_turn), for boss_hitter_cooldown_us: a turn passes at
+    // every attack's end (4 s), so a cooldown from changed_at would refuse nearly every stun from another player
+    // (Gohma's eye, a ball sent back into a copy Phantom Ganon or Ganondorf). 0: never.
+    std::uint64_t hitter_changed_at = 0;
     // The last state relayed from its owner, for a hand-over with no answer
     // and for a player who enters the scene later.
     std::optional<protocol::ObjectState> last_state;
@@ -761,6 +769,8 @@ class Session {
     std::map<ConnectionId, std::uint64_t> chased_by;
     // Games whose boss is not ready to be owned (object_presence::unready).
     std::set<ConnectionId> unready;
+    // Games that take boss turns (object_presence::takes_turns): an older build is never given a turn.
+    std::set<ConnectionId> takes_turns;
     // A HANDOVER_ASK the owner has not answered yet.
     struct Ask {
       ConnectionId to = 0;
@@ -772,6 +782,8 @@ class Session {
       // A BOMB_TAKE (native puppets phase 2): no answer means the owner's
       // game keeps the bomb (BOMB_ANSWER kept), not a move.
       bool bomb = false;
+      // A boss turn (next_turn): its change does not start boss_hitter_cooldown_us (hitter_changed_at).
+      bool turn = false;
     };
     std::optional<Ask> ask;
     // DAMAGE that came while the owner hold had not chosen its owner yet
@@ -980,6 +992,8 @@ class Session {
   bool place_known_in(const Connection& c, const std::string& scene,
                       std::uint64_t now_us) const;
   bool unfit_owner(const Connection& c, std::uint64_t now_us) const;
+  // The same for a boss's owner, sooner (boss_owner_dead_us, boss_owner_paused_us).
+  bool unfit_boss_owner(const Connection& c, std::uint64_t now_us) const;
   void mark_fight(Object& o, std::uint64_t now_us);
   bool in_fight(const Object& o, std::uint64_t now_us) const;
   // The owner hit it itself within boss_owner_hit_hold_us (issue 150).

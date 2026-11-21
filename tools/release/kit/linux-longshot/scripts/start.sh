@@ -82,7 +82,7 @@ kit_game_running && fail 'The game of this kit is running already. Switch to its
 if ((pack_only)); then
     [[ -n $(kit_game_exe) ]] || fail 'The game is not built yet: start start-squadala.sh (it builds the game and makes the puppet pack).'
     rm -f "$GAME/mods/contents/0400486024DEC000/coop-puppet/.coop-stamp" "$DATA/pack-asked.txt"   # (and asks again)
-    bash "$KIT/scripts/build.sh" "${build_args[@]}"
+    OOT_COOP_PACK_FRESH=1 bash "$KIT/scripts/build.sh" "${build_args[@]}"   # (made, never put back from data/pack-variants)
     [[ -f $GAME/mods/contents/0400486024DEC000/coop-puppet/.coop-stamp ]] || fail 'The puppet pack was not made (said why above).'
     say 'Done: the puppet pack is made. Start start-squadala.sh to play.'
     exit 0

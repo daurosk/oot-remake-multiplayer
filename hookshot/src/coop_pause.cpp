@@ -710,8 +710,7 @@ void Save() {
     CoopVoice::SetMicrophone(g_menu.options().voice_mic);   // and its microphone
     MicRows();   // (voice just turned on: the Microphone row's list)
     CoopHookshot::SetChatKey(g_menu.options().chat_key);   // the chat key too
-    CoopHookshot::SetMapOptions(g_menu.options().map_players, g_menu.options().map_names);
-    CoopHookshot::SetHudSize(g_menu.options().hud_size);   // (the player list: at once)   // at once too
+    CoopHookshot::SetMapOptions(g_menu.options().map_players, g_menu.options().map_names);   // at once too
     g_auto_rejoin_on = g_menu.options().auto_rejoin;   // (the Auto-rejoin row: counts at once, as the files have it now)
     {   // Original game (coop_original.h): the mods list follows the switch now; the rest counts from the next start
         std::string why;
@@ -919,7 +918,10 @@ void Act(const Request& r) {
         break;
     }
     case Request::Kind::kRefreshFound:   // (the Find page's list asked again: the relay's rooms, or this network's games)
-        if (g_menu.find_online()) {
+        if (g_native && g_menu.title()) {   // (the title's list: both kinds)
+            CoopRoomList::AskNow();
+            CoopLanNet::Forget();
+        } else if (g_menu.find_online()) {
             CoopRoomList::AskNow();
         } else {
             CoopLanNet::Forget();
@@ -1076,12 +1078,44 @@ void RefreshFound(std::uint64_t now) {
         return;
     }
     g_finding = true;
+    // (the title's list: both kinds at once, this network's first; the overlay's: the one its List row says)
+    const bool both = g_native && g_menu.title();
     const bool online = g_menu.find_online();
-    CoopLanNet::Look(!online, now);
-    CoopRoomList::Look(CoopRoomList::Viewer::kMenu, online, now, g_menu.options().relay);
+    CoopLanNet::Look(both || !online, now);
+    CoopRoomList::Look(CoopRoomList::Viewer::kMenu, both || online, now, g_menu.options().relay);
     std::vector<CoopPauseMenu::Menu::Found> games;
     std::string state;
     const int mine = coop::protocol::kProtocolVersion;
+    if (both) {
+        for (const CoopLan::Heard& h : CoopLanNet::Games(now)) {
+            const bool full = h.game.max > 0 && h.game.players >= h.game.max;
+            games.push_back({h.game.name + "'s game", full ? std::string("Full") : CoopPauseTab::ListValue(h.game.players, h.game.max, h.game.protocol == mine),
+                             h.address, h.game.port, CoopLan::Joinable(h, mine), h.game.name, h.game.players,
+                             h.game.max, h.game.protocol == mine, false, false});
+        }
+        for (const CoopRoomList::Room& r : CoopRoomList::Now().rooms) {
+            const bool full = r.max > 0 && r.players >= r.max;
+            const std::string count = r.protocol != mine ? CoopI18n::Tr("Other version")
+                                      : full             ? CoopI18n::Tr("Full")
+                                      : std::to_string(r.players) + "/" + std::to_string(r.max);
+            games.push_back({CoopPauseTab::ListName(r.host, r.room), count, r.room, 0, CoopRoomList::Joinable(r, mine),
+                             r.host, r.players, r.max, r.protocol == mine, r.is_public, true});
+        }
+        // (a run's screenshots, LICHII_COOP_TEST_TITLE_GAMES=1: three made-up rooms after the real ones, a public one,
+        // one that asks a password and a full one, never joinable for real: their rooms are not on any relay)
+        static const bool test_games = [] {
+            const char* e = std::getenv("LICHII_COOP_TEST_TITLE_GAMES");
+            return e != nullptr && std::string(e) == "1";
+        }();
+        if (test_games) {
+            games.push_back({"forest-4821 (dauro)", "2/4", "test-forest-4821", 0, true, "dauro", 2, 4, true, true, true});
+            games.push_back({"kokiri (Mido)", "3/4", "test-kokiri", 0, true, "Mido", 3, 4, true, false, true});
+            games.push_back({"lost-woods (Link2)", CoopI18n::Tr("Full"), "test-lost-woods", 0, false, "Link2", 4, 4, true,
+                             true, true});
+        }
+        g_menu.SetFound(std::move(games), {});
+        return;
+    }
     if (online) {
         const CoopRoomList::Snapshot rooms = CoopRoomList::Now();
         for (const CoopRoomList::Room& r : rooms.rooms) {
@@ -1416,7 +1450,11 @@ bool NativeInput(int event, int arg, int arg2) {
 
 CoopPauseMenu::View NativeView() {
     std::lock_guard lock(g_mutex);
-    return g_native ? g_menu.view() : CoopPauseMenu::View{};
+    if (!g_native) return CoopPauseMenu::View{};
+    // (the session as Page() reads it for the overlay: without it the title's rows kept the page of the moment Start
+    // hosting was pressed, "Code: Starting..." and no Password row while hosting; title-join-shots 2026-11-21)
+    RefreshSession(false);
+    return g_menu.view();
 }
 
 CoopPauseMenu::Page NativePage() {
@@ -1440,7 +1478,19 @@ void CloseNative() {
     std::lock_guard lock(g_mutex);
     if (!g_native) return;
     g_native = false;
+    g_menu.SetTitle(false);
     if (!g_shown) g_menu.Hide();
+}
+
+bool NativeBackLeaves() {
+    std::lock_guard lock(g_mutex);
+    return !g_native || g_menu.BackLeaves();
+}
+
+void NativeRefresh() {
+    std::lock_guard lock(g_mutex);
+    if (!g_native || g_menu.page() != CoopPauseMenu::Page::kFind) return;
+    g_menu.RefreshFound();
 }
 
 void OpenJoinRoom(const std::string& room) {
@@ -1459,6 +1509,7 @@ void Open(CoopPauseMenu::Page page) {
     g_menu.SetSaveSet(CoopSave::MultiplayerSaves());
     InputRows();
     MicRows();
+    g_menu.SetTitle(g_native);   // (the title's own buttons: its pages, docs/hookshot.md "The title menu")
     g_menu.Open(page);
     if (page == CoopPauseMenu::Page::kJoin) {
         const std::string coop = ReadText(CoopIni());

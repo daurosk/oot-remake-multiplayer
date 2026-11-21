@@ -588,7 +588,7 @@ class StringsTest(unittest.TestCase):
                 self.assertTrue(up.load_strings(name))
         ours = up.load_strings("EUfr")["LayoutMsg/PlusMenu_00.msbt"]
         r = msbt.read(up.add_labels(make_msbt(GAME), ours))
-        self.assertEqual(r.text("Pa_System_00-Pa_Button_06-T_Btn_00"), [ours["Pa_System_00-Pa_Button_06-T_Btn_00"]])
+        self.assertEqual(r.text("Pa_System_00-Pa_Button_05-T_Btn_00"), [ours["Pa_System_00-Pa_Button_05-T_Btn_00"]])
 
 
 if __name__ == "__main__":

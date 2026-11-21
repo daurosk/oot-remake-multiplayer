@@ -231,7 +231,7 @@ struct LifeWrite {
 
 // Shared: enemies, animals (a cucco is Animal_Cucco), townspeople (Npc_, but
 // not Navi, held equipment or invisible helpers) and the breakable world
-// objects (coop_world.h). Not the order-puzzle actors (IsOwnPuzzle).
+// objects (coop_world.h). Not the order-puzzle actors (IsOwnPuzzle) or the followers (IsOwnFollower).
 bool IsShared(std::string_view name);
 
 // A puzzle or minigame each game runs on its own (issues 149, 151): the Scrub Brothers
@@ -240,6 +240,12 @@ bool IsShared(std::string_view name);
 // solve or the prize is shared (docs/dungeon.md, docs/items.md). The pond's
 // fish are shared (IsFish).
 bool IsOwnPuzzle(std::string_view name);
+
+// Row 214: an actor whose own AI goes with the local Link (waits for it, runs ahead of it, comes to it, is
+// carried by it): the Ganon's Castle escape's Zelda (Npc_Hylia_Zelda_Adult*), child Ruto, the dogs, Epona
+// and the ranch horses. Each game runs its own, never shared, so no owner's escort is put over a game whose
+// own Link and story flags are elsewhere, and a leave, a join or an owner change mid-escort moves nothing.
+bool IsOwnFollower(std::string_view name);
 
 // Issue 151 (fishing-2, fishing-3): a fish (Animal_Fish_*). Shared like any animal, with
 // one owner game; the lure rules in Sync (SetLures, FISH_LURE) move a fish to the game
@@ -987,6 +993,9 @@ public:
     // here): listed with object_presence::unready, so the server keeps them
     // with a game whose boss is fighting.
     void SetUnready(std::vector<std::string> names) { unready_ = std::move(names); }
+    // Boss turns: our game reads its bosses' attacks and takes turns (LICHII_COOP_BOSS_TURNS on): every boss
+    // or part is listed with object_presence::takes_turns.
+    void SetTakesTurns(bool on) { takes_turns_ = on; }
     // The boss actors whose death has begun (the boss glue; player report #105). A hit such a boss's game did
     // not take (its owner's killing hit, refused outside Gohma's weak point) is given to its Life step as its
     // life after the wait, as for any other enemy: its death plays out here (CoopBossNative lets it die).
@@ -1677,6 +1686,7 @@ private:
     std::set<std::uint64_t> dead_;    // copies whose owner said dead kDeadGraceUs ago
     bool wake_ = true;
     std::vector<std::string> unready_;
+    bool takes_turns_ = false;  // SetTakesTurns
     std::vector<std::string> dying_;  // SetDying
     unsigned dying_finished_ = 0;     // DyingFinished
     std::size_t hurt_taken_ = 0;   // hurts the game took as asked

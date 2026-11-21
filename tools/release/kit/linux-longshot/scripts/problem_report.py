@@ -292,27 +292,53 @@ def run_key(path):
     return f"file-{size}-{hashlib.sha1(head).hexdigest()[:20]}"
 
 
-def read_run(path, mask, user, pc, known):
+def add_names(line, names):
+    """The players' names a line gives where the module writes a name, added to names."""
+    if "player " in line or "name '" in line:
+        protect_names(line, names)
+
+
+def log_names(logs, names):
+    """The players' names in whole logs (the name lines only): for a crash record after a session read before."""
+    for log in logs:
+        try:
+            with open(log, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    add_names(line.rstrip("\r\n"), names)
+        except OSError:
+            pass
+
+
+def read_run(path, mask, user, pc, known, names=None):
+    """One session: (key, events), events None for a known session. Players' names are masked once the whole session
+    is read, with every name it gave (a problem line before the player's join line too) and those already in names
+    (other sessions read now); the session's names are added to names."""
+    names = set() if names is None else names
     key = run_key(path)
     if key in known:
         return key, None
-    names = set()
-    events = {}
+    lines = {}
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.rstrip("\r\n")
+            add_names(line, names)
             if not is_problem(line):
-                if "player " in line or "name '" in line:
-                    protect_names(line, names)
                 continue
-            masked = protect_names(protect(line.strip(), mask, user, pc), names)
-            if has_address(masked):
-                continue
-            fp = fingerprint(masked)
-            if fp in events:
-                events[fp]["count"] += 1
-            else:
-                events[fp] = {"line": masked[:300], "count": 1}
+            t = line.strip()
+            if t in lines:
+                lines[t] += 1
+            elif len(lines) < 20000:
+                lines[t] = 1
+    events = {}
+    for t, count in lines.items():
+        masked = protect_names(protect(t, mask, user, pc), names)
+        if has_address(masked):
+            continue
+        fp = fingerprint(masked)
+        if fp in events:
+            events[fp]["count"] += count
+        else:
+            events[fp] = {"line": masked[:300], "count": count}
     return key, events
 
 
@@ -332,8 +358,10 @@ def write_zip(files, out):
     return out
 
 
-def new_report(logs, state, out_dir, version="", user="", pc=""):
-    """The new problems of the logs not read before: (zip path, count, text) or None. state is brought up to date."""
+def new_report(logs, state, out_dir, version="", user="", pc="", names=None):
+    """The new problems of the logs not read before: (zip path, count, text) or None. state is brought up to date;
+    names gets the players' names met (the crash records are masked with them)."""
+    names = set() if names is None else names
     mask = Mask()
     new = {}
     read = []
@@ -341,7 +369,7 @@ def new_report(logs, state, out_dir, version="", user="", pc=""):
         if not os.path.isfile(log):
             continue
         try:
-            key, events = read_run(log, mask, user, pc, set(state["runs"]) | set(read))
+            key, events = read_run(log, mask, user, pc, set(state["runs"]) | set(read), names)
         except OSError:
             continue
         if events is None:
@@ -473,19 +501,28 @@ def crash_records(game_dirs, known):
     return sorted(found, key=lambda f: f.name)[-3:]
 
 
-def crash_text(path, mask, user, pc):
-    out = []
-    size = 0
+def crash_text(path, mask, user, pc, names=None):
+    """A crash record masked as a problem line is: addresses and the rest, players' names (names, and any the record
+    itself gives) as <name>, a line the address gate stops left out; 64 KB at most (the first 4000 lines)."""
+    names = set() if names is None else names
+    raw = []
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
-            m = protect(line.rstrip("\r\n"), mask, user, pc)
-            if has_address(m):
-                m = "(a line with an address was left out)"
-            if size + len(m) + 2 > MAX_CRASH_BYTES:
-                out.append("(cut)")
+            if len(raw) >= 4000:
                 break
-            out.append(m)
-            size += len(m) + 2
+            raw.append(line.rstrip("\r\n"))
+            add_names(raw[-1], names)
+    out = []
+    size = 0
+    for line in raw:
+        m = protect_names(protect(line, mask, user, pc), names)
+        if has_address(m):
+            m = "(a line with an address was left out)"
+        if size + len(m) + 2 > MAX_CRASH_BYTES:
+            out.append("(cut)")
+            break
+        out.append(m)
+        size += len(m) + 2
     return "\r\n".join(out) + "\r\n"
 
 
@@ -499,8 +536,11 @@ def add_report(kit, version="", logs=None, game_dirs=None, user="", pc="", wait=
         game_dirs = kit.game_dirs() if game_dirs is None else game_dirs
         rs = read_report_state(kit.report_state)
         ss = read_send_state(kit.send_state)
-        rep = new_report(logs, rs, kit.logs, version, user, pc)
+        names = set()
+        rep = new_report(logs, rs, kit.logs, version, user, pc, names)
         crashes = crash_records(game_dirs, ss["crashes"])
+        if crashes:   # (masked with every player's name in the logs, also those of sessions read before)
+            log_names(logs, names)
         write_report_state(kit.report_state, rs)
         if rep is None and not crashes:
             return None
@@ -514,7 +554,7 @@ def add_report(kit, version="", logs=None, game_dirs=None, user="", pc="", wait=
                 "Addresses, names, codes and passwords are masked (as collect-logs masks them). Sent by the kit.", ""]) + "\r\n"}
         for n, c in enumerate(crashes, 1):
             name = re.sub(r"-\d+-\d+(?=\.txt$)", "", c.name)
-            files[f"crash-record-{n}.txt"] = name + "\r\n" + crash_text(c, mask, user, pc)
+            files[f"crash-record-{n}.txt"] = name + "\r\n" + crash_text(c, mask, user, pc, names)
         out = kit.send_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(16)}.zip"
         write_zip(files, out)
         if crashes:

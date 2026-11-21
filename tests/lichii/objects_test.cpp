@@ -734,12 +734,73 @@ TEST_CASE("objects: Business Scrubs are each game's own shop (GitHub 253)") {
 }
 
 TEST_CASE("objects: Jabu-Jabu's child Ruto is each game's own, so a carried Ruto is never put down by a copy (#64)") {
-    CHECK(CoopObjects::IsOwnPuzzle("Npc_Zora_Ruto_Child_001"));
-    CHECK_FALSE(CoopObjects::IsShared("Npc_Zora_Ruto_Child_001"));
+    for (const char* ruto : {"Npc_Zora_Ruto_Child_001", "Npc_Zora_Ruto_Child_002"}) {
+        CHECK_MESSAGE(CoopObjects::IsOwnFollower(ruto), ruto);
+        CHECK_FALSE_MESSAGE(CoopObjects::IsShared(ruto), ruto);
+    }
     // Other Zoras, and adult Ruto, stay shared NPCs.
     CHECK(CoopObjects::IsShared("Npc_Zora_ZU_001"));
     CHECK(CoopObjects::IsShared("Npc_Zora_Ruto_Adult_001"));
-    CHECK_FALSE(CoopObjects::IsOwnPuzzle("Npc_Zora_Ruto_Adult_001"));
+    CHECK_FALSE(CoopObjects::IsOwnFollower("Npc_Zora_Ruto_Adult_001"));
+}
+
+TEST_CASE("objects: every actor whose AI goes with the local Link is each game's own (row 214)") {
+    // From the romfs AI scan (docs/objects.md "Followers"): the escape's Zelda waits for the player on her rail,
+    // the dogs follow the player, the horses come to the Link that calls them.
+    for (const char* own : {"Npc_Hylia_Zelda_Adult", "Npc_Hylia_Zelda_Adult_Scalable", "Animal_Dog_Brown",
+                            "Animal_Dog_White", "Animal_Dog_Richard_01", "Animal_Dog_Richard_03", "Animal_Dog_Base",
+                            "Animal_Epona_Adult", "Animal_Epona_Child", "Animal_Horse", "Animal_Horse_For_Ingo",
+                            "Npc_Hylia_Dampe_002"}) {
+        CHECK_MESSAGE(CoopObjects::IsOwnFollower(own), own);
+        CHECK_FALSE_MESSAGE(CoopObjects::IsShared(own), own);
+    }
+    // Not followers: they stay shared (child Zelda in the courtyard, Sheik, the wagon and archery horses, the
+    // cuccos with their carry claim, Pierre and the shop clerks who only turn to the Link).
+    for (const char* shared : {"Npc_Hylia_Zelda_Child", "Npc_Hylia_Sheik_Adult", "Animal_Horse_Wagon",
+                               "Animal_Horse_Archery", "Animal_Cucco", "Npc_Pierre_CallOcarina",
+                               "Npc_Goron_011_Shop_Child", "Npc_Hylia_051", "Npc_Kaepora",
+                               "Npc_Kaepora_LakeHylia", "Npc_Kaepora_DeathMountainTrail", "Npc_Hylia_Dampe_001"}) {
+        CHECK_FALSE_MESSAGE(CoopObjects::IsOwnFollower(shared), shared);
+        CHECK_MESSAGE(CoopObjects::IsShared(shared), shared);
+    }
+    CHECK_FALSE(CoopObjects::IsOwnFollower(""));
+}
+
+TEST_CASE("objects: the escape's Zelda is never listed, so no owner, no copy and no second share (row 214)") {
+    // Two games in the escape, each with its own Zelda (the same placement) next to a shared Stalfos.
+    Sync one;
+    Sync two;
+    const Seen zelda_one = Enemy(0x700, 0xbc81f7fc2d70d29dULL, 100, 2.0f, "Npc_Hylia_Zelda_Adult");
+    const Seen zelda_two = Enemy(0x900, 0xbc81f7fc2d70d29dULL, 100, 40.0f, "Npc_Hylia_Zelda_Adult");
+    const Seen stalfos = Enemy(0x100, 0x11, 2, 5.0f, "Enemy_Stalfos_AlwaysRespawn");
+    auto present = All<proto::ObjectPresent>(Tick(one, 0, {zelda_one, stalfos}));
+    REQUIRE(present.size() == 1);
+    REQUIRE(present[0].objects.size() == 1);  // the Stalfos only
+    CHECK(present[0].objects[0].id.value == 0x11);
+    CHECK_FALSE(one.IdOf(0x700).has_value());
+    CHECK(one.IdOf(0x100).has_value());
+    Tick(two, 0, {zelda_two});
+    CHECK_FALSE(two.IdOf(0x900).has_value());
+    // An older kit's owner for its id (it still shares her) binds to nothing here: nothing written to our Zelda.
+    const proto::ObjectId theirs{proto::ObjectKind::placed, 0, 0xbc81f7fc2d70d29dULL};
+    Own(one, theirs, 4, 1);
+    Own(one, theirs, 2, 2);
+    auto step = Tick(one, 100 * kMs, {zelda_one, stalfos});
+    CHECK_FALSE(one.IdOf(0x700).has_value());
+    for (const auto& w : step.writes) {
+        CHECK(w.address != 0x700);
+    }
+    // A player who leaves and joins again mid-escort starts afresh and still lists no Zelda; the game made her
+    // again (a new address, as after a load) is no new share either.
+    Sync rejoined;
+    const Seen zelda_again = Enemy(0x780, 0xbc81f7fc2d70d29dULL, 100, 2.0f, "Npc_Hylia_Zelda_Adult");
+    present = All<proto::ObjectPresent>(Tick(rejoined, 200 * kMs, {zelda_again, stalfos}));
+    REQUIRE(present.size() == 1);
+    CHECK(present[0].objects.size() == 1);
+    CHECK_FALSE(rejoined.IdOf(0x780).has_value());
+    const Seen zelda_scene_made = Enemy(0x7c0, ~0ULL, 100, 3.0f, "Npc_Hylia_Zelda_Adult_Scalable");
+    Tick(rejoined, 300 * kMs, {zelda_again, zelda_scene_made, stalfos});
+    CHECK_FALSE(rejoined.IdOf(0x7c0).has_value());
 }
 
 TEST_CASE("objects: the pond's owner is each game's own, its fish are shared (issue 151)") {
@@ -7672,4 +7733,20 @@ TEST_CASE("boss turns: a sample's attack bits: read and attacking, read and betw
     CHECK(AttackBits(true) == (proto::object_state::attack_read | proto::object_state::attacking));
     CHECK(AttackBits(false) == proto::object_state::attack_read);
     CHECK(AttackBits(std::nullopt) == 0);
+}
+
+TEST_CASE("boss-turns-older-0119: a game that takes boss turns lists its bosses with takes_turns, nothing else") {
+    for (const bool on : {false, true}) {
+        CAPTURE(on);
+        Sync sync;
+        sync.SetTakesTurns(on);
+        auto present = All<proto::ObjectPresent>(Tick(
+            sync, 0, {Enemy(0x100, 0x11, 20, 1.0f, "Enemy_DungeonBoss_PhantomGanon"), Enemy(0x200, 0x22, 2, 5.0f)}));
+        REQUIRE(present.size() == 1);
+        REQUIRE(present[0].objects.size() == 2);
+        for (const auto& e : present[0].objects) {
+            const bool boss = e.id.value == 0x11;
+            CHECK(((e.flags & proto::object_presence::takes_turns) != 0) == (on && boss));
+        }
+    }
 }

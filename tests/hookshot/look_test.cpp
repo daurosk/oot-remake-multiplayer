@@ -1757,6 +1757,27 @@ TEST_CASE("look (row 198 guard): a texture of your Link found more than once is 
     CHECK(CoopLookTunic::Repeated(places).empty());
 }
 
+TEST_CASE("look (row 198): where the places lie, and two wardrobes over one texture") {
+    using CoopLookTunic::Place;
+    CoopLookTunic::Texels names(2);
+    names[0].name = "Mt_Weapon_Shield_Hylian_Alb";
+    names[1].name = "Mt_Weapon_Shield_Hylian_Mtl";
+    std::vector<Place> own(2);
+    own[0] = {0, 0x1000, 7, 0x100, nullptr, nullptr, false};
+    own[1] = {1, 0x3000, 8, 0x10, nullptr, nullptr, false};
+    CHECK(CoopLookTunic::PlacesLine(own, &names) ==
+          "Mt_Weapon_Shield_Hylian_Alb@0x1000/7+256 Mt_Weapon_Shield_Hylian_Mtl@0x3000/8+16");
+    CHECK(CoopLookTunic::PlacesLine(own, nullptr) == "#0@0x1000/7+256 #1@0x3000/8+16");
+    std::vector<Place> theirs(2);
+    theirs[0] = {4, 0x1100, 9, 0x100, nullptr, nullptr, false};   // starts after own[0]'s end: apart
+    theirs[1] = {5, 0x2ff8, 10, 0x10, nullptr, nullptr, false};   // its last 8 bytes on own[1]'s first
+    const auto both = CoopLookTunic::Overlaps(own, theirs);
+    REQUIRE(both.size() == 1);
+    CHECK(both[0] == std::pair<std::size_t, std::size_t>{1, 1});
+    theirs[1].address = 0x3010;   // right after own[1]: apart
+    CHECK(CoopLookTunic::Overlaps(own, theirs).empty());
+}
+
 TEST_CASE("look (0.11.9): the puppets' tunic copies, each repainted in the exact colour of the player given it") {
     const auto green = GreenTunic();
     // Two copies as the pack wrote them (here: green's texels shifted, so they differ from the painting).

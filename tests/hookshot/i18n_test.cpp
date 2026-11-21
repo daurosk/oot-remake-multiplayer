@@ -641,3 +641,18 @@ TEST_CASE("coop i18n: 0.11.9's - menu screens and Customize (ui-tabs)") {
     CHECK(CoopI18n::Tr(hans, "Find a game") == "找房间");
     CHECK(CoopI18n::Tr(hant, "Debug") == "偵錯");
 }
+
+TEST_CASE("coop i18n: a character not downloaded (Snail's Character Select, coop_char_slots.h)") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    CHECK(CoopI18n::Tr(hans, "This character is not downloaded: press N at the kit's start to get Snail's NPC characters.") ==
+          "这个角色还没下载：在套件启动时按 N，即可获取 Snail 的 NPC 角色。");
+    const std::string other = " plays a character you have not downloaded, shown as Link (press N at the kit's start to "
+                              "get Snail's NPC characters).";
+    CHECK(CoopI18n::Tr(hans, "A player" + other) ==
+          "一名玩家 用的角色你还没下载，显示为林克（在套件启动时按 N，即可获取 Snail 的 NPC 角色）。");
+    // (the only caller writes "Player N": the number as every other Player line, 玩家 N)
+    CHECK(CoopI18n::Tr(hans, "Player 3" + other) ==
+          "玩家 3 用的角色你还没下载，显示为林克（在套件启动时按 N，即可获取 Snail 的 NPC 角色）。");
+    CHECK(CoopI18n::Tr(hant, "Player 3" + other).rfind("玩家 3 用的角色你還沒下載", 0) == 0);
+}

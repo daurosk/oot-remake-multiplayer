@@ -42,7 +42,8 @@ Every line is masked with collect-logs' own `Protect-LogText` (`scripts\log-mask
 (`<lan-1>`, `<public-1>`, ...), MAC addresses `<mac>`, the Windows user name `<user>`, the PC name `<pc>`, invite codes and
 passwords `(removed)`. Players' names become `<name>`: the ones the module writes where a name goes (`player 2 joined: X`,
 `player 2 left: X (...)`, `player 2 'X' joined`, `Mods: player 2 (X)`, our own `name 'X'`), and those names anywhere
-later in the same log. After that, a last gate drops any line in which anything is still an address by the masking's
+in the same log (also in a line before the one that names them: names are masked once the whole session is read) and
+in the other logs read at the same time. After that, a last gate drops any line in which anything is still an address by the masking's
 own rules (`Get-MaskKind4`, `Get-MaskKind6`), a host name (`myhost.duckdns.org`; file names such as `hookshot_coop.dll`
 pass) or a host with a port (`myhost:27510`): nothing that may be one goes into the zip.
 
@@ -86,7 +87,9 @@ for the network: a start waits at most 5 s for a report another window is making
 **What.** Only when there is something new: a problem line never reported before (the fingerprints above) or a new
 Longshot crash record (`<game>\bug-reports\pending\crash-<UTC>.txt`, not the `unclean-` ones). The zip holds
 `problem-report.txt` (as in the local zip) and up to three `crash-record-<n>.txt`, each masked line by line as the
-problem lines are (a line the address gate stops becomes `(a line with an address was left out)`), 64 KB at most.
+problem lines are, players' names too (every name the game's logs give, also those of sessions reported before, and
+any the record itself gives where the module writes one); a line the address gate stops becomes `(a line with an
+address was left out)`; 64 KB at most.
 Quiet sessions send nothing. Whole logs are never sent (collect-logs stays the way to send those, by hand).
 
 **The gate.** Right before each upload the zip is checked again: only those file names, small, UTF-8, and every line

@@ -87,7 +87,7 @@ $bad = New-Log 'longshot_log.2.txt' '22222222222222222222222222222222' @(
     '[hos host] coop: link: lost the server 203.0.113.9:27510',
     '[hos host] coop: net: Mido timed out')
 $crash = Join-Path $game 'bug-reports\pending\crash-20261121T180000Z.txt'
-[System.IO.File]::WriteAllText($crash, "Exception 0xc0000005 in longshot.exe+0x1234`r`nPath: C:\Users\Testuser\Games\kit\longshot.exe`r`nPC: TESTPC-01`r`nserver 192.168.1.20 port 27510`r`n")
+[System.IO.File]::WriteAllText($crash, "Exception 0xc0000005 in longshot.exe+0x1234`r`nPath: C:\Users\Testuser\Games\kit\longshot.exe`r`nPC: TESTPC-01`r`nserver 192.168.1.20 port 27510`r`nlast peer Mido; player 4 'Darunia' joined`r`nDarunia left`r`n")
 [System.IO.File]::WriteAllText((Join-Path $game 'bug-reports\pending\unclean-20261121T170000Z.txt'), 'unclean')
 $zip = Add-ProblemSendReport $kit 'kit: Squadala-v0.11.9-windows (release v0.11.9)' @($quiet, $bad) @($game) 'Testuser' 'TESTPC-01'
 Check ($zip -and (Test-Path -LiteralPath $zip)) 'a session with problems queues a zip'
@@ -101,6 +101,7 @@ $cr = $files['crash-record-1.txt']
 Check ($cr -match 'C:\\Users\\<user>\\Games' -and $cr -match 'PC: <pc>') 'the crash record: user and PC names masked'
 Check ($cr -notmatch '192\.168' -and $cr -match '<lan-1>') 'the crash record: addresses masked'
 Check ($cr -match 'longshot\.exe\+0x1234') 'the crash record: the crash itself kept'
+Check ($cr -notmatch 'Mido|Darunia' -and $cr -match 'last peer <name>') 'the crash record: players'' names masked (from the logs and its own name line)'
 Check (@(Get-ChildItem (Join-Path $kit 'logs') -Filter 'coop-report-*.zip').Count -eq 1) 'the local coop-report zip is made as before'
 Check ((Test-ProblemSendZip $zip 'Testuser' 'TESTPC-01') -eq '') 'the queued zip passes the gate'
 
@@ -108,9 +109,10 @@ Check ((Test-ProblemSendZip $zip 'Testuser' 'TESTPC-01') -eq '') 'the queued zip
 Check ($null -eq (Add-ProblemSendReport $kit '' @($quiet, $bad) @($game) 'Testuser' 'TESTPC-01')) 'the same sessions and crash: nothing new'
 $bad2 = New-Log 'longshot_log.3.txt' '33333333333333333333333333333333' @('[hos Presentation Thread] coop: boss: could not move into the boss room; giving up')
 Check ($null -eq (Add-ProblemSendReport $kit '' @($bad2) @($game) 'Testuser' 'TESTPC-01')) 'the same problem in a new session: nothing new'
-[System.IO.File]::WriteAllText((Join-Path $game 'bug-reports\pending\crash-20261121T190000Z-1234-1.txt'), "Exception again`r`n")
-$onlyCrash = Add-ProblemSendReport $kit 'kit: x' @() @($game) 'Testuser' 'TESTPC-01'
+[System.IO.File]::WriteAllText((Join-Path $game 'bug-reports\pending\crash-20261121T190000Z-1234-1.txt'), "Exception again near Mido`r`n")
+$onlyCrash = Add-ProblemSendReport $kit 'kit: x' @($quiet, $bad) @($game) 'Testuser' 'TESTPC-01'
 $f2 = Read-ZipText $onlyCrash
+Check ($f2['crash-record-1.txt'] -match 'again near <name>') 'sessions read before: their names still mask a new crash record'
 Check ($onlyCrash -and $f2['problem-report.txt'] -match '1 crash record' -and $f2['crash-record-1.txt'] -match 'again') 'a new crash alone is sent too'
 
 # The gate

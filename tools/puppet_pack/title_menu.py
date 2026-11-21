@@ -5,7 +5,8 @@ own look. Made from the player's own game files, as the puppets are.
 Writes into the puppet mod's romfs:
   UI/Layout2Archive/Title.Product.100.Nin_Ounce_NVN2.blarc.zs   Title_00.buil with one more part,
       Pa_CoopMenu_00: a copy of the last title button, stored hidden. It is never shown; the co-op
-      module finds it by name and so knows this pack has the menu's texts
+      module finds it by name and so knows this pack has the menu's texts; then Pa_Button_04..13 (the
+      rows of co-op's pages on the title, stored hidden) and Pa_CoopHint_00 (a page's hint line)
   Mals/<language>.Product.110.sarc.zs   LayoutMsg/Title_00.msbt with the menu's texts (labels
       0100..0106), for every language the game has
 and grows those files' entries in the resource size table.
@@ -33,11 +34,20 @@ BUTTON = "Pa_Button_%02d"
 FIRST_NEW = 4                 # Pa_Button_04: after the game's 00..03 (the older packs' first row)
 MARKER = "Pa_CoopMenu_00"     # the hidden part that says this pack has the menu (CoopTitleMenu::kMenuMarker)
 # The menu's texts (CoopTitleMenu::kMenuLabels): 0100..0102 are the older packs' rows too.
-ROWS = (("0100", "Host"), ("0101", "Join"), ("0102", "Co-op Settings"), ("0103", "Start"),
+ROWS = (("0100", "Host a game"), ("0101", "Join a game"), ("0102", "Co-op Settings"), ("0103", "Start"),
         ("0104", "Multiplayer"), ("0105", "Options"), ("0106", "Back"))
-# The rows' live texts (CoopTitle's native pages: Host, Join and Co-op Settings on the title's own buttons): a
-# placeholder each, written over in the game's memory by the co-op module (as the pause menu's Coop_Live_NN).
-LIVE = tuple(("Coop_Live_T%d" % i, "." * 64) for i in range(4))
+# Co-op's pages on the title (Join's list of games, Host, Enter a code) show more rows than the game's four buttons:
+# ten more buttons, Pa_Button_04..13, copies of Pa_Button_03 continuing its column (ROW_STEP_Y apart, as the older
+# packs' Pa_Button_04..06 were: the game makes a button of every Pa_Button_NN, so their focus bar, move and press
+# sounds and mouse are the game's own), stored hidden: the module shows the ones a page uses and keeps the title's
+# cursor off the hidden ones (CoopTitleNative). Then HINT, a hidden copy that is no button (not a Pa_Button_NN name):
+# the page's one line under its rows (what the focused row does, the page "2 of 3").
+LIST_BUTTONS = 10              # Pa_Button_04..13 (CoopTitleNative::kMaxButtons 14 with the game's four)
+ROW_STEP_Y = -110.0            # the game's buttons are 110 apart (Title_00: Pa_Button_00..03 at y -65 .. -395)
+HINT = "Pa_CoopHint_00"
+# The rows' live texts (CoopTitle's native pages on the title's own buttons): a placeholder each, written over in the
+# game's memory by the co-op module (as the pause menu's Coop_Live_NN): one per button, then the hint line's (longer).
+LIVE = tuple(("Coop_Live_T%d" % i, "." * 64) for i in range(FIRST_NEW + LIST_BUTTONS)) + (("Coop_Live_Hint", "." * 160),)
 # The same rows for the languages whose game text is Chinese (the kit's Chinese layer keeps the
 # game's own tables, as its menus and messages do): the pack carries these words in that
 # language's Title_00.msbt, since the module only names the label (CoopTitleMenu::kMenuLabels)
@@ -81,6 +91,27 @@ def add_marker(d):
     return ui_pack.clone_parts(d, [ui_pack.Copy(last, MARKER, (0.0, 0.0), hidden=True)], new_id=_new_id)
 
 
+def add_list(d):
+    """Title_00.buil (with the marker) with the list's buttons Pa_Button_04..13 and the hint line HINT after it:
+    copies of Pa_Button_03 under the same alignment pane, each ROW_STEP_Y under the one before, stored hidden."""
+    panes, _ = read_layout(d)
+    names = [p[0] for p in panes]
+    if MARKER not in names:
+        raise TitleMenuError("the layout has no %s (add_marker first)" % MARKER)
+    if HINT in names or BUTTON % FIRST_NEW in names:
+        raise TitleMenuError("the layout has the list already")
+    last = BUTTON % (FIRST_NEW - 1)
+    copies = [ui_pack.Copy(last, BUTTON % (FIRST_NEW + i), (0.0, ROW_STEP_Y * (i + 1)), hidden=True)
+              for i in range(LIST_BUTTONS)]
+    copies.append(ui_pack.Copy(last, HINT, (0.0, ROW_STEP_Y * (LIST_BUTTONS + 1)), hidden=True))
+    return ui_pack.clone_parts(d, copies, new_id=_new_id)
+
+
+def add_menu(d):
+    """The marker, then the list's buttons and the hint line."""
+    return add_list(add_marker(d))
+
+
 # ---------------------------------------------------------------------------------------- MSBT
 
 def add_rows(msbt, rows=ROWS + LIVE):
@@ -121,7 +152,7 @@ def make(reader, dicts, recompress):
     olds = [data for name, data in entries if name == TITLE_LAYOUT]
     if not olds:
         raise TitleMenuError("%s has no %s" % (TITLE_ARCHIVE, TITLE_LAYOUT))
-    entries, new = ui_pack.edit_entries(entries, TITLE_LAYOUT, add_marker)   # (every copy of the layout)
+    entries, new = ui_pack.edit_entries(entries, TITLE_LAYOUT, add_menu)   # (every copy of the layout)
     archive = sarc.write(entries, data_align=16)   # (as the game's own: 16)
     growth.append((TITLE_ARCHIVE, len(dicts.decompress(raw)), len(archive), True))
     growth.append((TITLE_LAYOUT, len(olds[0]), len(new[olds[0]]), False))

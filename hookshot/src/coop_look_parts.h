@@ -144,7 +144,8 @@ std::optional<std::uint32_t> TunicColour(const std::string& name);
 // textures, sizes and order; a texture not in TunicTextures as it is.
 CoopLookTunic::Texels TunicPainted(const CoopLookTunic::Texels& green, std::uint32_t colour);
 
-// The Cap trim (CoopLook::Part::cap_trim), your own Link only. The cap's
+// The Cap trim (CoopLook::Part::cap_trim): your own Link's, and since 0.11.9 each player's tunic copy on the puppets
+// (PuppetTunicsTexels). The cap's
 // cloth is the tunic's tile (no texel of it is the cap's alone), so it keeps
 // the tunic's colour; but three tunic textures have blocks only the cap uses:
 // the child's headband and knot (Mt_Cloth_Parts_Player_Child_Alb) and the

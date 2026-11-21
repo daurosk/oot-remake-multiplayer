@@ -44,6 +44,11 @@ std::vector<std::string> MicChoices(const std::vector<std::string>& listed, cons
 // ("..." at its end), with " (not connected)" when it is not listed.
 constexpr std::size_t kMicChars = 28;
 std::string MicWords(const std::string& chosen, const std::vector<std::string>& listed);
+// The most bytes one of the title's own buttons shows (CoopTitleNative::RowText cuts a longer row, "..." at its end).
+constexpr std::size_t kTitleRowBytes = 40;
+// A game's name on a title row that has `rest` bytes after it ("1/4  Public", " asks for a password"), so the row's own
+// words are never the part cut: "room (host)" when it fits, else without " (host)", else the name cut, "..." at its end.
+std::string TitleGameName(const std::string& name, const std::string& host, std::size_t rest);
 
 struct Request {
     // kHost: start the server and join it. kJoin: `text` is the code or the
@@ -190,6 +195,7 @@ public:
         int count = 0, max = 0;    // its players and the most it takes (the sort, the filter)
         bool same_version = true;
         bool is_public = false;    // a public game (CoopRoomList::Room::is_public): joined at once, no password
+        bool online = false;       // the title's list (both kinds): a relay room (else a game on this network)
         bool operator==(const Found&) const = default;
     };
     void SetFound(std::vector<Found> games, std::string state);
@@ -197,6 +203,18 @@ public:
     // Password row chosen, saying the game needs the host's password. Nothing is tried.
     void PrefillJoin(const std::string& room);
     bool find_online() const { return find_online_; }
+    // The title's own pages (CoopPause::OpenNative; docs/hookshot.md "The title menu"): Join opens straight on the
+    // list of games, this network's and the relay's public ones in one (the module hands both, Found::online), with
+    // "Enter a code or address" after the games and no filter rows; that row's page (the Join page) has Paste a code,
+    // Type an address, its Password once an address is in, and Join; a picked game that needs a password shows a
+    // page of its password and Join. Host opens on its choices (Who can join first) and hosts on Start hosting only.
+    // B goes back one page. Off: the overlay's and the pause tab's pages, unchanged.
+    void SetTitle(bool on);
+    bool title() const { return title_; }
+    // B here leaves the pages (the caller's Multiplayer rows again): Press(kBack) would go to the first page.
+    bool BackLeaves() const;
+    // The Find page's list asked again (its Refresh row; the title's Y).
+    void RefreshFound();
     const std::string& find_search() const { return find_search_; }
     // The Customize page's picture of Link (hos_coop_menu_picture.h); empty
     // on the other pages.
@@ -223,11 +241,14 @@ private:
         kSameNetwork, kGameKind,
         kOpenCustomize, kNgPlus, kSaveSet,
         kOpenFind, kFindList, kFindSearch, kFindGame, kFindFilter, kFindSort, kFindRefresh,
-        kShowPassword, kNewPassword, kLetIn, kRefuse, kListRoom, kAutoRejoin, kOriginal, kHudSize
+        kShowPassword, kNewPassword, kLetIn, kRefuse, kListRoom, kAutoRejoin, kOriginal
     };
     struct Line;   // a row, what it does and its help
     std::vector<Line> Lines() const;
     void LauncherLines(std::vector<Line>& out) const;
+    void TitleListLines(std::vector<Line>& out, bool off) const;
+    void TitleCodeLines(std::vector<Line>& out, bool off) const;
+    void TitleHostLines(std::vector<Line>& out, bool host, bool guest) const;
     bool Selectable(const Line& line) const;
     void Go(Page page, Act select = Act::kNone);
     void Clamp();
@@ -268,6 +289,9 @@ private:
     int ngplus_level_ = 0, ngplus_unlocked_ = 0, ngplus_hearts_ = 0;   // (Navi) New Game+ (SetNgPlus)
     bool mp_saves_ = false;   // (Navi) the Saves row (SetSaveSet)
     bool character_ = false;  // SetCharacter
+    bool title_ = false;      // SetTitle
+    std::string picked_;      // the title: the game picked on the list that asks for a password ("": none)
+    std::string picked_host_; // (its host, so a long name gives way on the page's note: TitleGameName)
     bool find_online_ = true;                 // the Find a game page lists the relay's rooms (else this network's)
     std::string find_search_, search_before_; // its search, as typed
     int find_filter_ = 0, find_sort_ = 0;      // its filter and order (CoopBrowse)

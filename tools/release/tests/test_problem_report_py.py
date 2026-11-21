@@ -127,7 +127,8 @@ class Kit(unittest.TestCase):
         self.assertIsNone(self.add([quiet]))
         log = self.log("longshot_log.2.txt", "2" * 32, PROBLEMS)
         (self.game / "bug-reports" / "pending" / "crash-20261121T180000Z.txt").write_text(
-            "Exception in longshot+0x1234\nPath: /home/testuser/Squadala/data/game/longshot\nPC: testpc-01\nserver 192.168.1.20\n")
+            "Exception in longshot+0x1234\nPath: /home/testuser/Squadala/data/game/longshot\nPC: testpc-01\nserver 192.168.1.20\n"
+            "last peer Mido, then Ruto; player 4 'Darunia' joined\nDarunia left\n")
         (self.game / "bug-reports" / "pending" / "unclean-20261121T170000Z.txt").write_text("x")
         z = self.add([quiet, log], "kit: Squadala-v0.11.9-linux (release v0.11.9)")
         self.assertRegex(z.name, r"^\d{8}-\d{6}-[0-9a-f]{32}\.zip$")
@@ -142,15 +143,19 @@ class Kit(unittest.TestCase):
         self.assertIn("/home/<user>/Squadala", crash)
         self.assertIn("PC: <pc>", crash)
         self.assertIn("<lan-1>", crash)
+        for name in ("Mido", "Ruto", "Darunia"):   # from the logs, and the record's own name line
+            self.assertNotIn(name, crash, name)
+        self.assertIn("last peer <name>, then <name>", crash)
         self.assertEqual(pr.check_zip(z, USER, PC), "")
         self.assertEqual(len(list(self.kit.logs.glob("coop-report-*.zip"))), 1)
         # never twice
         self.assertIsNone(self.add([quiet, log]))
         again = self.log("longshot_log.3.txt", "3" * 32, [PROBLEMS[2]])
         self.assertIsNone(self.add([again]))
-        (self.game / "bug-reports" / "pending" / "crash-20261121T190000Z-12-1.txt").write_text("Exception again\n")
-        only_zip = self.add([])
+        (self.game / "bug-reports" / "pending" / "crash-20261121T190000Z-12-1.txt").write_text("Exception again near Saria\n")
+        only_zip = self.add([quiet, log])   # sessions read before: their names still mask a new crash record
         only = zip_text(only_zip)
+        self.assertIn("again near <name>", only["crash-record-1.txt"])
         self.assertIn("1 crash record", only["problem-report.txt"])
         self.assertTrue(only["crash-record-1.txt"].startswith("crash-20261121T190000Z.txt"))
         # once the bot took them, the game's title is told (coop-sent.txt, by their own names)
@@ -159,6 +164,20 @@ class Kit(unittest.TestCase):
         sent = (self.game / "bug-reports" / "coop-sent.txt").read_text().split()
         self.assertEqual(sorted(sent), ["crash-20261121T180000Z.txt", "crash-20261121T190000Z-12-1.txt"])
         self.assertEqual(list(self.kit.send_dir.glob("*.crashes")), [])
+
+    def test_name_before_join(self):
+        log = self.log("longshot_log.4.txt", "4" * 32, [
+            "[hos host] coop: net: Nabooru timed out",
+            "[hos host] coop: host: player 2 joined: Nabooru"])
+        rep = pr.new_report([log], pr.read_report_state(self.kit.report_state), self.kit.logs, "", USER, PC)
+        self.assertIn("<name> timed out", rep[2])
+        self.assertNotIn("Nabooru", rep[2])
+
+    def test_names_across_sessions(self):
+        a = self.log("longshot_log.5.txt", "5" * 32, ["[hos host] coop: host: player 2 joined: Impa"])
+        b = self.log("longshot_log.6.txt", "6" * 32, ["[hos host] coop: link: lost Impa"])
+        rep = pr.new_report([a, b], pr.read_report_state(self.kit.report_state), self.kit.logs, "", USER, PC)
+        self.assertNotIn("Impa", rep[2])
 
     def make(self, name, files):
         p = self.kit.send_dir / name

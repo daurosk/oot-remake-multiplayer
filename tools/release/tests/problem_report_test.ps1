@@ -34,6 +34,19 @@ $problems = @(
     '[hos host] coop: boss: could not hand Gohma to Saria or Ruto'
 )
 
+# A name in a problem line before the player's join line, and a name from another session read at the same time
+$early = New-Log 'longshot_log.early.txt' '99999999999999999999999999999999' @('[hos host] coop: net: Nabooru timed out', '[hos host] coop: host: player 2 joined: Nabooru')
+$earlyRun = Read-ProblemRun $early (New-MaskState) 'Testuser' 'TESTPC-01'
+$earlyText = ($earlyRun.Events.Values | ForEach-Object { $_.Line }) -join "`n"
+Check ($earlyText -match '<name> timed out' -and $earlyText -notmatch 'Nabooru') 'a name before its join line is masked too'
+$shared = New-Object 'System.Collections.Generic.HashSet[string]'
+$sa = New-Log 'longshot_log.sa.txt' '88888888888888888888888888888888' @('[hos host] coop: host: player 2 joined: Impa')
+$sb = New-Log 'longshot_log.sb.txt' '77777777777777777777777777777777' @('[hos host] coop: link: lost Impa')
+[void](Read-ProblemRun $sa (New-MaskState) 'Testuser' 'TESTPC-01' @() $shared)
+$sbText = ((Read-ProblemRun $sb (New-MaskState) 'Testuser' 'TESTPC-01' @() $shared).Events.Values | ForEach-Object { $_.Line }) -join "`n"
+Check ($shared.Contains('Impa') -and $sbText -match 'lost <name>' -and $sbText -notmatch 'Impa') 'names met in one session mask the next one read'
+Remove-Item -LiteralPath $early, $sa, $sb -Force
+
 # Which lines are problems
 Check (Test-ProblemLine $problems[2]) 'a failure is a problem'
 Check (-not (Test-ProblemLine $problems[1])) 'a routine counter (refused/s) is not a problem'

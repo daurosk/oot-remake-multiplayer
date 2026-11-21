@@ -296,6 +296,8 @@ jobs:
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/launch_test.ps1
       - name: Kit mod check tests
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/mods_test.ps1
+      - name: Kit mod restart tests
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/mod_restart_test.ps1
       - name: Kit path question tests
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/paste_test.ps1
       - name: Kit log masking tests

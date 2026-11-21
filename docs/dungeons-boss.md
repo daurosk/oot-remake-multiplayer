@@ -533,9 +533,10 @@ that player's Link: the ball rally, the charges and the breath are played with e
 hit and reflection in that player's own game. The turn goes only to a player whose game has it loaded, has played its
 intro (`unready` is not set), is up and playing (not paused, downed, dead or in an event) and stands within
 `boss_turn_m` (40 m) of it. It waits for a calm moment: no hit passed on for `boss_turn_quiet_us` (3 s), the owner not
-hitting it (`boss_owner_hit_hold_us`), its life above 0, its owner's animation no death and no cutscene, and no shot of
-the owner's game still flying in its scene (`boss_turn_shot_us`, 10 s at most for a shot whose end was lost; a shot
-is never handed over, so a rally would go on in the old owner's game alone). A hand-over carries the boss's state as
+hitting it (`boss_owner_hit_hold_us`), its life above 0, and its owner's animation no death and no cutscene. A shot of
+the owner's game still in the air does not hold it (2026-11-21: that hold, `boss_turn_shot_us`, met the attack-end
+edge right after every shooting attack, and Phantom Ganon got no turn at all in the proof run); his rally ball is a
+split shot, each game's own ([boss-multiplayer.md](boss-multiplayer.md)). A hand-over carries the boss's state as
 every other one does (native boss sync, the life with every hit in it). `boss_turn_us` 0 turns it off. Counted in
 the server's `enemies:` line as `boss turns`.
 
@@ -555,7 +556,9 @@ one turn rule; it now also waits for the boss's own attack edge, read in the own
   owner's sample where the bit fell, after the 20 s and with every calm rule above, and never in a stun animation
   (`anim::IsStun`: Stun, Down, Fall, Faint). An edge missed for a hit waits for the next attack's end. An edge is read
   only within one owner's epoch: the old owner's last "attacking" is never the new owner's end. An owner whose samples
-  never say `attack_read` (an older build) keeps its boss, so a boss is never handed over blind. A phase with no
+  never say `attack_read` (an older build) keeps its boss, so a boss is never handed over blind. Nor is a turn given TO
+  an older build: a game takes turns only when its presence lists the boss with `object_presence::takes_turns`
+  (boss-turns-older-0119), else it would keep the boss for the rest of the fight; the next game by number gets it. A phase with no
   attack (Phantom Ganon in his paintings, Gohma on the ceiling, Volvagia burrowed) never gives a turn.
 - *The new owner goes on (`CoopBossNative::PlanMadeOurs`).* Handed over between moves, the copy's own brain asked the
   move its body runs: nothing is asked again, its AI goes on from that phase and move. Mid-move (a forced hand-over:
@@ -587,7 +590,7 @@ turn at all. Read from the code and the earlier runs; only Phantom Ganon has had
   same read (Dark Link has 286 verbs: his top 4 read entry 0, as the game itself does).
 
 **Tests.** `tests/server/session_test.cpp`: "boss turns" (three players, round by number; a calm moment, near, up and
-ready; the ball in flight; each at an attack's end), "boss-turns-0119" (no turn in a phase with no attack, waits for
+ready; a shot in the air does not hold it; each at an attack's end), "boss-turns-0119" (no turn in a phase with no attack, waits for
 the attack's end, a stale edge, no attack read, a stun, the old owner's attack). `tests/lichii/boss_native_test.cpp`
 (the attribute word, the attack sequence after a reaction, PlanMadeOurs, the stall count), `objects_test.cpp` (the
 sample bits).

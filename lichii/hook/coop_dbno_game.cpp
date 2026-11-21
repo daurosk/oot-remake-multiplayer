@@ -95,6 +95,7 @@ struct Glue {
     std::atomic<std::uint64_t> bsa{0};      // our Link's BSA (the objects walk)
     std::atomic<std::uint64_t> emitter{0};  // our Link's PerceptionEmitter (the objects walk)
     std::atomic<bool> adult{false};         // our Link is Player_Adult (the objects walk)
+    std::atomic<std::uint64_t> actor{0};    // our Link (the objects walk; the adult's lying pose)
     std::atomic<std::int32_t> life_write{-1};  // raise to this (-1: none); the objects walk writes it
     Lowering take_to;                          // lower to this; the Life step takes it
     std::atomic<PadMode> pad_mode{PadMode::game};
@@ -415,6 +416,7 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     body.emitter = g.emitter.load(std::memory_order_acquire);
     body.bsa = g.bsa.load(std::memory_order_acquire);
     body.adult = g.adult.load(std::memory_order_acquire);
+    body.actor = g.actor.load(std::memory_order_acquire);
     body.life = g.life_component.load(std::memory_order_acquire);
     // A teammate who cannot be fought now (downed, spectating, or PLAYER_STATUS away: paused, in a
     // menu, loading, in their own event, dead): their puppet is unseen in our game too (issue 150 with
@@ -616,7 +618,8 @@ std::int32_t LifeStep(std::uint64_t component, std::int32_t life, std::int32_t s
     return Body::Raised(life, sum, Body::TheRaising().Peek());
 }
 
-void SetOurComponents(std::uint64_t bsa, std::uint64_t emitter, bool adult) {
+void SetOurComponents(std::uint64_t bsa, std::uint64_t emitter, bool adult, std::uint64_t actor) {
+    TheGlue().actor.store(actor, std::memory_order_release);
     TheGlue().adult.store(adult, std::memory_order_release);
     TheGlue().bsa.store(bsa, std::memory_order_release);
     TheGlue().emitter.store(emitter, std::memory_order_release);

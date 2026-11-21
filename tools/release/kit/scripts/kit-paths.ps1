@@ -988,6 +988,14 @@ function Get-KitCodeModsListHash([string]$List, $CodeMods) {
         if ($CodeMods.Contains($fold)) { $kept += "$($Matches[1]) $fold" }
     }
     if (-not $kept.Count) { return 'none' }
+    # Rows that change nothing are no change (player report 210): the game puts the mods the list does not name under the
+    # named ones, by folded name, on; so rows that are all "on" in that same order (Character Select switched off and on
+    # again leaves "on <it>") read as no list, and the build made before the switch is the one wanted.
+    $sorted = [string[]]@($CodeMods)
+    [Array]::Sort($sorted, [StringComparer]::Ordinal)
+    $same = $true
+    for ($i = 0; $i -lt $kept.Count; $i++) { if ($kept[$i] -cne "on $($sorted[$i])") { $same = $false; break } }
+    if ($same) { return 'none' }
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try { $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes(($kept -join "`n"))) } finally { $sha.Dispose() }
     return (($bytes | ForEach-Object { $_.ToString('x2') }) -join '')
@@ -1008,6 +1016,165 @@ function Get-KitHookshotStamp([string]$Kit, [string]$Game = '') {
     $hash = (($patches | ForEach-Object { (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }) -join ',')
     if (-not $Game) { $Game = Get-KitHookshotGame $Kit }
     return "release=$($keys.release)`ncommit=$($keys.commit)`npatches=$hash$(Get-KitExefsStampLine $Game)"
+}
+
+# --- The game builds kept per stamp (player report 210: "how long it takes just to reopen the game after changing a mod") ---
+# A mod with code patches (patches 0034/0035: Character Select) switched on or off on the Mods tab is built into the
+# game's code, so the game is built again (5 to 25 minutes). The build it replaces was thrown away, so switching the mod
+# back built it once more. Now, before anything replaces the game's code, its build-made files (the ones Longshot's
+# finish copies in: .longshot_installed.json's list, image.bin, exefs_patches.txt) go into hookshot\game-variants\<key>
+# with the stamp they were built from (coop-built-from.txt); a start that wants a stamp kept there copies them back
+# (seconds). Copies, never hard links: robocopy and other copies write over a file in place, which would change the kept
+# one too. Only the newest $Keep are kept (about 650 MB each). Nothing of the player's is in them (saves, user\, mods\,
+# coop.ini and the options stay in the game folder).
+function Get-KitGameVariantRoot([string]$Kit) { return (Join-Path $Kit 'hookshot\game-variants') }
+
+# The stamp text as compared: line endings and trailing space do not count, plus the game's DLSS state (a game with
+# NVIDIA's runtime is kept apart: Test-KitHookshotDlss).
+function ConvertTo-KitVariantStamp([string]$Stamp, [bool]$Dlss) {
+    $lines = @(("$Stamp" -replace "`r", '').Trim() -split "`n" | ForEach-Object { $_.TrimEnd() })
+    return (($lines -join "`n") + "`ndlss=$(if ($Dlss) { 1 } else { 0 })")
+}
+
+function Get-KitVariantKey([string]$Text) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Text)) } finally { $sha.Dispose() }
+    return ((($bytes | ForEach-Object { $_.ToString('x2') }) -join '').Substring(0, 20))
+}
+
+# The files of $Game a build makes (paths relative to it, '\'): those Longshot's finish noted (.longshot_installed.json:
+# the exe, its renderer and SDL libraries, image.bin, in bin\ for a builder's layout), else the usual ones that are
+# there, and exefs_patches.txt (which code patches it holds: the Mods tab reads it). @() without a game.
+function Get-KitGameVariantFiles([string]$Game) {
+    $exe = Get-KitHookshotExe $Game
+    if (-not $exe) { return @() }
+    $names = @()
+    $note = Join-Path $Game '.longshot_installed.json'
+    if (Test-Path -LiteralPath $note) {
+        try { $names = @(([System.IO.File]::ReadAllText($note) | ConvertFrom-Json -ErrorAction Stop).PSObject.Properties.Name) } catch { $names = @() }
+    }
+    if (-not $names) {
+        $dir = (Split-Path -Parent $exe).Substring(([System.IO.Path]::GetFullPath($Game)).TrimEnd('\').Length).TrimStart('\')
+        $names = @('longshot.exe', 'longshot_vk.dll', 'SDL2.dll', 'SDL3.dll' | ForEach-Object { if ($dir) { "$dir\$_" } else { $_ } }) + @('image.bin')
+        if ($dir) { $names += 'longshot.exe' }   # (the builder's launcher on top)
+    }
+    # (and Longshot's note itself: a build kept after a put back still knows the files Longshot copied in)
+    $names += 'exefs_patches.txt', '.longshot_installed.json'
+    $out = @()
+    foreach ($n in @($names | Sort-Object -Unique)) {
+        $rel = "$n" -replace '/', '\'
+        if ($rel -match '(^|\\)\.\.(\\|$)' -or [System.IO.Path]::IsPathRooted($rel)) { continue }
+        if (Test-Path -LiteralPath (Join-Path $Game $rel) -PathType Leaf) { $out += $rel }
+    }
+    return $out
+}
+
+# Keeps the build in $Game (its coop-built-from.txt) in the kit's game-variants, unless it is there already. The line
+# to show, or '' when there was nothing to keep. $Keep: how many builds stay (the newest used).
+function Save-KitGameVariant([string]$Kit, [string]$Game, [int]$Keep = 3) {
+    $stampFile = Join-Path $Game 'coop-built-from.txt'
+    if (-not (Test-Path -LiteralPath $stampFile) -or -not (Get-KitHookshotExe $Game)) { return '' }
+    $files = @(Get-KitGameVariantFiles $Game)
+    if (-not ($files | Where-Object { $_ -like '*longshot.exe' }) -or -not ($files -contains 'image.bin')) { return '' }
+    $text = ConvertTo-KitVariantStamp ([System.IO.File]::ReadAllText($stampFile)) (Test-KitHookshotDlss $Game)
+    $root = Get-KitGameVariantRoot $Kit
+    $dir = Join-Path $root (Get-KitVariantKey $text)
+    $kept = Join-Path $dir 'stamp.txt'
+    if ((Test-Path -LiteralPath $kept) -and [System.IO.File]::ReadAllText($kept) -eq $text) {
+        try { (Get-Item -LiteralPath $kept).LastWriteTimeUtc = [DateTime]::UtcNow } catch { }
+        return ''
+    }
+    $bytes = [long]0
+    foreach ($f in $files) { $bytes += (Get-Item -LiteralPath (Join-Path $Game $f)).Length }
+    try {
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $free = (New-Object System.IO.DriveInfo ([System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($root)))).AvailableFreeSpace
+        if ($free -lt ($bytes + 5GB)) { return "  (this build is not kept for later: only $([int]($free / 1GB)) GB free)" }
+    } catch { }
+    $part = "$dir.part"
+    try {
+        if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Recurse -Force }
+        foreach ($f in $files) {
+            $to = Join-Path $part "files\$f"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $to) | Out-Null
+            [System.IO.File]::Copy((Join-Path $Game $f), $to, $true)
+        }
+        Copy-Item -LiteralPath $stampFile -Destination (Join-Path $part 'built-from.txt')
+        # (the stamp last: a copy stopped half way is a .part folder, never taken)
+        [System.IO.File]::WriteAllText((Join-Path $part 'stamp.txt'), $text)
+        if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
+        Move-Item -LiteralPath $part -Destination $dir
+    } catch {
+        Remove-Item -LiteralPath $part -Recurse -Force -ErrorAction SilentlyContinue
+        return "  (this build is not kept for later: $($_.Exception.Message))"
+    }
+    # (the newest $Keep, by when each was last kept or used; leftovers of a stopped copy go too)
+    Get-ChildItem -LiteralPath $root -Directory -Filter '*.part' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    $all = @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'stamp.txt') } |
+        Sort-Object { (Get-Item -LiteralPath (Join-Path $_.FullName 'stamp.txt')).LastWriteTimeUtc } -Descending)
+    $all | Select-Object -Skip ([Math]::Max(1, $Keep)) | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    return "  The game as it was built ($([int]($bytes / 1MB)) MB of it) is kept, so going back to these mods takes seconds."
+}
+
+# Why the game is built now and about how long, from the stamp the game has ($Have, '' when none) and the one wanted.
+function Get-KitBuildWhyText([string]$Have, [string]$Want) {
+    $h = "$Have" -replace "`r", ''
+    $w = "$Want" -replace "`r", ''
+    if (-not $h) { return 'the first build of the co-op game (10 to 45 minutes, once).' }
+    $base = { param($s) (@($s -split "`n") | Where-Object { $_ -match '^(release|commit)=' }) -join "`n" }
+    if ((& $base $h) -ne (& $base $w)) { return 'another Longshot version than the game was built for (about 15 to 45 minutes).' }
+    $codeless = { param($s) (@($s -split "`n") | Where-Object { $_ -notmatch '^exefs=' }) -join "`n" }
+    if ((& $codeless $h) -eq (& $codeless $w)) {
+        return 'the mods'' code patches changed (a mod with an exefs folder, such as Character Select, put in, changed, or switched on the Mods tab), about 5 to 25 minutes. This build is kept: switching back later takes seconds.'
+    }
+    if ($h -eq $w) { return 'built again as asked (5 to 45 minutes).' }
+    return 'this update changes the co-op game''s code (about 5 to 20 minutes).'
+}
+
+# The kept build for $Stamp (as hookshot-build.ps1's gameWant) with DLSS as $Dlss, or ''.
+function Find-KitGameVariant([string]$Kit, [string]$Stamp, [bool]$Dlss) {
+    if (-not $Stamp) { return '' }
+    $text = ConvertTo-KitVariantStamp $Stamp $Dlss
+    $dir = Join-Path (Get-KitGameVariantRoot $Kit) (Get-KitVariantKey $text)
+    $kept = Join-Path $dir 'stamp.txt'
+    if (-not (Test-Path -LiteralPath $kept) -or [System.IO.File]::ReadAllText($kept) -ne $text) { return '' }
+    if (-not (Test-Path -LiteralPath (Join-Path $dir 'files\image.bin')) -or -not (Test-Path -LiteralPath (Join-Path $dir 'built-from.txt'))) { return '' }
+    if (-not (Get-ChildItem -LiteralPath (Join-Path $dir 'files') -Recurse -File -Filter 'longshot.exe' -ErrorAction SilentlyContinue)) { return '' }
+    return $dir
+}
+
+# The kept build $Dir copied back into $Game: every file staged as <name>.new first, then swapped in (a copy that stops
+# leaves the game as it was), exefs_patches.txt gone when that build had none, Longshot's note of what it copied in
+# put back with them, and coop-built-from.txt last. $true when done.
+function Restore-KitGameVariant([string]$Dir, [string]$Game) {
+    $from = Join-Path $Dir 'files'
+    $base = ([System.IO.Path]::GetFullPath($from)).TrimEnd('\') + '\'
+    $files = @(Get-ChildItem -LiteralPath $from -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName.Substring($base.Length) })
+    if (-not $files) { return $false }
+    $staged = @()
+    try {
+        foreach ($f in $files) {
+            $to = Join-Path $Game $f
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $to) | Out-Null
+            [System.IO.File]::Copy((Join-Path $from $f), "$to.new", $true)
+            $staged += $to
+        }
+        foreach ($to in $staged) {
+            if (Test-Path -LiteralPath $to) { [System.IO.File]::Delete($to) }
+            [System.IO.File]::Move("$to.new", $to)
+        }
+    } catch {
+        foreach ($to in $staged) { Remove-Item -LiteralPath "$to.new" -Force -ErrorAction SilentlyContinue }
+        return $false
+    }
+    if ($files -notcontains 'exefs_patches.txt') { Remove-Item -LiteralPath (Join-Path $Game 'exefs_patches.txt') -Force -ErrorAction SilentlyContinue }
+    # (Longshot's note comes back with them: its file list for the next keep; its stats differ from the copies, so its
+    # next build copies those files again, as after any copy)
+    if ($files -notcontains '.longshot_installed.json') { Remove-Item -LiteralPath (Join-Path $Game '.longshot_installed.json') -Force -ErrorAction SilentlyContinue }
+    # (coop-built-from.txt as that build wrote it)
+    Copy-Item -LiteralPath (Join-Path $Dir 'built-from.txt') -Destination (Join-Path $Game 'coop-built-from.txt') -Force
+    try { (Get-Item -LiteralPath (Join-Path $Dir 'stamp.txt')).LastWriteTimeUtc = [DateTime]::UtcNow } catch { }
+    return $true
 }
 
 # What the kit's Hookshot game needs before it starts:
@@ -1043,6 +1210,9 @@ function Get-KitHookshotNeed([string]$Kit) {
     $want = Get-KitHookshotStamp $Kit
     if (-not $want) { return '' }   # (a kit without hookshot\PIN or TOOLS.txt cannot build: nothing to do here)
     if ($have -ne $want) {
+        # (row 210: a build of exactly this stamp kept from before, e.g. a code mod switched back: put back in seconds)
+        $wantDlss = Test-Path -LiteralPath (Join-Path $Kit 'hookshot\dlss.txt')
+        if ($wantDlss -eq (Test-KitHookshotDlss $game) -and (Find-KitGameVariant $Kit $want $wantDlss)) { return 'variant' }
         $base = { param($s) (@($s -split "`n") | Where-Object { $_ -match '^(release|commit)=' }) -join "`n" }
         if ((& $base $have) -ne (& $base $want)) { return 'pin' }
         $codeless = { param($s) (@($s -split "`n") | Where-Object { $_ -notmatch '^exefs=' }) -join "`n" }
@@ -1819,21 +1989,43 @@ function Remove-KitRandoSeeds([string]$ExeDir, [string]$Release) {
 # pack made again): the game aborts while it loads with such a seed on, so they are built again (Update-KitRandoSeeds).
 # Only seeds the game built (coop-rando.txt, its seed file kept): one put in by hand cannot be built again here, and
 # the size-table merge (Invoke-KitSizeTableMerge) gives it the pack's entries instead.
+# A seed the kit built again (Update-KitRandoSeeds) keeps what it was built beside, by content, in coop-seed-tables.txt
+# (Get-KitSeedTablesText): it is stale only when one of those tables changed (player report 210: a size table merged
+# again with the same entries, or a pack put back with an older date, made every start after a mod change a module
+# step). A seed without that file (the game built it) keeps the date rule.
 function Get-KitStaleRandoSeeds([string]$ExeDir) {
     $mods = Join-Path $ExeDir 'mods'
     $others = @(Get-KitOtherSizeTables $mods)
     if (-not $others) { return @() }
     $newest = ($others | Measure-Object -Property LastWriteTimeUtc -Maximum).Maximum
+    $tables = $null
     $stale = @()
     foreach ($d in @(Get-ChildItem -LiteralPath $mods -Directory -Filter 'randomizer-*' -ErrorAction SilentlyContinue)) {
         if (-not (Test-Path -LiteralPath (Join-Path $d.FullName 'coop-seed.txt'))) { continue }
         if (-not (Test-Path -LiteralPath (Join-Path $d.FullName 'coop-rando.txt'))) { continue }   # (put in by hand)
+        $was = Join-Path $d.FullName 'coop-seed-tables.txt'
+        if (Test-Path -LiteralPath $was) {
+            if ($null -eq $tables) { $tables = Get-KitSeedTablesText $mods }
+            if ([System.IO.File]::ReadAllText($was) -cne $tables) { $stale += $d.Name }
+            continue
+        }
         $own = @(Get-ChildItem -LiteralPath (Join-Path $d.FullName 'romfs\System\Resource') -File -Filter '*.rsizetable.zs' -ErrorAction SilentlyContinue)
         # (no table of its own: the seed's build time, coop-seed.txt, so it is not built again at every start)
         $built = if ($own) { ($own | Measure-Object -Property LastWriteTimeUtc -Minimum).Minimum } else { (Get-Item -LiteralPath (Join-Path $d.FullName 'coop-seed.txt')).LastWriteTimeUtc }
         if ($built -lt $newest) { $stale += $d.Name }
     }
     return $stale
+}
+
+# The size tables a seed is built beside (Get-KitOtherSizeTables), one "<path under mods, '/'> <sha256>" line each, in
+# ordinal order.
+function Get-KitSeedTablesText([string]$ModsDir) {
+    $root = ([System.IO.Path]::GetFullPath($ModsDir)).TrimEnd('\') + '\'
+    $rows = [string[]]@(Get-KitOtherSizeTables $ModsDir | ForEach-Object {
+        "$($_.FullName.Substring($root.Length) -replace '\\', '/') $((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())"
+    })
+    [Array]::Sort($rows, [StringComparer]::Ordinal)
+    return (($rows -join "`n") + "`n")
 }
 
 # Builds the stale seeds again with the kit's OOTRR (a few seconds each), beside every other mod's size table, from
@@ -1876,6 +2068,8 @@ function Update-KitRandoSeeds([string]$ExeDir, [string]$Ootrr = '') {
                 }
                 Remove-Item -LiteralPath $seedDir -Recurse -Force
                 Move-Item -LiteralPath $built -Destination $seedDir
+                # (what it was built beside, by content: Get-KitStaleRandoSeeds compares it at the next start)
+                [System.IO.File]::WriteAllText((Join-Path $seedDir 'coop-seed-tables.txt'), (Get-KitSeedTablesText $mods))
                 $ok = $true
             }
           } catch {
@@ -1892,6 +2086,79 @@ function Update-KitRandoSeeds([string]$ExeDir, [string]$Ootrr = '') {
         }
     }
     return $lines
+}
+
+# --- Puppet packs kept per what they were made for (player report 210) ---
+# The pack (about 450 MB, 1 to 4 minutes to make) follows the Character Select mod's characters and the pack tool
+# (Get-PuppetPackHint), so switching Character Select off on the Mods tab made it again, and switching it back on made it
+# once more. Before a pack is made again, the one there is moved (same drive: no copy) into hookshot\pack-variants\<key>
+# with what it was made for: the pack tool's hash and its characters (Get-KitPackCharactersKey); a start that wants a pack
+# kept there moves it back. The newest $Keep stay.
+function Get-KitPackKeepRoot([string]$Kit) { return (Join-Path $Kit 'hookshot\pack-variants') }
+
+function Get-KitPackKeepText([string]$Tool, [string]$Characters) { return "tool=$Tool`ncharacters=$Characters" }
+
+# A folder moved, or copied and then removed where a move cannot (another drive). $true when done.
+function Move-KitFolder([string]$From, [string]$To) {
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $To) | Out-Null
+    try { Move-Item -LiteralPath $From -Destination $To -ErrorAction Stop; return $true } catch { }
+    try {
+        Copy-Item -LiteralPath $From -Destination $To -Recurse -Force -ErrorAction Stop
+        Remove-Item -LiteralPath $From -Recurse -Force -ErrorAction Stop
+        return $true
+    } catch {
+        Remove-Item -LiteralPath $To -Recurse -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+}
+
+# Keeps the pack in $Mod (its coop_puppet.json says what it was made for) before it is made again: moved out, so $Mod is
+# gone afterwards. Only a whole pack (Get-KitPuppetPackGaps finds nothing missing). Returns its keep folder, or ''.
+function Save-KitPuppetPack([string]$Kit, [string]$Mod, [int]$Keep = 2) {
+    $manifest = Join-Path $Mod 'coop_puppet.json'
+    if (-not (Test-Path -LiteralPath $manifest)) { return '' }
+    try { $json = [System.IO.File]::ReadAllText($manifest) | ConvertFrom-Json -ErrorAction Stop } catch { return '' }
+    if (-not $json.tool_sha256 -or $json.sound -ne $true -or @(Get-KitPuppetPackGaps $manifest $json).Count) { return '' }
+    $text = Get-KitPackKeepText $json.tool_sha256 (Get-KitPackCharactersKey $json)
+    $root = Get-KitPackKeepRoot $Kit
+    $dir = Join-Path $root (Get-KitVariantKey $text)
+    if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+    if (-not (Move-KitFolder $Mod (Join-Path $dir 'coop-puppet'))) { return '' }
+    [System.IO.File]::WriteAllText((Join-Path $dir 'key.txt'), $text)
+    $all = @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'key.txt') } |
+        Sort-Object { (Get-Item -LiteralPath (Join-Path $_.FullName 'key.txt')).LastWriteTimeUtc } -Descending)
+    $all | Select-Object -Skip ([Math]::Max(1, $Keep)) | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    return $dir
+}
+
+# The pack kept for what $Mod's pack would be made for now (this pack tool, Character Select's characters as
+# Get-KitCharacterSelectSeen finds them), moved back into $Mod. A pack there (made for something else) is kept first.
+# The line to show, or '' when none was kept (the pack is made then). Its size tables get this time as their date:
+# a randomizer seed built beside another pack's tables is then built again (Get-KitStaleRandoSeeds).
+function Restore-KitPuppetPack([string]$Kit, [string]$Mod, [string]$ToolDir) {
+    $manifest = Join-Path $Mod 'coop_puppet.json'
+    $cs = Get-KitCharacterSelectSeen $manifest
+    $tool = Get-PuppetToolHash $ToolDir
+    if ($null -eq $cs -or -not $tool) { return '' }
+    $text = Get-KitPackKeepText $tool $cs
+    $dir = Join-Path (Get-KitPackKeepRoot $Kit) (Get-KitVariantKey $text)
+    $key = Join-Path $dir 'key.txt'
+    if (-not (Test-Path -LiteralPath $key) -or [System.IO.File]::ReadAllText($key) -ne $text -or
+        -not (Test-Path -LiteralPath (Join-Path $dir 'coop-puppet\coop_puppet.json'))) { return '' }
+    if (Test-Path -LiteralPath $Mod) {
+        [void](Save-KitPuppetPack $Kit $Mod)
+        if (Test-Path -LiteralPath $Mod) { Remove-Item -LiteralPath $Mod -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    if (-not (Move-KitFolder (Join-Path $dir 'coop-puppet') $Mod)) { return '' }
+    Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+    if (Get-PuppetPackHint $manifest $ToolDir) {
+        Remove-Item -LiteralPath $Mod -Recurse -Force -ErrorAction SilentlyContinue
+        return ''
+    }
+    $now = [DateTime]::UtcNow
+    Get-ChildItem -LiteralPath (Join-Path $Mod 'romfs\System\Resource') -File -Filter '*.rsizetable.zs' -ErrorAction SilentlyContinue |
+        ForEach-Object { try { $_.LastWriteTimeUtc = $now } catch { } }
+    return '  puppet pack: the one made before for these characters is put back (seconds, instead of making it again)'
 }
 
 # A puppet pack to make (again) before the game starts: none there, or one Get-PuppetPackHint calls old (no sound,
@@ -1921,7 +2188,8 @@ function Get-KitHookshotNeedText([string]$Need, [string]$Game = '', [bool]$HsOnl
         'moved' { "The co-op Hookshot game this kit built is not in $Game any more (moved or deleted). Moved it? Answer n, then run Build-Hookshot-Coop.bat -Out ""<its new folder>"" (seconds). Otherwise it is built again (about 20 to 40 minutes)." }
         'pin' { 'Your co-op game was built for another game version than this kit uses: it is built again (about 15 minutes; the PC stays usable).' }
         'patches' { 'This update changes the co-op game a little: updating it (a few minutes).' }
-        'mods' { 'A mod''s code patches changed (a mod with an exefs folder put in, changed or taken out, or switched on the Mods tab): the co-op game is built again with them (a few minutes).' }
+        'mods' { 'A mod''s code patches changed (a mod with an exefs folder put in, changed or taken out, or switched on the Mods tab): the co-op game is built again with them, about 5 to 25 minutes (the PC stays usable). This build is kept, and so is the one before it: switching that mod back later takes seconds.' }
+        'variant' { 'The co-op game was built before with the mods'' code patches as they are now (a mod with an exefs folder switched back on the Mods tab): that build is put back (seconds, no build).' }
         'module' { 'Putting the updated co-op and the puppet pack into the co-op game (seconds to a minute).' }
         'quarantine' { Get-KitHookshotQuarantineText }
         default { '' }

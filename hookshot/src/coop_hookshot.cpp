@@ -94,7 +94,6 @@
 #include "coop_pack_notice.h"
 #include "coop_frame_clock.h"
 #include "coop_original.h"
-#include "coop_hud_layout.h"
 #include "coop/protocol/messages.hpp"
 #include "coop_runtime.h"
 #include "coop_pause_files.h"
@@ -788,8 +787,6 @@ bool EnvOff(const char* name) {
     return v == "0" || v == "no" || v == "off" || v == "false";
 }
 std::atomic<bool> g_map_players{!EnvOff("LICHII_COOP_MAP")};
-// The player list's size (Co-op settings' "Player list", SetHudSize): Auto, Full, Compact or Off.
-std::atomic<int> g_hud_size{static_cast<int>(CoopHudLayout::ParseListSize(Env("LICHII_COOP_HUD_SIZE")))};
 std::atomic<bool> g_map_names{!EnvOff("LICHII_COOP_MAP_NAMES")};
 
 // The players on the maps (CoopDraw::MapShown), or null: the setting is
@@ -895,10 +892,6 @@ const CoopDraw::MapShown* MapScene(bool camera, std::uint8_t self) {
 
 }  // namespace
 
-void SetHudSize(const std::string& size) {
-    g_hud_size.store(static_cast<int>(CoopHudLayout::ParseListSize(size)));
-}
-
 void SetMapOptions(bool players, bool names) {
     g_map_players.store(players);
     g_map_names.store(names);
@@ -962,7 +955,7 @@ CoopDraw::Scene DrawScene() {
             }
         }
     }
-    // The voice icons (docs/voice.md, "Who is talking"): only while voice chat is on here.
+    // The voice states after the names, as words (docs/voice.md, "Who is talking"): only while voice chat is on here.
     const bool voice_on = game && CoopVoice::Available() && CoopVoice::Get().mode != coop::voice::Mode::off;
     const CoopLobby::Seen seen = voice_on ? CoopLobby::Now() : CoopLobby::Seen{};
     const auto voice_muted = [&](std::uint8_t number) {
@@ -990,10 +983,6 @@ CoopDraw::Scene DrawScene() {
     CoopPauseTab::CensusFromMenuState();   // (the - menu research: only with COOP_TEST_SCREEN_PROBE=1)
     const auto menu_state = CoopMapPage::MenuState();
     const bool game_menu_up = (menu_state && menu_state->menu_open) || CoopPauseTab::GameMenuUp();   // (row 199)
-    std::optional<std::string> own_scene;
-    for (const auto& row : rows) {
-        if (row.self) own_scene = row.scene;
-    }
     for (const auto& row : game ? rows : std::vector<CoopHook::PlayerRow>{}) {
         if (row.self) {
             s.own_voice = CoopVoice::IconFor(voice_on, CoopVoice::Get().muted || voice_muted(row.number),
@@ -1011,18 +1000,9 @@ CoopDraw::Scene DrawScene() {
         }
         if (const auto life = CoopHud::PlayerLife(row.number); life && life->max > 0) {
             b.hearts = CoopHudHearts::Quarters(life->life, life->max);
-            b.life = life->life, b.max = life->max;
         }
-        b.colour = coop::protocol::slot_color(row.number);
-        b.here = own_scene && row.scene && *own_scene == *row.scene;
         b.dim = dim_hold.Dim(row.number, row.state == "connected", dim_now);
         s.hud.push_back(std::move(b));
-    }
-    {   // the player list: Off, or the players in our own area first; compact rows for many (CoopHudLayout::ListSize)
-        const auto size = static_cast<CoopHudLayout::ListSize>(g_hud_size.load());
-        if (size == CoopHudLayout::ListSize::kOff) s.hud.clear();
-        CoopHudLayout::HereFirst(s.hud, [](const CoopDraw::HudBlock& b) { return b.here; });
-        s.hud_compact = CoopHudLayout::CompactFor(size, s.hud.size());
     }
     if (!s.hud.empty()) {   // row 141: the blocks go below the game's own HUD as it is laid out now
         s.game_hud_bottom = CoopMapPage::GameHudBottom();
@@ -1244,9 +1224,8 @@ bool Start(const HosCoopApi* api) {
         return false;
     }
     UseInputSelect();
-    // (the player list's size as coop-options.ini says, now that ApplyKitOptions put it in the process's variables:
-    // read at the module's load, it was always Auto without the kit's launcher, a test run 2026-11-20)
-    SetHudSize(Env("LICHII_COOP_HUD_SIZE"));
+    // (the map's players and names as coop-options.ini says, now that ApplyKitOptions put them in the process's
+    // variables: read at the module's load they missed the kit's options without the kit's launcher, 2026-11-20)
     g_map_players.store(!EnvOff("LICHII_COOP_MAP"));   // (the same for the map's players and names)
     g_map_names.store(!EnvOff("LICHII_COOP_MAP_NAMES"));
     CoopFiles::CheckName();  // never the PC's user or PC name as the co-op name (coop_name_privacy.h), before coop.ini is read

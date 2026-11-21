@@ -24,13 +24,13 @@ The microphone is opened only when it may send: with push to talk when you press
 
 ### Who is talking
 
-The player HUD on the left (the names and hearts under your own hearts) shows a small microphone after a name:
+The player HUD on the left (the names and hearts under your own hearts) says it after a name, in the game's font (no drawn icon: co-op UI uses only the game's own assets, hud-native-0119):
 
-- **lit green, with a ring**: that player's voice plays here now (held 300 ms after its last frame);
-- **crossed out in red**: muted (by you, or by the host for everyone);
+- **(talking)**: that player's voice plays here now (held 300 ms after its last frame);
+- **(muted)**: muted (by you, or by the host for everyone);
 - nothing: quiet (whether their voice chat is on is not known here).
 
-While your voice chat is on, a **You** row above them shows your own: lit while you send, dim while you are quiet, crossed out when muted. Voice off: no icons at all. The Multiplayer tab's Lobby page marks the same players as talking.
+While your voice chat is on, a **You** row above them shows your own: "You (talking)" while you send, "You" while you are quiet, "You (muted)" when muted. Voice off: no words and no You row. The Multiplayer tab's Lobby page marks the same players as talking.
 
 ## How it works
 

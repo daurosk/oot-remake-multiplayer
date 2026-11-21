@@ -557,3 +557,16 @@ TEST_CASE("look share (0.11.9, one customizer): the mod's own options read and n
     CHECK(CoopLookShare::OptionsToHold(V{0, 0, 0, 0, 0, 0}).empty());                    // (already the model's own)
     CHECK(CoopLookShare::OptionsToHold(V{3, 0, std::nullopt, 0, 7, -1}) == std::vector<std::size_t>{0, 4, 5});
 }
+
+TEST_CASE("look share (row 198, 0.11.9): a coloured copy the game did not make is told from one it made") {
+    // The 0.11.9 pack sized the copies' AnimationParam too small: the game kept the puppet's own shield
+    // ('Weapon_Shield_Hylian', the viewer's colours) though the equip of its copy returned 1.
+    using CoopPuppet::CopyRefused;
+    CHECK(CopyRefused("Weapon_Shield_Hylian_Look1", "Weapon_Shield_Hylian"));
+    CHECK(CopyRefused("Weapon_Shield_Mirror_Look9", "Weapon_Shield_Mirror"));             // (the neutral copy too)
+    CHECK(CopyRefused("Weapon_Sword_Kokiri_Blade3", "Weapon_Sword_Kokiri"));               // a wearer copy
+    CHECK_FALSE(CopyRefused("Weapon_Shield_Hylian_Look1", "Weapon_Shield_Hylian_Look1"));  // made
+    CHECK_FALSE(CopyRefused("Weapon_Shield_Hylian", "Weapon_Shield_Hylian"));              // no copy worn
+    CHECK_FALSE(CopyRefused("Weapon_Shield_Hylian", "Weapon_Shield_Deku"));                // (not a copy: not ours)
+    CHECK_FALSE(CopyRefused("Weapon_Shield_Hylian_Look1", ""));                            // name not read
+}

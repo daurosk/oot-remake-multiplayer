@@ -62,6 +62,10 @@ CoopPauseMenu::View NativeView();
 bool NativeOpen();
 CoopPauseMenu::Page NativePage();   // (the page the menu shows now)
 void CloseNative();
+// B on the title's page leaves it (the Multiplayer rows again) rather than going back a page (Menu::BackLeaves).
+bool NativeBackLeaves();
+// Y on the title's list of games: asked again (Menu::RefreshFound; nothing on another page).
+void NativeRefresh();
 // Another page of co-op's menu while it shows natively (the pause page's Settings and look): the page only, no files
 // read again (OpenNative read them as it opened).
 void NativeGo(CoopPauseMenu::Page page);

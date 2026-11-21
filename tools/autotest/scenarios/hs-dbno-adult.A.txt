@@ -1,14 +1,18 @@
 # hs-dbno-adult (rows 113 and 190, the ADULT case): a downed adult is asked the game's own Crawl (234) like a child
-# (the same crawl AI in both packs; the Tunnel_* animations are in the child's banks only, so the POSE is what this
-# run is for: look at the shots). The HugeHit of 2026-11-16 is not used (it threw B and the game's death followed).
+# and, as the crawl's Tunnel_* clips are the child's only, laid down by the game's own AS command DamageLStand held
+# at frame 0 (rate 0; the start of its stand-up from lying); revived or respawned he gets up with it (rate 1) and the
+# game's LDamageStandUp (85). The HugeHit of 2026-11-16 is not used (it threw B away from the spot).
 # A hosts (joins first), sets the bleed-out to 10 s and stays up in Hyrule Field (adult, by Kakariko's steps); B is
 # downed by the game's own hits (hurt 4 x3), lies, pushes the stick, bleeds out, spectates A, then respawns beside A
 # once no enemy is near and stands up. See hs-dbno-adult.B.txt for B's checks.
-# Checks (log): B "coop: dbno: our Link: event 0", "our downed Link: Crawl (234) asked and taken" once, no "refused",
-# at most one "waits: the slot took a request", B still in HyruleField_Adult at every mark (no reload), "event 2"
-# (spectating), "event 7" (respawned), then "our Link up:" (Wait asked and taken, or the game's own stands it up).
-# Shots (the proof, on both games): B-lying / B-stick / B-still-down (B low on the ground in a crawl pose, not
-# standing, not a T or bind pose; A's see-b-* shots: B's puppet the same), B-after-respawn (B standing beside A).
+# Checks (log): B "coop: dbno: our Link: event 0", "our downed Link: Crawl (234) asked and taken" once, "our downed
+# adult Link: the game's AS 'DamageLStand' held at frame 0", no "refused", at most one "waits: the slot took a
+# request", B still in HyruleField_Adult at every mark (no reload), "event 2" (spectating), "event 7" (respawned),
+# then "our Link up: the game's AS 'DamageLStand' played on" and "our Link up: LDamageStandUp (85) asked and taken"
+# (or "... refused ...: the game's own Wait stands our Link up": a FAIL of the stand-up only, say so).
+# Shots (the proof, on both games): B-lying / B-stick / B-still-down / B-watching: B LYING on the ground (not
+# standing, not bent, not a T or bind pose); A's see-b-* shots: B's puppet lying the same; B-after-respawn: B standing
+# beside A (getting up or up).
 #! timeout 420
 mark start
 setflag Sequence_IsChildhood 0  # adult (run.ps1 loads the save first)

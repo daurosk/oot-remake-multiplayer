@@ -93,6 +93,9 @@ private:
 bool Available();
 const char* TabName();
 bool Page(HosCoopMenuPage* out);
+// The tab's page as the pause menu's - page draws it (0.11.9: the Mods tab right of Map): its rows, and whether a
+// mod's own page shows (Back goes to the list) rather than the list. False before the tab is made.
+bool View(CoopPauseMenu::View* out, bool* on_mod_page);
 bool MenuInput(int event, int arg, int arg2);
 bool Key(std::uint32_t vk, bool repeat);  // while typing: the tab's
 bool Char(std::uint32_t cp);

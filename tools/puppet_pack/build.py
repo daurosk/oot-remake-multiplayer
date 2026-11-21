@@ -1501,11 +1501,13 @@ def write_look_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, slots, l
             ap_size = table.get(look_items.actor_param_path(item)) or 0
             table.add_new(look_items.actor_param_path(actor), max(ap_size, len(ap) + PACK_SIZE_MARGIN))
             table.add_new(look_items.model_info_path(actor), chain_entry(table, info_chain, info))
-            # Row 184: the copy's own AnimationParam (retargeted clips), sized as the item's.
+            # Row 184: the copy's own AnimationParam (retargeted clips), with room for each IsRetarget it adds
+            # (row 198: sized as the item's, the game refused to make the shield copies).
             anim = look_items.copy_animation_param(members, item, actor)
             if anim is not None:
                 anim_size = table.get(look_items.item_animation_param(members, item)[0]) or 0
-                table.add_new(anim[0], max(anim_size, len(anim[1]) + PACK_SIZE_MARGIN))
+                table.add_new(anim[0], look_items.copy_animation_param_entry(members, item, anim_size, anim[1],
+                                                                             PACK_SIZE_MARGIN))
             new_ai.append(look_items.info_row(ai_rows[item], item, slot))
             new_gai.append(dict(gai_rows.get(item, {}), __RowId=actor))
             paths = [dst]
@@ -1582,11 +1584,13 @@ def write_blade_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, copies,
             ap_size = table.get(look_items.actor_param_path(item)) or 0
             table.add_new(look_items.actor_param_path(actor), max(ap_size, len(ap) + PACK_SIZE_MARGIN))
             table.add_new(look_items.model_info_path(actor), chain_entry(table, info_chain, info))
-            # Row 184: the copy's own AnimationParam (retargeted clips), sized as the item's.
+            # Row 184: the copy's own AnimationParam (retargeted clips), with room for each IsRetarget it adds
+            # (row 198: sized as the item's, the game refused to make the shield copies).
             anim = look_items.copy_animation_param(members, item, actor)
             if anim is not None:
                 anim_size = table.get(look_items.item_animation_param(members, item)[0]) or 0
-                table.add_new(anim[0], max(anim_size, len(anim[1]) + PACK_SIZE_MARGIN))
+                table.add_new(anim[0], look_items.copy_animation_param_entry(members, item, anim_size, anim[1],
+                                                                             PACK_SIZE_MARGIN))
             new_ai.append(look_items.info_row_as(ai_rows[item], actor, copy_project))
             new_gai.append(dict(gai_rows.get(item, {}), __RowId=actor))
             files.append(dst)

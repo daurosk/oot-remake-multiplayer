@@ -92,6 +92,16 @@ bool Page(HosCoopMenuPage* out) {
     return true;
 }
 
+bool View(CoopPauseMenu::View* out, bool* on_mod_page) {
+    if (out == nullptr || on_mod_page == nullptr) return false;
+    std::lock_guard lock(g_mutex);
+    Tab* tab = TheTab();
+    if (tab == nullptr) return false;
+    *out = tab->view();
+    *on_mod_page = tab->on_mod_page();
+    return true;
+}
+
 bool MenuInput(int event, int arg, int arg2) {
     std::lock_guard lock(g_mutex);
     Tab* tab = TheTab();

@@ -319,11 +319,6 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
         }
     }
     o.map_players = !Off(IniGet(options_ini, "LICHII_COOP_MAP"));
-    {
-        std::string size(Trim(IniGet(options_ini, "LICHII_COOP_HUD_SIZE").value_or("auto")));
-        for (char& c : size) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        o.hud_size = size == "full" || size == "compact" || size == "off" ? size : "auto";
-    }
     o.map_names = !Off(IniGet(options_ini, "LICHII_COOP_MAP_NAMES"));
     // The relay lines Host.bat reads too (coop-options.ini, "Advanced: relay"): the Multiplayer tab's Host uses them
     // the same way. Read only: the menu writes none of them.
@@ -408,7 +403,7 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     const std::uint16_t port = host_port != 0 ? host_port : kDefaultPort;
     o = port == kDefaultPort ? IniUnset(o, "server_port") : IniSet(o, "server_port", std::to_string(port), true);
     o = map_players ? IniUnset(o, "LICHII_COOP_MAP") : IniSet(o, "LICHII_COOP_MAP", "0", false);
-    o = hud_size == "auto" ? IniUnset(o, "LICHII_COOP_HUD_SIZE") : IniSet(o, "LICHII_COOP_HUD_SIZE", hud_size, false);
+    o = IniUnset(o, "LICHII_COOP_HUD_SIZE");   // (0.11.8's "Player list" size, removed: a kit's old line goes)
     o = map_names ? IniUnset(o, "LICHII_COOP_MAP_NAMES") : IniSet(o, "LICHII_COOP_MAP_NAMES", "0", false);
     options_ini = std::move(o);
 }
@@ -426,7 +421,6 @@ std::vector<std::pair<std::string, std::string>> Options::Environment() const {
         {"LICHII_COOP_VOICE_MIC", voice_mic},
         {"LICHII_COOP_MAP", map_players ? "" : "0"},
         {"LICHII_COOP_MAP_NAMES", map_names ? "" : "0"},
-        {"LICHII_COOP_HUD_SIZE", hud_size == "auto" ? "" : hud_size},
     };
 }
 
@@ -993,7 +987,8 @@ TitleMenuLook MenuFor(bool any_save, bool multiplayer, bool one_start) {
     TitleMenuLook l;
     if (multiplayer) {
         l.btn_num_frame = 4;
-        l.rows = {{{"0100", TitleDo::kHost}, {"0101", TitleDo::kJoin}, {"0102", TitleDo::kSettings},
+        // (Join first: most players join a friend's game; docs/hookshot.md "The title menu")
+        l.rows = {{{"0101", TitleDo::kJoin}, {"0100", TitleDo::kHost}, {"0102", TitleDo::kSettings},
                    {"0106", TitleDo::kBack}}};
         l.count = 4;
         l.focus = 0;
@@ -1021,6 +1016,17 @@ TitleMenuLook MenuFor(bool any_save, bool multiplayer, bool one_start) {
     }
     l.count = 3;
     return l;
+}
+
+const char* MenuHint(TitleDo action) {
+    switch (action) {
+    case TitleDo::kJoin: return "Play in a friend's game or a public game. You play on their save.";
+    case TitleDo::kHost: return "Start a game on this PC; your friends join it. They play on your save.";
+    case TitleDo::kSettings: return "Your name, voice, chat key, controller, map.";
+    case TitleDo::kBack: return "Back to the title.";
+    default: break;
+    }
+    return nullptr;
 }
 
 int RowOf(const TitleMenuLook& look, TitleDo action) {

@@ -171,7 +171,7 @@ void NoteShooters(std::vector<Shooter> shooters, std::uint64_t now_us) {
 }
 
 bool StopAtCreate(std::string_view shot, const Vec3& at, std::uint64_t shooter) {
-    if (!IsEnemyShot(shot) || !On() || !HideOn() || !StopOn()) {
+    if (!IsEnemyShot(shot) || !On() || !HideOn() || !StopOn() || KeepsCopyShot(shot, KeepCopyOn())) {
         return false;
     }
     std::unique_lock lock(g_mutex, std::try_to_lock);
@@ -222,6 +222,35 @@ bool On() {
 bool HideOn() {
     static const bool on = !EnvOff("LICHII_COOP_ENEMY_SHOTS_HIDE");
     return on;
+}
+
+bool SwordReturned(std::string_view shot) {
+    // coop_shot_reflect.cpp's melee rows, and the charge ball, whose own AI reads its sensor (docs/objects.md).
+    return shot == "DungeonBossGanondrof_Bullet_LightBall" || shot == "DungeonBossGanondrof_Bullet_ChargeLightBall" ||
+           shot == "DungeonBossPhantomGanon_Bullet_LightBall";
+}
+
+bool KeepCopyOn() {
+    static const bool on = [] {
+#ifdef _WIN32
+        char* value = nullptr;
+        std::size_t size = 0;
+        if (_dupenv_s(&value, &size, "LICHII_COOP_SHOT_KEEP_COPY") != 0 || value == nullptr) {
+            return false;
+        }
+        const bool one = std::string_view(value) == "1";
+        std::free(value);
+        return one;
+#else
+        const char* v = std::getenv("LICHII_COOP_SHOT_KEEP_COPY");
+        return v != nullptr && std::string_view(v) == "1";
+#endif
+    }();
+    return on;
+}
+
+bool KeepsCopyShot(std::string_view shot, bool on) {
+    return on && SwordReturned(shot);
 }
 
 } // namespace CoopEnemyShots

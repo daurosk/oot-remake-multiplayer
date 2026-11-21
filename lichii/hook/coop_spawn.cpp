@@ -263,6 +263,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     flights_.clear();
     made_up_.clear();
     doom_.clear();
+    watch_.clear();
     decided_.clear();
     blow_own_.clear();
     bomb_notes_.clear();
@@ -446,8 +447,10 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             if (local != local_.end()) {
                 Local& l = local->second;
                 ++l.walks;
-                if (l.verdict == CoopEnemyShots::Verdict::hide && hide_ && !l.doomed &&
-                    l.walks >= kDoomWalks && l.vtable != 0) {
+                if (l.verdict == CoopEnemyShots::Verdict::hide && CoopEnemyShots::KeepsCopyShot(l.name, keep_copy_)) {
+                    watch_.push_back({s.address, l.vtable});  // row 211 probe: the copy's own, kept and read
+                } else if (l.verdict == CoopEnemyShots::Verdict::hide && hide_ && !l.doomed &&
+                           l.walks >= kDoomWalks && l.vtable != 0) {
                     doom_.push_back({s.address, l.vtable});
                     l.doomed = true;
                 }
@@ -1067,6 +1070,59 @@ void Director::SetBlowOwn(const std::vector<Doomed>& blow) {
         if (blow_own_.size() < 16) {
             blow_own_.push_back(b);
         }
+    }
+}
+
+void Director::SetWatched(const std::vector<Doomed>& watched) {
+    if (watched.empty()) {
+        return;
+    }
+    std::lock_guard lock(mutex_);
+    for (const Doomed& w : watched) {
+        if (watched_.size() < 16 || watched_.contains(w.address)) {
+            Watched& entry = watched_[w.address];
+            if (entry.vtable != w.vtable) {
+                entry = Watched{};  // a new actor at an old address
+                entry.vtable = w.vtable;
+            }
+        }
+    }
+}
+
+// Row 211 probe: what a copy boss's own kept shot does in our game (Sync::Watch). Only reads.
+void Director::ReadWatched(CoopPuppet::Guest& guest) {
+    namespace addr = CoopPuppet::addr;
+    std::lock_guard lock(mutex_);
+    const std::uint64_t link = our_link_.load(std::memory_order_relaxed);
+    for (auto it = watched_.begin(); it != watched_.end();) {
+        auto& [address, w] = *it;
+        ++w.ticks;
+        std::uint64_t vtable = 0;
+        std::uint32_t state = 0;
+        if (!ReadValue(guest, address, vtable) || vtable != w.vtable ||
+            !ReadValue(guest, address + addr::kActorState, state) || Gone(state)) {
+            Say("shot probe " + Hex(address) + ": gone after " + std::to_string(w.ticks) + " ticks (state " +
+                std::to_string(state) + ")");
+            it = watched_.erase(it);
+            continue;
+        }
+        const std::string hits = CoopShotReflect::Describe(guest, address);
+        const bool our_hit = CoopShotReflect::OurHit(guest, address, link, CoopShotReflect::Way::melee);
+        const bool changed = w.ticks == 1 || state != w.state || hits != w.hits || our_hit != w.our_hit;
+        if (w.lines < kWatchLines && (changed || w.ticks % 30 == 0)) {
+            ++w.lines;
+            Vec3 at{};
+            (void)ReadValue(guest, address + addr::kActorPosition, at);
+            char place[64];
+            std::snprintf(place, sizeof place, "%.2f %.2f %.2f", at[0], at[1], at[2]);
+            Say("shot probe " + Hex(address) + " tick " + std::to_string(w.ticks) + ": state " +
+                std::to_string(state) + " at " + place + (our_hit ? ", OUR LINK'S SWING IN ITS SENSOR" : "") +
+                (hits.empty() ? ", hit lists empty" : ", hits:" + hits));
+        }
+        w.state = state;
+        w.hits = hits;
+        w.our_hit = our_hit;
+        ++it;
     }
 }
 
@@ -1808,6 +1864,7 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
 
 std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
     namespace addr = CoopPuppet::addr;
+    ReadWatched(guest);
     if (auto doomed = NextDoomed(guest, now_ms)) {
         return doomed;
     }
@@ -2096,6 +2153,7 @@ public:
         // Enemy shots: who owns the enemies (coop_objects' last walk).
         sync_.SetShooters(CoopEnemyShots::Shooters(now_us));
         sync_.SetHide(CoopEnemyShots::HideOn());
+        sync_.SetKeepCopy(CoopEnemyShots::KeepCopyOn());  // row 211 probe (off unless LICHII_COOP_SHOT_KEEP_COPY=1)
         sync_.Tick(*scene, self, now_us, seen, TheDirector().Live(), send, copies);
         // Row 177 (coop_shot_reflect.h): shots sent back. Ours in another game: the game's own call here (the
         // caller below); another player's sent back by our Link here: told to its owner.
@@ -2120,6 +2178,7 @@ public:
                      d.position[0], d.position[1], d.position[2], CoopEnemyShots::NameOf(d.verdict));
         }
         TheDirector().SetDoomed(sync_.Doom());
+        TheDirector().SetWatched(sync_.Watch());
         TheDirector().SetBlowOwn(sync_.BlowOwn());
         for (const auto& note : sync_.BombNotes()) {
             LOG_INFO(Core, "coop: bombs: {}", note);

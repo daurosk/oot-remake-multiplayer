@@ -170,6 +170,10 @@ public:
     static constexpr unsigned kDoomWalks = 2;
     // The enemy shots to delete now (filled by Tick).
     const std::vector<Doomed>& Doom() const { return doom_; }
+    // Row 211 probe (CoopEnemyShots::KeepsCopyShot): a copy's own sword-returned boss shot is never doomed but
+    // listed here every Tick it is seen, for the director to read (Director::SetWatched).
+    void SetKeepCopy(bool on) { keep_copy_ = on; }
+    const std::vector<Doomed>& Watch() const { return watch_; }
     // The enemy shots first seen in the last Tick and what was decided.
     struct Decided {
         std::string name;
@@ -424,7 +428,9 @@ private:
     std::vector<CoopEnemyShots::Shooter> shooters_;
     std::vector<ReflectAsk> reflect_asks_;
     bool hide_ = true;
+    bool keep_copy_ = false;
     std::vector<Doomed> doom_;
+    std::vector<Doomed> watch_;
     std::vector<Decided> decided_;
     ShotSettings shot_settings_;
     bool setter_ = true;
@@ -521,6 +527,11 @@ public:
     // its life set to 0 once (the game's own explosion, as a copy is blown)
     // if the actor still has the vtable.
     void SetBlowOwn(const std::vector<Doomed>& blow);
+    // Row 211 probe (Sync::Watch): copy bosses' own kept shots. The calc thread logs each one's actor state,
+    // place, hit lists (CoopShotReflect::Describe) and whether our Link's swing is there (OurHit), when any of
+    // them changes, at most kWatchLines lines a shot, and once when it is gone.
+    void SetWatched(const std::vector<Doomed>& watched);
+    static constexpr unsigned kWatchLines = 60;
     std::size_t Deleted() const;  // enemy shots deleted so far
     std::map<std::uint64_t, std::uint64_t> Live() const;  // key to actor
     // Present thread: the stand-ins the installed puppet pack has
@@ -623,6 +634,16 @@ private:
     std::vector<Doomed> doomed_;                     // guarded
     std::vector<Doomed> blow_own_;                   // guarded
     std::vector<std::uint64_t> reflected_;           // guarded (row 177)
+    struct Watched {
+        std::uint64_t vtable = 0;
+        unsigned lines = 0;
+        unsigned ticks = 0;
+        std::uint32_t state = 0;
+        std::string hits;
+        bool our_hit = false;
+    };
+    std::map<std::uint64_t, Watched> watched_;       // guarded (row 211 probe)
+    void ReadWatched(CoopPuppet::Guest& guest);      // calc thread
     std::atomic<std::uint64_t> our_link_{0};
     std::map<std::uint64_t, std::uint64_t> done_doomed_;  // address to when deleted (ms)
     std::size_t deleted_ = 0;                        // guarded

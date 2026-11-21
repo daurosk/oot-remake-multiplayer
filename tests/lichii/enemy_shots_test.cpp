@@ -324,3 +324,39 @@ TEST_CASE("enemy shots: the director deletes a doomed shot only if it is still t
     CHECK_FALSE(d.Step(guest, false, 0, 16));
     CHECK(d.Deleted() == 1);
 }
+
+TEST_CASE("enemy shots: row 211 probe keeps a copy boss's own sword-returned shot, only with the probe on") {
+    CHECK(es::SwordReturned("DungeonBossGanondrof_Bullet_ChargeLightBall"));
+    CHECK(es::SwordReturned("DungeonBossGanondrof_Bullet_LightBall"));
+    CHECK(es::SwordReturned("DungeonBossPhantomGanon_Bullet_LightBall"));
+    CHECK_FALSE(es::SwordReturned("Octorok_Bullet"));  // the shield's (row 177's way)
+    CHECK_FALSE(es::SwordReturned("Ganondorf_Bullet_LightBall_MirrorShieldReflect"));
+    CHECK_FALSE(es::KeepsCopyShot("DungeonBossGanondrof_Bullet_ChargeLightBall", false));  // off: as before
+    CHECK(es::KeepsCopyShot("DungeonBossGanondrof_Bullet_ChargeLightBall", true));
+    CHECK_FALSE(es::KeepCopyOn());  // (the tests run without LICHII_COOP_SHOT_KEEP_COPY)
+
+    const std::string ball = "DungeonBossGanondrof_Bullet_ChargeLightBall";
+    for (const bool keep : {false, true}) {
+        CAPTURE(keep);
+        CoopSpawn::Sync sync;
+        sync.SetShooters({{"Enemy_DungeonBoss_Ganondorf", {0.0f, 1.0f, 2.0f}, Owner::theirs}});
+        sync.SetKeepCopy(keep);
+        std::vector<proto::Message> send;
+        std::vector<CoopSpawn::Copy> copies;
+        sync.Tick(kScene, 2, 1'000 * kMs, {}, {}, send, copies);
+        bool doomed = false;
+        std::size_t watched = 0;
+        for (int i = 0; i < 4; ++i) {
+            sync.Tick(kScene, 2, (1'033 + 33 * i) * kMs, {Shot(0x2000, 1.0f + 0.5f * i, ball)}, {}, send, copies);
+            doomed = doomed || !sync.Doom().empty();
+            watched += sync.Watch().size();
+            if (!sync.Watch().empty()) {
+                CHECK(sync.Watch()[0].address == 0x2000);
+                CHECK(sync.Watch()[0].vtable == 0xbeef);
+            }
+        }
+        CHECK(send.empty());  // never sent: the owner's is the one shared
+        CHECK(doomed == !keep);
+        CHECK(watched == (keep ? 4u : 0u));
+    }
+}

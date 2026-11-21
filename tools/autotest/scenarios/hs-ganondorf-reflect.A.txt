@@ -1,0 +1,40 @@
+# hs-ganondorf-reflect (row 211 probe, branch shot-reflect-211): is a copy boss's OWN shot a real shot whose
+# Sensor takes our Link's swing? A owns Ganondorf; on B the probe (LICHII_COOP_SHOT_KEEP_COPY=1) keeps the
+# light/charge balls the copy Ganondorf's own shoot code makes (never stopped at the create, never deleted),
+# and B's log reads each per tick ("shot probe 0x...: state, place, hit lists"). B swings all the time.
+# Facts it gives (not a PASS/FAIL of a fix):
+#  1. B: "shot probe 0x... tick 1": the copy's own ball was made (the copy boss fires through its own code).
+#  2. B: its place moves tick to tick (it flies by the game's own physics, Shootable flying) and how long it
+#     lives ("gone after N ticks"; a placed light-ball copy ends at tick 2, run 20261120-135931).
+#  3. B: "OUR LINK'S SWING IN ITS SENSOR" or any "hits:" line: the real shot's Sensor takes our hit (a placed
+#     copy's lists stay empty, run 20261120-135622); then whether it turns back (place heads back to the boss).
+#  4. Screenshots b-1..b-4: the ball(s) on B's screen (two at once = the owner's copy beside the kept one).
+# Route: as hs-ganondorf-native (the boss rush's GanondorfStage).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1,LICHII_COOP_SHOT_KEEP_COPY=1
+#! timeout 600
+mark start
+warp GanondorfStage GanondorfStage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-in
+wait 1800               # the intro, then the fight
+press ZL 10             # lock on
+mark a-1
+hold ZL 600              # A stands locked on (no swing: B's swings are the probe)
+mark a-2
+hold ZL 600              # A stands locked on (no swing: B's swings are the probe)
+mark a-3
+hold ZL 600              # A stands locked on (no swing: B's swings are the probe)
+mark a-4
+hold ZL 600              # A stands locked on (no swing: B's swings are the probe)
+mark end

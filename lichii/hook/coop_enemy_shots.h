@@ -90,4 +90,14 @@ bool StopOn();
 bool On();
 bool HideOn();
 
+// Row 211 probe (LICHII_COOP_SHOT_KEEP_COPY=1; off by default, so nothing changes without it): a copy boss's
+// own shot of the boss shots a sword sends back (Ganondorf's light and charge balls, Phantom Ganon's light
+// ball) is kept, made by the copy's own shoot code (never stopped at its create, never deleted by the walk's
+// rule), so a run can see whether such a real shot's own Sensor takes our Link's swing (a placed copy's never
+// does: run 20261120-135622). The owner's copy still comes beside it: the probe only reads.
+bool SwordReturned(std::string_view shot);
+bool KeepCopyOn();
+// Whether a copy's own `shot` is kept: SwordReturned and the probe on (`on`: KeepCopyOn() in the game).
+bool KeepsCopyShot(std::string_view shot, bool on);
+
 } // namespace CoopEnemyShots

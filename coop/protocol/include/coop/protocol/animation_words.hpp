@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // What an actor's animation name (its AS slot 0, as a walk reads it and samples carry) says it is doing, for the
 // rules that must never judge a death or a cutscene as a move: the objects walk (an enemy that left while dying,
-// IsDeathAnimation), the native boss table's stall check and the server's (row 149: CoopBossNative::StallJudged,
+// IsDeathAnimation, IsPreBattleAnimation), the native boss table's stall check and the server's (row 149: CoopBossNative::StallJudged,
 // Session::note_hold).
 #pragma once
 
@@ -42,6 +42,12 @@ constexpr bool IsEvent(std::string_view name) noexcept {
         ++at;
     }
     return at < name.size() && (name[at] == '-' || name[at] == '_');
+}
+
+// An animation of a boss that waits for its fight to begin (row 189): Gohma's `Sleep` (far from her room's
+// middle) and `Pre_Battle_*` (on the ceiling, before her drop). Never a held fight move: nothing is stuck there.
+constexpr bool IsPreBattle(std::string_view name) noexcept {
+    return name == "Sleep" || name.starts_with("Pre_Battle_");
 }
 
 } // namespace coop::protocol::anim

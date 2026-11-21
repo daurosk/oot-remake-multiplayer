@@ -306,6 +306,7 @@ struct Glue {
             CoopBossBeaten::TheHostAlive().Clear();
             CoopBossScenes::RefusedDeaths().store(0, std::memory_order_release);
             readiness.Reset();
+            CoopBossNative::TheTable().SetNotBegun({});
             max_life_cap.reset();
         }
         if (step != CoopSessionGate::Step::join && step != CoopSessionGate::Step::run) {
@@ -356,9 +357,11 @@ struct Glue {
                              unready.empty() ? "ready to own the boss" : "not ready to own the boss: its intro is not played here",
                              room->intro);
                 }
+                CoopBossNative::TheTable().SetNotBegun(unready);  // (row 189: its wait is no stuck move)
                 CoopObjects::SetUnreadyBosses(std::move(unready));
             } else {
                 readiness.Reset();  // out of the boss room: her next visit starts over
+                CoopBossNative::TheTable().SetNotBegun({});
                 CoopObjects::SetUnreadyBosses({});
             }
         }

@@ -347,8 +347,13 @@ void Table::Hold(Entry& e, const Boss& b) {
         e.hold_life = b.life;
         e.hold_rechoices = 0;
     }
-    if (!same || event_ || e.dying || !StallJudged(b.animation, b.life)) {
-        // A new move, or none to judge (our event's, its death's, a cutscene's, nothing read): counted from now.
+    if (b.life) {
+        e.hit = e.hit || (e.top_life && *b.life < *e.top_life);
+        e.top_life = std::max(e.top_life.value_or(*b.life), *b.life);
+    }
+    if (!same || event_ || e.dying || (NotBegun(b.name) && !e.hit) || !StallJudged(b.animation, b.life)) {
+        // A new move, or none to judge (our event's, its death's, a cutscene's, its wait before the fight, nothing
+        // read): counted from now.
         e.hold_since = steps_;
         e.hold_asks = 0;
         return;
@@ -566,7 +571,9 @@ bool StallJudged(std::string_view animation, std::optional<std::int32_t> life) {
     // another game's, or one ours plays before SetEvent sees it) are never a held move: re-choosing there would
     // break the death or the cut (boss-die-0116).
     namespace anim = coop::protocol::anim;
-    return !animation.empty() && life && *life > 0 && !anim::IsDeath(animation) && !anim::IsEvent(animation);
+    // Row 189: nor is its wait before the fight (Gohma asleep on the ceiling 25 s: "stuck, its AI chooses again").
+    return !animation.empty() && life && *life > 0 && !anim::IsDeath(animation) && !anim::IsEvent(animation) &&
+           !anim::IsPreBattle(animation);
 }
 
 bool Table::OwnTime(const Entry& e) const {
@@ -604,6 +611,15 @@ void Table::AddDyingLife(std::uint64_t component) {
             return;
         }
     }
+}
+
+bool Table::NotBegun(std::string_view name) const {
+    return std::find(not_begun_.begin(), not_begun_.end(), name) != not_begun_.end();
+}
+
+void Table::SetNotBegun(std::vector<std::string> bodies) {
+    std::lock_guard lock(mutex_);
+    not_begun_ = std::move(bodies);
 }
 
 void Table::SetDying(std::vector<std::string> bodies) {
@@ -1353,6 +1369,7 @@ void Table::Reset() {
     for (auto& slot : held_life_) {
         slot.store(0, std::memory_order_relaxed);
     }
+    not_begun_.clear();
     dying_.clear();
     shot_ends_.clear();
     stream_notes_ = 0;

@@ -206,7 +206,7 @@ std::optional<bool> BossOurs(const std::vector<Seen>& walk, std::span<const std:
 }
 
 bool IsPreBattleAnimation(std::string_view name) {
-    return name == "Sleep" || name.starts_with("Pre_Battle_");
+    return coop::protocol::anim::IsPreBattle(name);
 }
 
 std::optional<bool> BossPreBattle(const std::vector<Seen>& seen, std::span<const std::string_view> bodies) {

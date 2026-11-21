@@ -5965,6 +5965,40 @@ TEST_CASE("boss-copy-b: a boss owned by a game that has not played its intro goe
   CHECK(messages_to<HandoverAsk>(h, 2).empty());
 }
 
+TEST_CASE("row 189: a ready owner that stands still keeps its boss from a game that has not begun the fight") {
+  OwnerHarness h;
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.receive(1, boss_presence(object_presence::awake), kChannelOwnership);  // its intro played: in its fight
+  h.receive(2, boss_presence(object_presence::awake | object_presence::unready), kChannelOwnership);
+  h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);
+  h.stand(1, 3);
+  h.stand(2, 5);
+  h.receive(1, PlayerStatus{0, status::loading}, kChannelSession);  // unfit: it would give the boss up
+  h.clear();
+  h.run(5 * kSecond);
+  CHECK(h.asks() == 0);
+  CHECK(h.session.stats().boss_kept_from_unready > 0);
+  CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+  // The other game's fight begins (ready): now it is asked over.
+  h.receive(2, boss_presence(object_presence::awake), kChannelOwnership);
+  h.run(kSecond);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+}
+
+TEST_CASE("row 189: with no game ready, an owner that stands still gives its boss on as before") {
+  OwnerHarness h;
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.receive(1, boss_presence(object_presence::awake | object_presence::unready), kChannelOwnership);
+  h.receive(2, boss_presence(object_presence::awake | object_presence::unready), kChannelOwnership);
+  h.stand(1, 3);
+  h.stand(2, 5);
+  h.receive(1, PlayerStatus{0, status::loading}, kChannelSession);
+  h.clear();
+  h.run(5 * kSecond);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+  CHECK(h.session.stats().boss_kept_from_unready == 0);
+}
+
 TEST_CASE("boss-copy-b: when a boss's owner leaves, a game that has played its intro takes it before a nearer one that has not") {
   ObjectHarness h;
   h.receive(3, present_in("Field", {placed(7)}), kChannelOwnership);
@@ -6633,6 +6667,40 @@ TEST_CASE("row 149: a boss stuck in one move frees its fight lock, a new move or
   CHECK_FALSE(h.session.object_in_fight(placed(7), h.now));
   sample_for(kSecond, "Wait", 20);
   CHECK(h.session.object_in_fight(placed(7), h.now));
+}
+
+TEST_CASE("row 189: a boss waiting for its fight never stalls: asleep, or owned by a game that has not begun it") {
+  SessionConfig config = quiet_config();
+  config.boss_near_hold_us = 0;
+  struct Wait {
+    const char* animation;
+    bool owner_unready;
+  };
+  // Gohma asleep before anyone came in, and her ceiling wait in a game whose intro has not played (the server's
+  // last resort: no game is ready). Her ceiling wait in a ready owner's game is a fight move: judged (row 149).
+  for (const Wait wait : {Wait{"Sleep", false}, Wait{"Sleep", true}, Wait{"Pre_Battle_Ceiling_Wait", true}}) {
+    CAPTURE(std::string(wait.animation));
+    CAPTURE(wait.owner_unready);
+    OwnerHarness h(config);
+    h.receive(1, wait.owner_unready ? boss_presence(object_presence::unready) : present_in("Field", {placed(7)}),
+              kChannelOwnership);
+    h.receive(2, boss_presence(object_presence::unready), kChannelOwnership);
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    for (std::uint64_t t = 0; t < 2 * config.boss_stall_us; t += kSecond) {
+      h.receive(1, ObjectSample{0, placed(7), 0, held_move(wait.animation, 21)}, kChannelObjectSamples);
+      h.run(kSecond);
+    }
+    CHECK(h.session.stats().boss_stalled == 0);
+  }
+  OwnerHarness h(config);
+  h.receive(1, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.receive(2, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  for (std::uint64_t t = 0; t < config.boss_stall_us + 2 * kSecond; t += kSecond) {
+    h.receive(1, ObjectSample{0, placed(7), 0, held_move("Pre_Battle_Ceiling_Wait", 21)}, kChannelObjectSamples);
+    h.run(kSecond);
+  }
+  CHECK(h.session.stats().boss_stalled == 1);
 }
 
 TEST_CASE("boss-die-0116: a boss dying or in a cutscene never stalls: its fight lock stays (no hand-over mid-death)") {

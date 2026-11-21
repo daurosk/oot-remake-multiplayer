@@ -358,6 +358,12 @@ public:
     // and their Life step is not held (it dies here of its own). The ones
     // skipped just before are made late. An empty list: none (a new fight).
     void SetDying(std::vector<std::string> bodies);
+    // Row 189: the boss bodies whose fight has not begun in our game (the boss glue, every tick: the ones our game
+    // is not ready to own, CoopBoss::Readiness: its intro not played here, its boss still in its wait before the
+    // fight). Ours only as the server's last resort (no game there is ready): the stall check never judges that
+    // wait as a stuck move (Geno's first boss run: Gohma asleep, "stuck, its AI chooses again" twice before
+    // anyone was in her room). A body that lost life in our sight is in its fight whatever the list says.
+    void SetNotBegun(std::vector<std::string> bodies);
 
     // The game's Life step (patch 0007, any game thread), after every other
     // change to the frame's damage `sum`: for a copy boss's Life component
@@ -520,6 +526,8 @@ private:
         // Owner (row 149): the move it holds now (animation, brain verb, last action verb, life), since which
         // step, the action requests its AI made since, and how often it was re-chosen in this move. `rechoose`:
         // Step sets its brain verb again (a stall, or a copy just made ours whose AI did not run its body).
+        std::optional<std::int32_t> top_life;  // the most life read of it; `hit`: it read less since (row 189)
+        bool hit = false;
         std::string hold_animation;
         std::int32_t hold_brain = 0;
         std::optional<std::int32_t> hold_action;
@@ -575,6 +583,8 @@ private:
     bool event_ = false;           // our game runs an event (SetEvent)
     std::vector<std::string> dying_;  // the bodies whose death has begun (SetDying)
     bool Dying(std::string_view name) const;
+    std::vector<std::string> not_begun_;  // the bodies whose fight has not begun here (SetNotBegun)
+    bool NotBegun(std::string_view name) const;
     void Release(std::uint64_t component);  // its held_life_ slot: let die
     std::uint64_t steps_ = 0;      // Step calls (game frames)
     struct ShotEnd {

@@ -450,6 +450,7 @@ struct Stats {
   std::uint64_t damage_relayed = 0;     // DAMAGE passed on to an owner
   std::uint64_t boss_to_hitter = 0;     // a boss asked over to the player who hurt it (issue 150)
   std::uint64_t boss_to_near = 0;       // a boss asked over to the player near it (issue 150)
+  std::uint64_t boss_kept_from_unready = 0;  // row 189: ticks a ready, unfit owner's boss was not asked to an unready game
   std::uint64_t boss_to_ready = 0;       // a boss asked from a game that has not played its intro to one that has
   std::uint64_t boss_stalled = 0;       // row 149: a boss held one move boss_stall_us: its fight lock freed
   std::uint64_t parts_to_root = 0;      // row 149: a fresh group member given its root's owner at the link

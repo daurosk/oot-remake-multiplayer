@@ -332,7 +332,7 @@ constexpr u64 kDriftLogUs = 5'000'000;
 constexpr u64 kActorComponents = 0x270;
 
 namespace {
-// Boss turns debug (LICHII_COOP_DEBUG_BOSS): each boss's attack starting or ending in our walk, with its five action
+// Boss turns debug (always on, capped: no switch): each boss's attack starting or ending in our walk, with its five action
 // slots' verbs and their attribute bits; at most kMaxAttackNotes lines (plain enemies: their first 20 edges).
 void NoteAttackEdge(u64 actor, const std::string& name, bool attacking, const std::array<s32, 5>& verbs, u64 bits) {
     static std::mutex m;

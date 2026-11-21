@@ -6990,9 +6990,24 @@ TEST_CASE("boss turns: the other player out of reach, or downed: the owner keeps
   CHECK(h.asks() == 0);
 }
 
-TEST_CASE("boss turns: no attack for its owner's Link for 8 s in a fight: the turn goes on") {
+TEST_CASE("boss turns: no attack for 8 s in a fight: a plain enemy's turn goes on, a boss's never (lane 154046)") {
+  {
+    // A boss in a phase of no attack (Phantom Ganon in his painting): no turn, however long.
+    OwnerHarness h;
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.clear();
+    for (std::uint64_t t = 0; t < 20 * kSecond; t += 250'000) {
+      h.stand(1, 0);
+      h.stand(2, 5);
+      h.receive(1, ObjectSample{0, placed(7), 0, turn_sample(false)}, kChannelObjectSamples);
+      h.run(250'000);
+    }
+    CHECK(h.asks() == 0);
+    CHECK(h.session.stats().turns_idle == 0);
+  }
+  // A plain shooter that attacked once, then waits on a puppet target.
   OwnerHarness h;
-  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.receive(1, ObjectSample{0, placed(7), 0, turn_sample(true)}, kChannelObjectSamples);
   h.clear();
   for (std::uint64_t t = 0; t < 9 * kSecond; t += 250'000) {
     h.stand(1, 0);

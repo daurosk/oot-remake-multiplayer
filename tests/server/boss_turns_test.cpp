@@ -82,3 +82,15 @@ TEST_CASE("boss turns: next is the player who hurt it most, else the next number
   CHECK_FALSE(Next({p(11, 1, 5)}, 1, 40).has_value());
   CHECK_FALSE(Next({}, 1, 40).has_value());
 }
+
+TEST_CASE("boss turns: a boss's turn never ends on the idle rule (its no-attack phases: paintings, ceiling, burrowed)") {
+  Config c;
+  State s;
+  const auto boss = [&](std::uint64_t at, bool attacking) {
+    return Step(s, Sample{1, attacking, false, true, false}, at, c);
+  };
+  CHECK(boss(0, false) == Why::none);
+  CHECK(boss(30 * kS, false) == Why::none);  // 30 s inside his painting: still his owner's
+  CHECK(boss(31 * kS, true) == Why::none);
+  CHECK(boss(33 * kS, false) == Why::attack_ended);  // his own attack's end
+}

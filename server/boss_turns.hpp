@@ -22,8 +22,13 @@ struct Config {
   bool on = true;                       // false: one owner for the fight, as before 0.11.8
   std::uint64_t min_turn_us = 4'000'000;  // a turn lasts at least this long...
   std::uint32_t min_attacks = 1;        // ...and at least this many of the owner's attacks
-  // No attack started for this long in a fight: its target is not its owner's Link (a perceived puppet gets no
-  // attack permission, so the enemy waits), so the turn goes on.
+  // A PLAIN enemy with no attack started for this long in a fight: its target is not its owner's Link (a perceived
+  // puppet gets no attack permission, so it waits), so the turn goes on. Never a boss (Sample::idle_turns false):
+  // a boss has long phases of no attack by design (Phantom Ganon inside his paintings, Gohma on the ceiling,
+  // Volvagia burrowed, King Dodongo's roll, Bongo Bongo's hands, Twinrova and Ganondorf in the air, Morpha in her
+  // water, Barinade's jellyfish), and a hand-over there starts the new owner's move over: lane run
+  // 20261120-154046 handed Phantom Ganon on 23 times this way and he never left his painting. A boss's turn ends
+  // only on its own game's attack end.
   std::uint64_t idle_us = 8'000'000;
   float boss_reach_m = 40.0f;   // players this near a boss take turns (a boss room)
   float plain_reach_m = 15.0f;  // and this near a plain enemy (a scrub's or Octorok's range)
@@ -45,6 +50,7 @@ struct Sample {
   bool attacking = false;   // object_state::attacking
   bool blocked = false;     // in an event, dying, stunned, stalled, a hand-over asked: no turn now
   bool in_fight = false;
+  bool idle_turns = true;   // the idle rule may end this turn (plain enemies; never a boss)
 };
 
 enum class Why : std::uint8_t { none, attack_ended, idle };
@@ -59,7 +65,7 @@ inline const char* WhyText(Why w) {
 
 // Takes one owner sample and says whether the enemy's turn is over now. A new epoch (any hand-over, a stun's
 // included) starts a new turn. A turn ends only BETWEEN moves: on the sample whose attack bit fell (the attack
-// is over), or while not attacking after idle_us with no attack. Never while blocked.
+// is over), or (a plain enemy) while not attacking after idle_us with no attack. Never while blocked.
 inline Why Step(State& s, const Sample& in, std::uint64_t now_us, const Config& c) {
   if (!s.known || in.epoch != s.epoch) {
     s = State{};
@@ -83,6 +89,7 @@ inline Why Step(State& s, const Sample& in, std::uint64_t now_us, const Config& 
   if (!c.on || in.blocked || !in.in_fight || in.attacking) return Why::none;
   if (now_us < s.started_at || now_us - s.started_at < c.min_turn_us) return Why::none;
   if (fell && s.attacks >= c.min_attacks) return Why::attack_ended;
+  if (!in.idle_turns) return Why::none;
   const std::uint64_t quiet_since = s.last_attack_at != 0 ? s.last_attack_at : s.started_at;
   if (now_us >= quiet_since && now_us - quiet_since >= c.idle_us) return Why::idle;
   return Why::none;

@@ -2214,6 +2214,7 @@ void Session::step_turn(const ObjectId& oid, Object& o, std::uint64_t now_us) {
   in.epoch = o.epoch;
   in.attacking = attacking;
   in.in_fight = in_fight(o, now_us);
+  in.idle_turns = !o.boss;  // a boss's turn ends only on its own attack end (boss_turns.hpp idle_us)
   in.blocked = o.ask.has_value() || o.stalled || dying ||
                (st.state && (*st.state & object_state::in_event) != 0) ||
                (anim && (coop::protocol::anim::IsEvent(anim->name) || coop::protocol::anim::IsStun(anim->name)));

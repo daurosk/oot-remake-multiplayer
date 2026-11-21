@@ -339,13 +339,9 @@ TEST_CASE("testinput: dress asks the game's equip for a slot, or all of them") {
     CHECK(DressNext() == std::optional<std::uint32_t>(8));
     CHECK_FALSE(DressNext());
     // `dress head show` (row 197's mask check): the equip, then the game's head show call; only for the head.
-    CHECK_FALSE(Parse("dress shield show
-", error));
-    CHECK_FALSE(Parse("dress head show now
-", error));
-    Runner shown(Must("dress head show
-dress head
-"));
+    CHECK_FALSE(Parse("dress shield show\n", error));
+    CHECK_FALSE(Parse("dress head show now\n", error));
+    Runner shown(Must("dress head show\ndress head\n"));
     shown.Advance(0.0, std::nullopt, log);
     const auto asks = shown.TakeRequests();
     REQUIRE(asks.size() == 2);

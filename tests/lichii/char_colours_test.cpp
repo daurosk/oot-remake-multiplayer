@@ -381,12 +381,14 @@ TEST_CASE("char colours: a material number the unit does not have is never used"
 TEST_CASE("char colours: the call budget stops a dressing, the next frame goes on, the first target turns (review S2)") {
     FakeGame f(Character());
     State s = StateFor();
-    const Result cut = Dress(f.AsGame(), s, Custom(2, 3, 0, 4), false, 0, 3);
+    const Result cut = Dress(f.AsGame(), s, Custom(2, 3, 0, 4, 1), false, 0, 3);
     CHECK(cut.cut);
     CHECK(cut.calls == 3);
     CHECK_FALSE(s.units[0].looked_up);
-    const Result rest = Dress(f.AsGame(), s, Custom(2, 3, 0, 4), false);
+    const Result rest = Dress(f.AsGame(), s, Custom(2, 3, 0, 4, 1), false);
     CHECK_FALSE(rest.cut);
     CHECK(s.units[0].looked_up);
+    // (the three palettes of the full dressing above: the hair, Clothing Color 1 and 2; with Clothing Color 2 at 0
+    // Mt_Vest keeps its own texture and only two are set)
     CHECK(f.textures.size() == 3);
 }

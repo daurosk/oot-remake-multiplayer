@@ -1,0 +1,11 @@
+# hs-mask-zr: B faces where A stands after A steps aside, camera behind B, a shot at A's zr and zr2.
+mark start
+wait 120
+stick 1 0 8             # face right, towards A
+press ZL                # camera behind B
+wait 470
+mark b-zr
+wait 360
+mark b-zr2
+wait 60
+mark end

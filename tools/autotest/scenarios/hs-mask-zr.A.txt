@@ -1,0 +1,27 @@
+# hs-mask-zr (Hookshot, #91 research): does the game's REAL put-on (ZR with the mask on the item button) draw a mask,
+# on A's own Link and on A's puppet in B? hs-lens-head (20261121-034131) showed the equip call + the head show call
+# 0x33abfa0 draw nothing on either (the Keaton actor alive in armor link 0 on both, `up 0.00 off 0.00`), while
+# A's HUD did show the Keaton on the ZR item button after give + assign: so ZR can now be tried.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-mask-zr (the lane: -Lane 1); any module >= 55c94dc8.
+# Look: A-zr-A (A's own face: mask or not), A's 'slots (local player' line after zr (armor 0: the mask, its up/off),
+# B's log ('P1 wears head ...' from the links), b-zr-B (the puppet's face). zr2 = ZR again (the mask off).
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1
+mark start
+give PouchData.Armor_Child_Mask_Keaton.StockNum
+wait 120
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 60
+assign KeatonMask
+wait 60
+mark before
+press ZR 10            # the game's own put-on (ExecutePlayerMaskChange, AS MaskChange)
+wait 240
+mark zr
+wait 120
+press ZR 10            # again: the mask off
+wait 240
+mark zr2
+wait 60
+mark end

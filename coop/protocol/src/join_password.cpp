@@ -183,4 +183,23 @@ JoinNonce random_nonce() {
   return nonce;
 }
 
+
+std::string public_join_password(std::string_view room) {
+  std::string out(kPublicPasswordTag);
+  for (const char c : room) {
+    out.push_back(c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c);
+  }
+  return out;
+}
+
+bool is_public_join_password(std::string_view password) {
+  if (password.size() < kPublicPasswordTag.size()) return false;
+  for (std::size_t i = 0; i < kPublicPasswordTag.size(); ++i) {
+    const char c = password[i];
+    const char lower = c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
+    if (lower != kPublicPasswordTag[i]) return false;
+  }
+  return true;
+}
+
 }  // namespace coop::protocol

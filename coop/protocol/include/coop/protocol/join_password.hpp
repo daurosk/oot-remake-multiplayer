@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <string_view>
 
 namespace coop::protocol {
@@ -27,6 +28,16 @@ inline constexpr std::size_t kMaxJoinPasswordBytes = 128;
 // relay's or a helper's connections come from. It is no secret: the traffic
 // is still sealed with fresh keys, it is only not a password.
 inline constexpr std::string_view kSameNetworkPassword = "squadala-same-network";
+
+// A public game (0.11.8, docs/play-online.md "Public games"): a host who lists the room on the relay's public list
+// hosts it with no password to type. Its join password is this one, made from the room name every joiner sees on
+// the list (kPublicPasswordTag + the name in lower case), so the join proof and the traffic keys work exactly as
+// with any password: the traffic is still sealed with fresh keys per connection, and only who may join changes
+// (anyone who knows the room). A private game's password may never have this shape (is_public_join_password), so
+// a public room's password never opens a private one.
+inline constexpr std::string_view kPublicPasswordTag = "squadala-public-game:";
+std::string public_join_password(std::string_view room);
+bool is_public_join_password(std::string_view password);
 
 using Sha256Digest = std::array<std::uint8_t, 32>;
 using JoinNonce = std::array<std::uint8_t, kJoinNonceBytes>;

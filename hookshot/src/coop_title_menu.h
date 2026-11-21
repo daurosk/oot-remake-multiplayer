@@ -54,10 +54,10 @@ inline constexpr std::size_t kMaxNameChars = 16;   // coop_settings.h
 inline constexpr std::size_t kMaxPasswordBytes = 128;
 inline constexpr int kMinPlayers = 2, kMaxPlayers = 16;   // a session's size (protocol 11: up to 16)
 inline constexpr std::uint16_t kDefaultPort = 27510;
-// The relay a kit uses when coop-options.ini names none (relay = ...): the co-op project's own, once it runs one; ""
-// until then (no relay: hosting and joining by address or invite code, as before). Players change it in Co-op
-// Settings (Relay), or with a relay line of their own.
-inline constexpr const char* kDefaultRelay = "";
+// The relay a kit uses when coop-options.ini names none (relay = ..., or an empty relay line): the co-op project's own
+// public relay, squadala-relay (0.11.8). It adds a room name and the public room list to hosting; joining by address
+// or invite code works as before. A player's own relay line (Co-op Settings, Relay) still wins.
+inline constexpr const char* kDefaultRelay = "159.54.182.85:27530";
 // A room name the relay takes: 3 to 24 letters, digits, - or _ ("": none).
 bool RoomNameOk(std::string_view room);
 // A relay line: host[:port] (a host of letters, digits, '.' and '-'; a port from 1 to 65535), at most 128 bytes
@@ -99,8 +99,8 @@ struct Options {
     std::string voice_mic;         // LICHII_COOP_VOICE_MIC: the voice's microphone by its name ("": the game's)
     bool map_players = true;       // LICHII_COOP_MAP (0: no other players on the minimap and the pause map)
     bool map_names = true;         // LICHII_COOP_MAP_NAMES (0: their icons without names)
-    std::string relay;             // relay (host and join rooms through it, Host.bat's too; kDefaultRelay without a
-                                   // line; Co-op Settings' Relay row writes it)
+    std::string relay = kDefaultRelay;  // relay (host and join rooms through it; kDefaultRelay without a line or
+                                        // with an empty one; Co-op Settings' Relay row writes it)
     std::string relay_key;         // relay_key (that relay's host key; read only)
     std::string relay_room;        // relay_room (a room name on the relay, issue 261; Co-op Settings' Room name)
     std::string list_name;         // list_name (the name list_room shows the room as; "": the room name; read only)

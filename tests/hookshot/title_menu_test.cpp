@@ -1099,7 +1099,25 @@ TEST_CASE("title menu: an A on Host in the Multiplayer submenu (the game's Conti
 
 TEST_CASE("title menu: the relay and the room name: written when set, the kit's default needs no line") {
     Options o;
-    CHECK(o.relay.empty());
+    CHECK(o.relay == kDefaultRelay);
+    CHECK(std::string(kDefaultRelay) == "159.54.182.85:27530");  // the project's own relay, squadala-relay (0.11.8)
+    // No relay line, or an empty one: the kit's own relay. A player's own line still wins.
+    CHECK(Options::Read("", "").relay == kDefaultRelay);
+    CHECK(Options::Read("", "relay =\r\n").relay == kDefaultRelay);
+    CHECK(Options::Read("", "relay = \r\n").relay == kDefaultRelay);
+    CHECK(Options::Read("", "relay = mine.example.net:27600\r\n").relay == "mine.example.net:27600");
+    {
+        // Cleared in Co-op Settings (an empty Relay): the kit's own again, written as no line.
+        std::string c2, opt2 = "relay = mine.example.net:27600\r\n";
+        Options cleared = Options::Read("", opt2);
+        cleared.relay.clear();
+        cleared.Write(c2, opt2);
+        CHECK_FALSE(IniGet(opt2, "relay").has_value());
+        // An empty line the player wrote stays as written while the relay stays the kit's.
+        std::string c3, opt3 = "relay =\r\n";
+        Options::Read("", opt3).Write(c3, opt3);
+        CHECK(opt3.find("relay =") != std::string::npos);
+    }
     std::string c, opt = "relay = old.example.net:27530\r\nrelay_room = old-room\r\n";
     o = Options::Read("", opt);
     CHECK(o.relay == "old.example.net:27530");

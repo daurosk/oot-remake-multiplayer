@@ -309,6 +309,9 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     // The relay lines Host.bat reads too (coop-options.ini, "Advanced: relay"): the Multiplayer tab's Host uses them
     // the same way. Read only: the menu writes none of them.
     o.relay = std::string(Trim(IniGet(options_ini, "relay").value_or(kDefaultRelay)));
+    if (o.relay.empty()) {
+        o.relay = kDefaultRelay;  // (an empty relay line: the kit's own)
+    }
     o.relay_key = std::string(Trim(IniGet(options_ini, "relay_key").value_or("")));
     o.relay_room = std::string(Trim(IniGet(options_ini, "relay_room").value_or("")));
     o.list_name = std::string(Trim(IniGet(options_ini, "list_name").value_or("")));
@@ -368,8 +371,13 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     o = list_room ? IniSet(o, "list_room", "on", true) : IniUnset(o, "list_room");
     // (the relay: the kit's default needs no line; a room name, or none)
     // A line whose value did not change is kept as the player wrote it (its spacing and a comment after it).
-    if (std::string(Trim(IniGet(o, "relay").value_or(kDefaultRelay))) != relay) {
-        o = relay == kDefaultRelay ? IniUnset(o, "relay") : IniSet(o, "relay", relay, true);
+    {
+        const std::string want = relay.empty() ? std::string(kDefaultRelay) : relay;  // (cleared: the kit's own)
+        std::string have(Trim(IniGet(o, "relay").value_or(kDefaultRelay)));
+        if (have.empty()) have = kDefaultRelay;
+        if (have != want) {
+            o = want == kDefaultRelay ? IniUnset(o, "relay") : IniSet(o, "relay", want, true);
+        }
     }
     if (std::string(Trim(IniGet(o, "relay_room").value_or(""))) != relay_room) {
         o = relay_room.empty() ? IniUnset(o, "relay_room") : IniSet(o, "relay_room", relay_room, true);

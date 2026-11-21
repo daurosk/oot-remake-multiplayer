@@ -447,8 +447,10 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             if (local != local_.end()) {
                 Local& l = local->second;
                 ++l.walks;
-                if (l.verdict == CoopEnemyShots::Verdict::hide && CoopEnemyShots::KeepsCopyShot(l.name, keep_copy_)) {
-                    watch_.push_back({s.address, l.vtable});  // row 211 probe: the copy's own, kept and read
+                if (CoopEnemyShots::KeepsCopyShot(l.name, keep_copy_)) {
+                    // Row 211 probe: a copy boss's own ball, kept and read (hide: kept by the probe; keep: each
+                    // game's own already, e.g. split shots, PR 308).
+                    watch_.push_back({s.address, l.vtable});
                 } else if (l.verdict == CoopEnemyShots::Verdict::hide && hide_ && !l.doomed &&
                            l.walks >= kDoomWalks && l.vtable != 0) {
                     doom_.push_back({s.address, l.vtable});

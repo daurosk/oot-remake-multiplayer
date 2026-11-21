@@ -4,6 +4,7 @@
 // screen's thread (its panes shown or hidden, its tabs lit, texts from the
 // pack's labels), the pad filtered, the log. Only in hookshot_coop.dll (the
 // tests drive Page and Probe themselves).
+#include "coop_i18n.h"
 #include "coop_pause_tab.h"
 
 #include <algorithm>
@@ -24,6 +25,7 @@
 #include "common/logging.h"
 #include "coop_hook.h"
 #include "coop_hookshot.h"
+#include "coop/protocol/join_password.hpp"
 #include "coop/protocol/messages.hpp"
 #include "coop_lan.h"
 #include "coop_lan_net.h"
@@ -410,17 +412,19 @@ SessionView ViewNow(View view) {
         const CoopRoomList::Snapshot rooms = CoopRoomList::Now();
         for (const CoopRoomList::Room& r : rooms.rooms) {
             v.online_rows.push_back(CoopRoomList::CellText(r, coop::protocol::kProtocolVersion));
+            // (the same words as the Lobby tab's Public games: CoopRoomList::DetailText)
             v.online_list.push_back(ListLine{ListName(r.host, r.room),
-                                             ListValue(r.players, r.max, r.protocol == coop::protocol::kProtocolVersion)});
+                                             CoopI18n::Tr(CoopRoomList::DetailText(r, coop::protocol::kProtocolVersion))});
         }
-        v.online_state = rooms.state;
+        v.online_state = rooms.state.empty() ? std::string() : CoopI18n::Tr(rooms.state);
         v.s.online_listed = static_cast<int>(rooms.rooms.size());
         v.s.online = g_online.load();
         v.s.cell_page = g_cell_page.load();
         v.s.list_room = CoopPause::ListRoom();   // (the files' setting; read only while this view shows)
         v.cell = g_cell.load();
         // (the relay asked again while the Online list shows: at most every CoopRoomList::kEveryMs, from its own thread)
-        CoopRoomList::Look(v.s.online && !v.s.in_one && !v.s.by_launcher, NowMs(), CoopPause::Relay());
+        CoopRoomList::Look(CoopRoomList::Viewer::kFindAGame, v.s.online && !v.s.in_one && !v.s.by_launcher, NowMs(),
+                           CoopPause::Relay());
     }
     if (view == View::kJoin) {
         v.s.rejoin = CoopPause::Rejoin(&v.rejoin_host);
@@ -1404,7 +1408,16 @@ void ActCell(int cell) {
                            "version)", cell);
             return;
         }
-        LOG_INFO(Core, "coop: pause tab: cell {} chosen: a room on the relay's list, to the Join view", cell);
+        if (r.is_public) {
+            // A public game: joined at once, no password to type (its password is the room's, as its host made it).
+            LOG_INFO(Core, "coop: pause tab: cell {} chosen: a public game on the list, joining it", cell);
+            CoopPause::JoinRoomNow(r.room, coop::protocol::public_join_password(r.room));
+            return;
+        }
+        // A private game (or an older kit's listing, which may lock out wrong passwords): never tried with the
+        // public password; the Join view with the room typed, for the host's password.
+        LOG_INFO(Core, "coop: pause tab: cell {} chosen: a private game on the list (needs the host's password), to "
+                       "the Join view", cell);
         {
             std::lock_guard lock(g_mutex);
             g_page.Field(0).Clear();
@@ -1694,7 +1707,9 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
         if (f.kind == Kind::kPages) {
             CoopLanNet::Look(now_shown && ViewShown() == View::kLan, NowMs());
             // (the relay's list left, the page gone or the Local tab: its asks stop; ViewNow asks while it shows)
-            if (!(now_shown && ViewShown() == View::kLan && g_online.load())) CoopRoomList::Look(false, NowMs(), {});
+            if (!(now_shown && ViewShown() == View::kLan && g_online.load())) {
+                CoopRoomList::Look(CoopRoomList::Viewer::kFindAGame, false, NowMs(), {});
+            }
         }
         if (early_live && calls && LiveDue(g_pages_gen)) LiveRows(ctx, g_pages_layout, g_pages_gen, ViewNow(ViewShown()));
         if (!now_shown) g_confirm_until = 0;

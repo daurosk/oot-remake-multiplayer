@@ -884,8 +884,8 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
         // shown goes into its cells, as Right does)
         rows[0] = "Local games (" + std::to_string(v.lan_rows.size()) + ")";
         rows[1] = v.online_rows.empty() && v.online_state.empty()
-                      ? std::string("Online games")
-                      : "Online games (" + std::to_string(v.online_rows.size()) + ")";
+                      ? std::string("Public games")
+                      : "Public games (" + std::to_string(v.online_rows.size()) + ")";
         const int pages = CellPages(BrowseListed(v.s));
         rows[2] = pages > 1 ? "Next page (" + std::to_string((v.s.cell_page % pages + pages) % pages + 1) + "/" +
                                   std::to_string(pages) + ")"

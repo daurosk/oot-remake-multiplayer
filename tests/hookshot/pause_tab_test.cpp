@@ -1476,7 +1476,7 @@ TEST_CASE("pause tab: the game browser: the rows choose the list and its page, t
     SessionView v;
     auto rows = RowTexts(View::kLan, v);
     CHECK(rows[0] == "Local games (0)");   // (the list the cells show: the module dims the other's row)
-    CHECK(rows[1] == "Online games");      // (not asked yet)
+    CHECK(rows[1] == "Public games");      // (not asked yet)
     CHECK(rows[2] == "Refresh list");      // (one page: no empty row)
     CHECK(rows[3] == "List my room: Off");
     CHECK(rows[kRows - 1] == "Back");
@@ -1500,7 +1500,7 @@ TEST_CASE("pause tab: the game browser: the rows choose the list and its page, t
     v.online_state = "No relay set";
     rows = RowTexts(View::kLan, v);
     CHECK(rows[0] == "Local games (2)");
-    CHECK(rows[1] == "Online games (0)");
+    CHECK(rows[1] == "Public games (0)");
     CHECK(ListLines(v)[0].name == "Game");
     CHECK(ListLines(v)[1].name == "No relay set");
     v.online_state.clear();
@@ -1510,7 +1510,7 @@ TEST_CASE("pause tab: the game browser: the rows choose the list and its page, t
     v.s.online_listed = 10;
     v.s.list_room = true;
     rows = RowTexts(View::kLan, v);
-    CHECK(rows[1] == "Online games (10)");
+    CHECK(rows[1] == "Public games (10)");
     CHECK(rows[2] == "Next page (1/2)");
     CHECK(rows[3] == "List my room: On");
     lines = ListLines(v);

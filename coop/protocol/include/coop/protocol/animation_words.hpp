@@ -44,4 +44,17 @@ constexpr bool IsEvent(std::string_view name) noexcept {
     return at < name.size() && (name[at] == '-' || name[at] == '_');
 }
 
+// A stun or knock-down the actor lies in (its own chance time: Gohma's "Stun_St_Attack_Chance", "Down_Start",
+// "Fall_St"): the first word Stun, Down, Fall or Faint, as the hook's stun rule reads it (docs/dungeons-boss.md
+// "Stuns"). Boss turns never hand an enemy over in one.
+constexpr bool IsStun(std::string_view name) noexcept {
+    for (const std::string_view word :
+         {std::string_view("Stun"), std::string_view("Down"), std::string_view("Fall"), std::string_view("Faint")}) {
+        if (name.starts_with(word) && (name.size() == word.size() || name[word.size()] == '_')) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace coop::protocol::anim

@@ -206,8 +206,18 @@ void Table::Publish(const std::vector<Boss>& bosses) {
                     e.react_until = std::max(e.react_until, steps_ + kStartSteps);
                     Note(b.name + ": made a copy during its own start (appear): it runs on, then the owner's state");
                 }
-                if (e.role == Role::copy && b.role == Role::owner && e.wanted && !b.plain && !OwnTime(e)) {
-                    if (actions_on_ && e.put_action && e.own_node != 0) {
+                const bool own_ask_same =
+                    e.put_action && e.own_asks.contains({e.put_action->slot, e.put_action->verb});
+                const MadeOurs plan = PlanMadeOurs(turns_, b.attacking, actions_on_ && e.put_action.has_value(),
+                                                   own_ask_same, e.own_node != 0);
+                if (e.role == Role::copy && b.role == Role::owner && e.wanted && !b.plain && !OwnTime(e) &&
+                    plan == MadeOurs::resume) {
+                    // Boss turns, condition (1): handed to us between moves. Its body runs the owner's move (not an
+                    // attack) and its own brain asked that same move, in the owner's brain verb: it goes on from here.
+                    Note(b.name + ": made ours between moves (verb " + std::to_string(e.put_action->verb) +
+                         ", no attack): its own AI goes on, nothing started over (boss turns)");
+                } else if (e.role == Role::copy && b.role == Role::owner && e.wanted && !b.plain && !OwnTime(e)) {
+                    if (plan == MadeOurs::restart_move) {
                         // Row 178: made ours in the middle of the owner's move (Phantom Ganon handed over mid
                         // RushAttack when his owner went down): that move starts over as ours through the game's
                         // own request, named by the node its own AI names for it (before ForgetOwnAsks below).
@@ -777,7 +787,19 @@ bool Table::RunsOwnMoveWhenOurs(std::uint64_t actor) const {
 bool Table::KeepsLinkAsAttacker(std::uint64_t actor) const {
     std::lock_guard lock(mutex_);
     const Entry* e = FindActor(actor);
+    // Every boss keeps our Link (row 178: a puppet in its memory held its attacks; with boss turns every boss
+    // fights only the Player of the game it runs in, and the server's turn aggro counts every player's hits).
     return e != nullptr && !e->plain;
+}
+
+void Table::SetTurns(bool on) {
+    std::lock_guard lock(mutex_);
+    turns_ = on;
+}
+
+bool Table::TurnsOn() const {
+    std::lock_guard lock(mutex_);
+    return turns_;
 }
 
 bool Table::OutOfReach(std::uint64_t actor, const HitGuard& guard) const {
@@ -805,7 +827,11 @@ bool Table::FightsPlayerOnly(std::string_view name) {
 std::optional<std::string> Table::PlayerOnlyBoss() const {
     std::lock_guard lock(mutex_);
     for (const auto& [bsa, e] : by_bsa_) {
-        if (!e.plain && !e.dying && FightsPlayerOnly(e.name)) {
+        // Boss turns (review-charsel-0118 M1): with turns on EVERY boss fights the Player only. A boss whose own
+        // perception picked a puppet never attacks (the attack permission is the Player's), so it would never reach
+        // an attack end and never take a turn. Puppets unseen, each game's boss fights that game's own Link; the
+        // turns hand it to each player in turn.
+        if (!e.plain && !e.dying && (turns_ || FightsPlayerOnly(e.name))) {
             return e.name;
         }
     }

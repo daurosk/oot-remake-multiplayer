@@ -7499,3 +7499,10 @@ TEST_CASE("objects: row 178, the copies' fall line is the owner's fall guard's")
     CHECK(CoopObjects::IsBoss("Enemy_MiddleBoss_Poe_Meg"));
     CHECK_FALSE(CoopObjects::IsBoss("Enemy_DungeonBoss_BongoBongo_LeftHand"));  // a part follows its root
 }
+
+TEST_CASE("boss turns: a sample's attack bits: read and attacking, read and between moves, not read (nothing)") {
+    using CoopObjects::AttackBits;
+    CHECK(AttackBits(true) == (proto::object_state::attack_read | proto::object_state::attacking));
+    CHECK(AttackBits(false) == proto::object_state::attack_read);
+    CHECK(AttackBits(std::nullopt) == 0);
+}

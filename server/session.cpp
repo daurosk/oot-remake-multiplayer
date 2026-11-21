@@ -1682,6 +1682,7 @@ void Session::on_object_message(ConnectionId id, Connection& c, std::uint8_t cha
       o.owner_hit_at = stamp(now_us);
     }
     o.last_state = sample->state;
+    step_turn(oid, o, now_us);
   } else {
     auto& remove = std::get<ObjectRemove>(message);
     oid = remove.id;
@@ -1788,6 +1789,15 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
   ++stats_.damage_relayed;
   mark_fight(o, now_us);
   if (o.ask) o.ask->hits += d.amount;
+  {
+    // Boss turns: the hitter's aggro in this turn (a stun of 0 counts as 1), on the group's root.
+    Object* turn_root = &o;
+    if (o.root) {
+      if (auto r = objects_.find(*o.root); r != objects_.end()) turn_root = &r->second;
+    }
+    // Clamped: d.amount is a client's number (review-charsel-0118 S2); a stun of 0 counts as 1.
+    turn_root->turn_aggro[id] += std::clamp<std::int64_t>(d.amount, 1, 255);
+  }
   if (o.hit_at == 0 || now_us - o.hit_at > config_.hit_window_us) {
     o.hit_base.reset();
     if (o.last_state && o.last_state->life) o.hit_base = o.last_state->life->life;
@@ -2206,6 +2216,88 @@ void Session::note_hold(Object& o, const ObjectState& sample, std::uint64_t now_
   o.owner_hit_at = 0;
   o.candidate.reset();
   ++stats_.boss_stalled;
+}
+
+void Session::step_turn(const ObjectId& oid, Object& o, std::uint64_t now_us) {
+  const turns::Config& tc = config_.boss_turns;
+  if (!tc.on || o.root || o.projectile || o.fish || o.removed || !o.owner || !o.last_state) return;
+  const ObjectState& st = *o.last_state;
+  const bool attacking = st.state && (*st.state & object_state::attacking) != 0;
+  // Only an enemy whose owner's game reads its attacks takes turns (a newer hook; never a world object).
+  if (!st.state || (*st.state & object_state::attack_read) == 0) {
+    if (o.boss && now_us - o.turn_note_at >= 10'000'000) {
+      o.turn_note_at = now_us;
+      log("boss turns: " + o.actor + ": its owner's samples do not read its attacks (an older build): one owner");
+    }
+    return;
+  }
+  if (attacking) o.turn_attacked = true;
+  if (!o.turn.known || o.turn.epoch != o.epoch) o.turn_aggro.clear();
+  const auto& anim = st.animation;
+  const bool dying = (st.life && st.life->life <= 0) || (anim && coop::protocol::anim::IsDeath(anim->name));
+  turns::Sample in;
+  in.epoch = o.epoch;
+  in.attacking = attacking;
+  in.in_fight = in_fight(o, now_us);
+  in.idle_turns = !o.boss;  // a boss's turn ends only on its own attack end (boss_turns.hpp idle_us)
+  in.blocked = o.ask.has_value() || o.stalled || dying ||
+               (st.state && (*st.state & object_state::in_event) != 0) ||
+               (anim && (coop::protocol::anim::IsEvent(anim->name) || coop::protocol::anim::IsStun(anim->name)));
+  const turns::Why why = turns::Step(o.turn, in, now_us, tc);
+  if (why == turns::Why::none) {
+    // Debug for the lane proofs: why a turn is not over yet, every 10 s while one runs long.
+    if (o.boss && now_us - o.turn.started_at >= tc.idle_us && now_us - o.turn_note_at >= 10'000'000) {
+      o.turn_note_at = now_us;
+      const auto oc = connections_.find(*o.owner);
+      log("boss turns: " + o.actor + " of player " +
+          std::to_string(oc == connections_.end() ? 0 : oc->second.number) + " (epoch " +
+          std::to_string(o.epoch) + "): no turn yet: attacking " + (attacking ? "yes" : "no") + ", attacks " +
+          std::to_string(o.turn.attacks) + ", in a fight " + (in.in_fight ? "yes" : "no") + ", blocked " +
+          (in.blocked ? "yes" : "no") + (anim ? " (" + anim->name + ")" : std::string()));
+    }
+    return;
+  }
+  if (!o.boss && !o.turn_attacked) return;  // a plain enemy that never attacked here: the old rules
+  auto owner = connections_.find(*o.owner);
+  if (owner == connections_.end()) return;
+  std::vector<turns::Player> players;
+  for (ConnectionId other : o.present) {
+    if (other == *o.owner || !has_loaded(other, o)) continue;
+    const Connection& oc = connections_.at(other);
+    turns::Player p;
+    p.id = other;
+    p.number = oc.number;
+    p.fit = !busy(oc) && !unfit_owner(oc, now_us) && !o.unready.contains(other);
+    p.distance = distance_to(oc, o, now_us);
+    if (auto a = o.turn_aggro.find(other); a != o.turn_aggro.end()) p.aggro = a->second;
+    players.push_back(p);
+  }
+  const auto next = turns::Next(players, owner->second.number, o.boss ? tc.boss_reach_m : tc.plain_reach_m);
+  std::string seen;
+  for (const turns::Player& p : players) {
+    seen += " P" + std::to_string(p.number) + (p.fit ? "" : " unfit") +
+            (p.distance ? " " + std::to_string(static_cast<int>(*p.distance)) + " m" : " place unknown") +
+            (p.aggro ? " aggro " + std::to_string(p.aggro) : "") + ";";
+  }
+  // A host alone in reach logs nothing (an attack end every few seconds), and "nobody else" at most every 10 s
+  // (review-charsel-0118 S1).
+  const bool quiet = !next && (players.empty() || now_us - o.turn_note_at < 10'000'000);
+  if (!next && !quiet) o.turn_note_at = now_us;
+  if (!quiet)
+  log("boss turns: " + o.actor + " of player " + std::to_string(owner->second.number) + ": " + turns::WhyText(why) +
+      (next ? ": to player " + std::to_string(connections_.at(static_cast<ConnectionId>(*next)).number)
+            : ": nobody else") +
+      " (" + (seen.empty() ? std::string("no other player has it") : seen) + ")");
+  if (!next) {
+    o.turn = turns::State{};  // nobody else: a new turn for the owner (one player: the game as it is)
+    return;
+  }
+  ask_handover(oid, o, static_cast<ConnectionId>(*next), now_us);
+  if (why == turns::Why::attack_ended) {
+    ++stats_.turns_attack;
+  } else {
+    ++stats_.turns_idle;
+  }
 }
 
 void Session::mark_fight(Object& o, std::uint64_t now_us) {

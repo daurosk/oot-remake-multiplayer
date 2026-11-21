@@ -871,6 +871,13 @@ inline constexpr std::uint8_t asleep = 1u << 2;
 // game logic (an Enemy_: a Deku Scrub) then keeps that logic; only the
 // event's result reaches it (its flags). An older build ignores the bit.
 inline constexpr std::uint8_t in_event = 1u << 3;
+// Boss turns (0.11.8): the owner's enemy is in an attack, read from its game's own action verb attribute Attack
+// (the attributes of its BSA's current action verbs, as the game's own method main+0x507be0 reads them). The server
+// hands the enemy to the next player when it falls (server/boss_turns.hpp). An older build ignores the bit.
+inline constexpr std::uint8_t attacking = 1u << 4;
+// The sender reads attacks (the bit above means something): set on every sample of an enemy whose BSA it reads.
+// Turns only for enemies whose owner sets it, so an older owner's boss keeps its one owner.
+inline constexpr std::uint8_t attack_read = 1u << 5;
 }  // namespace object_state
 
 // Issue 150 (protocol 10): one more AS slot of the owner's actor than slot 0

@@ -3,6 +3,7 @@ find_package(Threads REQUIRED)
 add_executable(coop_server_tests
   ../main.cpp
   session_test.cpp
+  boss_turns_test.cpp
   options_test.cpp
   loopback_test.cpp
   relay_test.cpp

@@ -23,6 +23,7 @@
 
 #include "coop/protocol/codec.hpp"
 #include "coop/protocol/messages.hpp"
+#include "boss_turns.hpp"
 #include "world.hpp"
 
 namespace coop::server {
@@ -259,6 +260,10 @@ struct SessionConfig {
   // player) can hand it to a game whose AI then chooses from its own body.
   // A hit that takes life is a change. 0: off.
   std::uint64_t boss_stall_us = 40'000'000;
+  // Boss turns (0.11.8, server/boss_turns.hpp): an enemy in a fight is handed to the next player at its own
+  // attack boundaries (the owner's attack ended), so it attacks every player in turn, each in their own game.
+  // boss_turns.on false: one owner for the fight (gohma-sync), as before.
+  turns::Config boss_turns;
   // Row 149: a group member first listed this recently takes its root's owner
   // at once when the group link comes (no hand-over ask): a boss's part made
   // in every game (King Dodongo's roll centre, made anew for each roll) was
@@ -449,6 +454,8 @@ struct Stats {
   std::uint64_t owner_changes = 0;      // owner set or moved (not first owner)
   std::uint64_t damage_relayed = 0;     // DAMAGE passed on to an owner
   std::uint64_t boss_to_hitter = 0;     // a boss asked over to the player who hurt it (issue 150)
+  std::uint64_t turns_attack = 0;       // boss turns: handed on after its attack ended
+  std::uint64_t turns_idle = 0;         // boss turns: handed on after no attack for its owner's Link
   std::uint64_t boss_to_near = 0;       // a boss asked over to the player near it (issue 150)
   std::uint64_t boss_to_ready = 0;       // a boss asked from a game that has not played its intro to one that has
   std::uint64_t boss_stalled = 0;       // row 149: a boss held one move boss_stall_us: its fight lock freed
@@ -767,6 +774,11 @@ class Session {
     std::string hold_key;
     std::uint64_t hold_since = 0;
     bool stalled = false;
+    // Boss turns (boss_turns.hpp): the current turn, and each player's hits on it in this turn (aggro).
+    turns::State turn;
+    std::map<ConnectionId, std::int64_t> turn_aggro;
+    bool turn_attacked = false;  // its owner's samples said it attacked once (a hook that reads attacks)
+    std::uint64_t turn_note_at = 0;  // the last "no turn yet" log line (every 10 s at most)
   };
   using Objects = std::map<protocol::ObjectId, Object>;
 
@@ -854,6 +866,8 @@ class Session {
                        std::uint64_t now_us);
   // Row 149 (boss_stall_us): a boss root's owner sample, for the stall check.
   void note_hold(Object& o, const protocol::ObjectState& sample, std::uint64_t now_us);
+  // Boss turns (boss_turns.hpp): after each owner sample of an enemy, whether its turn is over, and to whom.
+  void step_turn(const protocol::ObjectId& oid, Object& o, std::uint64_t now_us);
   void on_fish_lure(Connection& c, const protocol::FishLure& m, std::uint64_t now_us);
   // Proximity voice: to the others in the speaker's scene within voice_range_m.
   void on_voice(ConnectionId id, const Connection& c, protocol::VoiceFrame& m, std::uint64_t now_us);

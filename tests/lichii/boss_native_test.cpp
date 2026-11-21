@@ -2137,3 +2137,117 @@ TEST_CASE("native boss: row 178: our fallen boss is also put back at its fight s
     c.Publish({Phantom(Role::copy, -400.0f)});
     CHECK(c.TakeReturns().empty());
 }
+
+TEST_CASE("native boss: boss turns: the attributes of the BSA's action verbs, as the game's own method reads them") {
+    // main+0x507be0: five action slots' s32 verbs from +0x54, each verb's u64 at +0x1a40 + 16 x verb + 8 (below 282).
+    CHECK(addr::ActionVerbAt(kBsa, 0) == kBsa + 0x54);
+    CHECK(addr::ActionVerbAt(kBsa, 4) == kBsa + 0x64);
+    CHECK(addr::ActionAttributesAt(kBsa, 0) == kBsa + 0x1a40 + 8);
+    CHECK(addr::ActionAttributesAt(kBsa, 103) == kBsa + 0x1a40 + 103 * 16 + 8);
+    CHECK(addr::ActionAttributesAt(kBsa, 281) == kBsa + 0x1a40 + 281 * 16 + 8);
+    CHECK(addr::ActionAttributesAt(kBsa, 282) == kBsa + 0x1a40 + 8);  // (past the table: the first entry)
+    CHECK(addr::ActionAttributesAt(kBsa, -1) == kBsa + 0x1a40 + 8);
+    // The brain verb table (63 x 16 from +0x1650, bit 0 Battle) ends where the action verb table starts.
+    CHECK(0x1650 + 63 * 16 == addr::kBsaActionAttributes);
+    // Attack is attribute 0 (AttributeFlag 1; 513 = Attack and attribute 9 together).
+    CHECK(addr::IsAttack(1));
+    CHECK(addr::IsAttack(513));
+    CHECK_FALSE(addr::IsAttack(0));
+    CHECK(addr::IsAttack(2));    // Interrupt alone: a reaction that cut a move is still its attack sequence
+    CHECK(addr::IsAttack(6));    // Phantom Ganon's verb 134 after a cut RideJumpAttack (run 20261120-180245)
+    CHECK_FALSE(addr::IsAttack(0x800000000000));  // his verb 4 ('Run' in the painting): a plain move
+    CHECK_FALSE(addr::IsAttack(4));  // attribute 2 alone
+    CHECK(TurnsSwitch(""));
+    CHECK(TurnsSwitch("1"));
+    CHECK_FALSE(TurnsSwitch("0"));
+}
+
+TEST_CASE("native boss: boss turns: a copy made ours between moves resumes, mid-attack or unread it restarts as before") {
+    using CoopBossNative::MadeOurs;
+    CHECK(PlanMadeOurs(true, false, true, true, true) == MadeOurs::resume);
+    CHECK(PlanMadeOurs(true, false, true, true, false) == MadeOurs::resume);  // (its own ask is the same move)
+    CHECK(PlanMadeOurs(true, true, true, true, true) == MadeOurs::restart_move);  // mid-attack: row 178
+    CHECK(PlanMadeOurs(true, std::nullopt, true, true, true) == MadeOurs::restart_move);  // not read
+    CHECK(PlanMadeOurs(true, false, true, false, true) == MadeOurs::restart_move);  // its own AI is elsewhere
+    CHECK(PlanMadeOurs(true, false, false, false, false) == MadeOurs::rechoose);   // row 149
+    CHECK(PlanMadeOurs(false, false, true, true, true) == MadeOurs::restart_move);  // turns off: as before
+    CHECK(PlanMadeOurs(false, false, false, false, true) == MadeOurs::rechoose);
+}
+
+TEST_CASE("native boss: boss turns: handed to us between moves, its own brain goes on (no brain verb, no start over)") {
+    FakeGuest g;
+    const std::int32_t brain = 6;
+    g.Write(kBsa + addr::kBsaBrainVerb, &brain, 4);
+    auto fly = ActionFromRequest(GameRequest(7, 0));
+    REQUIRE(fly);
+    fly->flags = 0;
+    const auto copy_in_fly = [&](Table& t) {
+        t.SetOn(true, true);
+        t.SetTurns(true);
+        t.Publish({Phantom(Role::copy)});
+        // Its own AI asks the same move (Fly) itself; the owner's Fly is put in.
+        CHECK_FALSE(t.OnActionVerb(kBsa, GameRequest(7, kNode), true, false));
+        t.Receive(kActor, BossBsa{3, 6, fly, {}});
+        REQUIRE(t.Step(g, false, 0, kMain));
+        REQUIRE(t.Step(g, true, kBlock, kMain));
+        CHECK_FALSE(t.Step(g, true, 0, kMain));
+    };
+    {
+        Table t;
+        copy_in_fly(t);
+        Boss ours = Phantom(Role::owner);
+        ours.attacking = false;  // its game: the move its body runs is no attack
+        t.Publish({ours});
+        CHECK_FALSE(t.Step(g, false, 0, kMain));  // nothing asked: its own AI goes on from its phase and move
+        CHECK(t.Totals().owner_restarted == 0);
+        CHECK(t.Totals().owner_rechosen == 0);
+        // Its own next ask is ours now: it goes through and is sent to every copy.
+        CHECK_FALSE(t.OnActionVerb(kBsa, GameRequest(103, kNode), true, true));
+        CHECK(t.Totals().owner_action == 1);
+    }
+    {
+        // The same hand-over mid-attack: the row 178 start-over, unchanged.
+        Table t;
+        copy_in_fly(t);
+        Boss ours = Phantom(Role::owner);
+        ours.attacking = true;
+        t.Publish({ours});
+        g.bytes.erase(kBlock + addr::kReqVerb);
+        const auto c = t.Step(g, false, 0, kMain);
+        REQUIRE(c);
+        CHECK(c->function == kMain + addr::kRequestActionVerb);
+        CHECK((g.Get<std::uint16_t>(kBlock + addr::kReqFlags) & addr::kReqStartOver) != 0);
+    }
+}
+
+TEST_CASE("native boss: boss turns: every boss fights the Player only (puppets unseen, our Link the attacker)") {
+    // review-charsel-0118 M1: a boss whose own perception picked a puppet never attacks (the attack permission is the
+    // Player's), so it never reaches an attack end and never takes a turn. With turns on, every boss of every
+    // dungeon and every mid-boss names PlayerOnlyBoss (each game's boss sees only that game's Link) and keeps our
+    // Link as a replayed hit's attacker; the turns give it to each player in their own game.
+    for (const char* name :
+         {"Enemy_DungeonBoss_Gohma", "Enemy_DungeonBoss_Dodongo", "Enemy_DungeonBoss_Barinade",
+          "Enemy_DungeonBoss_PhantomGanon", "Enemy_DungeonBoss_Volvagia", "Enemy_DungeonBoss_Morpha",
+          "Enemy_DungeonBoss_BongoBongo", "Enemy_DungeonBoss_Twinrova", "Enemy_DungeonBoss_Kotake",
+          "Enemy_DungeonBoss_Koume", "Enemy_DungeonBoss_Ganondorf", "Enemy_DungeonBoss_Ganon",
+          "Enemy_MiddleBoss_DarkLink", "Enemy_MiddleBoss_Lizalfos", "Enemy_MiddleBoss_FlareDancer",
+          "Enemy_MiddleBoss_BigOcto", "Enemy_MiddleBoss_GerudoThief", "Enemy_MiddleBoss_Poe_Meg"}) {
+        CAPTURE(std::string(name));
+        Table t;
+        t.SetOn(true, true);
+        t.SetTurns(true);
+        t.Publish({Boss{kActor, kBsa, Role::copy, name, 2}});
+        CHECK(t.PlayerOnlyBoss() == std::optional<std::string>(name));
+        CHECK(t.KeepsLinkAsAttacker(kActor));
+        t.SetTurns(false);  // off: only Phantom Ganon and Ganondorf (row 178), as before
+        CHECK(t.PlayerOnlyBoss().has_value() == Table::FightsPlayerOnly(name));
+    }
+    // A plain enemy is never one (it keeps issue 150's perceived puppets).
+    Table t;
+    t.SetTurns(true);
+    Boss baba{kActor, kBsa, Role::owner, "Enemy_DekuBaba", 2};
+    baba.plain = true;
+    t.Publish({baba});
+    CHECK_FALSE(t.PlayerOnlyBoss());
+    CHECK_FALSE(t.KeepsLinkAsAttacker(kActor));
+}

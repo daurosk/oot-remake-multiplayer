@@ -7145,3 +7145,98 @@ TEST_CASE("dedicated: the player who hosts the progress has no host powers, the 
   // The console still acts.
   CHECK(h.session.admin("/mute 1 chat", h.now) == "mute 1 chat: done");
 }
+
+namespace {
+ObjectState turn_sample(bool attacking, bool read = true) {
+  ObjectState s = state_at(0, 12);
+  s.animation = Animation{attacking ? "LightBall_Throw" : "Fly", 1.0f, 1.0f};
+  s.state = static_cast<std::uint8_t>(object_state::in_fight | (read ? object_state::attack_read : 0) |
+                                      (attacking ? object_state::attacking : 0));
+  return s;
+}
+
+// Boss 7 owned by player 1, player 2 at 5 m: the owner's samples for `us`, attacking from 1 s to 3 s and again
+// from 4 s to 5 s (every 250 ms). The number of hand-over asks to player 1.
+std::size_t turn_asks(OwnerHarness& h, bool read, std::uint64_t us = 6 * kSecond, bool boss = true) {
+  if (boss) h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.clear();
+  for (std::uint64_t t = 0; t < us; t += 250'000) {
+    h.stand(1, 0);
+    h.stand(2, 5);
+    const bool attacking = (t >= kSecond && t < 3 * kSecond) || (t >= 4 * kSecond && t < 5 * kSecond);
+    h.receive(1, ObjectSample{0, placed(7), 0, turn_sample(attacking, read)}, kChannelObjectSamples);
+    h.run(250'000);
+  }
+  return h.asks();
+}
+}  // namespace
+
+TEST_CASE("boss turns: a boss is handed to the next player when its attack ends (after one attack and 4 s)") {
+  OwnerHarness h;
+  CHECK(turn_asks(h, true) == 1);
+  CHECK(messages_to<HandoverAsk>(h, 1)[0] == HandoverAsk{placed(7), 0, 2});
+  CHECK(h.session.stats().turns_attack == 1);
+  CHECK(h.session.stats().turns_idle == 0);
+}
+
+TEST_CASE("boss turns: an owner whose game does not read attacks (an older build), or turns off: one owner") {
+  {
+    OwnerHarness h;
+    CHECK(turn_asks(h, false) == 0);
+  }
+  {
+    SessionConfig config = quiet_config();
+    config.boss_turns.on = false;
+    OwnerHarness h(config);
+    CHECK(turn_asks(h, true) == 0);
+  }
+}
+
+TEST_CASE("boss turns: the other player out of reach, or downed: the owner keeps it (the game as it is)") {
+  OwnerHarness h;
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.clear();
+  for (std::uint64_t t = 0; t < 6 * kSecond; t += 250'000) {
+    h.stand(1, 0);
+    h.stand(2, 60);  // past boss_reach_m
+    const bool attacking = t >= kSecond && t < 3 * kSecond;
+    h.receive(1, ObjectSample{0, placed(7), 0, turn_sample(attacking)}, kChannelObjectSamples);
+    h.run(250'000);
+  }
+  CHECK(h.asks() == 0);
+}
+
+TEST_CASE("boss turns: no attack for 8 s in a fight: a plain enemy's turn goes on, a boss's never (lane 154046)") {
+  {
+    // A boss in a phase of no attack (Phantom Ganon in his painting): no turn, however long.
+    OwnerHarness h;
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.clear();
+    for (std::uint64_t t = 0; t < 20 * kSecond; t += 250'000) {
+      h.stand(1, 0);
+      h.stand(2, 5);
+      h.receive(1, ObjectSample{0, placed(7), 0, turn_sample(false)}, kChannelObjectSamples);
+      h.run(250'000);
+    }
+    CHECK(h.asks() == 0);
+    CHECK(h.session.stats().turns_idle == 0);
+  }
+  // A plain shooter that attacked once, then waits on a puppet target.
+  OwnerHarness h;
+  h.receive(1, ObjectSample{0, placed(7), 0, turn_sample(true)}, kChannelObjectSamples);
+  h.clear();
+  for (std::uint64_t t = 0; t < 9 * kSecond; t += 250'000) {
+    h.stand(1, 0);
+    h.stand(2, 5);
+    h.receive(1, ObjectSample{0, placed(7), 0, turn_sample(false)}, kChannelObjectSamples);
+    h.run(250'000);
+  }
+  CHECK(h.asks() == 1);
+  CHECK(h.session.stats().turns_idle == 1);
+}
+
+TEST_CASE("boss turns: a plain shooter enemy takes turns too, once its owner said it attacked") {
+  OwnerHarness h;
+  CHECK(turn_asks(h, true, 6 * kSecond, false) == 1);
+  CHECK(h.session.stats().turns_attack == 1);
+}

@@ -492,6 +492,14 @@ bool EnemyBrainSwitch(std::string_view value) {
     return !value.empty() && value != "0";
 }
 
+std::uint8_t AttackBits(std::optional<bool> attacking) {
+    if (!attacking) {
+        return 0;
+    }
+    return static_cast<std::uint8_t>(proto::object_state::attack_read |
+                                     (*attacking ? proto::object_state::attacking : 0));
+}
+
 bool IsBossOrPart(std::string_view name) {
     if (name.find("_Dictionary") != std::string_view::npos) return false;
     if (name.starts_with("Enemy_DungeonBoss_") || name.starts_with("Enemy_MiddleBoss_")) {
@@ -1414,8 +1422,12 @@ proto::ObjectState Sync::StateOf(Object& o, std::uint64_t now_us) {
     if (o.life) {
         state.life = proto::ObjectLife{*o.life, o.max};
     }
+    state.state = AttackBits(o.attacking);  // boss turns: its game's own Attack attribute
     if (o.own_event_until > now_us) {
-        state.state = proto::object_state::in_event;  // S2: our Link's event binds it
+        state.state = static_cast<std::uint8_t>(state.state.value_or(0) | proto::object_state::in_event);  // S2
+    }
+    if (state.state && *state.state == 0) {
+        state.state.reset();
     }
     return state;
 }
@@ -2073,6 +2085,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
         o.slots = s.slots;
         o.bsa = s.bsa;
+        o.attacking = s.attacking;
         o.event_member = s.event_member;  // row 97
         o.sensor_in_area = s.sensor_in_area;  // row 138(8)
         if (s.hit_at) {
@@ -2460,6 +2473,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.animation = s->animation;
         o.slots = s->slots;
         o.bsa = s->bsa;
+        o.attacking = s->attacking;
         o.seen_at = now_us;
         o.name = s->name;
         o.breakable = CoopWorld::IsBreakable(s->name);

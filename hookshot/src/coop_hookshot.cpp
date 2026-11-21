@@ -417,6 +417,11 @@ void SetBossNative() {
     const bool brain = WrapIn(HOS_COOP_WRAP_BRAIN_VERB) && Env("LICHII_COOP_BOSS_NATIVE") != "0";
     const bool actions = brain && WrapIn(HOS_COOP_WRAP_ACTION_VERB) && Env("LICHII_COOP_BOSS_ACTIONS") != "0";
     CoopBossNative::Table& t = CoopBossNative::TheTable();
+    const bool turns = CoopBossNative::TurnsSwitch(Env("LICHII_COOP_BOSS_TURNS"));
+    if (t.TurnsOn() != turns) {
+        t.SetTurns(turns);
+        LOG_INFO(Core, "coop: bosses: turns {} (LICHII_COOP_BOSS_TURNS)", turns ? "on" : "off");
+    }
     if (t.BrainOn() == brain && t.ActionsOn() == actions) {
         return;
     }

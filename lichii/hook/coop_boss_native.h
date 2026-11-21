@@ -95,7 +95,9 @@ inline constexpr std::uint64_t kBsaAttributeStride = 0x10;
 inline constexpr std::uint64_t kBsaAttributeBits = 0x8;
 inline constexpr std::uint32_t kActionVerbCount = 282;
 inline constexpr std::uint64_t kAttributeAttack = 1u << 0;
-// Where action slot `slot`'s verb is, and where the attribute bits of action verb `verb` are.
+// Where action slot `slot`'s verb is, and where the attribute bits of action verb `verb` are. A verb outside 0..281
+// (an empty slot) maps to the first entry, exactly as main+0x507be0 does (its csel picks the table's start), so our
+// read ORs the same bits the game's own queries see (review-charsel-0118 m1).
 constexpr std::uint64_t ActionVerbAt(std::uint64_t bsa, std::size_t slot) { return bsa + kBsaActionVerbs + 4 * slot; }
 constexpr std::uint64_t ActionAttributesAt(std::uint64_t bsa, std::int32_t verb) {
     const auto i = static_cast<std::uint32_t>(verb);
@@ -294,8 +296,9 @@ public:
     // skip, no apply, nothing kept (the old gohma-sync path alone).
     void SetOn(bool brain, bool actions);
     // Boss turns (LICHII_COOP_BOSS_TURNS, TurnsSwitch): a copy made ours between moves resumes (PlanMadeOurs), and
-    // a hit of another player replayed on a boss names their puppet (aggro), except on the bosses that fight the
-    // Player only (FightsPlayerOnly: their puppets stay unseen and they keep our Link). Off: as before.
+    // every boss fights the Player only (PlayerOnlyBoss names any boss of ours or a copy: every puppet unseen while
+    // one is here; replayed hits name our Link): each player gets the boss in their own game by its turns. Off: only
+    // FightsPlayerOnly's two (Phantom Ganon, Ganondorf), as before.
     void SetTurns(bool on);
     bool TurnsOn() const;
     bool BrainOn() const;

@@ -1771,7 +1771,8 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
     if (o.root) {
       if (auto r = objects_.find(*o.root); r != objects_.end()) turn_root = &r->second;
     }
-    turn_root->turn_aggro[id] += std::max<std::int64_t>(d.amount, 1);
+    // Clamped: d.amount is a client's number (review-charsel-0118 S2); a stun of 0 counts as 1.
+    turn_root->turn_aggro[id] += std::clamp<std::int64_t>(d.amount, 1, 255);
   }
   if (o.hit_at == 0 || now_us - o.hit_at > config_.hit_window_us) {
     o.hit_base.reset();
@@ -2254,6 +2255,11 @@ void Session::step_turn(const ObjectId& oid, Object& o, std::uint64_t now_us) {
             (p.distance ? " " + std::to_string(static_cast<int>(*p.distance)) + " m" : " place unknown") +
             (p.aggro ? " aggro " + std::to_string(p.aggro) : "") + ";";
   }
+  // A host alone in reach logs nothing (an attack end every few seconds), and "nobody else" at most every 10 s
+  // (review-charsel-0118 S1).
+  const bool quiet = !next && (players.empty() || now_us - o.turn_note_at < 10'000'000);
+  if (!next && !quiet) o.turn_note_at = now_us;
+  if (!quiet)
   log("boss turns: " + o.actor + " of player " + std::to_string(owner->second.number) + ": " + turns::WhyText(why) +
       (next ? ": to player " + std::to_string(connections_.at(static_cast<ConnectionId>(*next)).number)
             : ": nobody else") +

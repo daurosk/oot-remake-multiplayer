@@ -340,6 +340,9 @@ void NoteAttackEdge(u64 actor, const std::string& name, bool attacking, const st
     static std::size_t notes = 0, plain_notes = 0;
     constexpr std::size_t kMaxAttackNotes = 400;
     std::lock_guard lock(m);
+    if (last.size() >= 512) {
+        last.clear();  // (actors come and go with scenes: kept small; review-charsel-0118 m2)
+    }
     auto [it, fresh] = last.try_emplace(actor, attacking);
     if (!fresh && it->second == attacking) {
         return;

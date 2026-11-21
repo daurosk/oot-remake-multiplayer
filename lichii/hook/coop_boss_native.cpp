@@ -784,9 +784,9 @@ bool Table::RunsOwnMoveWhenOurs(std::uint64_t actor) const {
 bool Table::KeepsLinkAsAttacker(std::uint64_t actor) const {
     std::lock_guard lock(mutex_);
     const Entry* e = FindActor(actor);
-    // Boss turns: another player's hit names their puppet (the game's own last-attacker aggro), but a boss whose
-    // native AI fights the Player only keeps our Link (row 178: a puppet in its memory held its attacks).
-    return e != nullptr && !e->plain && (!turns_ || FightsPlayerOnly(e->name));
+    // Every boss keeps our Link (row 178: a puppet in its memory held its attacks; with boss turns every boss
+    // fights only the Player of the game it runs in, and the server's turn aggro counts every player's hits).
+    return e != nullptr && !e->plain;
 }
 
 void Table::SetTurns(bool on) {
@@ -824,7 +824,11 @@ bool Table::FightsPlayerOnly(std::string_view name) {
 std::optional<std::string> Table::PlayerOnlyBoss() const {
     std::lock_guard lock(mutex_);
     for (const auto& [bsa, e] : by_bsa_) {
-        if (!e.plain && !e.dying && FightsPlayerOnly(e.name)) {
+        // Boss turns (review-charsel-0118 M1): with turns on EVERY boss fights the Player only. A boss whose own
+        // perception picked a puppet never attacks (the attack permission is the Player's), so it would never reach
+        // an attack end and never take a turn. Puppets unseen, each game's boss fights that game's own Link; the
+        // turns hand it to each player in turn.
+        if (!e.plain && !e.dying && (turns_ || FightsPlayerOnly(e.name))) {
             return e.name;
         }
     }

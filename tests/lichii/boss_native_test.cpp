@@ -2175,15 +2175,34 @@ TEST_CASE("native boss: boss turns: handed to us between moves, its own brain go
     }
 }
 
-TEST_CASE("native boss: boss turns: another player's hit names their puppet on a boss, not on Phantom Ganon or Ganondorf") {
+TEST_CASE("native boss: boss turns: every boss fights the Player only (puppets unseen, our Link the attacker)") {
+    // review-charsel-0118 M1: a boss whose own perception picked a puppet never attacks (the attack permission is the
+    // Player's), so it never reaches an attack end and never takes a turn. With turns on, every boss of every
+    // dungeon and every mid-boss names PlayerOnlyBoss (each game's boss sees only that game's Link) and keeps our
+    // Link as a replayed hit's attacker; the turns give it to each player in their own game.
+    for (const char* name :
+         {"Enemy_DungeonBoss_Gohma", "Enemy_DungeonBoss_Dodongo", "Enemy_DungeonBoss_Barinade",
+          "Enemy_DungeonBoss_PhantomGanon", "Enemy_DungeonBoss_Volvagia", "Enemy_DungeonBoss_Morpha",
+          "Enemy_DungeonBoss_BongoBongo", "Enemy_DungeonBoss_Twinrova", "Enemy_DungeonBoss_Kotake",
+          "Enemy_DungeonBoss_Koume", "Enemy_DungeonBoss_Ganondorf", "Enemy_DungeonBoss_Ganon",
+          "Enemy_MiddleBoss_DarkLink", "Enemy_MiddleBoss_Lizalfos", "Enemy_MiddleBoss_FlareDancer",
+          "Enemy_MiddleBoss_BigOcto", "Enemy_MiddleBoss_GerudoThief", "Enemy_MiddleBoss_Poe_Meg"}) {
+        CAPTURE(std::string(name));
+        Table t;
+        t.SetOn(true, true);
+        t.SetTurns(true);
+        t.Publish({Boss{kActor, kBsa, Role::copy, name, 2}});
+        CHECK(t.PlayerOnlyBoss() == std::optional<std::string>(name));
+        CHECK(t.KeepsLinkAsAttacker(kActor));
+        t.SetTurns(false);  // off: only Phantom Ganon and Ganondorf (row 178), as before
+        CHECK(t.PlayerOnlyBoss().has_value() == Table::FightsPlayerOnly(name));
+    }
+    // A plain enemy is never one (it keeps issue 150's perceived puppets).
     Table t;
-    t.SetOn(true, true);
     t.SetTurns(true);
-    t.Publish({Phantom(Role::owner)});
-    CHECK(t.KeepsLinkAsAttacker(kActor));  // fights the Player only (row 178): our Link still
-    Boss gohma{kActor, kBsa, Role::owner, "Enemy_DungeonBoss_Gohma", 2};
-    t.Publish({gohma});
-    CHECK_FALSE(t.KeepsLinkAsAttacker(kActor));  // the hitter's puppet: the game's own aggro
-    t.SetTurns(false);
-    CHECK(t.KeepsLinkAsAttacker(kActor));  // off: as before
+    Boss baba{kActor, kBsa, Role::owner, "Enemy_DekuBaba", 2};
+    baba.plain = true;
+    t.Publish({baba});
+    CHECK_FALSE(t.PlayerOnlyBoss());
+    CHECK_FALSE(t.KeepsLinkAsAttacker(kActor));
 }

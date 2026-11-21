@@ -1,0 +1,45 @@
+# hs-lens-head (Hookshot, row 197): the Lens of Truth's head flag never reaches a puppet's head, a mask still does.
+# Every player who has the Lens has PlayerStatus.EquipHeadArmor = 'Armor_GlassTruth' (the age-less base actor: the
+# adult glasses, no animation or physics). 0.11.6 to 0.11.8 sent it as `head`, and every other game wore it on the
+# puppet and showed it: orange spikes from the head and shoulders and a streak along the ground (owner's shot,
+# reports/row197-owner-spikes.jpg). A writes that flag the way the game leaves it (flag only, no dress), then wears a
+# mask (`dress head show`: the game's equip call, then its head show call, as the pause menu; the equip alone left
+# it worn and undrawn, lane run 08:55), takes it off and sets the Lens flag again. A steps aside to face B.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-lens-head (the lane: -Lane 1)
+# Needs a module from puppet-overlap with `dress head show` (the commit adding this line or later) on BOTH games;
+# the fix itself is 14389b1b (integrate-0118 55c94dc8). Pass:
+# - B's log: no "P1 wears head 'Armor_GlassTruth'" anywhere; "P1 wears head 'Armor_Child_Mask_Keaton'" and
+#   "P1 shows head" after `mask`; "P1 takes off head 'Armor_Child_Mask_Keaton'" after `lens-again`.
+# - B's shots b-lens, b-lens-again: A's puppet with no spikes, shards or ground streak (and no glasses);
+#   b-mask: the Keaton mask on A's puppet's face. A's own shots: the mask on A's face at mask (check this first:
+#   no mask on A = the step did not wear it, VOID), no mask and no glasses at lens / lens-again.
+# Before the fix (0.11.8 module) b-lens shows the spikes: the control, if a lane has the old dll.
+# With OoT Character Select installed on both games: hs-lens-head-char (A as character 114, Link (opening)).
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1
+mark start
+give PouchData.Armor_Child_Mask_Keaton.StockNum
+wait 120
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 60
+mark before
+wear head Armor_GlassTruth   # the flag as the game leaves it once the Lens is owned (no equip call)
+wait 270
+mark lens
+assign KeatonMask
+wait 30
+wear head Armor_Child_Mask_Keaton
+wait 30
+dress head show        # the game's own equip call, then its head show call (as the pause menu): the mask on A's face
+wait 240
+mark mask
+wear head none         # the mask off: the game's own take-off for an empty head flag
+wait 30
+dress head
+wait 120
+wear head Armor_GlassTruth   # the Lens flag again, flag only (as the game leaves it)
+wait 120
+mark lens-again
+wait 120
+mark end

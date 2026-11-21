@@ -204,6 +204,10 @@ std::optional<std::uint32_t> DressKind(std::string_view slot);
 // CoopCallerOrders::kTestDress) takes one per call, on the game's calc thread. Thread-safe.
 void DressAsk(std::uint32_t kind);
 std::optional<std::uint32_t> DressNext();
+// Asked after a `dress head`'s equip (row 197 test): the game's head show call on our Link, as the pause
+// menu's equip makes it (0x33abfa0, docs/puppet.md #91). The equip alone leaves a mask worn and not drawn,
+// so no scenario ever saw a mask on its own Link. Not a slot kind of the equip call.
+inline constexpr std::uint32_t kDressShowHead = 0x100;
 
 // assign ITEM: true for a value of the item button enum
 // (PlayerStatus.AssignableItem.Child / .Adult in GameDataList: Empty,

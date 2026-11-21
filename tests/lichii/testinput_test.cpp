@@ -338,6 +338,25 @@ TEST_CASE("testinput: dress asks the game's equip for a slot, or all of them") {
     CHECK(DressNext() == std::optional<std::uint32_t>(7));
     CHECK(DressNext() == std::optional<std::uint32_t>(8));
     CHECK_FALSE(DressNext());
+    // `dress head show` (row 197's mask check): the equip, then the game's head show call; only for the head.
+    CHECK_FALSE(Parse("dress shield show
+", error));
+    CHECK_FALSE(Parse("dress head show now
+", error));
+    Runner shown(Must("dress head show
+dress head
+"));
+    shown.Advance(0.0, std::nullopt, log);
+    const auto asks = shown.TakeRequests();
+    REQUIRE(asks.size() == 2);
+    CHECK(asks[0].kind == Kind::dress);
+    CHECK(asks[0].start == "head");
+    CHECK(asks[0].name == "show");
+    CHECK(asks[1].name.empty());
+    // The show call's ask is no slot kind of the equip call (row 197 test: `dress head` then shows it).
+    for (const char* slot : {"weapon", "shield", "head", "armor", "boots", "hand"}) {
+        CHECK(DressKind(slot) != std::optional<std::uint32_t>(kDressShowHead));
+    }
 }
 
 TEST_CASE("testinput: a hold's mark is said halfway, with the keys still down") {

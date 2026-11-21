@@ -463,15 +463,18 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             step.mark = std::string(w[2]);
         } else if (cmd == "DRESS") {
             std::string low;
-            if (w.size() == 2) {
+            if (w.size() == 2 || w.size() == 3) {
                 low = std::string(w[1]);
                 for (auto& ch : low) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
             }
-            if (w.size() != 2 || (low != "all" && !DressKind(w[1]))) {
-                return fail("want: dress weapon|shield|head|armor|boots|hand|all");
+            // `dress head show`: the equip, then the game's head show call (kDressShowHead), as the pause menu.
+            const bool show = w.size() == 3 && low == "head" && Upper(w[2]) == "SHOW";
+            if ((w.size() != 2 && !show) || (low != "all" && !DressKind(w[1]))) {
+                return fail("want: dress weapon|shield|head|armor|boots|hand|all, or dress head show");
             }
             step.kind = Kind::dress;
             step.start = low;
+            step.mark = show ? "show" : "";  // (the request's name)
         } else if (cmd == "ASSIGN") {
             if (w.size() != 2 || !AssignableItem(w[1])) {
                 return fail("want: assign ITEM (Bow, Hookshot, Hammer, SlingShot, Bomb, ...: "
@@ -1254,6 +1257,7 @@ void OnFrame(Core::System& system) {
             for (const char* slot : slots) {
                 if (request.start == "all" || request.start == slot) {
                     DressAsk(*DressKind(slot));
+                    if (std::string_view(slot) == "head" && request.name == "show") DressAsk(kDressShowHead);
                     ++asked;
                 }
             }

@@ -1,0 +1,14 @@
+# hs-lens-head: B faces where A stands after A steps aside, camera behind B, and takes a shot at each of A's
+# marks (lens, mask, lens-again come at about these times; see hs-lens-head.A.txt for the pass list).
+mark start
+wait 120
+stick 1 0 8             # face right, towards A
+press ZL                # camera behind B
+wait 480
+mark b-lens
+wait 300
+mark b-mask
+wait 300
+mark b-lens-again
+wait 120
+mark end

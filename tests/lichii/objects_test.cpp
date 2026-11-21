@@ -4352,7 +4352,8 @@ TEST_CASE("objects: a boss off the walk reads by its last life and its delete re
     CHECK(BossAliveKept({}, kGanon, last) == std::optional<bool>(true));
     // Back on the walk (a new reading): as read.
     CoopObjects::NoteBossLives({boss}, last);
-    CHECK_FALSE(last.at("Enemy_DungeonBoss_PhantomGanon").removed);
+    REQUIRE(last.at("Enemy_DungeonBoss_PhantomGanon").size() == 1);
+    CHECK_FALSE(last.at("Enemy_DungeonBoss_PhantomGanon").front().removed);
     // His death is read at life 0 while it runs; deleted after it: dead, before and after its delete request.
     boss.life = coop::protocol::ObjectLife{0, 42};
     CoopObjects::NoteBossLives({boss}, last);
@@ -4364,6 +4365,46 @@ TEST_CASE("objects: a boss off the walk reads by its last life and its delete re
     Seen unread = boss;
     unread.life.reset();
     CHECK_FALSE(BossAliveKept({unread}, kGanon, last).has_value());
+}
+
+TEST_CASE("objects: row 191: bodies of one name are read each by its own address (Gohma's eggs)") {
+    // Geno's four-player run: egg 0x1065043e00 at life 0 beside a new egg at life 1 logged its death on four
+    // walks, because both took turns in the one reading kept for their name.
+    using CoopObjects::BossLifeOf;
+    CoopObjects::BossLives last;
+    Seen dead = Chest(0x3e00, 0);
+    dead.name = "Enemy_DungeonBoss_Gohma_Egg";
+    dead.life = coop::protocol::ObjectLife{1, 1};
+    Seen fresh = Chest(0x9d98, 0);
+    fresh.name = dead.name;
+    fresh.life = coop::protocol::ObjectLife{1, 1};
+    CoopObjects::NoteBossLives({dead, fresh}, last);
+    dead.life = coop::protocol::ObjectLife{0, 1};
+    int deaths = 0;
+    for (int walk = 0; walk < 4; ++walk) {
+        for (const Seen* s : {&dead, &fresh}) {  // NoteBosses' death line: by the body's own last reading
+            const auto* was = BossLifeOf(last, s->name, s->address);
+            deaths += s->life->life <= 0 && (was == nullptr || was->life > 0) ? 1 : 0;
+        }
+        CoopObjects::NoteBossLives({dead, fresh}, last);
+    }
+    CHECK(deaths == 1);
+    REQUIRE(BossLifeOf(last, dead.name, 0x9d98));
+    CHECK(BossLifeOf(last, dead.name, 0x9d98)->life == 1);
+    CHECK(BossLifeOf(last, dead.name, 0x1) == nullptr);
+    CHECK(BossLifeOf(last, "Enemy_DungeonBoss_Gohma", 0x3e00) == nullptr);
+    // A deleted body's reading ends with the next new body of its name; a live one's stays.
+    CoopObjects::NoteBossRemoved(0x3e00, last);
+    Seen third = fresh;
+    third.address = 0x5948;
+    CoopObjects::NoteBossLives({fresh, third}, last);
+    CHECK(BossLifeOf(last, dead.name, 0x3e00) == nullptr);
+    CHECK(last.at(dead.name).size() == 2);
+    // A boss of one body made again at another address after its delete: the new body is the reading.
+    constexpr std::array<std::string_view, 1> kEgg{"Enemy_DungeonBoss_Gohma_Egg"};
+    CoopObjects::NoteBossRemoved(0x9d98, last);
+    CoopObjects::NoteBossRemoved(0x5948, last);
+    CHECK(CoopObjects::BossAliveKept({}, kEgg, last) == std::optional<bool>(true));  // removed alive
 }
 
 TEST_CASE("objects: a boss's death is read only at life 0, never from a body not read here (G2 review)") {

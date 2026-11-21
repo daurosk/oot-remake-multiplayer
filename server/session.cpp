@@ -2203,7 +2203,10 @@ void Session::note_hold(Object& o, const ObjectState& sample, std::uint64_t now_
   // lock there could hand a dying boss over mid-death (boss-die-0116; the game's own stall check has the same rule,
   // CoopBossNative::StallJudged).
   const bool judged = animation && life && life->life > 0 && !coop::protocol::anim::IsDeath(animation->name) &&
-                      !coop::protocol::anim::IsEvent(animation->name);
+                      !coop::protocol::anim::IsEvent(animation->name) &&
+                      // Row 189: nor its wait before the fight, as the hook's check (StallJudged's 'Sleep', and
+                      // Table::SetNotBegun: its owner's game has not begun the fight).
+                      animation->name != "Sleep" && !(o.owner && o.unready.contains(*o.owner));
   if (key != o.hold_key || !judged) {
     o.hold_key = std::move(key);
     o.hold_since = now_us;
@@ -2617,7 +2620,14 @@ void Session::run_ownership(std::uint64_t now_us) {
       if (o.fish) {
         fish_owner(oid, o, owner, true, now_us);  // a hooked fish waits for it
       } else if (auto next = best_other(o, owner, true, now_us)) {
-        ask_handover(oid, o, *next, now_us);
+        // Row 189: a boss in its fight (its owner's game ready) never goes to a game whose boss has not begun
+        // it (unready: every game's boss would go back to its wait before the fight). It waits for its owner,
+        // or for a ready game; an owner that leaves still gives it on (next_owner: nobody else has it).
+        if (o.boss && !o.unready.contains(owner) && o.unready.contains(*next)) {
+          ++stats_.boss_kept_from_unready;
+        } else {
+          ask_handover(oid, o, *next, now_us);
+        }
       }
       continue;
     }

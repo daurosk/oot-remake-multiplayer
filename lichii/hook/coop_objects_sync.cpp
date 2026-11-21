@@ -132,13 +132,35 @@ std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std
 
 void NoteBossLives(const std::vector<Seen>& walk, BossLives& last) {
     for (const Seen& s : walk) {
-        if (s.life) last[s.name] = BossLifeSeen{s.address, s.life->life, false};
+        if (!s.life) continue;
+        auto& bodies = last[s.name];
+        const auto it = std::find_if(bodies.begin(), bodies.end(),
+                                     [&](const BossLifeSeen& b) { return b.address == s.address; });
+        if (it != bodies.end()) {
+            *it = BossLifeSeen{s.address, s.life->life, false};
+        } else {
+            // A new body of that name: the readings of deleted ones are over (the newest body speaks for the
+            // name, as one reading per name did).
+            std::erase_if(bodies, [](const BossLifeSeen& b) { return b.removed; });
+            bodies.push_back(BossLifeSeen{s.address, s.life->life, false});
+        }
     }
 }
 
+const BossLifeSeen* BossLifeOf(const BossLives& last, std::string_view name, std::uint64_t address) {
+    const auto it = last.find(name);
+    if (it == last.end()) return nullptr;
+    for (const BossLifeSeen& b : it->second) {
+        if (b.address == address) return &b;
+    }
+    return nullptr;
+}
+
 void NoteBossRemoved(std::uint64_t address, BossLives& last) {
-    for (auto& [name, seen] : last) {
-        if (address != 0 && seen.address == address) seen.removed = true;
+    for (auto& [name, bodies] : last) {
+        for (BossLifeSeen& seen : bodies) {
+            if (address != 0 && seen.address == address) seen.removed = true;
+        }
     }
 }
 
@@ -155,12 +177,14 @@ std::optional<bool> BossAliveKept(const std::vector<Seen>& walk, std::span<const
     for (const std::string_view body : bodies) {
         const auto it = last.find(body);
         if (it == last.end()) continue;  // never read here
-        if (it->second.life <= 0) {
-            died = true;
-        } else if (!it->second.removed) {
-            return true;  // away: alive
-        } else {
-            removed_alive = true;
+        for (const BossLifeSeen& seen : it->second) {  // (each body of that name)
+            if (seen.life <= 0) {
+                died = true;
+            } else if (!seen.removed) {
+                return true;  // away: alive
+            } else {
+                removed_alive = true;
+            }
         }
     }
     if (died) return false;
@@ -178,7 +202,8 @@ bool BossReadDead(const std::vector<Seen>& walk, std::span<const std::string_vie
     }
     for (const std::string_view body : bodies) {
         const auto it = last.find(body);
-        if (it != last.end() && it->second.life <= 0) {
+        if (it != last.end() && std::any_of(it->second.begin(), it->second.end(),
+                                            [](const BossLifeSeen& seen) { return seen.life <= 0; })) {
             return true;
         }
     }
@@ -206,7 +231,7 @@ std::optional<bool> BossOurs(const std::vector<Seen>& walk, std::span<const std:
 }
 
 bool IsPreBattleAnimation(std::string_view name) {
-    return name == "Sleep" || name.starts_with("Pre_Battle_");
+    return coop::protocol::anim::IsPreBattle(name);
 }
 
 std::optional<bool> BossPreBattle(const std::vector<Seen>& seen, std::span<const std::string_view> bodies) {

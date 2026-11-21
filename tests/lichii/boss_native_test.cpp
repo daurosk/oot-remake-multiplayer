@@ -1399,6 +1399,38 @@ TEST_CASE("native boss: row 149: the stall count goes on through the re-choice's
     }
 }
 
+TEST_CASE("native boss: row 189: a boss whose fight has not begun here is never judged stuck, until it is hit") {
+    // Geno's four-player run: nobody had played Gohma's intro, the server's last resort gave her to a game outside
+    // her room, and her wait there read "stuck, its AI chooses again" twice.
+    Table t;
+    t.SetOn(true, true);
+    FakeGuest g;
+    const std::int32_t brain = 12;
+    g.Write(kBsa + addr::kBsaBrainVerb, &brain, 4);
+    CHECK_FALSE(t.OnBrainVerb(kBsa, brain, false, false));
+    t.SetNotBegun({"Enemy_DungeonBoss_Dodongo"});
+    CHECK_FALSE(HoldMove(t, g, Table::kStallSteps * 2, "Pre_Battle_Ceiling_Wait"));
+    CHECK(t.Totals().owner_stalls == 0);
+    SUBCASE("its fight begins (the list empties): a stuck move is judged again") {
+        t.SetNotBegun({});
+        CHECK(HoldMove(t, g, Table::kStallSteps + 2, "Pre_Battle_Ceiling_Wait"));
+    }
+    SUBCASE("it lost life in our sight: in its fight whatever the list says") {
+        CHECK_FALSE(HoldMove(t, g, 4, "Pre_Battle_Ceiling_Wait", true, 2));  // 24 -> 20
+        std::optional<CoopPuppet::Call> c;
+        for (std::uint64_t i = 0; i < Table::kStallSteps + 2 && !c; ++i) {
+            CHECK_FALSE(t.OnActionVerb(kBsa, GameRequest(5, kNode), false, false));
+            t.Publish({Dodongo(Role::owner, "Rolling_Loop", 20)});
+            c = t.Step(g, false, 0, kMain);
+        }
+        CHECK(c);
+    }
+    SUBCASE("another boss's name on the list changes nothing") {
+        t.SetNotBegun({"Enemy_DungeonBoss_Gohma"});
+        CHECK(HoldMove(t, g, Table::kStallSteps + 2, "Pre_Battle_Ceiling_Wait"));
+    }
+}
+
 TEST_CASE("native boss: boss turns: after a reaction the attack sequence stays on until its own next attack ends") {
     // Phantom Ganon, run 20261120-184021: RideJumpAttack 115 (Attack), SmallDamage 134 (0x6, Interrupt), 'Run' 40
     // (0), the ride 96 (0).

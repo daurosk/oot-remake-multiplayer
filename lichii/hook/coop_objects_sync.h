@@ -296,8 +296,13 @@ struct BossLifeSeen {
     std::int32_t life = 0;
     bool removed = false;  // a delete request for `address` came after that reading
 };
-using BossLives = std::map<std::string, BossLifeSeen, std::less<>>;
+// One reading per body: a name may have several bodies at once (Gohma's eggs, a boss's two hands), each read by
+// its own address. (Row 191: kept by name alone, two eggs took turns in the one reading, and the dead one logged
+// "read at life 0 here (from 1): its death" on every walk until it was deleted, as if it had been revived.)
+using BossLives = std::map<std::string, std::vector<BossLifeSeen>, std::less<>>;
 void NoteBossLives(const std::vector<Seen>& walk, BossLives& last);
+// The last reading of the body `name` at `address`; nullptr: never read.
+const BossLifeSeen* BossLifeOf(const BossLives& last, std::string_view name, std::uint64_t address);
 void NoteBossRemoved(std::uint64_t address, BossLives& last);
 std::optional<bool> BossAliveKept(const std::vector<Seen>& walk, std::span<const std::string_view> bodies,
                                   const BossLives& last);

@@ -27,12 +27,8 @@ wait 120
 press L
 wait 120
 mark characters-page
-press A
-wait 150
-mark picker-open
-press B
-wait 150
-mark picker-back
+# (X on his page: Customize. The picker last: B from it closes the whole menu, lane-0119 12:5x, so an X after it
+# landed in the field)
 press X
 wait 180
 mark customize-open
@@ -59,10 +55,11 @@ wait 90
 mark tunic-changed
 press B
 wait 150
-press B
-wait 150
 mark customize-left
-press MINUS
+press A
+wait 150
+mark picker-open
+press B
 wait 180
 mark field-tunic
 wait 120

@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "coop_i18n.h"
 #include "coop_problem_ask.h"
 #include "coop_title_native.h"
 
@@ -61,6 +62,21 @@ TEST_CASE("problem ask: old crashes, a clock set wrong, no crash") {
 TEST_CASE("problem ask: the words fit the title's buttons") {
     for (const char* w : kWords) {
         CHECK(std::string(w).size() <= CoopTitleNative::kTextBytes);
+    }
+}
+
+TEST_CASE("problem ask: the words fit the title's buttons in Chinese too") {
+    for (const char* code : {"zh-Hans", "zh-Hant"}) {
+        const CoopI18n::Lang* lang = nullptr;
+        for (int i = 0; i < CoopI18n::kLangCount; ++i) {
+            if (std::string(CoopI18n::kLangs[i].code) == code) lang = &CoopI18n::kLangs[i];
+        }
+        REQUIRE(lang != nullptr);
+        for (const char* w : kWords) {
+            const std::string text = CoopI18n::Tr(lang, w);
+            CHECK_MESSAGE(text != w, w);   // (each has its line)
+            CHECK(text.size() <= CoopTitleNative::kTextBytes);
+        }
     }
 }
 

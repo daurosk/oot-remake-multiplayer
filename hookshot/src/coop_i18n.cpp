@@ -494,6 +494,11 @@ constexpr Entry kzh_Hans[] = {
     {"Talk with players near your Link through your microphone; they sound quieter the farther away they are. Off: you neither send nor hear voices.",
      "用麦克风与林克附近的玩家说话；离得越远声音越小。关闭：不发送也不接收语音。"},
     {"Push to talk", "按键说话"},
+    // (the start screen's ask for a /bugreport after a crash, coop_problem_ask.h kWords: 40 bytes each at most)
+    {"The game crashed last time.", "游戏上次崩溃了。"},
+    {"Please send /bugreport on Discord", "请在 Discord 发送 /bugreport"},
+    {"with the zip of collect-logs.cmd.", "附上 collect-logs.cmd 的压缩包。"},
+    {"OK", "确定"},
     {"Open mic", "自由麦"},
     {"The host only: takes that player out of the game. They can join again.", "仅房主：把该玩家踢出游戏。他还能再加入。"},
     {"The host only: takes that player out, and they cannot join again, under any name, until the host stops hosting.",
@@ -1353,6 +1358,11 @@ constexpr Entry kzh_Hant[] = {
     {"Talk with players near your Link through your microphone; they sound quieter the farther away they are. Off: you neither send nor hear voices.",
      "用麥克風與林克附近的玩家說話；離得越遠聲音越小。關閉：不傳送也不接收語音。"},
     {"Push to talk", "按鍵說話"},
+    // (the start screen's ask for a /bugreport after a crash, coop_problem_ask.h kWords: 40 bytes each at most)
+    {"The game crashed last time.", "遊戲上次當機了。"},
+    {"Please send /bugreport on Discord", "請在 Discord 傳送 /bugreport"},
+    {"with the zip of collect-logs.cmd.", "附上 collect-logs.cmd 的壓縮檔。"},
+    {"OK", "確定"},
     {"Open mic", "自由麥"},
     {"The host only: takes that player out of the game. They can join again.", "僅房主：把該玩家踢出遊戲。他還能再加入。"},
     {"The host only: takes that player out, and they cannot join again, under any name, until the host stops hosting.",

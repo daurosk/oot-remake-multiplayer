@@ -43,6 +43,10 @@ enum Tone : std::uint32_t {
     kBlue = 1u << 8,
     kPurple = 1u << 9,
     kPink = 1u << 10,
+    // Row 185: a pale warm grey, always with kGold: a bright colour of gold hue whose spread is under a
+    // quarter of its brightness (the Hylian Shield's frame shades, ~(168, 168, 136)). Rules that take it
+    // (the frame) paint it; every other rule sees only its kGold, as before (the real gold stays gold).
+    kWarmGrey = 1u << 11,
 };
 using Rgb = std::array<std::uint8_t, 3>;
 std::uint32_t ToneOf(const Rgb& c);

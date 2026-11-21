@@ -19,7 +19,7 @@ const std::vector<GearTexture>& Gear() {
     // 8% blue, 2% red, the rest wood; the Master Sword 63% grey, 22% blue).
     static const std::vector<GearTexture> kGear = {
         {"Mt_Weapon_Shield_Hylian_Alb", Format::bc1,
-         {{Part::hylian_frame, T::kGrey}, {Part::hylian_face, T::kBlue | T::kPurple}, {Part::hylian_emblem, T::kRed}}},
+         {{Part::hylian_frame, T::kGrey | T::kWarmGrey}, {Part::hylian_face, T::kBlue | T::kPurple}, {Part::hylian_emblem, T::kRed}}},
         {"Mt_Weapon_Shield_Mirror_Alb", Format::astc,
          {{Part::mirror_rim, T::kRed}, {Part::mirror_face, T::kGrey | T::kBlue | T::kPurple | T::kCyan}}},
         {"Mt_Body_Weapon_Shield_Deku_Alb", Format::astc,

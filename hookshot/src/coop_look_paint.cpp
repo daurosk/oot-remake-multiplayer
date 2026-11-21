@@ -856,8 +856,9 @@ std::uint32_t ToneOf(const Rgb& c) {
     }
     const double h = Hue(c);
     if (h < 15 || h >= 345) return kRed;
-    if (h < 45) return hi >= 150 ? kGold : kBrown;
-    if (h < 70) return hi >= 150 ? kGold : kYellow;
+    const std::uint32_t gold = hi - lo < 0.25 * hi ? (kGold | kWarmGrey) : kGold;   // row 185
+    if (h < 45) return hi >= 150 ? gold : kBrown;
+    if (h < 70) return hi >= 150 ? gold : kYellow;
     if (h < 160) return kGreen;
     if (h < 200) return kCyan;
     if (h < 260) return kBlue;

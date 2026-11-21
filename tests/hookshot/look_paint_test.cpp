@@ -6,6 +6,7 @@
 // its is_green swapped for these tones): the C++ must give the same bytes.
 #include <doctest/doctest.h>
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -158,6 +159,40 @@ TEST_CASE("look paint: tones of colours") {
     CHECK(ToneOf({213, 180, 113}) == kGold);        // the gold gauntlets
     CHECK(ToneOf({62, 81, 42}) == kGreen);          // the tunic
     CHECK(ToneOf({78, 78, 137}) == kBlue);          // the Master Sword's hilt
+    // Row 185: the Hylian Shield frame's pale warm grey is gold by hue but takes the warm-grey bit too;
+    // the real gold (the Triforce, the gauntlets) and the darker browns do not.
+    CHECK(ToneOf({168, 168, 136}) == (kGold | kWarmGrey));
+    CHECK(ToneOf({176, 160, 144}) == (kGold | kWarmGrey));
+    CHECK(ToneOf({240, 192, 96}) == kGold);
+    CHECK(ToneOf({213, 180, 113}) == kGold);
+    CHECK(ToneOf({128, 112, 96}) == kBrown);
+    CHECK(ToneOf({112, 96, 80}) == kBrown);
+}
+
+TEST_CASE("look paint: the Hylian frame's warm grey is painted with the frame, the gold stays (row 185)") {
+    auto block = [](std::uint16_t a, std::uint16_t b) {
+        std::array<std::uint8_t, 8> out{static_cast<std::uint8_t>(a), static_cast<std::uint8_t>(a >> 8),
+                                        static_cast<std::uint8_t>(b), static_cast<std::uint8_t>(b >> 8), 0x1b, 0x1b, 0x1b, 0x1b};
+        return out;
+    };
+    auto rgb565 = [](int r, int g, int b) {
+        return static_cast<std::uint16_t>(((r * 31 + 127) / 255) << 11 | ((g * 63 + 127) / 255) << 5 | ((b * 31 + 127) / 255));
+    };
+    std::vector<std::uint8_t> tex;
+    for (const auto& b : {block(rgb565(184, 168, 136), rgb565(160, 158, 152)),   // frame: warm grey + grey
+                          block(rgb565(240, 192, 96), rgb565(200, 160, 80))}) {  // the Triforce's gold
+        tex.insert(tex.end(), b.begin(), b.end());
+    }
+    std::vector<std::uint8_t> out(tex.size());
+    const std::size_t changed = Recolour(Format::bc1, tex, out, {{kGrey | kWarmGrey, 0x2060E0}});
+    CHECK(changed == 1);
+    const auto ends = Ends(Format::bc1, std::span<const std::uint8_t>(out.data(), 8));
+    CHECK(ToneOf(ends[0]) == kBlue);   // both of the frame's ends took the colour
+    CHECK(ToneOf(ends[1]) == kBlue);
+    CHECK(std::equal(out.begin() + 8, out.end(), tex.begin() + 8));   // the gold untouched
+    // A grey-only rule (the swords, the Silver gauntlets) leaves the warm grey as it was.
+    CHECK(Recolour(Format::bc1, tex, out, {{kGrey, 0x2060E0}}) == 1);
+    CHECK(ToneOf(Ends(Format::bc1, std::span<const std::uint8_t>(out.data(), 8))[0]) == (kGold | kWarmGrey));
 }
 
 TEST_CASE("look paint: formats as a BNTX names them") {

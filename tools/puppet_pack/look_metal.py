@@ -39,13 +39,13 @@ MAGIC = b"COOPMTL1"
 NAME_BYTES = 64
 
 # The module's tones (hookshot/src/coop_look_paint.h Tone).
-BLACK, GREY, RED, BROWN, GOLD, YELLOW, GREEN, CYAN, BLUE, PURPLE, PINK = (1 << k for k in range(11))
+BLACK, GREY, RED, BROWN, GOLD, YELLOW, GREEN, CYAN, BLUE, PURPLE, PINK, WARM_GREY = (1 << k for k in range(12))
 
 # (metalness texture, its colour texture, [(part number, tones)] in the module's rule order:
 # hookshot/src/coop_look_parts.cpp Gear(), the same parts and tones). Only the textures whose model
 # names both (Model/*.bfres): the Biggoron model's colour is Alb.00 (Alb.01 is its animation's).
 METAL = (
-    ("Mt_Weapon_Shield_Hylian_Mtl", "Mt_Weapon_Shield_Hylian_Alb", ((3, GREY), (4, BLUE | PURPLE), (5, RED))),
+    ("Mt_Weapon_Shield_Hylian_Mtl", "Mt_Weapon_Shield_Hylian_Alb", ((3, GREY | WARM_GREY), (4, BLUE | PURPLE), (5, RED))),
     ("Mt_Weapon_Shield_Mirror_Mtl", "Mt_Weapon_Shield_Mirror_Alb", ((6, RED), (7, GREY | BLUE | PURPLE | CYAN))),
     ("Mt_Weapon_Sword_Kokiri_Mtl", "Mt_Weapon_Sword_Kokiri_Alb", ((9, GREY), (10, BROWN | RED))),
     ("Mt_Weapon_Sword_Master_Mtl", "Mt_Weapon_Sword_Master_Alb", ((11, GREY), (12, BLUE | PURPLE))),
@@ -73,10 +73,11 @@ def tone_of(c):
     h = tunic_extra.hue((r, g, b))
     if h < 15 or h >= 345:
         return RED
+    gold = GOLD | WARM_GREY if hi - lo < 0.25 * hi else GOLD   # row 185: the frame's pale warm grey
     if h < 45:
-        return GOLD if hi >= 150 else BROWN
+        return gold if hi >= 150 else BROWN
     if h < 70:
-        return GOLD if hi >= 150 else YELLOW
+        return gold if hi >= 150 else YELLOW
     if h < 160:
         return GREEN
     if h < 200:
@@ -185,7 +186,7 @@ def blocks(mtl_bntx, alb_bntx, rules):
                 a = start + block_at(mx, my, mw * 8, mh, g, 8)
                 if a + 8 > len(image) or image[a:a + 8] == bytes(8):
                     continue
-                if max(tx.bc4_block(image[a:a + 8])) == 0:
+                if max(v[0] for v in tx.bc4_block(image[a:a + 8])) == 0:
                     continue
                 # The colour blocks under this one (same texture coordinates).
                 x0, x1 = mx * 4 * aw // lw // fw, min(wb - 1, ((mx + 1) * 4 * aw - 1) // lw // fw)

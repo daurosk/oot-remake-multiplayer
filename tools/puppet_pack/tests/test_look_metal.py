@@ -52,6 +52,7 @@ def swizzle(blocks_by_row, block_bytes, gobs_tall):
 GREY = struct.pack("<HHI", 0x8410, 0x8410, 0)      # both ends (132, 130, 132)
 BLUE = struct.pack("<HHI", 0x001F, 0x0010, 0)      # blue ends
 GOLDGREY = struct.pack("<HHI", 0xFE60, 0x8410, 0)  # a gold end beside a grey one
+WARMGREY = struct.pack("<HHI", 0xB551, 0x8410, 0)  # a pale warm grey end (181, 170, 140) beside a grey one
 METAL = bytes([200, 120, 0x49, 0x92, 0x24, 0x49, 0x92, 0x24])
 NONE = bytes(8)
 
@@ -65,10 +66,17 @@ class LookMetalTest(unittest.TestCase):
         self.assertEqual(lm.tone_of((200, 30, 30)), lm.RED)
         self.assertEqual(lm.tone_of((240, 200, 30)), lm.GOLD)
         self.assertEqual(lm.tone_of((120, 70, 30)), lm.BROWN)
+        # Row 185: the Hylian frame's pale warm grey takes WARM_GREY beside GOLD; the real gold and the
+        # darker browns do not (the module's look_paint_test checks the same colours).
+        self.assertEqual(lm.tone_of((168, 168, 136)), lm.GOLD | lm.WARM_GREY)
+        self.assertEqual(lm.tone_of((176, 160, 144)), lm.GOLD | lm.WARM_GREY)
+        self.assertEqual(lm.tone_of((240, 192, 96)), lm.GOLD)
+        self.assertEqual(lm.tone_of((213, 180, 113)), lm.GOLD)
+        self.assertEqual(lm.tone_of((128, 112, 96)), lm.BROWN)
         # the module's numbers (hookshot/src/coop_look_paint.h Tone)
         with open(os.path.join(SRC, "coop_look_paint.h"), encoding="utf-8") as f:
             src = f.read()
-        for name, bit in (("kGrey", lm.GREY), ("kGold", lm.GOLD), ("kPink", lm.PINK)):
+        for name, bit in (("kGrey", lm.GREY), ("kGold", lm.GOLD), ("kPink", lm.PINK), ("kWarmGrey", lm.WARM_GREY)):
             k = int(re.search(name + r" = 1u << (\d+)", src).group(1))
             self.assertEqual(bit, 1 << k)
 
@@ -140,6 +148,20 @@ class LookMetalTest(unittest.TestCase):
             self.assertIn(name, look_live.GEAR)
             self.assertTrue(name.startswith("Mt_") and name.endswith("_Mtl"))
 
+    def test_the_frame_takes_its_warm_grey_blocks(self):
+        # Row 185: a frame block whose ends are the pale warm grey and grey is the frame's with the
+        # frame's rule (GREY | WARM_GREY), so its metal is cleared; with GREY alone it was no part's
+        # (its warm end read as the Triforce's gold) and kept its metal. A real gold block still keeps it.
+        self.assertEqual(lm.tone_of(lm._unpack565(0xB551)), lm.GOLD | lm.WARM_GREY)
+        alb = full_bntx(0x1A, 8, 8, 0, [swizzle([[WARMGREY, BLUE], [GREY, GOLDGREY]], 8, 1)])
+        mtl = full_bntx(0x1D, 8, 8, 0, [swizzle([[METAL, NONE], [METAL, METAL]], 8, 1)])
+        at = lambda x, y: lm.block_at(x, y, 16, 2, 1, 8)
+        new = lm.blocks(mtl, alb, ((3, lm.GREY | lm.WARM_GREY), (4, lm.BLUE | lm.PURPLE), (5, lm.RED)))
+        old = lm.blocks(mtl, alb, ((3, lm.GREY), (4, lm.BLUE | lm.PURPLE), (5, lm.RED)))
+        self.assertEqual(new[3], sorted([at(0, 0), at(0, 1)]))
+        self.assertEqual(old[3], [at(0, 1)])
+        self.assertIn(dict(lm.METAL[0][2])[3] & lm.WARM_GREY, (lm.WARM_GREY,))   # the Hylian frame's rule
+
     def test_parts_and_tones_are_the_modules(self):
         """Each metal item's parts and tones, in the module's rule order (coop_look_parts.cpp Gear(),
         coop_look.h Part): the blocks follow what the painter paints."""
@@ -147,7 +169,7 @@ class LookMetalTest(unittest.TestCase):
             numbers = {n: int(v) for n, v in re.findall(r"^\s+(\w+) = (\d+),", f.read(), re.M)}
         with open(os.path.join(SRC, "coop_look_parts.cpp"), encoding="utf-8") as f:
             src = f.read()
-        tones = {n: getattr(lm, n[1:].upper()) for n in re.findall(r"T::(k[A-Z][a-z]+)", src)}
+        tones = {n: getattr(lm, re.sub(r"(?<!^)(?=[A-Z])", "_", n[1:]).upper()) for n in re.findall(r"T::(k\w+)", src)}
         for _, alb, rules in lm.METAL:
             entry = re.search(r'\{"' + re.escape(alb) + r'", Format::\w+,\s*\{(.*?)\}\},\n', src, re.S)
             self.assertIsNotNone(entry, alb)

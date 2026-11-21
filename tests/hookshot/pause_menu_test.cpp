@@ -1662,3 +1662,40 @@ TEST_CASE("pause tab: Customize Link with a Character Select character picked sa
     m.SetCharacter(false);
     CHECK(m.view().help == own);
 }
+
+TEST_CASE("pause tab: Settings: A, Left and Right on Original game and Player list (d501ce95: A did nothing on Original)") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kSettings);
+    REQUIRE(RowNamed(m.view(), "Original game") != nullptr);
+    CHECK(RowNamed(m.view(), "Original game")->kind == RowKind::kToggle);
+    CHECK_FALSE(RowNamed(m.view(), "Original game")->on);   // (off unless turned on)
+    SelectRow(m, "Original game");
+    CHECK(m.view().help.find("as it came") != std::string::npos);
+    m.Press(Input::kDecide);   // A flips it, as Left and Right set it
+    CHECK(m.options().original_game);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    CHECK(RowNamed(m.view(), "Original game")->on);
+    m.Press(Input::kDecide);
+    CHECK_FALSE(m.options().original_game);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    m.Press(Input::kRight);
+    CHECK(m.options().original_game);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    m.Press(Input::kLeft);
+    CHECK_FALSE(m.options().original_game);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+
+    SelectRow(m, "Player list");
+    CHECK(RowNamed(m.view(), "Player list")->value == "Auto");   // (the default)
+    for (const char* next : {"Full", "Compact", "Off", "Auto"}) {   // A steps on, round
+        m.Press(Input::kDecide);
+        CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+        CHECK(RowNamed(m.view(), "Player list")->value == next);
+    }
+    m.Press(Input::kLeft);   // Left steps back
+    CHECK(RowNamed(m.view(), "Player list")->value == "Off");
+    CHECK(m.options().hud_size == "off");
+    m.Press(Input::kRight);
+    CHECK(m.options().hud_size == "auto");
+}

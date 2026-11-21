@@ -1213,6 +1213,14 @@ std::string SlotsText(Guest& guest, std::uint64_t actor, std::optional<std::uint
                 " state " + std::to_string(state) + " " + place +
                 (piece != 0 && a == 8 ? TurnText(guest, actor, piece) : std::string());
     }
+    // Issue 91 (mask-draw): every armor link's draw byte (low bits 2 shown, 1 not), empty links too.
+    text += "; drawn";
+    for (std::uint32_t a = 0; a < addr::kArmorLinkCount; ++a) {
+        std::uint8_t b = 0;
+        if (ReadValue(guest, eu + addr::kArmorShownBytes + a, b)) {
+            text += " " + std::to_string(a) + ":" + Hex(b);
+        }
+    }
     // Issue 91 (puppet-looks): the equip call's per-kind words (eu + 0x12d4 +
     // 8 * kind, two u32), to tell how the game wears a real mask from the
     // puppet's (the GameData path asks state 1 or 2 per piece).
@@ -1281,6 +1289,32 @@ std::optional<Call> Director::Dress(Slot& slot, const Target& target, Guest& gue
 // puppet again without it (slot.remake; issue 91: a mask taken off stayed on).
 std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& guest,
                                     std::uint64_t now_ms) {
+    if (anim_) {
+        // #91 (mask-draw), debug only: the head link's draw byte every frame, said when it changes, for the
+        // puppet and for our own Link: tells whether something puts it back after the show call (0x33abfa0).
+        const auto head_byte = [&guest](std::uint64_t actor) -> int {
+            std::uint64_t parts = 0, eu = 0;
+            std::uint8_t b = 0;
+            if (actor == 0 || !ReadValue(guest, actor + addr::kActorParts, parts) || parts == 0 ||
+                !ReadValue(guest, parts + addr::kPartsEquipmentUser, eu) || eu == 0 ||
+                !ReadValue(guest, eu + addr::kArmorShownBytes, b)) {
+                return -1;
+            }
+            return b;
+        };
+        if (const int b = head_byte(slot.actor); b != slot.head_drawn_seen) {
+            Say("P" + std::to_string(slot.number) + " head draw byte " + Hex(static_cast<std::uint64_t>(b & 0xff)) +
+                (b < 0 ? " (not read)" : "") + " at frame " + std::to_string(frames_) + " (puppet)");
+            slot.head_drawn_seen = b;
+        }
+        if (const std::uint64_t player = CoopPose::FindPlayer(guest, input_.main_base)) {
+            if (const int b = head_byte(player); b != own_head_drawn_seen_) {
+                Say("our Link's head draw byte " + Hex(static_cast<std::uint64_t>(b & 0xff)) +
+                    (b < 0 ? " (not read)" : "") + " at frame " + std::to_string(frames_));
+                own_head_drawn_seen_ = b;
+            }
+        }
+    }
     if (anim_ && now_ms - slot.gear_log_ms >= 2000) {
         slot.gear_log_ms = now_ms;
         std::uint64_t parts = 0;

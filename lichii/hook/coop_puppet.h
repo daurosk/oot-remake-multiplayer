@@ -626,6 +626,7 @@ private:
         std::size_t equip_index = 0;        // the equip being made
         std::string equip_name;
         std::uint64_t gear_log_ms = 0;      // last gear line (debug anim)
+        int head_drawn_seen = -1;           // #91 debug: the head link's draw byte last logged (-1 none)
         std::uint8_t in_hand = 0;           // equipment slots asked into the hand (bits)
         std::uint8_t hold_known = 0;        // slots whose state we have set (bits)
         int hold_slot = 0;                  // the change being made
@@ -776,6 +777,7 @@ private:
     std::size_t own_index_ = 0;   // the one a Pending::own_state call asks
     std::size_t first_slot_ = 0;  // where this frame's Step starts (round robin)
     std::uint64_t frames_ = 0;
+    int own_head_drawn_seen_ = -1;  // #91 debug: our Link's head link draw byte last logged
     std::atomic<std::uint32_t> live_mask_{0};  // LiveMask(); written by the calc thread
     std::array<std::atomic<std::uint64_t>, coop::protocol::kMaxPlayers + 1> live_pvp_actor_{};  // LivePvpActor()
     std::array<std::atomic<std::uint64_t>, coop::protocol::kMaxPlayers + 1> live_seen_actor_{};  // LiveSeenActor()

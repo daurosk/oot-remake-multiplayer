@@ -9,10 +9,13 @@
 # 1. no crash in the whole run (row 207: his page, his picker and his Customize under co-op);
 # 2. shot customize-open: HIS screen (his frame, title, two columns of three), with co-op's row names (Hair Colour,
 #    Eye Colour, Kokiri Tunic | Cap Trim, Goron Tunic, Zora Tunic) and values; SIDE BY SIDE with his own
-#    CharacterCustomize_00 shot from his mod page: same frame, fonts, focus marker; no box glyphs, no cut text;
-# 3. shots hair-changed / eyes-changed: the Link in the picture shows the new hair / iris colour. Hair: YES if the
+#    CharacterCustomize_00 shot from his mod page: same frame, fonts, focus marker; no box glyphs, no cut text
+#    (his own screen needs a run of this scenario with the co-op module off: its customize-open shot is his);
+# 3. shots customize-open (before) and hair-changed / eyes-changed: the Link in the picture shows red hair / purple
+#    irises after. Hair: YES if the
 #    tint is plainly seen, NO if it is weak (the Hair row then goes); eyes the same;
-# 4. shot field-tunic (row 202): your own Link's tunic is the new colour with Character Select on; log has
+# 4. shots field-tunic and field-tunic-front (row 202): your own Link's tunic is the new colour with Character
+#    Select on, seen from behind and from the front; log has
 #    "coop: look:" lines naming your tunic, none "no tunic texture of your Link";
 # 5. log: "Your Link's colours:" from the kit start (merge_self_models) on the first run with his mod.
 mark start
@@ -32,14 +35,20 @@ mark characters-page
 press X
 wait 180
 mark customize-open
-press ZR
-wait 60
-press ZR
-wait 60
+# (colours that are not Link's own: one ZR = Red for the hair (his is blond), seven = Purple for the eyes (his are
+# blue); lane-0119 12:58: three = Yellow, which showed no change)
 press ZR
 wait 90
 mark hair-changed
 press DDOWN
+wait 60
+press ZR
+wait 60
+press ZR
+wait 60
+press ZR
+wait 60
+press ZR
 wait 60
 press ZR
 wait 60
@@ -62,5 +71,8 @@ mark picker-open
 press B
 wait 180
 mark field-tunic
+stick 0 -0.6 30         # walk back toward the camera: his front
+wait 30
+mark field-tunic-front
 wait 120
 mark end

@@ -354,6 +354,14 @@ int main(int argc, char** argv) {
     config.session.dedicated = line->dedicated;
     config.session.same_network_open = line->same_network_open;
     if (line->owner_hold_ms) config.session.owner_hold_us = std::uint64_t{*line->owner_hold_ms} * 1000;
+    // Boss turns (SessionConfig::boss_turn_us, off by default): seconds per turn, for a proof run only.
+    if (const std::string turn = environment("COOP_BOSS_TURN_S"); !turn.empty()) {
+      const unsigned long s = std::strtoul(turn.c_str(), nullptr, 10);
+      if (s > 0 && s <= 600) {
+        config.session.boss_turn_us = std::uint64_t{s} * 1'000'000;
+        say("boss turns on: " + std::to_string(s) + " s a turn (COOP_BOSS_TURN_S)");
+      }
+    }
     config.upnp = line->upnp;
     config.invite = line->invite;
     if (line->invite) config.stun_servers = stun_servers(*line);

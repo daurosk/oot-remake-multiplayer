@@ -260,7 +260,12 @@ struct SessionConfig {
   // owner's animation no death and no cutscene, and no shot of the owner's
   // game flying in its scene (made within boss_turn_shot_us and not ended:
   // Phantom Ganon's ball mid-rally). 0: off.
-  std::uint64_t boss_turn_us = 20'000'000;
+  // Off by default (review of PR #308): every mid-fight hand-over gives the
+  // boss to a copy whose AI phase never matched the owner's (docs/dungeons-
+  // boss.md, "Every hand-over jumped a phase"), and our own turns branch
+  // (boss-target-0118) failed four lane runs that way and was reverted from
+  // 0.11.8. On for a proof run with the server's COOP_BOSS_TURN_S (seconds).
+  std::uint64_t boss_turn_us = 0;
   std::uint64_t boss_turn_quiet_us = 3'000'000;
   std::uint64_t boss_turn_shot_us = 10'000'000;
   float boss_turn_m = 40.0f;

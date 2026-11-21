@@ -2875,14 +2875,14 @@ TEST_CASE("issue 150: no near-player move when both stand close, one is too far,
   }
 }
 
-SessionConfig turn_config() {  // boss turns, as by default
+SessionConfig turn_config() {  // boss turns, on (COOP_BOSS_TURN_S=20)
   SessionConfig config = quiet_config();
-  config.boss_turn_us = SessionConfig{}.boss_turn_us;
+  config.boss_turn_us = 20 * kSecond;
   return config;
 }
 
 TEST_CASE("boss turns: in a fight the boss goes to the next player every 20 s, round") {
-  REQUIRE(SessionConfig{}.boss_turn_us == 20 * kSecond);  // on by default
+  CHECK(SessionConfig{}.boss_turn_us == 0);  // off by default until a lane proof (review of PR #308)
   OwnerHarness h(turn_config());
   h.join(3, "Saria");
   h.receive(3, present_in("Field", {placed(7)}), kChannelOwnership);

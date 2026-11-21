@@ -542,6 +542,13 @@ the server's `enemies:` line as `boss turns`.
 **Tests.** `tests/server/session_test.cpp`: "boss turns" (three players, round by number; a calm moment, near, up and
 ready; the ball in flight).
 
+**Off by default (review, 2026-11-21).** `boss_turn_us` is 0 until a lane run proves it: every mid-fight hand-over
+gives the boss to a copy whose AI phase never matched the owner's ("Every hand-over jumped a phase", above), and an
+earlier turns branch (boss-target-0118, which also waited for each boss's own attack end and skipped its no-attack
+phases) failed four lane runs that way and was taken out of 0.11.8. For a proof run, start the server with
+`COOP_BOSS_TURN_S=20` (seconds a turn). The near-player rule stays off too, so the two do not hand the boss back and
+forth.
+
 **Not proven in game.** That every boss's AI takes a turn well from a copy's state (the phase jumps seen when the
 near rule moved bosses before native boss sync), and that 20 s is a good length. Check: two players fight Phantom
 Ganon; each gets his ball in turn and can send it back; Volvagia, Morpha and Twinrova go for each player in turn.

@@ -81,6 +81,7 @@ struct Session {
     };
     State state = State::kOff;
     bool hosting = false;      // what was tried last: Host (else Join); tells a failed Host from a failed Join
+    bool public_game = false;  // hosting: the game was started as a public game (HosCoopHostOptions::public_game)
     bool by_launcher = false;  // co-op came with the game's start (Host.bat, Join.bat, coop.ini): not stopped here
     int players = 0;           // in the session, this one included (0: not known)
     std::string code;          // the invite code (hosting), or the answer code (kWaitHost)
@@ -188,7 +189,7 @@ private:
         kStartHost, kHostPort, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan, kCopyVpn, kLeave,
         kRejoin, kCode, kClearCode, kJoinIp, kJoinPort, kJoinPassword, kJoinNow, kRelay, kRoom,
         kName, kLook, kPlayers, kVoice, kMic, kVoiceMode, kChatKey, kController, kKeyboard, kMapPlayers, kMapNames,
-        kSameNetwork,
+        kSameNetwork, kGameKind,
         kOpenCustomize, kNgPlus, kSaveSet
     };
     struct Line;   // a row, what it does and its help

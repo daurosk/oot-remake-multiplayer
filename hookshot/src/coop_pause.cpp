@@ -90,6 +90,7 @@ bool g_coop_on = false;      // co-op came with the game's start (coop.ini named
 bool g_shown = false;        // the tab shows in Hookshot's menu
 bool g_native = false;       // the title's own rows show its pages instead (OpenNative): no overlay
 std::string g_doing;         // what the tab started: "hosting", "joined", "" none
+bool g_hosted_public = false;  // the game hosting now was started as a public game (the Host page's Game row)
 // Auto-rejoin (coop_auto_rejoin.h): the planner, and what the player did since its last update (its own Host or Join,
 // a Leave), which stop what it planned; g_auto_join: the join being made is the planner's, not the player's.
 CoopAutoRejoin::Planner g_rejoin;
@@ -212,6 +213,7 @@ CoopPauseMenu::Session SessionNow() {
     default: s.state = State::kOff; break;
     }
     s.hosting = g_doing == "hosting";
+    s.public_game = s.hosting && g_hosted_public;
     s.by_launcher = g_coop_on;
     if (s.hosting) {
         s.players = st.players;
@@ -450,6 +452,10 @@ bool Host() {
     // room name without one; never the player's name unless they typed it there)
     const std::string& shown = o.list_name.empty() ? o.relay_room : o.list_name;
     h.relay_list = o.list_room && !o.relay_room.empty() ? shown.c_str() : nullptr;
+    // A public game (the Host page's Game row): anyone joins with no password, relay only, always listed.
+    h.public_game = o.public_game ? 1u : 0u;
+    if (o.public_game) h.relay_list = shown.c_str();
+    g_hosted_public = o.public_game;
     g_doing = "hosting";
     ++g_session;
     g_copied = false;

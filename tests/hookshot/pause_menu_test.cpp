@@ -103,7 +103,7 @@ TEST_CASE("pause tab: Host hosts in one press, then the page shows the code, the
     CHECK(m.view().gold == "Starting your game...");
     m.SetSession(Hosting(1));
     CHECK(Names(m) == std::vector<std::string>{"Copy the code again", "Paste friend's answer (or Ctrl+V)",
-                                               "Same network", "VPN", "Port", "Stop hosting"});
+                                               "Same network", "VPN", "Port", "Game", "Stop hosting"});
     // Ctrl+V (or Shift+Insert) on the Host page is Paste friend's answer, wherever the cursor is.
     CHECK(m.Press(Input::kPaste));
     const auto paste = m.TakeRequest();
@@ -129,6 +129,8 @@ TEST_CASE("pause tab: Host hosts in one press, then the page shows the code, the
     // Port row, then Stop hosting
     m.Press(Input::kDown);
     REQUIRE(Selected(m) == "Port");
+    m.Press(Input::kDown);
+    REQUIRE(Selected(m) == "Game");
     m.Press(Input::kDown);
     REQUIRE(Selected(m) == "Stop hosting");
     m.Press(Input::kDecide);
@@ -178,6 +180,32 @@ TEST_CASE("pause tab: the host's player count goes round 2 to 16 and is saved") 
     CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
     m.Press(Input::kRight);
     CHECK(m.options().max_players == 2);
+}
+
+TEST_CASE("pause tab: Host page: Private game is the default; Public game offers a ready room name, is remembered, "
+          "and while hosting public no row holds an address") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kHost);
+    REQUIRE(m.TakeRequest()->kind == Request::Kind::kHost);
+    m.SetSession(Session{});   // (stopped: the Start row and the choices)
+    SelectRow(m, "Game");
+    CHECK(m.view().help.find("Private game") != std::string::npos);
+    m.Press(Input::kDecide);
+    CHECK(m.options().public_game);
+    CHECK_FALSE(m.options().relay_room.empty());   // a ready name, as forest-4821
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    CHECK(Names(m) == std::vector<std::string>{"Start hosting", "Game", "Room name", "Players", "Port"});
+    CHECK(m.view().help.find("no password") != std::string::npos);
+    Session s = Hosting(1, "");
+    s.public_game = true;
+    m.SetSession(s);
+    CHECK(Names(m) == std::vector<std::string>{"Port", "Game", "Stop hosting"});
+    // Switched to private while hosting public: it says plainly it applies at the next Host.
+    SelectRow(m, "Game");
+    m.Press(Input::kDecide);
+    CHECK_FALSE(m.options().public_game);
+    CHECK(m.view().help.find("next Host") != std::string::npos);
 }
 
 TEST_CASE("pause tab: Join: a room name or an address, its port and the password, then Join (no friend's code)") {
@@ -1018,7 +1046,7 @@ TEST_CASE("pause tab: Host Port and Settings Port when you host validate, save, 
     m.Open(Page::kHost);
     REQUIRE(m.TakeRequest()->kind == Request::Kind::kHost);
     m.SetSession(Session{});
-    CHECK(Names(m) == std::vector<std::string>{"Start hosting", "Players", "Port"});
+    CHECK(Names(m) == std::vector<std::string>{"Start hosting", "Game", "Players", "Port"});
     SelectRow(m, "Port");
     m.Press(Input::kDecide);
     for (const char c : std::string("28600")) {

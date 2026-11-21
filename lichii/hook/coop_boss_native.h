@@ -103,7 +103,13 @@ constexpr std::uint64_t ActionAttributesAt(std::uint64_t bsa, std::int32_t verb)
     const auto i = static_cast<std::uint32_t>(verb);
     return bsa + kBsaActionAttributes + (i < kActionVerbCount ? i * kBsaAttributeStride : 0) + kBsaAttributeBits;
 }
-constexpr bool IsAttack(std::uint64_t bits) { return (bits & kAttributeAttack) != 0; }
+// Interrupt (murmur3 4112727460) is attribute 1: the reaction moves (a hit, a stun's start) that cut a move.
+inline constexpr std::uint64_t kAttributeInterrupt = 1u << 1;
+// In its attack sequence: an attack, or a reaction that cut one (Interrupt). A turn passes only when this falls,
+// so a boss is never handed over in the middle of its own reaction: lane run 20261120-180245, Phantom Ganon's
+// RideJumpAttack cut by a hit fell into verb 134 (attributes 0x6, Interrupt); the hand-over there started 134 over
+// in the new owner's game and he held 'Run' in his painting ~75 s, never attacking again.
+constexpr bool IsAttack(std::uint64_t bits) { return (bits & (kAttributeAttack | kAttributeInterrupt)) != 0; }
 inline constexpr std::uint64_t kSetBrainVerb = 0x6733b0;       // main+
 inline constexpr std::uint64_t kRequestActionVerb = 0xc08f0;   // main+
 inline constexpr std::uint64_t kMalloc = 0x14c6c90;            // main+, as coop_puppet.h

@@ -2111,7 +2111,10 @@ TEST_CASE("native boss: boss turns: the attributes of the BSA's action verbs, as
     CHECK(addr::IsAttack(1));
     CHECK(addr::IsAttack(513));
     CHECK_FALSE(addr::IsAttack(0));
-    CHECK_FALSE(addr::IsAttack(2));  // Interrupt alone
+    CHECK(addr::IsAttack(2));    // Interrupt alone: a reaction that cut a move is still its attack sequence
+    CHECK(addr::IsAttack(6));    // Phantom Ganon's verb 134 after a cut RideJumpAttack (run 20261120-180245)
+    CHECK_FALSE(addr::IsAttack(0x800000000000));  // his verb 4 ('Run' in the painting): a plain move
+    CHECK_FALSE(addr::IsAttack(4));  // attribute 2 alone
     CHECK(TurnsSwitch(""));
     CHECK(TurnsSwitch("1"));
     CHECK_FALSE(TurnsSwitch("0"));

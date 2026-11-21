@@ -3,17 +3,18 @@
 # adult glasses, no animation or physics). 0.11.6 to 0.11.8 sent it as `head`, and every other game wore it on the
 # puppet and showed it: orange spikes from the head and shoulders and a streak along the ground (owner's shot,
 # reports/row197-owner-spikes.jpg). A writes that flag the way the game leaves it (flag only, no dress), then wears a
-# mask through the game's own equip call, then the Lens flag again. A steps aside to face B; B watches A's puppet.
+# mask (`dress head show`: the game's equip call, then its head show call, as the pause menu; the equip alone left
+# it worn and undrawn, lane run 08:55), takes it off and sets the Lens flag again. A steps aside to face B.
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-lens-head (the lane: -Lane 1)
-# Pass, module with puppet-overlap 14389b1b (integrate-0118 55c94dc8 or later) on BOTH games:
+# Needs a module from puppet-overlap with `dress head show` (the commit adding this line or later) on BOTH games;
+# the fix itself is 14389b1b (integrate-0118 55c94dc8). Pass:
 # - B's log: no "P1 wears head 'Armor_GlassTruth'" anywhere; "P1 wears head 'Armor_Child_Mask_Keaton'" and
 #   "P1 shows head" after `mask`; "P1 takes off head 'Armor_Child_Mask_Keaton'" after `lens-again`.
 # - B's shots b-lens, b-lens-again: A's puppet with no spikes, shards or ground streak (and no glasses);
-#   b-mask: the Keaton mask on A's puppet's face. A's own shots: no glasses on A's Link at lens (flag only);
-#   at lens-again `dress head` runs the game's own equip call, so whatever A's Link shows there is the game's own.
+#   b-mask: the Keaton mask on A's puppet's face. A's own shots: the mask on A's face at mask (check this first:
+#   no mask on A = the step did not wear it, VOID), no mask and no glasses at lens / lens-again.
 # Before the fix (0.11.8 module) b-lens shows the spikes: the control, if a lane has the old dll.
-# Same check with OoT Character Select installed and A as a character (pick 114, Link (opening)): run it again
-# after A picks the character in the mod's menu (CHARACTER-SELECT kit); B's shots must show the same.
+# With OoT Character Select installed on both games: hs-lens-head-char (A as character 114, Link (opening)).
 #! switches LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1
 mark start
 give PouchData.Armor_Child_Mask_Keaton.StockNum
@@ -30,13 +31,15 @@ assign KeatonMask
 wait 30
 wear head Armor_Child_Mask_Keaton
 wait 30
-dress head             # the game's own equip call: the mask on A's Link
+dress head show        # the game's own equip call, then its head show call (as the pause menu): the mask on A's face
 wait 240
 mark mask
-wear head Armor_GlassTruth   # back to the Lens flag: the mask's link stays until the game takes it off
+wear head none         # the mask off: the game's own take-off for an empty head flag
 wait 30
 dress head
-wait 240
+wait 120
+wear head Armor_GlassTruth   # the Lens flag again, flag only (as the game leaves it)
+wait 120
 mark lens-again
 wait 120
 mark end

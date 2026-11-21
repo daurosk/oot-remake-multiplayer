@@ -255,6 +255,8 @@ class ParseTest(unittest.TestCase):
         self.assertEqual((steps[13].start, steps[13].name), ("boots", "HoverBoot"))
         self.assertEqual((steps[16].name, steps[16].start), ("Enemy_DungeonBoss_Gohma", "2"))
         self.assertEqual((steps[14].kind, steps[14].name), ("dress", "all"))
+        show = hs.parse("dress head show" + chr(10))[0]   # row 197: the equip, then the game's head show call
+        self.assertEqual((show.kind, show.name, show.start), ("dress", "head", "show"))
         self.assertEqual(steps[17].name, "Enemy_DungeonBoss_Gohma")
         self.assertIn("hit", hs.MODULE_ONLY)   # module steps, as coop_testinput.cpp reads them
         self.assertIn("stun", hs.MODULE_ONLY)
@@ -295,7 +297,7 @@ class ParseTest(unittest.TestCase):
         for text, want in (("wait", "line 1: want: wait TICKS"), ("\n\nhold Q 3", "line 3: unknown key Q"),
                            ("stick 2 0 5", "line 1: want: STICK"), ("goto 1 2 0.1", "radius at least 0.2"),
                            ("jump", "unknown command jump"), ("# only", "no steps"),
-                           ("wear cape X", "want: wear"), ("dress hat", "want: dress"), ("menu", "want: menu customize|close"),
+                           ("wear cape X", "want: wear"), ("dress hat", "want: dress"), ("dress shield show", "want: dress"), ("dress head show x", "want: dress"), ("menu", "want: menu customize|close"),
                            ("menu map", "want: menu customize|close"), ("hurt", "want: hurt QUARTER_HEARTS"),
                            ("hurt 0", "want: hurt QUARTER_HEARTS"), ("hurt 81", "want: hurt QUARTER_HEARTS"),
                            ("hurt 2x", "want: hurt QUARTER_HEARTS"), ("hit Enemy_DungeonBoss_Gohma", "want: hit ACTOR N"),

@@ -8,7 +8,7 @@ wait 480
 mark b-lens
 wait 300
 mark b-mask
-wait 280
+wait 300
 mark b-lens-again
 wait 120
 mark end

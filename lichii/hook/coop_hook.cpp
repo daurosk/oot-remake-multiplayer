@@ -591,6 +591,13 @@ public:
             const auto kind = CoopTestInput::DressNext();
             if (!kind) return std::nullopt;
             CoopPuppet::Call c;
+            if (*kind == CoopTestInput::kDressShowHead) {
+                // The head show call takes an owner whose +0x470 is the EquipmentUser: the holder's +0x200
+                // is that pointer (the puppet's own path reads the same two offsets), so owner = that slot - 0x470.
+                c.function = base_ + CoopPuppet::addr::kShowHeadArmor;
+                c.x[0] = holder + oc::kHolderEquipment - CoopPuppet::addr::kShowHeadArmorEu;
+                return c;
+            }
             c.function = base_ + oc::kEquipFromGameData;
             c.x[0] = equipment;
             c.x[1] = *kind;

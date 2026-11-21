@@ -318,9 +318,11 @@ def parse(text):
                 fail("want: wear weapon|shield|head|armor|boots|hand NAME")
             s.kind, s.start, s.name = "wear", w[1], w[2]
         elif cmd == "DRESS":
-            if len(w) != 2 or w[1].lower() not in WEAR_SLOTS + ("all",):
-                fail("want: dress weapon|shield|head|armor|boots|hand|all")
-            s.kind, s.name = "dress", w[1].lower()
+            # `dress head show`: the equip, then the game's head show call (as the pause menu; row 197's mask check)
+            show = len(w) == 3 and w[1].lower() == "head" and w[2].lower() == "show"
+            if (len(w) != 2 and not show) or w[1].lower() not in WEAR_SLOTS + ("all",):
+                fail("want: dress weapon|shield|head|armor|boots|hand|all, or dress head show")
+            s.kind, s.name, s.start = "dress", w[1].lower(), "show" if show else ""
         elif cmd == "ASSIGN":
             if len(w) != 2:
                 fail("want: assign ITEM")

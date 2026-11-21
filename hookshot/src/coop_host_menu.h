@@ -68,6 +68,10 @@ public:
     int HostStart(const HosCoopHostOptions* options);
     int Join(const HosCoopJoinOptions* options);
     int Answer(const char* code);
+    // The host's new join password while hosting (the pause menu's Session view): players who join from now on
+    // need it, players already in stay in; the invite code is made again. 1: taken (the host thread sets it at its
+    // next round; the status' password and message say when); 0: not hosting or not a password (message says why).
+    int SetPassword(const char* password);
     void Leave();
     void Status(HosCoopStatus* out) const;
 
@@ -79,6 +83,7 @@ private:
         std::string name, password, relay_via, relay_key, relay_room, relay_list;
         std::uint16_t port = 0;
         bool upnp = false, invite = false, pvp = false, approve_joins = false;
+        bool same_network_open = true;   // (players from a private address join without the password)
         std::uint8_t max_players = 0;  // HostMaxPlayers'
         std::uint32_t pose_upload_kbps = 0;
     };
@@ -111,6 +116,7 @@ private:
     std::mutex calls_;  // one start, join or leave at a time (the menu and the game's exit)
     mutable std::mutex mutex_;
     std::deque<std::string> answers_;  // pasted, for the host thread
+    std::optional<std::string> new_password_;  // the host's new join password, for the host thread
     HosCoopStatus status_{};
 };
 

@@ -37,7 +37,7 @@ index 426082d..8df6974 100644
  static volatile LONG pad_raw_now;   /* the gamepads' inputs at the last read, 1 << HOS_PAD_* */
  static uint64_t pad_after_menu;     /* (the pads' inputs the Insert menu had, 1 << HOS_PAD_*: each waits until let go) */
  static uint64_t pad_raw_game;       /* (pads_read: the last read's inputs without the menu's Back+Start chord) */
-@@ -1182,6 +1199,26 @@ static void npad_states(Ctx *c) {
+@@ -1185,6 +1202,26 @@ static void npad_states(Ctx *c) {
      uint64_t buttons = 0, taps = 0;
      int32_t stick[4] = {0};
      int connected = id == NPAD_NO1;
@@ -64,7 +64,7 @@ index 426082d..8df6974 100644
      {
          static int64_t last_read;
          static uint32_t seen_ids[16];
-@@ -1197,7 +1234,8 @@ static void npad_states(Ctx *c) {
+@@ -1200,7 +1237,8 @@ static void npad_states(Ctx *c) {
          for (int i = 0; i < nseen; i++) known |= seen_ids[i] == id;
          if (!known && nseen < 16) {
              seen_ids[nseen++] = id;
@@ -74,7 +74,7 @@ index 426082d..8df6974 100644
                      (unsigned long long)c->x[30]);
          }
      }
-@@ -1241,7 +1279,8 @@ static void npad_states(Ctx *c) {
+@@ -1244,7 +1282,8 @@ static void npad_states(Ctx *c) {
      uint64_t hos_coop_pad_filter(uint64_t buttons, int32_t stick[4]);   /* (oot-remake-multiplayer, coop_bridge.c: the title menu) */
      if (connected) buttons = hos_coop_pad_filter(buttons, stick);
      int64_t s = ++sampling;
@@ -84,7 +84,7 @@ index 426082d..8df6974 100644
      if (connected) __atomic_store_n(&hos_coop_pad, word, __ATOMIC_RELAXED);
      for (int i = 0; i < count; i++) {
          uint64_t e = out + (uint64_t)i * STATE_SIZE;
-@@ -1249,7 +1288,7 @@ static void npad_states(Ctx *c) {
+@@ -1252,7 +1291,7 @@ static void npad_states(Ctx *c) {
          G64(e) = (uint64_t)(s - i);
          G64(e + 8) = word;
          memcpy(GP(e + 16), stick, 16);
@@ -93,7 +93,7 @@ index 426082d..8df6974 100644
      }
      RET(count);
  }
-@@ -1259,14 +1298,27 @@ HLE(_ZN2nn3hid13GetNpadStatesEPNS0_16NpadJoyDualStateEiRKj) { npad_states(c); }
+@@ -1262,14 +1301,27 @@ HLE(_ZN2nn3hid13GetNpadStatesEPNS0_16NpadJoyDualStateEiRKj) { npad_states(c); }
  HLE(_ZN2nn3hid13GetNpadStatesEPNS0_16NpadJoyLeftStateEiRKj) { npad_states(c); }
  HLE(_ZN2nn3hid13GetNpadStatesEPNS0_17NpadJoyRightStateEiRKj) { npad_states(c); }
  /* GetNpadStyleSet(unsigned int const&) -> BitFlagSet<32, NpadStyleTag> */
@@ -123,7 +123,7 @@ index 426082d..8df6974 100644
  HLE(_ZN2nn3hid24SetSupportedNpadStyleSetENS_4util10BitFlagSetILi32ENS0_12NpadStyleTagEEE) {}
  HLE(_ZN2nn3hid18StartSixAxisSensorERKNS0_19SixAxisSensorHandleE) {}
  
-@@ -1460,3 +1512,30 @@ HLE(_ZN2nn3hid20GetTouchScreenStatesILm16EEEiPNS0_16TouchScreenStateIXT_EEEi) {
+@@ -1463,3 +1515,30 @@ HLE(_ZN2nn3hid20GetTouchScreenStatesILm16EEEiPNS0_16TouchScreenStateIXT_EEEi) {
      G64(ARG(0)) = (uint64_t)InterlockedIncrement64(&sampling);
      RET(1);
  }

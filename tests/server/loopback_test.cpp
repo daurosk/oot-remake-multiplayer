@@ -934,6 +934,47 @@ TEST_CASE("host service: a wrong password is refused") {
   CHECK(service.status().players == 0);
 }
 
+TEST_CASE("host service: the host changes the join password, new joins need it, players already in stay in") {
+  EnetLife enet;
+  std::vector<std::string> log;
+  HostService service(service_config(&log));
+  std::string why;
+  CHECK_FALSE(service.set_join_password("before-start", why));   // (not hosting yet)
+  CHECK(why == "not hosting");
+  REQUIRE(service.start(why));
+  Client in;
+  in.connect(service.port());
+  REQUIRE(pump_service(service, {&in}, [&] { return in.connected; }));
+  in.send(hello_from("Link"), kChannelSession);
+  REQUIRE(pump_service(service, {&in}, [&] { return in.find<Welcome>() != nullptr; }));
+
+  CHECK_FALSE(service.set_join_password("has a space", why));
+  CHECK(why.find("space") != std::string::npos);
+  CHECK_FALSE(service.set_join_password("", why));
+  CHECK_FALSE(service.set_join_password(std::string(200, 'x'), why));
+  REQUIRE(service.set_join_password("NEW-pass-42", why));
+  REQUIRE(service.session() != nullptr);
+  CHECK(service.session()->join_password() == "NEW-pass-42");
+  CHECK(said(log, "the join password changed: players who join from now on need the new one"));
+  for (const auto& line : log) CHECK(line.find("NEW-pass-42") == std::string::npos);   // (never in the log)
+
+  Client old_pass;   // (the old password: refused now)
+  old_pass.connect(service.port());
+  REQUIRE(pump_service(service, {&in, &old_pass}, [&] { return old_pass.connected; }));
+  old_pass.send(hello_from("Saria"), kChannelSession);
+  pump_service(service, {&in, &old_pass}, [&] { return old_pass.find<Refused>() != nullptr || old_pass.disconnected; });
+  CHECK(old_pass.find<Welcome>() == nullptr);
+
+  Client fresh;   // (the new one: let in)
+  fresh.password = "NEW-pass-42";
+  fresh.connect(service.port());
+  REQUIRE(pump_service(service, {&in, &fresh}, [&] { return fresh.connected; }));
+  fresh.send(hello_from("Mido"), kChannelSession);
+  REQUIRE(pump_service(service, {&in, &fresh}, [&] { return fresh.find<Welcome>() != nullptr; }));
+  CHECK_FALSE(in.disconnected);   // (the player who was in stays in)
+  CHECK(service.status().players == 2);
+}
+
 TEST_CASE("host service: 16 real clients join over ENet, a 17th is told the server is full") {
   EnetLife enet;
   HostServiceConfig config = service_config(nullptr);

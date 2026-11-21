@@ -55,6 +55,31 @@ inline std::string clamp_build_id(std::string_view id) {
   }
   return std::string(id);
 }
+// The co-op release a HELLO's build_id names (docs/crossplay.md): its first word that is a version, "v0.11.7" or
+// "0.11.7" (at least two numbers with dots), without a `git describe` tail ("-86-gab12cd34", "-dirty"); "" when it names
+// none (a launcher's own name, a commit alone, a test tool). Two games of different releases are not let play together.
+inline std::string coop_release(std::string_view id) {
+  std::size_t at = 0;
+  while (at < id.size()) {
+    const std::size_t end = std::min(id.find(' ', at), id.size());
+    std::string_view word = id.substr(at, end - at);
+    at = end + 1;
+    if (word.starts_with('v') || word.starts_with('V')) word.remove_prefix(1);
+    word = word.substr(0, word.find('-'));
+    std::size_t dots = 0;
+    bool ok = !word.empty() && word.front() != '.' && word.back() != '.';
+    for (std::size_t i = 0; ok && i < word.size(); ++i) {
+      if (word[i] == '.') {
+        ok = word[i - 1] != '.';
+        ++dots;
+      } else {
+        ok = word[i] >= '0' && word[i] <= '9';
+      }
+    }
+    if (ok && dots >= 1) return "v" + std::string(word);
+  }
+  return {};
+}
 inline constexpr std::size_t kMaxGameBuildIdChars = 32;
 inline constexpr std::size_t kMaxGameVersionChars = 16;
 inline constexpr std::size_t kMaxNicknameChars = 16;
@@ -281,6 +306,9 @@ enum class RefuseReason : std::uint8_t {
   // Protocol 13, host approval (docs/protocol.md "Host approval"): the host
   // did not let this player in (it said no, did not answer in time, or left).
   not_let_in = 9,
+  // The game runs another co-op release than the host's (coop_release of the HELLO's build_id against the session's
+  // first player's; a build that names none is let in). Older games show it as an unknown reason.
+  wrong_coop_version = 10,
   // Never sent: the game's own refusal of a server that did not encrypt
   // although the game has a join password (docs/protocol.md "Encrypted
   // traffic"), so nobody on the path can stand in for a no-password server.

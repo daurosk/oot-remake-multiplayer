@@ -362,6 +362,8 @@ bool MoveLink(Core::System& system, std::uint64_t main_base, const Vec& to);
 // Boss cutscenes for the area (coop_boss_scenes.h), present thread, for the hook:
 // - our game's PlayerStatus.MaxLife this frame (nothing: unread);
 void SetMaxLife(std::optional<std::int32_t> max_life);
+// Our Link's maximum was raised to this by another game's pickup (the shared MaxLife flag): no heart claim of ours.
+void NoteMaxLifeFromOthers(std::int32_t max_life);
 // - a maximum life to write in our game (the one shared heart container), once;
 std::optional<std::int32_t> TakeMaxLifeWrite();
 // - the most our own game may raise our maximum life to now (FlagWatcher::cap_max), or nothing;

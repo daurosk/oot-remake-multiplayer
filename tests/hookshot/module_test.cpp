@@ -1336,6 +1336,10 @@ TEST_CASE("hookshot: no patch logs a microphone, pad, player or server name outs
     CHECK(voice.find("+    while (named && i < MAX_STREAMS + 1 && sources[i].used) i++;") != std::string::npos);
     const std::string pads = ReadFile(kRepo / "hookshot" / "patches" / "0015-coop-pad-select.patch");
     CHECK(pads.find("+                    hos_log(\"hid: that controller is pad %d\", n);") != std::string::npos);
+    // A game with no keyboard or mouse leaves the camera to its pad, behind other windows too (Nucleus Co-op's Ctrl+H
+    // puts every game behind): the mouse camera's last angles are never put back over the right stick.
+    CHECK(pads.find("+        if (hos_input_keyboard_mode() == 2) hos_mouse_native_stick(1);") != std::string::npos);
+    CHECK(pads.find("+        hos_mouse_native_stick(stick[2] != 0 || stick[3] != 0);") == std::string::npos);
 }
 
 TEST_CASE("hookshot: the Insert menu files nothing with Longshot in a co-op build (patch 0027)") {

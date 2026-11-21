@@ -490,6 +490,50 @@ keyboard of its own. These layouts of `Common` can frame one (pane names, kind 1
 - A sixth button on the System page is cheaper: `PaSystemMenu_00` has `Pa_Button_00..04`, each a `PaCommonBtnThin_00`,
   and the graph's selectors on a button's name send an unknown name to their default branch. A co-op page could open
   from that button, as a screen of our own. (inferred)
+- System's five buttons are Save, Load, Options, Special Actions (its "New!" mark is `T_New_00`) and Title Screen, at
+  x -1330, y 338, 150, -140, -328, -516 (a gap after Load). `Pa_Button_03` alone has no override lists and an empty
+  properties list. A copy of it, `Pa_Button_05` at y -704, is a button the game's cursor reaches with Down from Title
+  Screen (Longshot Settings, 2026-11-19). (checked)
+- The pages screen's button list holds the buttons of every page made of `PaSystemMenu_00` (System's and our copies).
+  As a page is swapped for another, the focus goes to the shown button of the same name; with none shown, to the
+  nearest shown one. `f_8088ffc0(screen, button, 0)` on the pages screen moves the focus, but after it put the focus on
+  System's `Pa_Button_05`, neither B nor + closed the menu. (checked)
+- A text pane's drawn width is at +0x13c (its left at +0x134, -width/2 for centred text; +0x140 its height): the tabs'
+  words were 294.7 (Collection), 312.9, 159.0, 201.2 and 325.3 (Multiplayer) at the strip's scale. The game's tabs
+  keep a place written to their own x (+0x6c) in `N_MenuChange_00`. (checked)
+- An A that reaches the game with its cursor on one of our System buttons (`Pa_Button_05`, `Pa_Button_06`) leaves the
+  System page dead to A, B, + and L/R (only Up and Down still move). After our page hides, System's cursor takes a few
+  reads to come back onto our Multiplayer button: a focus read in that time still names the page's row (the module's
+  way back to the title pressed A then, in a session, and froze System; 2026-11-20). It now waits 450 ms and for
+  Title Screen seen twice 150 ms apart. (run)
+- Every page made of `PaSystemMenu_00` has the pack's list rows `Pa_List_00..07` (one layout: our Multiplayer page uses
+  `00..06` for the game browser and the details, and `07` for Settings and look's seventh row). A list row is a part:
+  moved as the pages' slide moves pages, its own x at +0x6c then `kPaneMoved` (main+0x152af50). (run)
+
+### The menu's 3D model (the pouch actor)
+
+- The pause menu draws a 3D model through its own camera (`3DUICamera`): Link on Equipment, the item picked on
+  Collection and Items, none on System. The menu manager's object at `+0x4e8` keeps it. (checked)
+- The graph `Sequence/PlusMenu.module.ainb` sets it at each page change with `SeqOneShotSetPouchActorDisplayType`
+  (vtable `0x84bdf3c8`; slot 28 `f_80a011e0` binds `DisplayType`; slot 39 `f_80e01a90` runs
+  `f_80e01af0(*(mgr+0x4e8), type)`). `f_80e01af0` keeps the type at `+0x228` and shows one slot actor with
+  `f_80d2a3c0(object, on, slot)` (four slots; type 0 shows slot 0, Link; type 1 slot 1). Types seen in a run: 0
+  Equipment, 1 Collection and Items, 4 System. (checked, run)
+- The slots: `object + 0x28 + slot * 0x20`, each a link: `+0x10` its holder, `+0x18` the id; the holder's `+0x48` must
+  equal the id, and `+0x40` is the actor (the same link shape as co-op's puppet handles). (checked)
+- Asked for 0 on the System page (2026-11-20), Link stands on System as on Equipment, in the colours CoopLook's preview
+  painted. The actor's place is `+0x31c` (with `+0x358`, the place asked of an actor with no physics body), its turn
+  rows `+0x328` (and `+0x364`), as on any actor; written each update, they hold. On Equipment he stands about
+  (0.08, -0.2, 0.02): x right, z toward the camera, which sits near his head's height. (run)
+- The scene has a floor at his feet that hides what goes below it: lowered by 0.13 his soles went, and standing further
+  back hides more of him (z -1.7: his boots; z -2.2: his legs to the knee). (run)
+- Child Link stands higher on Equipment (y about 0.30, adult about -0.2) and the menu's camera is closer to him: the
+  adult's place below is outside the picture. Settings and look tells them apart by that y (above 0.05: child) and
+  stands child Link at (1.25, as he was, -0.35), set with a tester. (run)
+- Settings and look (`coop_pause_tab_module.cpp`, `MenuModel`) asks for 0 while Customize Link shows, stands him at
+  (2.30, as he was, -1.3), and puts his place, turn and System's type 4 back when it goes. Other ideas from these
+  names, not followed: `ExecuteMenuActorRotate` (the Equipment page's own turn), `QueryGetMenuActorDisplayType`,
+  `game__ui__MenuActorParam`, `ChangeToUIModelScene`. (notes)
 
 ### The tab strip
 

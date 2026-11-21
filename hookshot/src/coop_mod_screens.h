@@ -66,6 +66,9 @@ std::uint64_t FocusedButton(const Reader& read, std::uint64_t screen);
 // A button's pane name ("" when it cannot be read or is not printable).
 std::string ButtonName(const Reader& read, std::uint64_t button);
 
+// A button's focus state byte as FocusedButton reads it (0: none; 4 and 5 are not focus), for traces.
+std::uint8_t FocusState(const Reader& read, std::uint64_t button);
+
 // Whether a button takes a choice now (its flags have kChoosable). False for no button or one that cannot be read.
 bool Choosable(const Reader& read, std::uint64_t button);
 

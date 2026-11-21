@@ -146,15 +146,17 @@ if [[ -d $(dirname "$apps") && -z ${OOT_COOP_NO_SHORTCUT-} ]] &&
 fi
 
 # --- 4: the game --------------------------------------------------------------------------------
-# Your own Link's tunic files follow your colour on every start, as on Windows (kit-paths.ps1
-# Set-KitSelfTunic; colour-agree): tools/puppet_pack/self_tunic.py reads the colour as the module does.
+# Your own Link's tunic files on every start, as on Windows (kit-paths.ps1 Set-KitSelfTunic -Painted;
+# colour-agree): tools/puppet_pack/self_tunic.py puts green's in when the pack has coop_look/green.bin (the
+# module paints your exact colour on them), else your colour's, read as the module reads it.
 pack=$GAME/mods/contents/0400486024DEC000/coop-puppet
 py=$DATA/builder/image/usr/python/bin/python3
 [[ -x $py ]] || py=$(command -v python3 || true)
 if [[ -f $pack/coop_puppet.json && -n $py && -f $DATA/tools/puppet_pack/self_tunic.py ]]; then
     own=$("$py" -I -B "$DATA/tools/puppet_pack/self_tunic.py" --pack "$pack" --options "$DATA/coop-options.ini" \
         --coop-ini "$GAME/coop.ini" 2>/dev/null) || own=''
-    [[ -n $own ]] && say "Your Link: the $own tunic (coop-options.ini color)."
+    [[ $own == green ]] && say "Your Link: the green tunic files; your coop-options.ini color is painted on in the game."
+    [[ -n $own && $own != green ]] && say "Your Link: the $own tunic (coop-options.ini color)."
 fi
 # #48: one size table for the game (a seed from OOTRR's website has its own, without the puppet pack's entries):
 # tools/puppet_pack/merge_tables.py, as the Windows kit's Invoke-KitSizeTableMerge. Never stops the start.

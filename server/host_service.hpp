@@ -128,6 +128,12 @@ class HostService {
   // (Navi) New Game+: the hosting game's level (Session::set_ngplus). Between
   // service() calls, on the same thread.
   void set_ngplus(std::uint8_t level);
+  // The host changes the join password while hosting: new joins need the new
+  // one (players already in stay in), answer codes and punches are signed with
+  // it, and the invite code is made again with it. False (and `error` says why)
+  // when not hosting or the password cannot be one. Between service() calls,
+  // on the same thread.
+  bool set_join_password(const std::string& password, std::string& error);
 
  private:
   std::uint64_t now_ms() const;
@@ -148,6 +154,7 @@ class HostService {
   bool stopped_ = false;
   bool port_failed_ = false;
   bool invite_shown_ = false;
+  std::optional<nat::Addr> invite_where_;  // the address the invite code holds (a new password: a new code)
   std::uint64_t shown_resets_ = 0;
   std::uint64_t shown_limited_ = 0;
   std::uint64_t shown_enemies_ = 0;

@@ -2387,6 +2387,16 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                               Distance(d.position, s->position) < kClaimDistance;
                    })) {
             continue;  // the copy of another game's hatchling, not yet bound
+        } else if (std::any_of(decided_.begin(), decided_.end(), [&](const auto& e) {
+                       const Decided& d = e.second;
+                       return d.address == 0 && !d.removed && d.name == s->name &&
+                              now_us - d.got_us < kCreateWaitUs && Distance(d.position, s->position) < kClaimDistance;
+                   })) {
+            // The copy of an enemy another game announced (a Gold Skulltula, a late encounter), made here but not yet
+            // bound to its id: taken as a new one of ours, it was shared under a scene id, its death never reached its
+            // copy's entry, and the director made it again after each kill (a Gold Skulltula three times, four
+            // players, 2026-11-20).
+            continue;
         } else {
             o.id = {proto::ObjectKind::placed, 0, SceneSpawnId(scene_, s->name, order_[s->name]++)};
             if (IsHatchling(s->name) && CopyHatch(self, *s, now_us)) {
@@ -3136,6 +3146,11 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             if (known) {
                 continue;
             }
+            // A Gold Skulltula (or any announced one-time placement) this save has already taken: never copied (its
+            // owner's game may still list it; a copy was made here though its token was taken, 2026-11-20).
+            if (!made && Taken(spawn->id.value)) {
+                continue;
+            }
             // Report 99 re-review: a new OBJECT_SPAWN for an enemy whose copy
             // was killed here is its respawn (its owner's room loaded again;
             // the server resends nothing to a player already in the scene and
@@ -3389,7 +3404,15 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 o->hit_seq_in = sample->state.hit->seq;
                 record = sample->state.hit->record;
             }
-            if (life < have) {
+            if (life < have && !record && IsBossOrPart(o->name) && o->boss_stand_in_life != 0 &&
+                life >= o->boss_stand_in_life) {
+                // A boss copy, no hit record, and the stand-in hit for this life of the owner's was replayed once
+                // already: not again. Her game refuses it (its weak point is not hit), so every later sample asked
+                // again: a copy of Gohma took about 690 refused hits in one fight, reacting to each, its life staying
+                // 21 (four players, 2026-11-20). One replay per drop of the owner's life, as the copy shows the hit.
+                o->fight_until = now_us + kFightUs;
+            } else if (life < have) {
+                if (!record && IsBossOrPart(o->name)) o->boss_stand_in_life = life;
                 // Who hit it is not sent: its owner is the best guess. The hit is the owner's game's own (record);
                 // without one (no new seq: an older game, or a fall with no hit) the stand-in sword hit.
                 Lower(*o, life, now_us, writes, sample->player_number, std::nullopt, record);

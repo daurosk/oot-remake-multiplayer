@@ -88,6 +88,10 @@ bool SoundName(const char* name) {
     return true;
 }
 
+std::uint8_t FocusState(const Reader& read, std::uint64_t button) {
+    return button != 0 ? Peek<std::uint8_t>(read, button + kButtonState) : 0;
+}
+
 bool Choosable(const Reader& read, std::uint64_t button) {
     std::uint32_t flags = 0;
     return button != 0 && read(button + kButtonFlags, &flags, sizeof flags) && (flags & kChoosable) == kChoosable;

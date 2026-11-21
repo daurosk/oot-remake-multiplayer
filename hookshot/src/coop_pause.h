@@ -52,6 +52,19 @@ bool KeysTaken();
 // The menu opened on the tab at this page (the title's rows, Minus at the
 // title): Host hosts at once, Join pastes a code already copied.
 void Open(CoopPauseMenu::Page page);
+// The same pages on the title's own rows (coop_title.cpp, its Host, Join and Co-op Settings): the menu opened on the
+// page without the overlay; the title shows NativeView's rows on its buttons and sends its presses through
+// NativeInput (HOS_COOP_MENU_* events: they act as the overlay's, Settle included); Key and Char type into a field as
+// the overlay's. CloseNative when the title leaves the page (its Back).
+void OpenNative(CoopPauseMenu::Page page);
+bool NativeInput(int event, int arg = 0, int arg2 = 0);
+CoopPauseMenu::View NativeView();
+bool NativeOpen();
+CoopPauseMenu::Page NativePage();   // (the page the menu shows now)
+void CloseNative();
+// Another page of co-op's menu while it shows natively (the pause page's Settings and look): the page only, no files
+// read again (OpenNative read them as it opened).
+void NativeGo(CoopPauseMenu::Page page);
 
 // The pause menu's Multiplayer page (coop_pause_tab.h): its copies, done on the page itself (co-op's menu stays shut): the host's room name (else its relay join code,
 // else its invite code), a waiting guest's answer code, the host's same-network or VPN join line (as the menu's rows).
@@ -71,6 +84,8 @@ void HostNow();
 void LeaveNow();
 // Co-op came with the game's start (Host.bat, Join.bat, coop.ini): the page's rows open the menu instead.
 bool ByLauncher();
+// The tab's own Host started co-op (hosting, or still starting to).
+bool HostStarted();
 // The Multiplayer page's Join view: joining with the code (or address line) on the clipboard, as the Join page's
 // paste then Join; and the last game again ("Join <host> again", its code kept in coop.ini). Refused (co-op on, the
 // code not readable) or failed: PageSays why.
@@ -90,6 +105,15 @@ bool ListRoom();
 // The kit's relay ("host" or "host:port", coop-options.ini relay), "" none: the files' setting.
 std::string Relay();
 void SetListRoom(bool on);
+// The page's own typing (the details' Router line, the browser's online list): the port when hosting, saved at once
+// (coop-options.ini server_port) and, while hosting, hosting again on it; the relay's address (relay), saved at once.
+// False when refused (not a port, not a relay address): the page's note says why.
+bool SetHostPort(int port);
+bool SetRelay(const std::string& relay);
+// This game's room name when it hosts (coop-options.ini relay_room; "" none: a join code), and set from the pause
+// menu's Multiplayer page (saved; the next Host uses it). False: not a room name (3 to 24 letters, digits, - or _).
+std::string RoomName();
+bool SetRoomName(const std::string& name);
 // The page's "Games on this network": join the game at that address and port, with `password` (the Join view's,
 // "" none). Refused or failed: PageSays why.
 void JoinLanNow(const std::string& address, std::uint16_t port, const std::string& password);

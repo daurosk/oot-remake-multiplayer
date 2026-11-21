@@ -488,8 +488,11 @@ bool StallJudged(std::string_view animation, std::optional<std::int32_t> life) {
     // whatever plays, as a Bongo Bongo hand down until it grows back) and a cutscene's animation (an event of
     // another game's, or one ours plays before SetEvent sees it) are never a held move: re-choosing there would
     // break the death or the cut (boss-die-0116).
+    // Nor the sleep a boss waits in for its intro (Gohma's 'Sleep' before anyone came in): re-chosen twice there in a
+    // four-player run (2026-11-20), as if stuck. (Its ceiling wait, Pre_Battle_Ceiling_Wait, stays judged: row 149.)
     namespace anim = coop::protocol::anim;
-    return !animation.empty() && life && *life > 0 && !anim::IsDeath(animation) && !anim::IsEvent(animation);
+    return !animation.empty() && animation != "Sleep" && life && *life > 0 && !anim::IsDeath(animation) &&
+           !anim::IsEvent(animation);
 }
 
 bool Table::OwnTime(const Entry& e) const {

@@ -184,3 +184,12 @@ TEST_CASE("command line: --approve-joins, off by default (docs/protocol.md, Host
   CHECK(line->port == 4000);
   CHECK(std::string(usage()).find("--approve-joins") != std::string::npos);
 }
+
+TEST_CASE("command line: --same-network-open, off by default (docs/protocol.md, Same network)") {
+  std::string error;
+  CHECK_FALSE(parse_command_line({}, error)->same_network_open);
+  auto line = parse_command_line({"--same-network-open"}, error);
+  REQUIRE(line.has_value());
+  CHECK(line->same_network_open);
+  CHECK(std::string(usage()).find("--same-network-open") != std::string::npos);
+}

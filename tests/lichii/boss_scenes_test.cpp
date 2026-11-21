@@ -565,6 +565,25 @@ TEST_CASE("boss scenes: one heart container for all, never two") {
         l.max_life = max;
         return l;
     };
+    SUBCASE("the players who did not take it get their hearts filled, once, the one who took it does not") {
+        const proto::BossHeart given{1, kGohma, true, 16};
+        a.Receive(given);
+        c.Receive(given);
+        CHECK_FALSE(a.Tick(with(1, 16), {}, 2'000'000).refill);
+        CHECK(c.Tick(with(3, 12), {}, 2'000'000).refill);
+        CHECK_FALSE(c.Tick(with(3, 16), {}, 2'100'000).refill);   // (once)
+        c.Receive(given);                                         // (the answer again: no second refill)
+        CHECK_FALSE(c.Tick(with(3, 16), {}, 2'200'000).refill);
+    }
+    SUBCASE("a maximum another game's pickup raised (the shared MaxLife flag) sends no claim") {
+        // Four players, 2026-11-20: every game claimed when the flag raised its maximum, and the first claim to reach
+        // the server named the wrong player.
+        Local l = with(2, 16);
+        l.max_life_from_others = true;
+        CHECK(b.Tick(l, {}, 2'000'000).claims.empty());
+        CHECK(b.Tick(with(2, 16), {}, 2'100'000).claims.empty());   // (once: not claimed later either)
+        CHECK(a.Tick(with(1, 16), {}, 2'000'000).claims.size() == 1);   // the one who took it still claims
+    }
     SUBCASE("A and B grab it together: the server's one answer, one +1 each, C too") {
         Actions oa = a.Tick(with(1, 16), {}, 2'000'000);
         Actions ob = b.Tick(with(2, 16), {}, 2'000'000);

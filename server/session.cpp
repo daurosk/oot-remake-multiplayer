@@ -247,10 +247,21 @@ void Session::on_join_proof(ConnectionId id, Connection& c, const JoinProof& pro
   std::shared_ptr<const KeyPair> key_pair = std::move(c.key_pair);
   // Bound to both key shares: a proof relayed by someone who swapped them
   // (to sit in the middle) does not match.
-  const bool right =
+  bool right =
       key_pair != nullptr && hello.key_share &&
       same_proof(proof.proof, join_proof(config_.join_password, c.nonce, *hello.key_share,
                                          key_pair->share()));
+  // The same network without the password (SessionConfig::same_network_open):
+  // the same-network key, from a private address only.
+  std::string_view password = config_.join_password;
+  if (!right && config_.same_network_open && key_pair != nullptr && hello.key_share && c.address &&
+      is_same_network(ipv4_of(*c.address)) &&
+      same_proof(proof.proof, join_proof(protocol::kSameNetworkPassword, c.nonce, *hello.key_share,
+                                         key_pair->share()))) {
+    right = true;
+    password = protocol::kSameNetworkPassword;
+    ++stats_.same_network_joins;
+  }
   c.nonce = {};  // used once: a second proof on this connection finds no nonce to match
   std::vector<std::uint8_t> hello_packet = std::move(c.hello_packet);
   std::vector<std::uint8_t> challenge_packet = std::move(c.challenge_packet);
@@ -265,7 +276,7 @@ void Session::on_join_proof(ConnectionId id, Connection& c, const JoinProof& pro
   }
   // The keys for this connection: from here on, all of it is sealed.
   std::optional<TrafficKeys> keys =
-      derive_traffic_keys(*key_pair, *hello.key_share, config_.join_password, hello_packet,
+      derive_traffic_keys(*key_pair, *hello.key_share, password, hello_packet,
                           challenge_packet, /*is_server=*/true);
   if (!keys) {
     ++stats_.no_key_share;
@@ -322,6 +333,15 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
     refuse(id, c, *reason, now_us,
            *reason == RefuseReason::wrong_protocol_version ? version_note(hello.protocol_version)
                                                            : std::string());
+    return;
+  }
+  // Another co-op release than the host's: refused, so an older and a newer kit never play together (what the
+  // releases share may differ though the protocol did not change). A build that names no release is let in.
+  if (const std::string theirs = coop_release(hello.build_id); player_count() != 0 && !theirs.empty() &&
+                                                                 !session_release_.empty() && theirs != session_release_) {
+    refuse(id, c, RefuseReason::wrong_coop_version, now_us,
+           "the game runs co-op " + theirs + ", the host " + session_release_ +
+               ": the older kit runs Update.bat");
     return;
   }
   if (blank_name(hello.nickname) || hidden_characters(hello.nickname)) {
@@ -427,7 +447,10 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   c.voice_budget = 2.0 * config_.voice_per_second;
   c.byte_budget = 2.0 * config_.bytes_per_second;
   c.budget_time = now_us;
-  if (player_count() == 1) session_game_build_ = hello.game_build_id;
+  if (player_count() == 1) {
+    session_game_build_ = hello.game_build_id;
+    session_release_ = coop_release(hello.build_id);
+  }
 
   send(id, kChannelSession, welcome);
   c.rejoin_claim.reset();
@@ -850,6 +873,10 @@ Difficulty Session::difficulty() const {
 }
 
 // (Navi) New Game+: the host's level, told to everyone in the session at once.
+void Session::set_join_password(std::string password) {
+  config_.join_password = std::move(password);
+}
+
 void Session::set_ngplus(std::uint8_t level) {
   if (level > kMaxNgPlus) level = kMaxNgPlus;
   if (level == ngplus_) return;
@@ -2887,6 +2914,11 @@ std::uint32_t ipv4_of(std::uint32_t enet_host) {
          std::uint32_t{b[3]};
 }
 
+bool is_same_network(std::uint32_t ipv4) {
+  const std::uint32_t a = ipv4 >> 24, b = (ipv4 >> 16) & 255u;
+  return a == 10 || (a == 172 && (b & 0xF0u) == 16) || (a == 192 && b == 168) || (a == 169 && b == 254);
+}
+
 void Session::refuse(ConnectionId id, Connection& c, RefuseReason reason,
                      std::uint64_t now_us, const std::string& why) {
   send(id, kChannelSession, Refused{reason});
@@ -2946,6 +2978,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
       (!why.empty() ? " (" + why + ")" : reason == LeaveReason::timed_out ? " (timed out)" : ""));
   if (player_count() == 0) {
     session_game_build_.clear();
+    session_release_.clear();
     host_.reset();
     pvp_ = config_.pvp;
     pvp_set_by_ = 0;

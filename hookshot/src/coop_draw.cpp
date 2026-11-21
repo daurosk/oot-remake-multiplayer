@@ -21,12 +21,13 @@ constexpr float kChatWidth = 520.0f;
 // The co-op window's sizes for the game look, in the game's 720-line picture.
 constexpr float kGameHeight = 720.0f;
 constexpr float kHudLeft = 40.0f;
-constexpr float kHudNamePx = 25.0f;
-constexpr float kHudPlacePx = 19.0f;
-constexpr float kHudGap = 16.0f;
+constexpr float kHudNamePx = 21.0f;   // (25, 19, 16 and hearts 38 before: a little big, a tester 2026-11-20)
+constexpr float kHudPlacePx = 16.0f;
+constexpr float kHudGap = 12.0f;
+constexpr float kCompactPx = 18.0f;    // a compact row's name (CoopHudLayout::ListSize)
 // The heart pictures are 96 x 96 with the heart about half as wide in the
 // middle: drawn kHeartPx big, kHeartStep apart (the co-op window's HudLayer).
-constexpr float kHeartPx = 38.0f;
+constexpr float kHeartPx = 32.0f;
 constexpr float kHeartStep = 0.55f;
 constexpr float kChatGamePx = 23.0f;
 constexpr float kListGamePx = 24.0f;
@@ -528,8 +529,9 @@ float ChatTopGame(const HosCoopDraw& d, const Scene& s, const Look& look) {
     return top;
 }
 
-// One HUD block's height, its gap under it included (as DrawHud steps).
-float BlockHeight(const HudBlock& b, float u) {
+// One HUD block's height, its gap under it included (as DrawHud steps). A compact row: one line.
+float BlockHeight(const HudBlock& b, float u, bool compact = false) {
+    if (compact) return kCompactPx * u * 1.35f;
     float h = kHudNamePx * u + 2 * u;
     if (!b.hearts.empty()) {
         const int rows = (static_cast<int>(b.hearts.size()) + CoopHudHearts::kPerRow - 1) / CoopHudHearts::kPerRow;
@@ -549,7 +551,7 @@ float BlockHeight(const HudBlock& b, float u) {
 // (`hud_bottom`; none: the fixed top), and blocks that would run into the
 // chat at `floor` are left out, a "+N" line saying how many.
 void DrawHud(const HosCoopDraw& d, const std::vector<HudBlock>& blocks, CoopVoice::Icon own_voice, const Look& look,
-             std::optional<double> hud_bottom, float floor) {
+             std::optional<double> hud_bottom, float floor, bool compact) {
     const Pic p = Picture(d);
     const float u = p.u;
     const float x = p.left + kHudLeft * u;
@@ -568,9 +570,47 @@ void DrawHud(const HosCoopDraw& d, const std::vector<HudBlock>& blocks, CoopVoic
     std::vector<double> heights;
     heights.reserve(blocks.size());
     for (const auto& b : blocks) {
-        heights.push_back(BlockHeight(b, u));
+        heights.push_back(BlockHeight(b, u, compact));
     }
-    const std::size_t shown = CoopHudLayout::BlocksThatFit(y, heights, floor, name_px);
+    const std::size_t shown = std::min(CoopHudLayout::BlocksThatFit(y, heights, floor, name_px), CoopHudLayout::kMostRows);
+    if (compact) {   // one row each: their colour, the name, a bar of their hearts and the count ("5/16")
+        const float px = kCompactPx * u;
+        float name_w = 0;
+        Font(d, look.medium);
+        for (std::size_t i = 0; i < shown; ++i) {
+            name_w = std::max(name_w, static_cast<float>(d.text_width(d.user, px, blocks[i].name.c_str())));
+        }
+        for (std::size_t i = 0; i < shown; ++i) {
+            const auto& b = blocks[i];
+            const int a = b.dim ? 150 : 255;
+            const std::uint32_t c = b.colour;
+            const float m = px * 0.62f;   // the marker
+            d.rect(d.user, x, y + (px - m) * 0.5f, x + m, y + (px + m) * 0.5f,
+                   Rgba(static_cast<int>((c >> 16) & 0xFF), static_cast<int>((c >> 8) & 0xFF), static_cast<int>(c & 0xFF), a),
+                   m * 0.2f);
+            const float nx = x + m + px * 0.35f;
+            GameText(d, nx, y, px, Rgba(255, 255, 255, a), b.name.c_str());
+            DrawVoiceIcon(d, nx + name_w + px * 0.15f, y, px, b.voice, a);
+            if (b.life >= 0 && b.max > 0) {
+                const float bx = nx + name_w + px * 1.3f, bw = px * 3.6f, bh = px * 0.42f, by = y + (px - bh) * 0.5f;
+                const float f = std::clamp(static_cast<float>(b.life) / static_cast<float>(b.max), 0.0f, 1.0f);
+                d.rect(d.user, bx, by, bx + bw, by + bh, Rgba(0, 0, 0, a * 150 / 255), bh * 0.3f);
+                const std::uint32_t fill = f > 0.5f ? Rgba(90, 210, 90, a) : f > 0.25f ? Rgba(235, 200, 60, a)
+                                                                                     : Rgba(230, 70, 60, a);
+                if (f > 0) d.rect(d.user, bx, by, bx + bw * f, by + bh, fill, bh * 0.3f);
+                Font(d, look.regular);
+                const std::string count = std::to_string((b.life + 3) / 4) + "/" + std::to_string(b.max / 4);
+                GameText(d, bx + bw + px * 0.3f, y, px * 0.85f, Rgba(235, 235, 235, a), count.c_str());
+                Font(d, look.medium);
+            }
+            y += heights[i];
+        }
+        if (shown < blocks.size()) {
+            const std::string more = "+" + std::to_string(blocks.size() - shown) + " " + CoopI18n::Tr("elsewhere");
+            GameText(d, x, y, px, Rgba(225, 225, 225, 255), more.c_str());
+        }
+        return;
+    }
     for (std::size_t i = 0; i < shown; ++i) {
         const auto& b = blocks[i];
         const int a = b.dim ? 150 : 255;
@@ -933,7 +973,7 @@ void Draw(const HosCoopDraw& d, const Scene& s, const Look& look) {
         DrawMap(d, *s.map, game);
     }
     if (game) {
-        DrawHud(d, s.hud, s.own_voice, *game, s.game_hud_bottom, ChatTopGame(d, s, *game));
+        DrawHud(d, s.hud, s.own_voice, *game, s.game_hud_bottom, ChatTopGame(d, s, *game), s.hud_compact);
     }
     if (s.panel) {
         Font(d, 0);

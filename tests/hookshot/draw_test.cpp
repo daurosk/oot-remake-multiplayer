@@ -317,8 +317,8 @@ TEST_CASE("hookshot draw: the other players under your hearts in the game look o
     CHECK(hearts[1].text == "15");
     CHECK(hearts[2].text == "13");
     CHECK(hearts[3].text == "11");
-    CHECK(hearts[0].px == doctest::Approx(38.0f));
-    CHECK(hearts[1].x - hearts[0].x == doctest::Approx(38.0f * 0.55f));
+    CHECK(hearts[0].px == doctest::Approx(32.0f));
+    CHECK(hearts[1].x - hearts[0].x == doctest::Approx(32.0f * 0.55f));
     CHECK(hearts[0].rgba == CoopDraw::Rgba(255, 255, 255, 255));
     CHECK(c.Of("rect").empty());
     CHECK(c.font == 0);  // Hookshot's own font again after drawing

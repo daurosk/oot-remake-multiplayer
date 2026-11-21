@@ -18,7 +18,12 @@ A game that joins is refused only for these (`server/session.cpp` `admit`, `chec
 - **The join password**, and the usual limits: a full server, a name in use or a bad one (blank, or with hidden
   characters), a ban, and a traffic key share the server cannot use (refused as a protocol mismatch).
 
-What the game runs the module in (its HELLO's `build_id`) is never a reason to refuse it. Each build names itself there
+- **The co-op release** its HELLO's `build_id` names (`coop_release` in `messages.hpp`: the first word that is a
+  version, `v0.11.7` from `coop hookshot v0.11.7-86-gab12cd34`): the session's first player decides it, and a game of
+  another release is refused (`REFUSED` 10), older or newer, so two kits never play together on different releases.
+  Builds of one release from different commits are let in, and so is a `build_id` that names no release.
+
+Otherwise what the game runs the module in (its HELLO's `build_id`) is never a reason to refuse it. Each build names itself there
 (`lichii/hook/coop_hook.cpp` `kBuildId`): the Hookshot/Longshot module `coop hookshot <version>`, the Fritchii emulator
 `coop fritchii-v5 <version>` (before, every build sent the same `lichii fritchii-v5 coop`). It is cut to HELLO's limit of
 64 characters (`kMaxBuildIdChars`, `clamp_build_id` in `messages.hpp`), at a character, so a long version text (a long

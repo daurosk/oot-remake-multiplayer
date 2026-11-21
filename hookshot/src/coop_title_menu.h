@@ -54,6 +54,15 @@ inline constexpr std::size_t kMaxNameChars = 16;   // coop_settings.h
 inline constexpr std::size_t kMaxPasswordBytes = 128;
 inline constexpr int kMinPlayers = 2, kMaxPlayers = 16;   // a session's size (protocol 11: up to 16)
 inline constexpr std::uint16_t kDefaultPort = 27510;
+// The relay a kit uses when coop-options.ini names none, or an empty one (relay = ...): the co-op project's own, run by
+// its maintainer (given 2026-11-20). It cannot be removed: clearing the Relay row (Co-op Settings) goes back to it. A
+// player may use another (a relay line of their own, or the row typed).
+inline constexpr const char* kDefaultRelay = "159.54.182.85:27530";
+inline constexpr const char* kDefaultRelayName = "Squadala relay";   // (what the Relay row shows for it)
+// A room name the relay takes: 3 to 24 letters, digits, - or _ ("": none).
+bool RoomNameOk(std::string_view room);
+// A relay line: host[:port], no spaces, at most 128 bytes ("": the kit's default).
+bool RelayOk(std::string_view relay);
 
 // A name the server takes: 1 to 16 characters (code points), no control
 // characters. Spaces at the ends do not count.
@@ -74,7 +83,10 @@ struct Options {
     bool show_players = false;     // LICHII_COOP_SHOW_PLAYERS (the list always shown)
     bool pvp = false;              // pvp (the host's)
     bool approve_joins = false;    // approve_joins (the host's: each new player waits for /allow or /deny); read only
+    bool same_network_password = false;   // same_network_password (the host's: on, players on this network need the
+                                          // join password too; off, the default, they join without it)
     bool auto_rejoin = false;      // auto_rejoin (join the last friend's game again by itself: coop_auto_rejoin.h)
+    bool original_game = false;    // original_game (from the next start: the game as it came, coop_original.h)
     bool list_room = false;        // list_room (hosting with a relay room: the room on the relay's public list)
     bool upnp = true;              // upnp (the host's router forward)
     std::string password;          // server_password ("": a new one each session)
@@ -87,10 +99,12 @@ struct Options {
     std::string voice_key = "V";   // LICHII_COOP_VOICE_KEY as the Voice mode row names it (read only)
     std::string voice_mic;         // LICHII_COOP_VOICE_MIC: the voice's microphone by its name ("": the game's)
     bool map_players = true;       // LICHII_COOP_MAP (0: no other players on the minimap and the pause map)
+    std::string hud_size = "auto"; // LICHII_COOP_HUD_SIZE: the player list on the left (auto, full, compact, off)
     bool map_names = true;         // LICHII_COOP_MAP_NAMES (0: their icons without names)
-    std::string relay;             // relay (the host's: host through that relay, Host.bat's too; read only here)
+    std::string relay = kDefaultRelay;   // relay (host and join rooms through it, Host.bat's too; kDefaultRelay without a
+                                   // line; Co-op Settings' Relay row writes it)
     std::string relay_key;         // relay_key (that relay's host key; read only)
-    std::string relay_room;        // relay_room (a room name on the relay, issue 261; read only)
+    std::string relay_room;        // relay_room (a room name on the relay, issue 261; Co-op Settings' Room name)
     std::string list_name;         // list_name (the name list_room shows the room as; "": the room name; read only)
 
     // From the two files' texts (a missing file: "").

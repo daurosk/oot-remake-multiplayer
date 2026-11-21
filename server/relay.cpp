@@ -404,7 +404,8 @@ std::vector<Outgoing> Relay::tick(std::uint64_t now_ms) {
     }
     it = next;
   }
-  // (the room list's asks have a window of their own: a forged sender's addresses must not pile up either)
+  // (the room list's asks and listings have a window of their own: a forged sender's addresses must not pile up
+  // either)
   for (auto [table, window] : {std::pair{&lookups_, config_.window_ms}, std::pair{&registers_, config_.window_ms},
                                std::pair{&new_listings_, config_.window_ms}, std::pair{&lists_, config_.list_window_ms},
                                std::pair{&listings_, config_.list_window_ms}}) {

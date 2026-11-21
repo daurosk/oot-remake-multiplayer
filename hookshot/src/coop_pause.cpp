@@ -29,10 +29,15 @@
 #include "coop_look.h"
 #include "coop_look_view.h"
 #include "coop_mods_tab.h"
+#include "coop_original.h"
 #include "coop_pause_files.h"
+#include "coop_pause_tab.h"
+#include "coop_room_list.h"
+#include "coop_runtime.h"
 #include "coop_ngplus.h"
 #include "coop_save.h"
 #include <cstdlib>
+#include <filesystem>
 #include "coop_title.h"
 #include "coop_title_menu.h"
 #include "coop_voice.h"
@@ -87,6 +92,7 @@ std::mutex g_mutex;   // everything below
 CoopPauseMenu::Menu g_menu;
 bool g_coop_on = false;      // co-op came with the game's start (coop.ini named a server): not started or stopped here
 bool g_shown = false;        // the tab shows in Hookshot's menu
+bool g_native = false;       // the title's own rows show its pages instead (OpenNative): no overlay
 std::string g_doing;         // what the tab started: "hosting", "joined", "" none
 // Auto-rejoin (coop_auto_rejoin.h): the planner, and what the player did since its last update (its own Host or Join,
 // a Leave), which stop what it planned; g_auto_join: the join being made is the planner's, not the player's.
@@ -183,13 +189,22 @@ void Joined() {
     WriteText(CoopIni(), coop);
     if (CoopTitle::StartSaveWait(host)) {
         g_wanted = HOS_COOP_MENU_WANT_CLOSE;
-        LOG_INFO(Core, "coop: multiplayer tab: joined at the title: load a save once the chat says Success");
+        CoopTitle::LoadHostSaveOnTitle();   // (the host's save, once in, loads by itself: Continue pressed for them)
+        LOG_INFO(Core, "coop: multiplayer tab: joined at the title: the host's save loads once it is in");
+    } else if (!g_auto_join) {
+        // (the player's own join with a file loaded: back to the title by itself, where the host's save loads. An
+        // auto-rejoin after a drop keeps the game being played)
+        LOG_INFO(Core, "coop: multiplayer tab: joined in the game: back to the title for the host's save");
+        CoopPauseTab::ToTitle();
+        CoopTitle::LoadHostSaveOnTitle();
     } else {
         LOG_INFO(Core, "coop: multiplayer tab: joined in the game: the host's save is used from the title on");
     }
 }
 
 // What co-op is doing, for the tab.
+std::string ShareCode(const HosCoopStatus& st);   // (below: the code a host gives its friends)
+
 CoopPauseMenu::Session SessionNow() {
     const HosCoopStatus st = Status();
     const CoopLobby::Seen seen = CoopLobby::Now();   // what the Lobby tab shows too
@@ -207,7 +222,10 @@ CoopPauseMenu::Session SessionNow() {
     s.by_launcher = g_coop_on;
     if (s.hosting) {
         s.players = st.players;
-        s.code = st.invite;
+        s.code = ShareCode(st);
+        // (the Host page's Join password row, shown on A, and its Let in and Refuse rows; the password is never logged)
+        if (st.state == HOS_COOP_HOSTING) s.password.assign(st.password, strnlen(st.password, sizeof st.password));
+        s.asking = CoopLobby::Asking();
     } else {
         s.players = static_cast<int>(CoopHook::PlayerList().size());
         s.code = st.state == HOS_COOP_WAIT_HOST ? st.answer : "";
@@ -281,22 +299,48 @@ void Delivered() {
 
 bool Busy();
 bool Join(const std::string& text);
+// A join the host turned away because the name is in use there (two PCs' Nucleus players both "Player1", a friend of
+// the same name): joined again as "<name> (2)", (3)... for this session only, the saved name kept. g_mutex.
+std::string g_name_suffix;
+int g_name_tries = 0;
+bool g_name_retry = false;   // (the Join now is that one: its suffix kept)
 
-// What follows from co-op's state, whether the tab is shown or not: the invite code on the clipboard once there is
-// one (a guest's answer code too), the message logged, a connected join remembered and the host's save loaded.
+// The code a host gives its friends: its room on the relay ("<room>@<relay>"), else the relay's join code
+// ("<CODE>@<relay>"), else the invite code; "" none yet. Join takes each of them.
+constexpr std::uint64_t kRelayWaitMs = 6000;
+std::string ShareCode(const HosCoopStatus& st) {
+    if (st.relay_room[0] != 0) return std::string(st.relay_room, strnlen(st.relay_room, sizeof st.relay_room));
+    if (st.relay_code[0] != 0) return std::string(st.relay_code, strnlen(st.relay_code, sizeof st.relay_code));
+    return std::string(st.invite, strnlen(st.invite, sizeof st.invite));
+}
+
+// What follows from co-op's state, whether the tab is shown or not: the code to give friends on the clipboard once
+// there is one (ShareCode; a guest's answer code too), the message logged, a connected join remembered and the host's
+// save loaded.
+void Leave();                          // (below)
+void SayOnPage(const char* otherwise);   // (below)
+
 void Follow(const HosCoopStatus& st) {
     const bool host = g_doing == "hosting";
     const std::uint64_t session = g_session;
-    if (host && st.invite[0] != 0 && !g_copied && !g_copy_tried) {
+    // (the relay's room or code first, which needs no router: it is asked at once with the built-in relay, and the
+    // invite code is only taken alone when the relay has not answered in kRelayWaitMs or said why not)
+    static std::uint64_t waited_session = 0, wait_from = 0;
+    if (waited_session != session) waited_session = session, wait_from = NowMs();
+    const bool relay_in = st.relay_room[0] != 0 || st.relay_code[0] != 0;
+    const bool relay_out = st.problem == HOS_COOP_PROBLEM_RELAY_FAILED || NowMs() - wait_from > kRelayWaitMs;
+    const std::string share = ShareCode(st);
+    if (host && !share.empty() && (relay_in || relay_out) && !g_copied && !g_copy_tried) {
 #ifndef _WIN32
         g_copy_tried = true;   // one try per code (Windows tries again each round: a busy clipboard frees up)
 #endif
-        CopyThen(st.invite, [session](bool ok) {
+        CopyThen(share, [session, relay_in](bool ok) {
             if (session != g_session) {
                 return;
             }
             g_copied = ok;
-            LOG_INFO(Core, "coop: multiplayer tab: host: the invite code is on the clipboard{}", ok ? "" : " (it could not be)");
+            LOG_INFO(Core, "coop: multiplayer tab: host: the {} is on the clipboard{}",
+                     relay_in ? "relay's room or join code" : "invite code", ok ? "" : " (it could not be)");
         });
     }
     if (!host && st.state == HOS_COOP_WAIT_HOST && st.answer[0] != 0 && !g_answer_copied && !g_answer_copy_tried) {
@@ -324,14 +368,37 @@ void Follow(const HosCoopStatus& st) {
     const std::uint64_t now = NowMs();
     // Games on this network (coop_lan.h): a hosting game says it is there (its name, port, players, room; never the
     // join password), every CoopLan::kEveryMs.
-    if (host && st.state == HOS_COOP_HOSTING) {
+    // A game the launcher started on a server of this very PC (Nucleus Co-op's host PC, Host.bat: coop.ini's server
+    // 127.0.0.1) says so too, once it is the session's host: without it Nucleus's "Join a game on this network" on
+    // another PC found nothing (a tester's two PCs, 2026-11-20). Its port is coop.ini's.
+    std::uint16_t launcher_port = 0;
+    if (g_coop_on) {
+        static std::uint64_t read_ms = 0;
+        static std::uint16_t local_port = 0;
+        if (read_ms == 0 || now - read_ms > 5000) {
+            read_ms = now;
+            const std::string ini = ReadText(CoopIni());
+            std::string server(CoopTitleMenu::Trim(CoopTitleMenu::IniGet(ini, "server").value_or("")));
+            std::uint16_t port = CoopTitleMenu::kDefaultPort;
+            if (const auto colon = server.rfind(':'); colon != std::string::npos && server.find(':') == colon) {
+                if (const auto p = CoopTitleMenu::ParsePort(server.substr(colon + 1))) port = *p;
+                server.resize(colon);
+            } else if (const auto p = CoopTitleMenu::ParsePort(CoopTitleMenu::IniGet(ini, "port").value_or(""))) {
+                port = *p;
+            }
+            local_port = server == "127.0.0.1" || server == "localhost" || server == "::1" ? port : 0;
+        }
+        const CoopLobby::Seen seen = CoopLobby::Now();
+        if (local_port != 0 && seen.connected && seen.self != 0 && seen.self == seen.host) launcher_port = local_port;
+    }
+    if ((host && st.state == HOS_COOP_HOSTING) || launcher_port != 0) {
         const CoopTitleMenu::Options& o = g_menu.options();
         CoopLan::Game g;
         g.name = o.name;
         for (const auto& row : CoopHook::PlayerList()) {   // (the name co-op plays this game under, once it is in)
             if (row.self && !row.name.empty()) g.name = row.name;
         }
-        g.port = o.host_port != 0 ? o.host_port : CoopTitleMenu::kDefaultPort;
+        g.port = launcher_port != 0 ? launcher_port : o.host_port != 0 ? o.host_port : CoopTitleMenu::kDefaultPort;
         const CoopLobby::Seen seen = CoopLobby::Now();
         g.players = seen.connected ? static_cast<int>(seen.players.size()) : 1;
         g.max = o.max_players;
@@ -360,9 +427,46 @@ void Follow(const HosCoopStatus& st) {
     f.player_acted = std::exchange(g_player_acted, false);
     {   // (a refusal counted since the last update: CoopLobby's count only grows, so none is missed)
         static std::uint32_t refusals_seen = 0;
-        const std::uint32_t refusals = CoopLobby::Now().refusals;
-        f.turned_away = refusals != refusals_seen;
-        refusals_seen = refusals;
+        static std::uint32_t names_taken_seen = 0;
+        const auto seen = CoopLobby::Now();
+        f.turned_away = seen.refusals != refusals_seen;
+        refusals_seen = seen.refusals;
+        const bool name_taken = seen.names_taken != names_taken_seen;
+        names_taken_seen = seen.names_taken;
+        // A join the host turned away (a wrong join password, a full game, a ban): co-op stops by itself and the Join
+        // rows come back with why. Kept on, the title's Join page offered only Leave the game, a tester's "janky".
+        // The name in use there (another PC's player of the same name: two Nucleus PCs' "Player1"), after the
+        // client's own retries ran out: joined again as "<name> (2)", (3)... A game started by the launcher keeps its
+        // name (its server and name are the launcher's).
+        if (name_taken && g_doing == "joined" && !seen.connected && !g_coop_on && g_name_tries < 8 &&
+            !g_join_text.empty()) {
+            ++g_name_tries;
+            g_name_suffix = " (" + std::to_string(g_name_tries + 1) + ")";
+            LOG_INFO(Core, "coop: multiplayer tab: the name is in use in that game: joining again with \"{}\" after it "
+                           "(this session only)",
+                     g_name_suffix);
+            const std::string again = g_join_text;
+            CoopHookshot::HostMenu().Leave();   // (the refused client stopped; quietly: no "Co-op stopped" note)
+            g_doing.clear();
+            g_name_retry = true;
+            g_auto_join = true;   // (not the player's own join: auto-rejoin's plans stay)
+            const bool joined = Join(again);
+            g_auto_join = false;
+            if (joined) {
+                g_menu.SetNote({"Your name is in use in that game: joined with" + g_name_suffix + " after it."});
+            }
+            g_name_retry = false;
+        } else if (f.turned_away && g_doing == "joined" && !seen.connected && !g_coop_on) {
+            const std::string why = CoopTitleMenu::RefusedLine(seen.refused);
+            LOG_INFO(Core, "coop: multiplayer tab: the join was turned away ({}): co-op stopped, the Join rows again",
+                     CoopTitleMenu::ShortReason(seen.refused));
+            Leave();
+            g_menu.SetNote({"Turned away: " + CoopTitleMenu::ShortReason(seen.refused),
+                            seen.banned ? "You cannot join that game again." : "Check the room and the join password, then Join again."});
+            // (the pause page's Session view says it only for a join made there: one made on the title said it on the
+            // title's Join page, and the page opened later in the game on that old line)
+            if (!g_native || !CoopTitle::Up()) SayOnPage(why.c_str());
+        }
     }
     if (g_rejoin.Tick(f, now)) {
         const auto code = CoopTitleMenu::IniGet(ReadText(CoopIni()), "last_invite");
@@ -416,6 +520,7 @@ bool Host() {
     h.invite = 1;
     h.pvp = o.pvp ? 1 : 0;
     h.approve_joins = o.approve_joins ? 1 : 0;
+    h.same_network_password = o.same_network_password ? 1 : 0;   // (off: this network's players need none)
     h.max_players = static_cast<std::uint8_t>(o.max_players);
     // coop-options.ini's relay lines, as Host.bat uses them (issue 261: a room name friends type in Join a game).
     h.relay_via = o.relay.empty() ? nullptr : o.relay.c_str();
@@ -472,9 +577,16 @@ bool Join(const std::string& text) {
     // Only what the player gave (the invite code, or the password after the address): never this game's own
     // server_password, which is its host secret and not the other server's.
     const std::string password = invite ? std::string() : std::get<CoopTitleMenu::JoinAddress>(target).password;
+    if (!std::exchange(g_name_retry, false)) g_name_suffix.clear(), g_name_tries = 0;   // (a join of the player's own)
+    std::string name = o.name;
+    if (!g_name_suffix.empty()) {   // (at most 16 bytes in all: the name cut before a UTF-8 letter's start)
+        std::size_t n = std::min(name.size(), std::size_t{16} > g_name_suffix.size() ? 16 - g_name_suffix.size() : 0);
+        while (n > 0 && n < name.size() && (static_cast<unsigned char>(name[n]) & 0xc0) == 0x80) --n;
+        name = std::string(CoopTitleMenu::Trim(name.substr(0, n))) + g_name_suffix;
+    }
     HosCoopJoinOptions j{};
     j.size = sizeof j;
-    j.name = o.name.c_str();
+    j.name = name.c_str();
     j.target = where.c_str();
     j.password = password.empty() ? nullptr : password.c_str();
     g_doing = "joined";
@@ -511,13 +623,15 @@ void MicRows() {
 }
 
 void Save() {
-    const auto kit = FindKit();
+    // (the coop-options.ini the game reads at its start: the kit's, or the one beside longshot.exe in a game with no kit
+    // of its own, Nucleus Co-op's instances: before, those saved nothing but coop.ini, a tester's "not saving")
+    const auto kit = CoopTitle::KitOptionsFile();
     std::string coop = ReadText(CoopIni());
-    std::string options = kit ? ReadText(*kit / "coop-options.ini") : std::string();
+    std::string options = kit ? ReadText(*kit) : std::string();
     g_menu.options().Write(coop, options);
     bool ok = WriteText(CoopIni(), coop);
     if (kit) {
-        ok = WriteText(*kit / "coop-options.ini", options) && ok;
+        ok = WriteText(*kit, options) && ok;
     }
     const bool live = g_coop_on || g_doing == "hosting" || g_doing == "joined";
     if (!live) {
@@ -529,7 +643,16 @@ void Save() {
     CoopVoice::SetMicrophone(g_menu.options().voice_mic);   // and its microphone
     MicRows();   // (voice just turned on: the Microphone row's list)
     CoopHookshot::SetChatKey(g_menu.options().chat_key);   // the chat key too
-    CoopHookshot::SetMapOptions(g_menu.options().map_players, g_menu.options().map_names);   // at once too
+    CoopHookshot::SetMapOptions(g_menu.options().map_players, g_menu.options().map_names);
+    CoopHookshot::SetHudSize(g_menu.options().hud_size);   // (the player list: at once)   // at once too
+    g_auto_rejoin_on = g_menu.options().auto_rejoin;   // (the Auto-rejoin row: counts at once, as the files have it now)
+    {   // Original game (coop_original.h): the mods list follows the switch now; the rest counts from the next start
+        std::string why;
+        if (!CoopOriginal::ApplyMods(CoopRuntime::GameDir() / "mods", g_menu.options().original_game, why)) {
+            LOG_WARNING(Core, "coop: original game: {}", why);
+            ok = false;
+        }
+    }
     LOG_INFO(Core, "coop: multiplayer tab: settings saved{}{}", ok ? "" : " (a file could not be written)",
              kit ? "" : " (no kit found: coop.ini only)");
     std::vector<std::string> note;
@@ -702,6 +825,38 @@ void Act(const Request& r) {
         g_menu.SetNote({CoopSave::ChooseSaveSet(r.text == "multiplayer")});
         g_menu.SetSaveSet(CoopSave::MultiplayerSaves());
         break;
+    case Request::Kind::kSetPassword: {   // (the host's new join password, typed on the Host page: never logged)
+        const bool taken = CoopHookshot::HostMenu().SetPassword(r.text.c_str()) != 0;
+        LOG_INFO(Core, "coop: multiplayer tab: host: a new join password typed: {}", taken ? "handed to the host" : "not taken");
+        if (taken) {
+            g_menu.SetNote({"New join password: players who join from now on need it."});
+        } else {
+            const HosCoopStatus st = Status();   // (why, in plain words: the status' message)
+            const std::string why(st.message, strnlen(st.message, sizeof st.message));
+            g_menu.SetNote({"The join password was not changed.", why});
+        }
+        RefreshSession(true);
+        break;
+    }
+    case Request::Kind::kAllow:
+    case Request::Kind::kDeny: {   // (as the chat's /allow and /deny: the oldest asking; the chat says what came of it)
+        const bool allow = r.kind == Request::Kind::kAllow;
+        const bool sent = CoopHook::SendChat(allow ? "/allow" : "/deny");
+        LOG_INFO(Core, "coop: multiplayer tab: host: {} the player asking to join{}", allow ? "let in" : "turned away",
+                 sent ? "" : " (not sent)");
+        g_menu.SetNote({!sent  ? std::string("Not sent: co-op is not connected.")
+                        : allow ? "Letting " + r.text + " in."
+                                : r.text + " was turned away."});
+        RefreshSession(true);
+        break;
+    }
+    case Request::Kind::kRefreshFound:   // (the Find page's list asked again: the relay's rooms, or this network's games)
+        if (g_menu.find_online()) {
+            CoopRoomList::AskNow();
+        } else {
+            CoopLanNet::Forget();
+        }
+        break;
     case Request::Kind::kNgPlus: {   // (Navi) New Game+ (coop_ngplus.h)
         CoopNgPlus::SetLevel(std::atoi(r.text.c_str()));
         g_menu.SetNgPlus(CoopNgPlus::Level(), CoopNgPlus::Unlocked(), CoopNgPlus::Hearts());
@@ -789,11 +944,92 @@ bool Translated(bool filled, HosCoopMenuPage* out) {
 
 }  // namespace
 
+// Nucleus's "Join a game on this network" (tools/nucleus/OoTCoop.js): coop.ini's join_lan ("first", or a host's
+// name) and no server: at the start the games on this network are listened for, and the first that can be joined (or
+// that host's) is joined, with no password (a host lets its own network in). None in kLanJoinMs: said, and the player
+// picks one in Browse games. g_mutex.
+std::string g_lan_join;            // what to join, "" none (or done)
+std::uint64_t g_lan_join_since = 0;
+constexpr std::uint64_t kLanJoinMs = 60000;
+
+void LanJoinStep(std::uint64_t now) {
+    if (g_lan_join.empty()) return;
+    if (g_lan_join_since == 0) {
+        g_lan_join_since = now;
+        LOG_INFO(Core, "coop: multiplayer tab: join_lan: listening for a game on this network to join ({})",
+                 g_lan_join == "first" ? std::string("the first that can be joined") : "the host " + g_lan_join);
+    }
+    if (const HosCoopStatus st = Status(); st.state != HOS_COOP_IDLE && st.state != HOS_COOP_FAILED) {
+        g_lan_join.clear();   // (a session already: the player's own)
+        return;
+    }
+    CoopLanNet::Look(true, now);
+    if (const auto pick = CoopLan::PickToJoin(CoopLanNet::Games(now), g_lan_join, coop::protocol::kProtocolVersion)) {
+        LOG_INFO(Core, "coop: multiplayer tab: join_lan: joining {}'s game on this network ({} ms after the start)",
+                 pick->game.name, now - g_lan_join_since);
+        g_lan_join.clear();
+        CoopLanNet::Look(false, now);
+        // (the files' settings first, the player's name above all: the menu's own are its defaults until it opens,
+        // and a join as "Player" was refused, the host's own name, a test run 2026-11-20; as auto-rejoin does)
+        g_menu.Show(ReadOptions());
+        const std::string line = pick->address + ":" + std::to_string(pick->game.port);
+        if (!Join(line)) LOG_INFO(Core, "coop: multiplayer tab: join_lan: the join did not start");
+        return;
+    }
+    if (now - g_lan_join_since > kLanJoinMs) {
+        LOG_INFO(Core, "coop: multiplayer tab: join_lan: no game found on this network in {} s",
+                 kLanJoinMs / 1000);
+        g_lan_join.clear();
+        CoopLanNet::Look(false, now);
+        g_menu.SetNote({"No game found on this network. Pick one in Browse games, or host one."});
+    }
+}
+
 void Init(bool coop_on) {
     std::lock_guard lock(g_mutex);
     g_coop_on = coop_on;
+    if (!coop_on) {
+        if (const auto want = CoopTitleMenu::IniGet(ReadText(CoopIni()), "join_lan"); want && !CoopTitleMenu::Trim(*want).empty()) {
+            g_lan_join = std::string(CoopTitleMenu::Trim(*want));
+        }
+    }
     LOG_INFO(Core, "coop: multiplayer tab: ready (the first tab of Hookshot's menu: F1, or Home on a pad){}",
              coop_on ? "; co-op came with the game's start" : "");
+}
+
+// The Find a game page (the title's Join page's first row): while it shows, the games on this network or the relay's
+// public rooms are heard and handed to it, as the pause menu's browser lists them. g_mutex.
+bool g_finding = false;
+void RefreshFound(std::uint64_t now) {
+    const bool want = (g_shown || g_native) && g_menu.page() == CoopPauseMenu::Page::kFind;
+    if (!want) {
+        if (g_finding) CoopLanNet::Look(false, now), CoopRoomList::Look(false, now, {});
+        g_finding = false;
+        return;
+    }
+    g_finding = true;
+    const bool online = g_menu.find_online();
+    CoopLanNet::Look(!online, now);
+    CoopRoomList::Look(online, now, g_menu.options().relay);
+    std::vector<CoopPauseMenu::Menu::Found> games;
+    std::string state;
+    const int mine = coop::protocol::kProtocolVersion;
+    if (online) {
+        const CoopRoomList::Snapshot rooms = CoopRoomList::Now();
+        for (const CoopRoomList::Room& r : rooms.rooms) {
+            games.push_back({CoopPauseTab::ListName(r.host, r.room), CoopPauseTab::ListValue(r.players, r.max, r.protocol == mine),
+                             r.room, 0, CoopRoomList::Joinable(r, mine), r.host, r.players, r.max, r.protocol == mine});
+        }
+        state = rooms.state;
+    } else {
+        for (const CoopLan::Heard& h : CoopLanNet::Games(now)) {
+            games.push_back({h.game.name + "'s game" + (h.game.room.empty() ? "" : " (" + h.game.room + ")"),
+                             CoopPauseTab::ListValue(h.game.players, h.game.max, h.game.protocol == mine), h.address,
+                             h.game.port, CoopLan::Joinable(h, mine), h.game.name, h.game.players, h.game.max,
+                             h.game.protocol == mine});
+        }
+    }
+    g_menu.SetFound(std::move(games), std::move(state));
 }
 
 void Tick() {
@@ -805,6 +1041,25 @@ void Tick() {
     }
     g_next_follow_ms = now + 250;
     Follow(Status());
+    RefreshFound(now);
+    LanJoinStep(now);
+    // (a test's trigger, LICHII_COOP_TEST_TO_TITLE=1 only: a file "to-title.now" in the game's folder starts the way
+    // back to the title a join with a file loaded takes, with no host to join)
+    static const bool test_to_title = [] {
+        const char* v = std::getenv("LICHII_COOP_TEST_TO_TITLE");
+        const bool on = v != nullptr && v[0] == '1';
+        if (on) LOG_INFO(Core, "coop: multiplayer tab: test: to-title.now in {} starts the way back to the title",
+                         CoopRuntime::GameDir().string());
+        return on;
+    }();
+    if (test_to_title) {
+        std::error_code ec;
+        if (std::filesystem::remove(CoopRuntime::GameDir() / "to-title.now", ec)) {
+            LOG_INFO(Core, "coop: multiplayer tab: test: back to the title asked (to-title.now)");
+            CoopPauseTab::ToTitle();
+            CoopTitle::LoadHostSaveOnTitle(true);
+        }
+    }
 }
 
 // Tab 1: the Lobby (coop_lobby_tab.h), always: who is in the game, the host's controls.
@@ -1012,7 +1267,7 @@ bool Key(std::uint32_t vk, bool repeat) {
         return true;
     }
     std::lock_guard lock(g_mutex);
-    if (!g_shown) {
+    if (!g_shown && !g_native) {
         return false;
     }
     const auto [ctrl_down, shift_down] = Modifiers();
@@ -1054,7 +1309,7 @@ bool Char(std::uint32_t cp) {
         return true;
     }
     std::lock_guard lock(g_mutex);
-    if (!g_shown || !g_menu.typing()) {
+    if ((!g_shown && !g_native) || !g_menu.typing()) {
         return false;
     }
     if (cp >= 0x20 && cp != 0x7F) {
@@ -1068,12 +1323,65 @@ bool KeysTaken() {
         return true;
     }
     std::lock_guard lock(g_mutex);
-    return g_shown && g_menu.typing();
+    return (g_shown || g_native) && g_menu.typing();
+}
+
+void OpenNative(CoopPauseMenu::Page page) {
+    {
+        std::lock_guard lock(g_mutex);
+        g_native = true;
+    }
+    Open(page);
+    g_wanted = HOS_COOP_MENU_WANT_NOTHING;   // (no overlay: the title's own rows show the page)
+    LOG_INFO(Core, "coop: multiplayer tab: its page on the title's own rows (no overlay)");
+}
+
+bool NativeInput(int event, int arg, int arg2) {
+    {
+        std::lock_guard lock(g_mutex);
+        if (!g_native) return false;
+    }
+    return CoopPause::Input(kMultiplayerTab, event, arg, arg2);
+}
+
+CoopPauseMenu::View NativeView() {
+    std::lock_guard lock(g_mutex);
+    return g_native ? g_menu.view() : CoopPauseMenu::View{};
+}
+
+CoopPauseMenu::Page NativePage() {
+    std::lock_guard lock(g_mutex);
+    return g_menu.page();
+}
+
+bool NativeOpen() {
+    std::lock_guard lock(g_mutex);
+    return g_native;
+}
+
+void NativeGo(CoopPauseMenu::Page page) {
+    std::lock_guard lock(g_mutex);
+    if (!g_native) return;
+    g_menu.Open(page);
+    Settle();
+}
+
+void CloseNative() {
+    std::lock_guard lock(g_mutex);
+    if (!g_native) return;
+    g_native = false;
+    if (!g_shown) g_menu.Hide();
 }
 
 void Open(CoopPauseMenu::Page page) {
     std::lock_guard lock(g_mutex);
     g_menu.Show(ReadOptions());
+    // (as the overlay's tab, ShowTab: the pause page's Settings and look opens Customize and Co-op settings here)
+    g_menu.SetLook(CoopLook::Shown());
+    g_menu.SetNgPlus(CoopNgPlus::Level(), CoopNgPlus::Unlocked(), CoopNgPlus::Hearts());
+    g_menu.SetSaveSet(CoopSave::MultiplayerSaves());
+    InputRows();
+    MicRows();
     g_menu.Open(page);
     if (page == CoopPauseMenu::Page::kJoin) {
         const std::string coop = ReadText(CoopIni());
@@ -1136,6 +1444,11 @@ bool ByLauncher() {
     return g_coop_on;
 }
 
+bool HostStarted() {
+    std::lock_guard lock(g_mutex);
+    return g_doing == "hosting";
+}
+
 void HostNow() {
     std::lock_guard lock(g_mutex);
     FreshMain();
@@ -1152,10 +1465,17 @@ void HostNow() {
 
 void LeaveNow() {
     std::lock_guard lock(g_mutex);
-    if (g_coop_on) {   // (as the menu: no Leave row for it; its main page says to start the game again)
+    if (g_coop_on) {   // co-op the launcher started (Nucleus Co-op, Host.bat): left here as any join, its server stays
         FreshMain();
-        LOG_INFO(Core, "coop: multiplayer tab: not leaving: co-op came with the game's start");
-        SayOnPage(kSayLauncher);
+        LOG_INFO(Core, "coop: multiplayer tab: leaving the session the game started with (the launcher's): co-op "
+                       "stops here, the server and the other players go on");
+        CoopHook::End();
+        CoopLobby::Forget();
+        g_coop_on = false;
+        g_player_left = true;
+        g_doing.clear();
+        RefreshSession(true);
+        g_menu.SetNote({"Co-op stopped. You play on alone.", "Host or Join to play together again."});
         return;
     }
     Act(Request{Request::Kind::kLeave, {}});
@@ -1211,6 +1531,47 @@ void SetListRoom(bool on) {
 bool AutoRejoining() {
     std::lock_guard lock(g_mutex);
     return g_rejoin.Retrying();
+}
+
+bool SetHostPort(int port) {
+    std::lock_guard lock(g_mutex);
+    if (port < 1 || port > 65535) return false;
+    CoopTitleMenu::Options o = ReadOptions();
+    o.host_port = static_cast<std::uint16_t>(port);
+    g_menu.Show(o);
+    Save();
+    const bool again = g_doing == "hosting" && !g_coop_on;
+    LOG_INFO(Core, "coop: multiplayer tab: the port when hosting is {} now (from the pause menu's Multiplayer page){}", port,
+             again ? ": hosting again on it" : "");
+    if (again && !Host()) SayOnPage(kSayRefused);
+    return true;
+}
+
+std::string RoomName() {
+    return ReadOptions().relay_room;
+}
+
+bool SetRoomName(const std::string& name) {
+    std::lock_guard lock(g_mutex);
+    if (!name.empty() && !CoopTitleMenu::RoomNameOk(name)) return false;
+    CoopTitleMenu::Options o = ReadOptions();
+    o.relay_room = name;
+    g_menu.Show(o);
+    Save();
+    LOG_INFO(Core, "coop: multiplayer tab: the room name {} (from the pause menu's Multiplayer page; from the next "
+                   "Host on)", name.empty() ? "cleared" : "set");
+    return true;
+}
+
+bool SetRelay(const std::string& relay) {
+    std::lock_guard lock(g_mutex);
+    if (!relay.empty() && !CoopTitleMenu::RelayOk(relay)) return false;
+    CoopTitleMenu::Options o = ReadOptions();
+    o.relay = relay;
+    g_menu.Show(o);
+    Save();
+    LOG_INFO(Core, "coop: multiplayer tab: the relay {} (from the pause menu's Multiplayer page)", relay.empty() ? "cleared" : "set");
+    return true;
 }
 
 void SetAutoRejoin(bool on) {

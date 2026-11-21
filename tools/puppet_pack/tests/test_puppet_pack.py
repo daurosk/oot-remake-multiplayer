@@ -26,6 +26,7 @@ from test_merge_tables import *  # noqa: E402,F401,F403
 from test_eye_switches import *  # noqa: E402,F401,F403
 from test_room_graph import *  # noqa: E402,F401,F403
 from test_look_metal import *  # noqa: E402,F401,F403
+from test_look_cap import *  # noqa: E402,F401,F403
 
 try:
     import zstandard
@@ -1311,8 +1312,27 @@ class TunicExtraTest(unittest.TestCase):
         from puppet_pack import look_live, look_metal
         src = os.path.join(os.path.dirname(__file__), "..", "..", "..", "hookshot", "src", "coop_look_parts.cpp")
         with open(src, encoding="utf-8") as f:
-            names = re.findall(r'\{"(Mt_[A-Za-z0-9_.]+)", Format::', f.read())
+            text = f.read()
+        gear = text[text.index("kGear = {"):text.index("};", text.index("kGear = {"))]
+        names = re.findall(r'\{"(Mt_[A-Za-z0-9_.]+)", Format::', gear)
         self.assertEqual(tuple(names) + look_metal.TEXTURES, look_live.GEAR)
+
+    def test_tunic_names_match_the_module(self):
+        """The module paints your own tunic from green.bin (hookshot/src/coop_look_parts.cpp
+        TunicTextures): the same textures in green.bin's order (write_tunics: the tile, the dark tile,
+        tunic_extra.EXTRA), the tile recoloured whole as tunic.py does, the rest only in their green."""
+        import re
+        from puppet_pack import tunic, tunic_extra
+        src = os.path.join(os.path.dirname(__file__), "..", "..", "..", "hookshot", "src", "coop_look_parts.cpp")
+        with open(src, encoding="utf-8") as f:
+            text = f.read()
+        table = text[text.index("kTunic = {"):text.index("};", text.index("kTunic = {"))]
+        rows = re.findall(r'\{(kTunicTile|"[A-Za-z0-9_]+"), Format::(\w+), T::Takes::(\w+)\}', table)
+        names = [tunic.TILE if n == "kTunicTile" else n.strip('"') for n, _, _ in rows]
+        self.assertEqual(names, [tunic.TILE, tunic.DARK] + list(tunic_extra.EXTRA))
+        with open(src[:-4] + ".h", encoding="utf-8") as f:
+            self.assertIn(f'kTunicTile = "{tunic.TILE}"', f.read().replace("constexpr const char* ", ""))
+        self.assertEqual([t for _, _, t in rows], ["all", "all"] + ["green"] * len(tunic_extra.EXTRA))
 
     def test_body_boots(self):
         """Each tunic colour's body model names boots of its own, as the module names and marks them

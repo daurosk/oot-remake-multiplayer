@@ -389,7 +389,10 @@ void SetSwitch(std::function<std::string()> root, std::function<bool(const std::
 
 void NoteInGame(bool in_game) {
     std::lock_guard lock(g_mutex);
-    g_in_game = in_game;
+    // (the title's menu up: a Link read there is the title's own scene behind it (Link rides Epona), never a file
+    // played; read as one, a guest back on the title from a join never switched to the host's save, a test run
+    // 2026-11-20)
+    g_in_game = in_game && !g_title_up;
     if (in_game && g_guest_live) g_guest_played = true;   // (the title's ask, TitleResync)
     Say(g_lines.on_in_game(in_game));
 }
@@ -455,7 +458,7 @@ void ReadSaveSetLocked() {
     if (g_set_read) return;
     g_set_read = true;
     std::FILE* f = nullptr;
-#ifdef _MSC_VER
+#ifdef _WIN32
     if (_wfopen_s(&f, SaveSetFile().c_str(), L"rb") != 0) f = nullptr;
 #else
     f = std::fopen(SaveSetFile().c_str(), "rb");
@@ -469,7 +472,7 @@ void ReadSaveSetLocked() {
 
 void KeepSaveSetLocked() {
     std::FILE* f = nullptr;
-#ifdef _MSC_VER
+#ifdef _WIN32
     if (_wfopen_s(&f, SaveSetFile().c_str(), L"wb") != 0) f = nullptr;
 #else
     f = std::fopen(SaveSetFile().c_str(), "wb");
@@ -538,6 +541,7 @@ void NoteTitle(bool title_up) {
         if (std::exchange(g_guest_played, false)) g_title_ask = true;   // (decided by the next OnFrame: TitleResync)
     }
     g_title_up = title_up;
+    if (title_up) g_in_game = false;   // (NoteInGame: the title's scene's Link is not a file played)
     if (title_up && !g_set_applied && !g_in_game && g_root) {   // (Navi) the kept choice, on the first title
         ReadSaveSetLocked();
         g_set_applied = true;

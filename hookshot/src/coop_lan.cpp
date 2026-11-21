@@ -2,6 +2,7 @@
 #include "coop_lan.h"
 
 #include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <random>
 
@@ -154,6 +155,19 @@ std::string RowText(const Heard& h, int my_protocol) {
 
 bool Joinable(const Heard& h, int my_protocol) {
     return h.game.protocol == my_protocol && (h.game.max <= 0 || h.game.players < h.game.max);
+}
+
+std::optional<Heard> PickToJoin(const std::vector<Heard>& heard, const std::string& want, int my_protocol) {
+    const auto lower = [](std::string t) {
+        for (char& c : t) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return t;
+    };
+    const std::string w = lower(want);
+    for (const Heard& h : heard) {
+        if (!Joinable(h, my_protocol)) continue;
+        if (w.empty() || w == "first" || lower(h.game.name) == w) return h;
+    }
+    return std::nullopt;
 }
 
 }  // namespace CoopLan

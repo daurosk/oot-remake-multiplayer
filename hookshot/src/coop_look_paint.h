@@ -13,7 +13,9 @@
 //
 // The same rewrite the puppet pack tool makes for the tunic's other textures
 // (tools/puppet_pack/tunic_extra.py), here in C++ so the module can paint any
-// colour the player picks while the game runs. ASTC blocks keep their
+// colour the player picks while the game runs: the gear by tones, your own
+// Kokiri tunic by the tool's own rules (Takes, Rule::base;
+// CoopLookParts::TunicPainted). ASTC blocks keep their
 // weights; their colour values are re-encoded in the same range (base+offset
 // modes become direct ones, same value count). A block that cannot be
 // re-encoded exactly as asked stays as it was.
@@ -47,12 +49,31 @@ enum Tone : std::uint32_t {
 using Rgb = std::array<std::uint8_t, 3>;
 std::uint32_t ToneOf(const Rgb& c);
 
+// The tunic's green (tools/puppet_pack/tunic_extra.py is_green): hue 40 to
+// 180, olive included, not brown leather (about 30), grey or white. Wider than
+// kGreen | kYellow: the pale greens of the adult's lower tunic are grey or gold
+// by ToneOf, so a rule of tones left them green.
+bool IsGreen(const Rgb& c);
+
+// Which end colours a rule takes: those of its `tones`, the tunic's green
+// (IsGreen), or every one (the tunic's tile: tools/puppet_pack/tunic.py
+// recolours all of it).
+enum class Takes : std::uint8_t { tones, green, all };
+
 // One part: its end colours (any of `tones`) become `colour` (0xRRGGBB), each
 // as bright against the part's average as it was, so the shading stays and
-// the part's average becomes the colour.
+// the part's average becomes the colour. `base` (above 0): the linear luma
+// that becomes the colour instead of the part's own average: the tunic's
+// textures are all shaded against the tile's average, so a darker texture
+// (the child's dark tile) stays as much darker as it was.
 struct Rule {
+    Rule() = default;
+    Rule(std::uint32_t tones_, std::uint32_t colour_, Takes takes_ = Takes::tones, double base_ = 0)
+        : tones(tones_), colour(colour_), takes(takes_), base(base_) {}
     std::uint32_t tones = 0;
     std::uint32_t colour = 0;
+    Takes takes = Takes::tones;
+    double base = 0;
 };
 
 // The texture formats this rewrites, as a BNTX names them (the high byte of
@@ -63,6 +84,9 @@ std::size_t BlockBytes(Format f);
 
 // Every end colour of the texels (whole blocks), for a part's average.
 std::vector<Rgb> Ends(Format f, std::span<const std::uint8_t> texels);
+// The mean linear luma of all of them (tools/puppet_pack/tunic.py
+// average_luma: blocks that are all zero are left out); 0 when there is none.
+double AverageLuma(Format f, std::span<const std::uint8_t> texels);
 
 // The texels with each rule's part in its colour; the first rule whose tones
 // match an end colour takes it. Returns how many blocks changed. `texels` is

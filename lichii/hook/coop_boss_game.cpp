@@ -27,6 +27,7 @@
 #include "coop_session_gate.h"
 #include "coop_objects.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <mutex>
@@ -174,6 +175,7 @@ struct Glue {
     bool scenes_live = false;  // logged once
     std::uint64_t requests_cursor = 0;
     std::optional<std::int32_t> max_life;          // set by the hook (SetMaxLife)
+    std::atomic<std::int32_t> max_life_from_others{0};   // the maximum another game's pickup gave us (0 none)
     std::optional<std::int32_t> max_life_write;    // for the hook (TakeMaxLifeWrite)
     std::optional<std::int32_t> max_life_cap;      // for the hook (MaxLifeCap)
     std::vector<std::string> wanted;               // events for the live-event requester (TakeWantedEvents)
@@ -423,6 +425,7 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
     here.event = event;
     here.self = local.self;
     here.max_life = max_life;
+    here.max_life_from_others = max_life && *max_life == max_life_from_others.load();
     if (local.scene) {
         for (const auto& room : CoopBoss::Rooms()) {  // the scene's boss (a dungeon has one boss room)
             if (room.scene == *local.scene) {
@@ -458,6 +461,9 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
     }
     if (a.skip) {
         mover.WantSkip(main);
+    }
+    if (a.refill) {
+        CoopObjects::AskRefill();   // (another player took the container: our hearts full, as its pickup would)
     }
     if (a.set_max_life) {
         max_life_write = a.set_max_life;
@@ -553,6 +559,10 @@ void ForgetFights() {
 
 void SetMaxLife(std::optional<std::int32_t> max_life) {
     TheGlue().max_life = max_life;
+}
+
+void NoteMaxLifeFromOthers(std::int32_t max_life) {
+    TheGlue().max_life_from_others = max_life;
 }
 
 std::optional<std::int32_t> TakeMaxLifeWrite() {

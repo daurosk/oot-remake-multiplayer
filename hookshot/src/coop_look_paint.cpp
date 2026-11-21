@@ -69,10 +69,19 @@ struct Painter {
     std::vector<Rgb> target;
 
     int Match(const Rgb& c) const {
-        const std::uint32_t tone = ToneOf(c);
+        std::optional<std::uint32_t> tone;   // (worked out once, when a rule asks)
         for (std::size_t i = 0; i < rules.size(); ++i) {
-            if ((rules[i].tones & tone) != 0) {
+            const Rule& r = rules[i];
+            if (r.takes == Takes::all || (r.takes == Takes::green && IsGreen(c))) {
                 return static_cast<int>(i);
+            }
+            if (r.takes == Takes::tones) {
+                if (!tone) {
+                    tone = ToneOf(c);
+                }
+                if ((r.tones & *tone) != 0) {
+                    return static_cast<int>(i);
+                }
             }
         }
         return -1;
@@ -865,6 +874,15 @@ std::uint32_t ToneOf(const Rgb& c) {
     return kPink;
 }
 
+bool IsGreen(const Rgb& c) {
+    const int hi = std::max({c[0], c[1], c[2]}), lo = std::min({c[0], c[1], c[2]});
+    if (hi == lo) {
+        return false;   // (no hue)
+    }
+    const double h = Hue(c);
+    return h >= 40 && h <= 180 && hi >= 6 && hi - lo >= std::max(3.0, 0.08 * hi);
+}
+
 double Luma(const Rgb& c) { return 0.2126 * Lin(c[0]) + 0.7152 * Lin(c[1]) + 0.0722 * Lin(c[2]); }
 
 Rgb Shade(const Rgb& c, const Rgb& target, double base) {
@@ -915,13 +933,24 @@ std::vector<Rgb> Ends(Format f, std::span<const std::uint8_t> texels) {
     return out;
 }
 
+double AverageLuma(Format f, std::span<const std::uint8_t> texels) {
+    double total = 0;
+    std::size_t n = 0;
+    for (const Rgb& e : Ends(f, texels)) {
+        total += Luma(e);
+        ++n;
+    }
+    return n != 0 ? total / static_cast<double>(n) : 0.0;
+}
+
 std::size_t Recolour(Format f, std::span<const std::uint8_t> texels, std::span<std::uint8_t> out,
                      const std::vector<Rule>& rules) {
     Painter p{rules, std::vector<double>(rules.size(), 0.0), {}};
     for (const Rule& r : rules) {
         p.target.push_back(RgbOf(r.colour));
     }
-    {
+    // Each rule's average, unless the rule gives its own (Rule::base).
+    if (std::any_of(rules.begin(), rules.end(), [](const Rule& r) { return r.base <= 0; })) {
         std::vector<std::size_t> n(rules.size(), 0);
         for (const Rgb& e : Ends(f, texels)) {
             if (const int r = p.Match(e); r >= 0) {
@@ -931,6 +960,11 @@ std::size_t Recolour(Format f, std::span<const std::uint8_t> texels, std::span<s
         }
         for (std::size_t i = 0; i < rules.size(); ++i) {
             p.base[i] = n[i] != 0 ? p.base[i] / static_cast<double>(n[i]) : 0.0;
+        }
+    }
+    for (std::size_t i = 0; i < rules.size(); ++i) {
+        if (rules[i].base > 0) {
+            p.base[i] = rules[i].base;
         }
     }
     const std::size_t size = std::min(texels.size(), out.size());

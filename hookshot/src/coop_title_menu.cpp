@@ -274,7 +274,9 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     o.show_players = On(IniGet(options_ini, "LICHII_COOP_SHOW_PLAYERS"));
     o.pvp = On(IniGet(options_ini, "pvp"));
     o.approve_joins = On(IniGet(options_ini, "approve_joins"));
+    o.same_network_password = On(IniGet(options_ini, "same_network_password"));
     o.auto_rejoin = On(IniGet(options_ini, "auto_rejoin"));
+    o.original_game = On(IniGet(options_ini, "original_game"));
     o.list_room = On(IniGet(options_ini, "list_room"));
     o.upnp = !Off(IniGet(options_ini, "upnp"));
     if (const auto v = IniGet(options_ini, "server_password"); v && PasswordOk(*v)) {
@@ -304,10 +306,16 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
         }
     }
     o.map_players = !Off(IniGet(options_ini, "LICHII_COOP_MAP"));
+    {
+        std::string size(Trim(IniGet(options_ini, "LICHII_COOP_HUD_SIZE").value_or("auto")));
+        for (char& c : size) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        o.hud_size = size == "full" || size == "compact" || size == "off" ? size : "auto";
+    }
     o.map_names = !Off(IniGet(options_ini, "LICHII_COOP_MAP_NAMES"));
     // The relay lines Host.bat reads too (coop-options.ini, "Advanced: relay"): the Multiplayer tab's Host uses them
     // the same way. Read only: the menu writes none of them.
-    o.relay = std::string(Trim(IniGet(options_ini, "relay").value_or("")));
+    o.relay = std::string(Trim(IniGet(options_ini, "relay").value_or(kDefaultRelay)));
+    if (o.relay.empty()) o.relay = kDefaultRelay;   // (an empty line: the built-in one, which is never removed)
     o.relay_key = std::string(Trim(IniGet(options_ini, "relay_key").value_or("")));
     o.relay_room = std::string(Trim(IniGet(options_ini, "relay_room").value_or("")));
     o.list_name = std::string(Trim(IniGet(options_ini, "list_name").value_or("")));
@@ -327,6 +335,20 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     return o;
 }
 
+bool RoomNameOk(std::string_view room) {
+    if (room.empty()) return true;
+    if (room.size() < 3 || room.size() > 24) return false;
+    return std::all_of(room.begin(), room.end(), [](unsigned char c) {
+        return std::isalnum(c) != 0 || c == '-' || c == '_';
+    });
+}
+
+bool RelayOk(std::string_view relay) {
+    if (relay.empty()) return true;
+    if (relay.size() > 128) return false;
+    return std::all_of(relay.begin(), relay.end(), [](unsigned char c) { return c > 0x20 && c < 0x7f; });
+}
+
 void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     coop_ini = IniSet(coop_ini, "name", Trim(name), true);
     std::string o = options_ini;
@@ -339,7 +361,12 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     o = show_players ? IniSet(o, "LICHII_COOP_SHOW_PLAYERS", "1", false) : IniUnset(o, "LICHII_COOP_SHOW_PLAYERS");
     o = IniSet(o, "pvp", pvp ? "on" : "off", true);
     o = auto_rejoin ? IniSet(o, "auto_rejoin", "on", true) : IniUnset(o, "auto_rejoin");
+    o = original_game ? IniSet(o, "original_game", "on", true) : IniUnset(o, "original_game");
+    o = same_network_password ? IniSet(o, "same_network_password", "on", true) : IniUnset(o, "same_network_password");
     o = list_room ? IniSet(o, "list_room", "on", true) : IniUnset(o, "list_room");
+    // (the relay: the kit's default needs no line; a room name, or none)
+    o = relay == kDefaultRelay ? IniUnset(o, "relay") : IniSet(o, "relay", relay, true);
+    o = relay_room.empty() ? IniUnset(o, "relay_room") : IniSet(o, "relay_room", relay_room, true);
     o = upnp ? IniUnset(o, "upnp") : IniSet(o, "upnp", "no", true);
     o = password.empty() ? IniUnset(o, "server_password") : IniSet(o, "server_password", password, true);
     o = debug_panel ? IniSet(o, "LICHII_COOP_DEBUG_PANEL", "1", false) : IniUnset(o, "LICHII_COOP_DEBUG_PANEL");
@@ -352,6 +379,7 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     const std::uint16_t port = host_port != 0 ? host_port : kDefaultPort;
     o = port == kDefaultPort ? IniUnset(o, "server_port") : IniSet(o, "server_port", std::to_string(port), true);
     o = map_players ? IniUnset(o, "LICHII_COOP_MAP") : IniSet(o, "LICHII_COOP_MAP", "0", false);
+    o = hud_size == "auto" ? IniUnset(o, "LICHII_COOP_HUD_SIZE") : IniSet(o, "LICHII_COOP_HUD_SIZE", hud_size, false);
     o = map_names ? IniUnset(o, "LICHII_COOP_MAP_NAMES") : IniSet(o, "LICHII_COOP_MAP_NAMES", "0", false);
     options_ini = std::move(o);
 }
@@ -369,6 +397,7 @@ std::vector<std::pair<std::string, std::string>> Options::Environment() const {
         {"LICHII_COOP_VOICE_MIC", voice_mic},
         {"LICHII_COOP_MAP", map_players ? "" : "0"},
         {"LICHII_COOP_MAP_NAMES", map_names ? "" : "0"},
+        {"LICHII_COOP_HUD_SIZE", hud_size == "auto" ? "" : hud_size},
     };
 }
 
@@ -914,22 +943,26 @@ TitleMenuLook MenuFor(bool any_save, bool multiplayer, bool one_start) {
         l.focus = 0;
         return l;
     }
+    // Options always on the game's own Options button (its third with a save, its second without), Multiplayer on the
+    // slot left: an Options row on another slot chose the game's Options in its place, and the game showed that
+    // button pressed, the one with Multiplayer's word on it, a moment first (a tester's run, 2026-11-19).
     if (any_save && !one_start) {
-        // Continue and New Game each their own (no file select of a mod's that does both): the game's fourth slot
-        // shown for Options, decided in its place (the game's third button is under Multiplayer).
+        // (Continue and New Game each their own, no file select of a mod's that does both: the fourth slot shown)
         l.btn_num_frame = 4;
         l.rows = {{{"0001", TitleDo::kGame},
                    {"0000", TitleDo::kGame},
-                   {"0104", TitleDo::kMultiplayer},
-                   {"0105", TitleDo::kDecide, 2}}};
+                   {"0105", TitleDo::kGame},
+                   {"0104", TitleDo::kMultiplayer}}};
         l.count = 4;
         return l;
     }
     l.btn_num_frame = 3;
-    l.rows = {{{one_start ? "0103" : "0000", TitleDo::kGame},   // (Start; New Game when no mod has a file select)
-               {"0104", TitleDo::kMultiplayer},
-               any_save ? TitleMenuRow{"0105", TitleDo::kGame} : TitleMenuRow{"0105", TitleDo::kDecide, 1},
-               {}}};
+    if (any_save) {   // (one Start for Continue and New Game: Start on Continue's slot, Multiplayer on New Game's)
+        l.rows = {{{"0103", TitleDo::kGame}, {"0104", TitleDo::kMultiplayer}, {"0105", TitleDo::kGame}, {}}};
+    } else {          // (no save: New Game, or Start, then the game's Options, then Multiplayer on the third slot)
+        l.rows = {{{one_start ? "0103" : "0000", TitleDo::kGame}, {"0105", TitleDo::kGame},
+                   {"0104", TitleDo::kMultiplayer}, {}}};
+    }
     l.count = 3;
     return l;
 }

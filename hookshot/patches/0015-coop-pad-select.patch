@@ -88,7 +88,7 @@ index 893b188..426082d 100644
  /* *taps: the host's own presses (hos_hid_tap), apart from the rest */
  static void read_input(uint64_t *buttons, uint64_t *taps, int32_t stick[4]) {
      *buttons = *taps = 0;
-@@ -1062,7 +1080,9 @@ static void read_input(uint64_t *buttons, uint64_t *taps, int32_t stick[4]) {
+@@ -1062,7 +1080,12 @@ static void read_input(uint64_t *buttons, uint64_t *taps, int32_t stick[4]) {
          static const char *env;
          static int looked;
          if (!looked) looked = 1, env = getenv("HOS_INPUT_BACKGROUND");
@@ -96,16 +96,19 @@ index 893b188..426082d 100644
 +        /* (patch 0015) a pad chosen for this game is its own, in front or not; the keys too when asked */
 +        if (pads_in_background(env, rx_option(4, 0)) || hos_input_pad_pick() > 0) pads_read(buttons, stick);
 +        if (hos_input_keyboard_mode() == 1) keys_behind(buttons, stick);
++        /* (patch 0015) no mouse in this game: the camera is the game's and its pad's, behind too (a mouse camera left
++           on, with its last free look, would put its angles back every frame over the right stick's) */
++        if (hos_input_keyboard_mode() == 2) hos_mouse_native_stick(1);
          walk_held(0, 0, rx_option(HOS_OPT_WALK_MODE, 0) == 1);   /* (behind: a toggled walk is kept) */
          return;
      }
-@@ -1086,6 +1106,11 @@ static void read_input(uint64_t *buttons, uint64_t *taps, int32_t stick[4]) {
+@@ -1086,6 +1109,11 @@ static void read_input(uint64_t *buttons, uint64_t *taps, int32_t stick[4]) {
              ps[3] > 12000 || ps[3] < -12000)
              player_used();
      }
 +    if (hos_input_keyboard_mode() == 2) {   /* (patch 0015) no keyboard or mouse in this game (display.c lets the mouse
-+                                               go), the pads still turn the camera */
-+        hos_mouse_native_stick(stick[2] != 0 || stick[3] != 0);
++                                               go): the camera is the game's and its pad's, its own follow included */
++        hos_mouse_native_stick(1);
 +        return;
 +    }
      binds_load();   /* (the keys: key_default's, or longshot_options.ini's; the mouse's buttons once its capture is known) */

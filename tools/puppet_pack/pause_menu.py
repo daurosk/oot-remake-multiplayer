@@ -1,41 +1,41 @@
-"""The pause menu's Multiplayer tab (issue #264, piece 4; docs/hookshot.md "The pause menu's
-Multiplayer tab"): a fifth tab after System, and its page, in the game's own look. Made from the
-player's own game files, as the puppets are.
+"""The pause menu's Multiplayer page and Longshot Settings (issue #264, piece 4; docs/hookshot.md
+"The pause menu's Multiplayer page"): two pages opened from two buttons on the game's own System
+page, in the game's own look; the tab strip stays the game's four tabs. Made from the player's own
+game files, as the puppets are.
 
 Writes into the puppet mod's romfs:
   UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc.zs
-      MenuOverlay_00.buil (the tab strip): Pa_Category_04, a copy of the fourth tab, after System;
-          the R label moved right of it. The game's four tabs and L stay where they are: the
-          strip's own animation places the tabs (seen in a run, 2026-11-18: moved ones went back)
-      PlusMenu_00.buil (the pages): Pa_Coop_00, a copy of the System page, where a page shows
-      PaSystemMenu_00.buil (the System page's own layout, which both pages use): Pa_List_00..06,
-          seven of the game's Options rows (PaOptionBtnLevel_00: a name on the left, a value
+      PlusMenu_00.buil (the pages): Pa_Coop_00 and Pa_Settings_00, copies of the System page, where
+          a page shows (the Multiplayer page, and Longshot Settings: Longshot's options)
+      PaSystemMenu_00.buil (the System page's own layout, which all three pages use): Pa_List_00..07,
+          eight of the game's Options rows (PaOptionBtnLevel_00: a name on the left, a value
           between arrows on the right) down the right half, where the controller picture is: the
-          game browser's list (a header, then six games). Stored hidden, so the System page never
-          shows them; the module shows them on ours (its copy of the controller picture is hidden)
+          game browser's list (a header, then six games), and the settings' list; and Pa_Button_05
+          and Pa_Button_06, copies of Pa_Button_03 below Pa_Button_04: System's Longshot Settings
+          and Multiplayer buttons. Stored hidden, so the System page never shows them; the module
+          shows the list on ours (its copy of the controller picture is hidden) and the buttons on
+          System's
   Mals/<language>.Product.110.sarc.zs
-      LayoutMsg/MenuOverlay_00.msbt: the tab's name; LayoutMsg/PlusMenu_00.msbt: the page's five
-      rows (strings/en.txt and its translations: labels named for the panes they fill, as the
-      game's own Pa_System_00-Pa_Button_00-T_Btn_00)
+      LayoutMsg/PlusMenu_00.msbt: the buttons' names and the page's rows (strings/en.txt and its
+      translations: labels named for the panes they fill, as the game's own
+      Pa_System_00-Pa_Button_00-T_Btn_00)
 and grows those files' entries in the resource size table.
 
-Both copies are stored hidden (ui_pack's Copy.hidden): the page sits under N_InOut_00 at x 0, over
-every page, so only the co-op module shows it (and the tab), and a game with an older module or none
-looks as it always did.
+The copies are stored hidden (ui_pack's Copy.hidden): the pages sit under N_InOut_00 at x 0, over
+every page, so only the co-op module shows them (and the buttons), and a game with an older module
+or none looks as it always did.
 
-What the game does with them (read from the game's code, not seen in a game yet):
-  - the tab strip's set-up counts its Pa_Category_%02d parts and makes a tab for each, so it
-    makes the fifth itself; it fills and lights only the four it knows (System and before);
+What the game does with them (read from the game's code):
   - no code of the game binds Pa_Coop_00 (the menu binds its four pages by name), and the game
-    makes a page's buttons in that page's own code, so the copy has no game buttons;
-  - the co-op module (hookshot/src/coop_pause_page) shows the page over System's and lights the tab
-    when R is pressed on System, and gives System back on L.
+    makes a page's buttons in that page's own code, so the copy has no game buttons of its own;
+    the System page's own code makes a button of every PaSystemMenu_00 button part, ours too;
+  - the co-op module (hookshot/src/coop_pause_tab_module.cpp) shows a page in System's place when
+    A is pressed on its button, and gives System back on B, L or R.
 
-Where the copies go (ui_pack.py's notes): neither the tabs' pane nor the pages' pane reaches the
-layout's last pane, so a copy under them would break the pane order. The tab goes under RootPane,
-where the fifth tab sits on the screen; the page under N_InOut_00 (the pages' and the menu's
-In and Out), where the shown page sits: the pages are side by side on a strip (System at x 12840)
-that the menu slides, and the System page shows when the strip has slid by its x.
+Where the copies go (ui_pack.py's notes): the pages' pane does not reach the layout's last pane,
+so a copy under it would break the pane order. The page goes under N_InOut_00 (the pages' and the
+menu's In and Out), where the shown page sits: the pages are side by side on a strip (System at
+x 12840) that the menu slides, and the System page shows when the strip has slid by its x.
 """
 import struct
 
@@ -48,17 +48,15 @@ OVERLAY_MSG = "LayoutMsg/MenuOverlay_00.msbt"
 PAGES_MSG = "LayoutMsg/PlusMenu_00.msbt"
 MALS_GLOB = "Mals/*.Product.*.sarc.zs"
 
-TAB = "Pa_Category_%02d"
-GAME_TABS = 4                 # Pa_Category_00..03
-NEW_TAB = TAB % GAME_TABS     # Pa_Category_04
-TAB_ROOT = "RootPane"
-L_LABEL, R_LABEL = "T_BtnL_00", "T_BtnR_00"
 SYSTEM_PAGE = "Pa_System_00"
 NEW_PAGE = "Pa_Coop_00"
+SETTINGS_PAGE = "Pa_Settings_00"
 PAGE_PARENT = "N_InOut_00"
 SYSTEM_LAYOUT = "PaSystemMenu_00.buil"
 ROW = "Pa_List_%02d"           # the game browser's rows (CoopPauseTab::kListRows: a header and kCells games)
-ROWS = 7
+# 8: the eighth (Pa_List_07) is Longshot Settings' alone, its header and seven settings a page (a tester: "it
+# fits"); the Multiplayer page uses the first seven, and a module that knows only seven leaves it hidden.
+ROWS = 8
 ROW_SOURCE = "Pa_Button_00"     # (a part of the page's own, in whose place each row is made)
 ROW_LAYOUT = "PaOptionBtnLevel_00"   # the game's Options row: T_Option_00 on the left, T_Text_00 between arrows
 ROW_SIZE = (1920.0, 126.0)      # its N_BtnWidth_00
@@ -73,42 +71,12 @@ def _new_id(name):
     return ui_pack.part_id(name)
 
 
-FIFTH_GAP = 50.0   # the fifth tab this much closer to System than the game's step (410 for 460), and R moved this far
-R_MOVE = 390.0     # right (990 -> 1380): R between the fifth tab's lit box and the rupee counter (seen in a run,
-                   # 2026-11-18: at 430 and 340 the lit box covered R)
-
-
 def _x(d, name):
     panes, _ = ui_pack.read_layout(d)
     for p in panes:
         if p.name == name:
             return struct.unpack_from("<f", d, p.record + 0x1c)[0]
     raise PauseMenuError("the layout has no %s" % name)
-
-
-def add_tab(d):
-    """MenuOverlay_00.buil with a fifth tab: a copy of the fourth (Pa_Category_03) a little less
-    than the game's step to its right (the step from tab 0 to tab 1, less FIFTH_GAP), under
-    RootPane, and the R label moved R_MOVE to the right of it. The game's four tabs and L stay:
-    the strip's animation sets the tabs' places, so moving them in the layout does nothing."""
-    panes, _ = ui_pack.read_layout(d)
-    names = {p.name for p in panes}
-    for i in range(GAME_TABS):
-        if TAB % i not in names:
-            raise PauseMenuError("the layout has no %s" % (TAB % i))
-    if NEW_TAB in names:
-        raise PauseMenuError("the layout has %s already" % NEW_TAB)
-    for name in (L_LABEL, R_LABEL, TAB_ROOT):
-        if name not in names:
-            raise PauseMenuError("the layout has no %s" % name)
-    last = TAB % (GAME_TABS - 1)
-    step = _x(d, TAB % 1) - _x(d, TAB % 0)
-    if step <= 0 or any(abs(_x(d, TAB % (i + 1)) - _x(d, TAB % i) - step) > 0.5 for i in range(GAME_TABS - 1)):
-        raise PauseMenuError("the game's tabs are not evenly spaced from left to right")
-    off = ui_pack.frame_offset(d, last, TAB_ROOT)
-    d = ui_pack.clone_parts(d, [ui_pack.Copy(last, NEW_TAB, (step - FIFTH_GAP + off[0], off[1]), parent=TAB_ROOT,
-                                             hidden=True)], new_id=_new_id)
-    return ui_pack.move_panes(d, {R_LABEL: (R_MOVE, 0.0)})
 
 
 def add_page(d):
@@ -123,7 +91,9 @@ def add_page(d):
         raise PauseMenuError("the layout has %s already" % NEW_PAGE)
     off = ui_pack.frame_offset(d, SYSTEM_PAGE, PAGE_PARENT)
     move = (-_x(d, SYSTEM_PAGE), off[1])   # x: the page's place on the strip taken off (the strip itself sits at 0)
-    return ui_pack.clone_parts(d, [ui_pack.Copy(SYSTEM_PAGE, NEW_PAGE, move, parent=PAGE_PARENT, hidden=True)], new_id=_new_id)
+    return ui_pack.clone_parts(d, [ui_pack.Copy(SYSTEM_PAGE, NEW_PAGE, move, parent=PAGE_PARENT, hidden=True),
+                                   ui_pack.Copy(SYSTEM_PAGE, SETTINGS_PAGE, move, parent=PAGE_PARENT, hidden=True)],
+                               new_id=_new_id)
 
 
 def add_rows(d):
@@ -142,6 +112,49 @@ def add_rows(d):
     copies = [ui_pack.Copy(ROW_SOURCE, ROW % i, (ROW_X - sx, ROW_TOP + ROW_STEP * i - sy), hidden=True,
                            part_layout=ROW_LAYOUT, size=ROW_SIZE) for i in range(ROWS)]
     return ui_pack.clone_parts(d, copies, new_id=_new_id)
+
+
+SETTINGS_BUTTON = "Pa_Button_05"    # Longshot Settings
+MULTIPLAYER_BUTTON = "Pa_Button_06" # Multiplayer
+CUSTOMIZE_BUTTON = "Pa_Button_07"   # Customize Link (Settings and look's Customize page, straight from System: a tester
+                                    # found it too deep under Multiplayer, 2026-11-20)
+BUTTON_SOURCE = "Pa_Button_03"   # (the one of System's buttons without overrides or properties: clone_parts copies it)
+BUTTON_AFTER = "Pa_Button_04"    # (Title Screen: ours row steps below it)
+
+
+def add_system_buttons(d):
+    """PaSystemMenu_00.buil with System's two buttons of ours: SETTINGS_BUTTON (Longshot
+    Settings) and MULTIPLAYER_BUTTON (Multiplayer), copies of BUTTON_SOURCE one and two row steps
+    (Pa_Button_03 to Pa_Button_04, 188 in the game's layout) below BUTTON_AFTER, stored hidden.
+    Every page made of this layout has them (System's, and our two copies): the module shows
+    System's and places its lower buttons around them (Title Screen last), shows Longshot
+    Settings' sixth row (its Debug category), and keeps the rest hidden. The game's System code
+    binds its five buttons by name, so A on ours reaches only the module (its selectors send an
+    unknown name to their default branch)."""
+    panes, _ = ui_pack.read_layout(d)
+    names = [p.name for p in panes]
+    for name in (BUTTON_SOURCE, BUTTON_AFTER):
+        if name not in names:
+            raise PauseMenuError("the layout has no %s" % name)
+    for name in (SETTINGS_BUTTON, MULTIPLAYER_BUTTON, CUSTOMIZE_BUTTON):
+        if name in names:
+            raise PauseMenuError("the layout has %s already" % name)
+    sx, sy = _xy(d, BUTTON_SOURCE)
+    ax, ay = _xy(d, BUTTON_AFTER)
+    step = ay - sy   # (down: y up)
+    if step >= 0:
+        raise PauseMenuError("%s is not below %s" % (BUTTON_AFTER, BUTTON_SOURCE))
+    return ui_pack.clone_parts(d, [ui_pack.Copy(BUTTON_SOURCE, SETTINGS_BUTTON, (ax - sx, ay + step - sy), hidden=True),
+                                   ui_pack.Copy(BUTTON_SOURCE, MULTIPLAYER_BUTTON, (ax - sx, ay + 2 * step - sy),
+                                                hidden=True),
+                                   ui_pack.Copy(BUTTON_SOURCE, CUSTOMIZE_BUTTON, (ax - sx, ay + 3 * step - sy),
+                                                hidden=True)],
+                               new_id=_new_id)
+
+
+def _system_layout(d):
+    """The System page's own layout with the browser's list and our two System buttons."""
+    return add_system_buttons(add_rows(d))
 
 
 def _xy(d, name):
@@ -167,7 +180,8 @@ def build(romfs, out_romfs, dicts, table, write, recompress, log=print, strings=
     run.commit(files, growth)
     for rel, data in files.items():
         write(out_romfs, rel, data)
-    log("pause menu: the Multiplayer tab and page (%s, %s; %d languages)" % (OVERLAY_LAYOUT, PAGES_LAYOUT, len(files) - 1))
+    log("pause menu: System's Multiplayer and Longshot Settings and their pages (%s, %s; %d languages)"
+        % (PAGES_LAYOUT, SYSTEM_LAYOUT, len(files) - 1))
     return list(files)
 
 
@@ -180,7 +194,8 @@ def make(reader, dicts, recompress, strings=ui_pack.STRINGS):
     raw = reader.read(COMMON_ARCHIVE)
     plain = dicts.decompress(raw)
     entries = sarc.read_entries(plain)
-    for layout, edit in ((OVERLAY_LAYOUT, add_tab), (PAGES_LAYOUT, add_page), (SYSTEM_LAYOUT, add_rows)):
+    # (the tab strip, MenuOverlay_00, stays the game's own: our pages open from System's buttons)
+    for layout, edit in ((PAGES_LAYOUT, add_page), (SYSTEM_LAYOUT, _system_layout)):
         olds = [data for name, data in entries if name == layout]
         if not olds:
             raise PauseMenuError("%s has no %s" % (COMMON_ARCHIVE, layout))
@@ -195,15 +210,14 @@ def make(reader, dicts, recompress, strings=ui_pack.STRINGS):
         plain = dicts.decompress(raw)
         msgs = sarc.read_entries(plain)
         have = {name for name, _ in msgs}
-        if OVERLAY_MSG not in have or PAGES_MSG not in have:
+        if PAGES_MSG not in have:
             continue
-        for f in (OVERLAY_MSG, PAGES_MSG):
-            if not ours.get(f):
-                raise PauseMenuError("the strings have no [%s]" % f)
+        if not ours.get(PAGES_MSG):
+            raise PauseMenuError("the strings have no [%s]" % PAGES_MSG)
         packed = sarc.write([(name, ui_pack.add_labels(data, ours[name], replace=True)
-                              if name in (OVERLAY_MSG, PAGES_MSG) else data) for name, data in msgs], data_align=16)
+                              if name == PAGES_MSG else data) for name, data in msgs], data_align=16)
         growth.append((rel, len(plain), len(packed), True))
         files[rel] = recompress(dicts, raw, packed)
     if len(files) < 2:
-        raise PauseMenuError("no language has %s and %s" % (OVERLAY_MSG, PAGES_MSG))
+        raise PauseMenuError("no language has %s" % PAGES_MSG)
     return files, growth

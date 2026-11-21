@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_pause_files.h"
+#include "coop_title.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -221,9 +222,9 @@ void CheckName() {
 
 CoopTitleMenu::Options ReadOptions() {
     CheckName();
-    const auto kit = FindKit();
+    const auto kit = CoopTitle::KitOptionsFile();   // (the one the game reads at its start, and Save writes)
     const std::string coop = ReadText(CoopIni());
-    auto o = CoopTitleMenu::Options::Read(coop, kit ? ReadText(*kit / "coop-options.ini") : std::string());
+    auto o = CoopTitleMenu::Options::Read(coop, kit ? ReadText(*kit) : std::string());
     if (o.name.empty() && !g_fallback_name.empty()) {
         o.name = g_fallback_name;
     }

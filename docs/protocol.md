@@ -55,7 +55,7 @@ Each rule answers a way the TotK online sync was seen to break.
 1. The client connects and sends `HELLO`: protocol version (`u16`), build id (string, up to 64 characters: emulator or recomp, and its version), game build id (string, up to 32, for example `e0f3ccfaf50065ae`), game version (string, up to 16, for example `1.1.1`), nickname (string, 1 to 16 characters), since protocol 10 the game's 32-byte traffic key share (see "Encrypted traffic"), and, after it, one byte: the player number this game had in its last session (1 to 16; none on a first join). The server gives that number back when it is free (a server restart: the games come back in the order they notice it, and without this the numbers, colours and objects' owners swapped). The protocol version is the first 2 bytes of the body in every version of the protocol, so a server can read it, and refuse with the right reason, even from a `HELLO` whose rest it cannot read.
 2. The server first answers `JOIN_CHALLENGE` (see "Join password" below; every session has one since protocol 10, this release's), or `REFUSED` for a wrong version; `WELCOME` or `REFUSED` follows the client's `JOIN_PROOF` (with host approval on, after the host's answer: "Host approval" below).
    - `WELCOME`: `u8` the player's number (1 to 16), `u64` server time, `u16` tick rate (not 0), `u8` count (at most 15), then for each player already in: `u8` number, nickname. Every number in it is different, and the new player's own is not in the list.
-   - `REFUSED`: `u8` reason, which the client shows: 1 wrong protocol version, 2 wrong game build, 3 server full, 4 name taken, 5 bad name (a nickname of nothing but spaces), 6 bad password (the join password did not match, protocol 9), 7 kicked and 8 banned (protocol 11, "Lobby"), 9 not let in (protocol 13, "Host approval"). Reason 200, not encrypted, is the game's own and never sent ("Encrypted traffic", 7). A reason the client does not know is kept and shown as unknown.
+   - `REFUSED`: `u8` reason, which the client shows: 1 wrong protocol version, 2 wrong game build, 3 server full, 4 name taken, 5 bad name (a nickname of nothing but spaces), 6 bad password (the join password did not match, protocol 9), 7 kicked and 8 banned (protocol 11, "Lobby"), 9 not let in (protocol 13, "Host approval"), 10 another co-op version (the game's co-op release, `coop_release` of its `build_id`, is not the session's first player's; a `build_id` that names no release is let in; no protocol change: an older game shows it as unknown). Reason 200, not encrypted, is the game's own and never sent ("Encrypted traffic", 7). A reason the client does not know is kept and shown as unknown.
 3. No `HELLO` within 10 seconds: the server drops the connection.
 4. One address may hold at most 4 connections that have not sent `HELLO` yet (a server option; 0 for no limit). The server drops one more at once, without `REFUSED`.
 
@@ -88,6 +88,14 @@ What it does not change: someone who records a challenge and its proof can still
 
 
 Other datagrams on the server's port, outside the protocol: STUN answers and NAT punches for the invite code (`coop_server --invite`; datagrams starting with `OCP` and version 1, signed with a key made from the join password). They are handled before ENet sees them, use no message types and change nothing in the session; the punch only opens the way through the routers, and the join password check above still decides who joins. [play-online.md](play-online.md), "How the invite code works".
+
+### Same network (no new types)
+
+A player on the host's own network may join without the join password (a tester asked for it, 2026-11-19). Nothing on the wire changes: the game answers `JOIN_CHALLENGE` with the same proof as ever, keyed with a fixed same-network key (`protocol::kSameNetworkPassword`, "squadala-same-network") in place of a password, and the traffic keys come from that key and fresh X25519 shares as above.
+
+- **The server** (`SessionConfig::same_network_open`; `coop_server --same-network-open`; the game's own Host: on unless `same_network_password = on` in `coop-options.ini`, the Co-op Settings row "Password on this network") takes a proof with that key only from a private address: 10/8, 172.16/12, 192.168/16 or 169.254/16 (`is_same_network`). Never from 127/8, where a relay's and a join helper's connections arrive for players from anywhere, nor from 100.64/10 (a carrier's NAT or a VPN). The join password still works from everywhere. `SessionStats::same_network_joins` counts who came in this way.
+- **The game** joining a private address (typed, or picked from the games on this network) with no password typed uses the key. An invite code and a relay room always carry or need the real password.
+- **What it gives up:** on that network, anyone can join, as with a game console's LAN play, and someone there who sits in the middle of a new connection can read it, as with a known password. A host on a shared network (a dorm, a café) chooses "Needed".
 
 ### Rejoin after a crash
 
@@ -337,7 +345,7 @@ Protocol 11, type 430 (430 to 434 kept for looks). The colours a player chose fo
 |---|---|
 | u8 | player: 0 from a client, 1 to 16 relayed |
 | u8 | parts listed, 0 to 64 |
-| per part: u8 | the part's number, 0 to 63 (one a build does not know is passed over by it) |
+| per part: u8 | the part's number, 0 to 63 (one a build does not know is passed over by it): 0 to 16 the first parts, 17 the Cap trim (branch `test-kit-0117`, your own Link's cap trims; an older build passes it over) |
 | per part: u8 u8 u8 | its colour: red, green, blue |
 
 Only the parts set are listed, each once (a part twice, a number past 63 or a count past 64 is refused); none listed: every part in the game's own colours. An older game skips the type as unknown.

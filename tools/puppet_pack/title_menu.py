@@ -35,6 +35,9 @@ MARKER = "Pa_CoopMenu_00"     # the hidden part that says this pack has the menu
 # The menu's texts (CoopTitleMenu::kMenuLabels): 0100..0102 are the older packs' rows too.
 ROWS = (("0100", "Host"), ("0101", "Join"), ("0102", "Co-op Settings"), ("0103", "Start"),
         ("0104", "Multiplayer"), ("0105", "Options"), ("0106", "Back"))
+# The rows' live texts (CoopTitle's native pages: Host, Join and Co-op Settings on the title's own buttons): a
+# placeholder each, written over in the game's memory by the co-op module (as the pause menu's Coop_Live_NN).
+LIVE = tuple(("Coop_Live_T%d" % i, "." * 64) for i in range(4))
 
 TitleMenuError = ui_pack.UiPackError   # one error for the rows and the library they use
 _sections = ui_pack.sections
@@ -62,9 +65,9 @@ def add_marker(d):
 
 # ---------------------------------------------------------------------------------------- MSBT
 
-def add_rows(msbt, rows=ROWS):
-    """Title_00.msbt with the rows' texts (label, text) added, in the file's encoding; a label the
-    file has already gets the row's text."""
+def add_rows(msbt, rows=ROWS + LIVE):
+    """Title_00.msbt with the rows' texts (label, text) added, and the live texts' placeholders, in
+    the file's encoding; a label the file has already gets the row's text."""
     return ui_pack.add_labels(msbt, dict(rows), replace=True)
 
 

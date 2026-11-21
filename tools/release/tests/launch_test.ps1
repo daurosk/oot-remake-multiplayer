@@ -305,6 +305,24 @@ try {
         [void](Set-KitSelfTunic $sp 'red')
         Check ((Set-KitSelfTunic $sp $c) -eq 'green' -and [System.IO.File]::ReadAllText($sTile) -eq 'GREENS' -and -not (Test-Path -LiteralPath $childModel)) "self tunic: green's own copies for '$c'"
     }
+    # -Painted (Longshot): the module paints your exact colour on green's files, so a pack with green's own
+    # files and coop_look/green.bin gets green's whatever the colour; the emulator (no -Painted) your colour's
+    Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"], "green": ["y"]}, "self_files": {"red": {"Tex/Angin_Tile_S_Alb.bntx.zs": "coop_self/red.Angin_Tile_S_Alb.bntx.zs", "Model/Player_Child.Player_Child.bfres.zs": "coop_self/red.Player_Child.bfres.zs"}, "green": {"Tex/Angin_Tile_S_Alb.bntx.zs": "coop_self/green.Angin_Tile_S_Alb.bntx.zs"}}, "look_files": {"green": "coop_look/green.bin"}}'
+    Check ((Set-KitSelfTunic $sp 'red' -Painted) -eq 'red' -and [System.IO.File]::ReadAllText($sTile) -eq 'REDS') 'self tunic: -Painted, no coop_look/green.bin on disk: your colour''s files'
+    New-Item -ItemType Directory -Force -Path (Join-Path $sp 'coop_look') | Out-Null
+    Write-File (Join-Path $sp 'coop_look\green.bin') 'LOOK'
+    foreach ($c in 'red', '#FF3333', '', 'green') {
+        [void](Set-KitSelfTunic $sp 'red')
+        Check ((Set-KitSelfTunic $sp $c -Painted) -eq 'green' -and [System.IO.File]::ReadAllText($sTile) -eq 'GREENS' -and -not (Test-Path -LiteralPath $childModel)) "self tunic: -Painted: green's files for '$c'"
+    }
+    Check ((Set-KitSelfTunic $sp 'red') -eq 'red' -and [System.IO.File]::ReadAllText($sTile) -eq 'REDS') 'self tunic: no -Painted (the emulator): your colour''s files'
+    $oldColor = $env:LICHII_COOP_COLOR; $oldTunics = $env:LICHII_COOP_TUNICS; $oldSelf = $env:LICHII_COOP_SELF_TUNIC
+    try {
+        $env:LICHII_COOP_COLOR = 'red'; $env:LICHII_COOP_TUNICS = $null
+        $said = @(Use-KitPuppetPack (Join-Path $sp 'coop_puppet.json') (Join-Path $ph 'no-tool') @('MISSING') -Painted 6>&1)
+        Check ($said[-1] -eq $true -and $env:LICHII_COOP_SELF_TUNIC -eq 'green' -and [System.IO.File]::ReadAllText($sTile) -eq 'GREENS' -and (($said -join '|') -match 'painted on in the game')) "pack step -Painted: green's files, your colour painted [$($said -join '|')]"
+    } finally { $env:LICHII_COOP_COLOR = $oldColor; $env:LICHII_COOP_TUNICS = $oldTunics; $env:LICHII_COOP_SELF_TUNIC = $oldSelf }
+    Remove-Item -LiteralPath (Join-Path $sp 'coop_look') -Recurse -Force
     # a pack made again by an older tool (self_tiles only): the newer copies do not stay
     [void](Set-KitSelfTunic $sp 'red')
     Write-File $vest 'STALEVEST'

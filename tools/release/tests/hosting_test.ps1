@@ -208,6 +208,7 @@ $opt = Join-Path $optDir 'coop-options.ini'
 [System.IO.File]::WriteAllText($opt, "# upnp = no`r`n# invite = no`r`n")
 $a = Read-KitServerAccess $opt
 Check ($a.Upnp -and $a.Invite -and $null -eq $a.Password) 'defaults: upnp and invite on, no password line'
+Check ($a.Relay -eq '159.54.182.85:27530' -and $a.SameNetworkOpen) 'defaults: the project''s relay built in, the same network without the password'
 [System.IO.File]::WriteAllText($opt, "upnp = no`r`ninvite = no`r`nstun_servers = a.example:1`r`n")
 $a = Read-KitServerAccess $opt
 Check (-not $a.Upnp -and -not $a.Invite -and $a.Stun -eq 'a.example:1') 'upnp = no and invite = no turn them off'
@@ -215,6 +216,11 @@ Check (-not $a.Upnp -and -not $a.Invite -and $a.Stun -eq 'a.example:1') 'upnp = 
 $a = Read-KitServerAccess $opt
 Check ($a.Relay -eq 'relay.example.net' -and $a.RelayRoom -eq 'forest-gang') 'relay_room is read (a commented one is not)'
 Check (-not $a.ApproveJoins) 'approve_joins: off by default'
+[System.IO.File]::WriteAllText($opt, "relay =`r`nsame_network_password = on`r`n")
+$a = Read-KitServerAccess $opt
+Check ($a.Relay -eq '159.54.182.85:27530' -and -not $a.SameNetworkOpen) 'an empty relay line is the built-in relay; same_network_password = on'
+$h = Get-ServerHostingArgs @{ Upnp = $false; Relay = ''; RelayKey = ''; SameNetworkOpen = $true } 'secret' ''
+Check (($h.Args -join ' ') -eq '--same-network-open') 'the same network: the server lets it in without the password'
 [System.IO.File]::WriteAllText($opt, "approve_joins = on`r`n")
 $a = Read-KitServerAccess $opt
 Check ($a.ApproveJoins) 'approve_joins = on is read (issue 261)'

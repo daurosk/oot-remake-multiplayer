@@ -277,9 +277,13 @@ function Read-KitHostSession([string]$Kit, $Servers) {
 # no), Stun (stun_servers), Relay (relay = address[:port]), RelayKey (relay_key) and RelayRoom (relay_room, a
 # room name on the relay) are the router forward, the invite code and the relay (docs/play-online.md). ApproveJoins:
 # $true for 'approve_joins = on': each new player waits for the host's /allow or /deny (issue 261). Pvp: $true
-# only for 'pvp = on' (or yes, 1, true); anything else, or no line, is off.
+# only for 'pvp = on' (or yes, 1, true); anything else, or no line, is off. Relay: the project's own
+# ($script:KitDefaultRelay, as the game's CoopTitleMenu::kDefaultRelay) without a relay line, or with an empty one: it is
+# never removed. SameNetworkOpen: players on this network join without the password, unless 'same_network_password =
+# on' (docs/protocol.md, "Same network").
+$script:KitDefaultRelay = '159.54.182.85:27530'
 function Read-KitServerAccess([string]$Path) {
-    $access = [ordered]@{ Allow = ''; Bind = ''; Password = $null; Upnp = $true; Invite = $true; Stun = ''; Relay = ''; RelayKey = ''; RelayRoom = ''; ApproveJoins = $false; Pvp = $false }
+    $access = [ordered]@{ Allow = ''; Bind = ''; Password = $null; Upnp = $true; Invite = $true; Stun = ''; Relay = $script:KitDefaultRelay; RelayKey = ''; RelayRoom = ''; ApproveJoins = $false; Pvp = $false; SameNetworkOpen = $true }
     if (-not (Test-Path -LiteralPath $Path)) { return $access }
     foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
         if ($line -match '^\s*server_allow\s*=\s*(.*?)\s*$') { $access.Allow = $Matches[1] }
@@ -288,7 +292,8 @@ function Read-KitServerAccess([string]$Path) {
         elseif ($line -match '^\s*upnp\s*=\s*(.*?)\s*$') { $access.Upnp = $Matches[1] -notmatch '^(no|off|false|0)$' }
         elseif ($line -match '^\s*invite\s*=\s*(.*?)\s*$') { $access.Invite = $Matches[1] -notmatch '^(no|off|false|0)$' }
         elseif ($line -match '^\s*stun_servers\s*=\s*(.*?)\s*$') { $access.Stun = $Matches[1] }
-        elseif ($line -match '^\s*relay\s*=\s*(.*?)\s*$') { $access.Relay = $Matches[1] }
+        elseif ($line -match '^\s*relay\s*=\s*(.*?)\s*$') { $access.Relay = $(if ($Matches[1]) { $Matches[1] } else { $script:KitDefaultRelay }) }
+        elseif ($line -match '^\s*same_network_password\s*=\s*(.*?)\s*$') { $access.SameNetworkOpen = $Matches[1] -notmatch '^(on|yes|1|true)$' }
         elseif ($line -match '^\s*relay_key\s*=\s*(.*?)\s*$') { $access.RelayKey = $Matches[1] }
         elseif ($line -match '^\s*relay_room\s*=\s*(.*?)\s*$') { $access.RelayRoom = $Matches[1] }
         elseif ($line -match '^\s*approve_joins\s*=\s*(.*?)\s*$') { $access.ApproveJoins = $Matches[1] -match '^(on|yes|1|true)$' }
@@ -435,7 +440,12 @@ function Get-KitTunic([string]$Color) {
 # tools/puppet_pack/self_tunic.py, the same steps. Green, no colour or a
 # pack without them: takes every copy away, the game's own green. Only the Kokiri tunic: the
 # Goron and Zora tunics have their own textures. Returns the colour put in, or ''.
-function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
+# -Painted (Longshot): the co-op module paints your exact colour on green's files while the game
+# runs (hookshot/src/coop_look_live.cpp, from the pack's coop_look/green.bin), so a pack that has
+# green's own files and coop_look/green.bin gets green's whatever the colour: what the game's memory
+# holds is then always the texels the module paints from. Without -Painted (the emulator, which has
+# no such module) or with an older pack: your colour's files, the nearest preset.
+function Set-KitSelfTunic([string]$PackDir, [string]$Color, [switch]$Painted) {
     $romfs = Join-Path $PackDir 'romfs'
     $tile = 'Tex/Angin_Tile_A_Alb.bntx.zs'
     $dark = 'Tex/Angin_Tile_A_Dark_Alb.bntx.zs'
@@ -446,6 +456,12 @@ function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
     $json = $null
     try {
         $json = [System.IO.File]::ReadAllText((Join-Path $PackDir 'coop_puppet.json')) | ConvertFrom-Json -ErrorAction Stop
+    } catch { }
+    try {
+        if ($Painted -and $json -and $json.self_files -and $json.self_files.green -and $json.look_files -and
+            $json.look_files.green -and (Test-Path -LiteralPath (Join-Path $PackDir $json.look_files.green) -PathType Leaf)) {
+            $tunic = 'green'
+        }
     } catch { }
     $ok = { param($rel) $rel -is [string] -and ($rel -match '^Tex/[A-Za-z0-9_]+\.bntx\.zs$' -or
             $rel -match '^Model/Player_(Adult|Child)\.Player_(Adult|Child)\.bfres\.zs$') }
@@ -519,8 +535,9 @@ function Set-KitDefaultColor([string]$Mode, [string]$Server) {
 # no pack the puppets off. $Manifest: the pack's coop_puppet.json (the emulator's load\<title>\coop-puppet,
 # Hookshot's mods\contents\<title>\coop-puppet). $Missing: the lines to say when there is no pack.
 # Hookshot indexes its mod files once at start, so this runs before Start-Process there too.
-# Returns $true when the pack is there.
-function Use-KitPuppetPack([string]$Manifest, [string]$ToolDir, [string[]]$Missing) {
+# Returns $true when the pack is there. -Painted: Longshot's co-op module paints your colour on green's
+# tunic files (Set-KitSelfTunic -Painted).
+function Use-KitPuppetPack([string]$Manifest, [string]$ToolDir, [string[]]$Missing, [switch]$Painted) {
     if (Test-Path -LiteralPath $Manifest) {
         Write-Host 'Puppet pack: found.'
         # Made before sound or before the kit's pack tool changed: say so, start anyway.
@@ -528,10 +545,14 @@ function Use-KitPuppetPack([string]$Manifest, [string]$ToolDir, [string[]]$Missi
         if ($hint) { Write-Host $hint }
         # Your own Link in your colour (#202); LICHII_COOP_TUNICS=0 keeps everyone green.
         $want = if ($env:LICHII_COOP_TUNICS -match '^(0|off)$') { '' } else { $env:LICHII_COOP_COLOR }
-        $self = Set-KitSelfTunic (Split-Path -Parent $Manifest) $want
+        $self = Set-KitSelfTunic (Split-Path -Parent $Manifest) $want -Painted:$Painted
         if ($self) {
             $env:LICHII_COOP_SELF_TUNIC = $self
-            Write-Host "Your Link: the $self tunic (coop-options.ini color; the Goron and Zora tunics stay as they are)."
+            if ($self -eq 'green' -and $want -and (Get-KitTunic $want) -and (Get-KitTunic $want) -ne 'green') {
+                Write-Host "Your Link: your tunic colour ($want) is painted on in the game (coop-options.ini color; the Goron and Zora tunics stay as they are)."
+            } else {
+                Write-Host "Your Link: the $self tunic (coop-options.ini color; the Goron and Zora tunics stay as they are)."
+            }
         }
         elseif ($env:LICHII_COOP_SELF_TUNIC) { Remove-Item env:LICHII_COOP_SELF_TUNIC }
         if ($want -and -not $self -and (Get-KitTunic $want) -ne 'green') {

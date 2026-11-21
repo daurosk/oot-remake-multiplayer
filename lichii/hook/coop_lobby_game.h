@@ -81,6 +81,9 @@ struct Seen {
     // grows (Forget keeps it), so a caller that looks less often than events come still sees each one: `refused` is
     // cleared again by the disconnect that follows a kick.
     std::uint32_t refusals = 0;
+    // How many times the session refused this game's name as in use there, after the client's own retries (the
+    // player's own crashed game holding it) ran out. Only grows, as `refusals`: the module joins again as "<name> (2)".
+    std::uint32_t names_taken = 0;
     std::uint8_t self = 0;
     std::uint8_t host = 0;
     std::vector<PlayerSeen> players;     // by number
@@ -92,7 +95,7 @@ Seen Now();
 inline bool StopsRejoin(coop::protocol::RefuseReason r) {
     using R = coop::protocol::RefuseReason;
     return r == R::kicked || r == R::banned || r == R::not_let_in || r == R::bad_password ||
-           r == R::wrong_protocol_version || r == R::wrong_game_build;
+           r == R::wrong_protocol_version || r == R::wrong_game_build || r == R::wrong_coop_version;
 }
 // Who asks to join this host now (the JOIN_KNOCKs not answered yet), oldest first, by nickname. Any thread.
 std::vector<std::string> Asking();

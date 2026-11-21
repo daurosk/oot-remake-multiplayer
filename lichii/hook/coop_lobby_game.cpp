@@ -29,6 +29,7 @@ struct Glue {
     std::vector<std::string> lines;                             // -> the chat box
     Knocks knocks;                                              // who asks to join (we host)
     std::uint32_t refusals = 0;                                 // Seen::refusals (never reset)
+    std::uint32_t names_taken = 0;                              // Seen::names_taken (never reset)
 
     void Line(std::string text) {
         if (lines.size() < 32) {
@@ -204,6 +205,9 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
         if (event.kind == EventKind::refused && StopsRejoin(event.refuse_reason)) {
             ++g.refusals;   // (kept across the disconnect that clears `refused`: Seen::refusals)
         }
+        if (event.kind == EventKind::refused && event.refuse_reason == proto::RefuseReason::name_taken) {
+            ++g.names_taken;
+        }
         if (!g.seen.refused.empty()) {
             g.Line("refused: " + g.seen.refused);   // the full reason in the chat (the tabs show its first part)
         }
@@ -351,6 +355,7 @@ Seen Now() {
     std::lock_guard lock(g.mutex);
     Seen s = g.seen;
     s.refusals = g.refusals;
+    s.names_taken = g.names_taken;
     return s;
 }
 

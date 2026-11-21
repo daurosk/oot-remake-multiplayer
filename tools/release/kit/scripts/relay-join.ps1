@@ -223,6 +223,11 @@ function Get-ServerHostingArgs($Access, [string]$Password, [string]$Allow) {
             }
         }
     }
+    if ($Access.SameNetworkOpen) {
+        $list += '--same-network-open'
+        $notes += 'Players on your own network (behind the same router) join without the join password'
+        $notes += '(same_network_password = on: they need it too).'
+    }
     if ($Access.ApproveJoins) {
         $list += '--approve-joins'
         $notes += 'approve_joins = on: each new player waits until you type /allow or /deny in your game''s chat'

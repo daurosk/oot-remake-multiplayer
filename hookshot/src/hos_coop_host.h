@@ -31,7 +31,9 @@ typedef struct HosCoopHostOptions {
     uint8_t max_players;    /* most players at once, 1 to 16; 0: the server's default (16) */
     uint8_t approve_joins;  /* 1: each new player waits until the host lets them in (/allow, /deny; docs/protocol.md
                                "Host approval") */
-    uint8_t reserved[2];
+    uint8_t same_network_password;   /* 1: players on this network need the join password too; 0: from a private
+                                        address they join without it (docs/protocol.md "Same network") */
+    uint8_t reserved;
     uint32_t pose_upload_kbps;  /* the host's upload for other players' poses, kilobits a second; 0: no cap */
     const char *relay_room; /* with relay_via: a room name to hold on the relay (issue 261); NULL or "": none */
     const char *relay_list; /* with relay_room: the name the room is shown as on the relay's public room list

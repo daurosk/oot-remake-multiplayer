@@ -1432,6 +1432,8 @@ TEST_CASE("boss-die-0116: the stall check judges only fight moves: never a death
     CHECK(StallJudged("Diet_Wait", 24));
     CHECK(StallJudged("Undead_Walk", 24));
     CHECK(StallJudged("Cry", 24));
+    // The sleep a boss waits in for its intro: never a held move (Gohma re-chosen twice before anyone came in).
+    CHECK_FALSE(StallJudged("Sleep", 21));
 }
 
 TEST_CASE("boss-die-0116: every boss and part held in its death or a cut never chooses again, a live stuck move does") {

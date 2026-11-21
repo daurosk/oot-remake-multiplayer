@@ -16,6 +16,8 @@
 #include <cmath>
 #include <cstddef>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace CoopHudLayout {
@@ -135,6 +137,39 @@ inline std::size_t BlocksThatFit(double top, const std::vector<double>& heights,
         y += heights[n++];
     }
     return n;
+}
+
+// The player list's size (Co-op settings' "Player list", coop-options.ini LICHII_COOP_HUD_SIZE): Auto (the full
+// blocks for a few players, compact rows past kFullMost), Full, Compact, Off. With 16 players the full blocks (a
+// name, a row of hearts, the place) did not fit, and a tester found them a little big (2026-11-20).
+enum class ListSize { kAuto, kFull, kCompact, kOff };
+inline constexpr std::size_t kFullMost = 4;   // Auto: the full blocks up to this many other players
+inline constexpr std::size_t kMostRows = 8;   // at most this many players listed; the rest are one "+N" line
+
+inline ListSize ParseListSize(std::string_view text) {
+    std::string t(text);
+    for (char& c : t) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+    if (t == "full") return ListSize::kFull;
+    if (t == "compact") return ListSize::kCompact;
+    if (t == "off" || t == "0" || t == "no") return ListSize::kOff;
+    return ListSize::kAuto;
+}
+inline const char* ListSizeName(ListSize s) {
+    switch (s) {
+    case ListSize::kFull: return "Full";
+    case ListSize::kCompact: return "Compact";
+    case ListSize::kOff: return "Off";
+    default: return "Auto";
+    }
+}
+// Compact rows for `others` other players at this size.
+inline bool CompactFor(ListSize s, std::size_t others) {
+    return s == ListSize::kCompact || (s == ListSize::kAuto && others > kFullMost);
+}
+// The players in our own area first, the order otherwise kept (by number).
+template <class T, class Here>
+void HereFirst(std::vector<T>& v, Here here) {
+    std::stable_partition(v.begin(), v.end(), here);
 }
 
 } // namespace CoopHudLayout

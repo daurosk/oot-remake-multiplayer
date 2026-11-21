@@ -116,6 +116,8 @@ CoopDraw::Scene DrawScene();
 // "Names on map"; LICHII_COOP_MAP, LICHII_COOP_MAP_NAMES at start): count
 // from the next present. Any thread.
 void SetMapOptions(bool players, bool names);
+// The player list's size from Co-op settings (CoopHudLayout::ParseListSize: auto, full, compact, off), at once.
+void SetHudSize(const std::string& size);
 
 // hos_coop_draw2: the scene drawn, in the game look when the HUD pack's font
 // and heart pictures load through the table's calls (the first call loads

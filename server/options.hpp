@@ -70,6 +70,9 @@ struct CommandLine {
   // --approve-joins: the host lets each new player in (docs/protocol.md,
   // "Host approval"); off by default.
   bool approve_joins = false;
+  // --same-network-open: players from a private address join without the
+  // join password (docs/protocol.md "Same network").
+  bool same_network_open = false;
   // --test-delay-ms / --test-jitter-ms: TEST ONLY (test_delay.hpp); main
   // refuses them unless the environment has OOT_COOP_TEST=1.
   TestDelay test_delay;

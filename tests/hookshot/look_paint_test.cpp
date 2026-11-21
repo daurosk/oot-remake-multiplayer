@@ -147,6 +147,57 @@ const Golden kGolden[] = {
         "2152d1b67080c1c95e1fcdebdb9a4b6d"},
 };
 
+// The tunic (CoopLookParts::TunicPainted): random blocks (synthetic) run
+// through the pack tool's own tunic rewrites: the green parts of the other
+// textures (tunic_extra.py _astc_recolor, _bc_recolor, its real is_green,
+// against a base given) and the whole tile (tunic.py recolor_bntx).
+struct TunicGolden {
+    Format format;
+    Takes takes;
+    std::uint32_t colour;
+    double base;
+    const char* in;
+    const char* out;
+};
+
+const TunicGolden kTunicGolden[] = {
+    {Format::astc, Takes::green, 0xD02020, 0.0746,
+        "a1924cc59f4690198471e70901b74561b808d131cc03e8cacf4c4b62e5653b64c5f13a2b3ce47840781131ddd0003798"
+        "21cb9281bc23aaa0bb25ffde19522cfb85aa33dd16817a737219c6b5f20e393742ca8461e8371e5db730d46eeaa627d4"
+        "0fc4067798e9d1beb46b1ab702ef02d42e72b978b193b9df498198dc80f5077ef1f0bd428197f9026563422d7d9a8636"
+        "d588a320c2a9e5e0702e7c3879e772b0250039414dcfd3a577d181611a2993f30de9b4c5b4630f989a118f25038b7101"
+        "0db5332b8685450d01a57954f2e501646df561cc9074bb8df3eed9a137f2ccf5cbc0ee992ed685664c5bac3027bef519"
+        "9e8988252877104ff2ec4c79e641ac4c",
+        "a1924cc59f76881a8471e70901b74561b808d1319c03e8cacf4c4b62e5653b64c5f13aab14e478f8350d31ddd0003798"
+        "21cb92e1df36aaa0bb25ffde19522cfb85aa33dd169162737219c6b5f20e393742ca842191321e55b730d46eeaa627d4"
+        "0fc4067798e9d1beb46b1ab702ef02d42e72b978b193b9df498198dc80f5077ef1f0bd428197f9026563422d7d9a8636"
+        "d588a320c2a9e5e0702e7c3879e772b02500ff9fccc6ccd277d181611a2993f30de9b4c5146071188e1b405816cb6500"
+        "0db5332bfea5840a0125890515fe01646df5612ca028bb8df3ee815a31f2ccf5cbc0de8c2ed685664c5bac3027bef519"
+        "9e89882588f8c1a3e0e01c7be641ac4c"},
+    {Format::bc1, Takes::green, 0x3050E0, 0.0746,
+        "b13cad3971121b1eb68acb33009079dc55d04a5b0b0cc495834f0143b7f4100f996d677690e1522b102b9b5760a0e8fd"
+        "d8d781675f4e014279e80c2a216c9dd4e53981da96c9a07d78be2f5a947cfa19afd0349d66c0fdb5c84a8d323305a56b"
+        "050e684222854cf887c10a770639114f6667496e94eac09b96ce0b153aeb46b4ad1dcd312de9a48ba1499c8a27135f45"
+        "290e7d9bcc76805287080052c8382b97c962e3398b58ee399c7335b6807d33d9036c476c5de3183ba25958361f136960",
+        "7f5cad3971121b1eb68a9f43009079dc55d05f430b0cc495df8edf3ab7f4100f996dff7d90e1522b102b1f9760a0e8fd"
+        "bf9fdf8e5f4e014279e80c2a216c9dd4f52181da96c9a07d9f862f5a947cfa19afd0349d66c0fdb5de328d323305a56b"
+        "7a327f6d66901df987c19f860639114fdf75df8e81ead58bbf8e9f5c3aeb46b4cd313f6d6ce8a19bd4219c8a27135f45"
+        "9f757d9bcc7680528708382ac8382b97c962f5218b58ee399c733f7e807d33d9ff4b3f545de3183bff7da2594a463c35"},
+    {Format::bc3, Takes::all, 0x7F3FBF, 0,   // (0: the texture's own average, as tunic.py)
+        "25873f7b8dc78542cb43b0110d343d5ce1fc6cbe1b4ee99a2c6d406fa97207f719c5ec3eac07e63b8f236876c91d9d6b"
+        "778c196e977af2b99ab62476f15a0c571f8adbe253ce2d94718c71a2901d04117247e8d509ff4ea4904ea049435f31af"
+        "aa1c8e32dea0928eae6b339d68c66d89bbadedc2f0a1048e6963af8c2137088dede8de0acb52f42de43bcca9c2f873f2"
+        "b7059c4790f7736e1395307cd695efbc53b9c6a208b6eb4d294247725096e80bac6193616c683cc4f29cf6b551fda97e"
+        "cbb5cc2218a0b206339dc55f0234cb8cd2d39f4645076d22e6310b2c61a719f1e50ebd5abd1922d05054694581c7af3d"
+        "26437c10ddfbfac1053aa33fbd4bfbea00000000000000000000000000000000",
+        "25873f7b8dc785427261aa300d343d5ce1fc6cbe1b4ee99a1882ffb2a97207f719c5ec3eac07e63b51599da2c91d9d6b"
+        "778c196e977af2b9ffb29c9af15a0c571f8adbe253ce2d94f7797259901d04117247e8d509ff4ea4bea2a930435f31af"
+        "aa1c8e32dea0928e92615a8a68c66d89bbadedc2f0a1048e715917822137088dede8de0acb52f42d72615051c2f873f2"
+        "b7059c4790f7736e398ad571d695efbc53b9c6a208b6eb4dcb380d495096e80bac6193616c683cc4398abea251fda97e"
+        "cbb5cc2218a0b2065a8a1fbb0234cb8cd2d39f4645076d22a930926161a719f1e50ebd5abd1922d0d571388281c7af3d"
+        "26437c10ddfbfac1ca301fbbbd4bfbea00000000000000000000000000000000"},
+};
+
 }  // namespace
 
 TEST_CASE("look paint: tones of colours") {
@@ -223,4 +274,73 @@ TEST_CASE("look paint: parts of one texture, each its own colour, the rest stays
     // A rule for a tone the texture has not: nothing changes.
     CHECK(Recolour(Format::bc1, tex, out, {{kPink, 0xFF00FF}}) == 0);
     CHECK((out == tex));
+}
+
+TEST_CASE("look paint: the tunic's green is the pack tool's is_green") {
+    // (tools/puppet_pack/tunic_extra.py is_green gave these)
+    struct Sample {
+        Rgb c;
+        bool green;
+    };
+    const Sample samples[] = {
+        {{62, 81, 42}, true},     {{200, 220, 190}, true},  {{190, 205, 120}, true}, {{150, 160, 150}, false},
+        {{96, 81, 66}, false},    {{120, 110, 60}, true},   {{40, 200, 220}, false}, {{2, 5, 1}, false},
+        {{5, 6, 5}, false},       {{90, 100, 95}, true},    {{255, 255, 255}, false}, {{30, 160, 60}, true},
+        {{160, 150, 40}, true},   {{130, 145, 128}, true},  {{20, 40, 200}, false},
+    };
+    for (const Sample& s : samples) {
+        CAPTURE(int(s.c[0]));
+        CAPTURE(int(s.c[1]));
+        CAPTURE(int(s.c[2]));
+        CHECK(IsGreen(s.c) == s.green);
+    }
+    // The pale greens of the adult's lower tunic: no green tone by ToneOf, green by the pack tool.
+    CHECK(ToneOf({200, 220, 190}) == kGrey);
+    CHECK(ToneOf({160, 150, 40}) == kGold);
+}
+
+TEST_CASE("look paint: the tunic's textures, the same bytes as the pack tool's") {
+    for (const TunicGolden& g : kTunicGolden) {
+        CAPTURE(g.colour);
+        const auto in = Hex(g.in);
+        const auto want = Hex(g.out);
+        const double base = g.base > 0 ? g.base : AverageLuma(g.format, in);
+        std::vector<std::uint8_t> out(in.size());
+        CHECK(Recolour(g.format, in, out, {Rule{0, g.colour, g.takes, base}}) > 0);
+        CHECK((out == want));
+    }
+}
+
+TEST_CASE("look paint: a base given shades every texture against it, as the tunic's tile") {
+    // BC3 blocks whose ends are all one colour: a "tile" and a "dark tile" some 0.64 as bright.
+    auto bc3 = [](int r, int g, int b) {
+        const auto c = static_cast<std::uint16_t>(((r * 31 + 127) / 255) << 11 | ((g * 63 + 127) / 255) << 5 |
+                                                  ((b * 31 + 127) / 255));
+        std::vector<std::uint8_t> out;
+        for (int i = 0; i < 8; ++i) {
+            const std::uint8_t block[16] = {0xFF, 0xFF, 0, 0, 0, 0, 0, 0, static_cast<std::uint8_t>(c),
+                                            static_cast<std::uint8_t>(c >> 8), static_cast<std::uint8_t>(c),
+                                            static_cast<std::uint8_t>(c >> 8), 0, 0, 0, 0};
+            out.insert(out.end(), block, block + 16);
+        }
+        return out;
+    };
+    const auto tile = bc3(76, 140, 60), dark = bc3(60, 114, 48);
+    const double base = AverageLuma(Format::bc3, tile);
+    CHECK(AverageLuma(Format::bc3, std::vector<std::uint8_t>(16, 0)) == 0.0);   // zero blocks are not counted
+    const double ratio = AverageLuma(Format::bc3, dark) / base;
+    CHECK(ratio == doctest::Approx(0.64).epsilon(0.05));
+    for (const std::uint32_t colour : {0xD02020u, 0x3070FFu, 0xE8E8E8u}) {
+        std::vector<std::uint8_t> t(tile.size()), d(dark.size());
+        Recolour(Format::bc3, tile, t, {Rule{0, colour, Takes::all, base}});
+        Recolour(Format::bc3, dark, d, {Rule{0, colour, Takes::all, base}});
+        // The tile becomes the colour (its average), the dark one stays as much darker.
+        const Rgb want{static_cast<std::uint8_t>(colour >> 16), static_cast<std::uint8_t>(colour >> 8),
+                       static_cast<std::uint8_t>(colour)};
+        CHECK(AverageLuma(Format::bc3, t) == doctest::Approx(Luma(want)).epsilon(0.05));
+        CHECK(AverageLuma(Format::bc3, d) / AverageLuma(Format::bc3, t) == doctest::Approx(ratio).epsilon(0.06));
+        // Without the base each texture is shaded against its own average: the dark one as bright as the tile.
+        Recolour(Format::bc3, dark, d, {Rule{0, colour, Takes::all}});
+        CHECK(AverageLuma(Format::bc3, d) == doctest::Approx(AverageLuma(Format::bc3, t)).epsilon(0.05));
+    }
 }

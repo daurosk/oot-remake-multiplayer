@@ -20,6 +20,7 @@
 #include <enet/enet.h>
 
 #include "coop/net/client.hpp"
+#include "coop/protocol/join_password.hpp"
 #include "coop_host_menu.h"
 #include "nat_codes.hpp"
 #include "nat_net.hpp"
@@ -255,6 +256,29 @@ TEST_CASE("host menu: Join by address needs the password, and with it the game c
     menu.Leave();
     CHECK(game.disconnects == 1);
     CHECK(status_of(menu).state == HOS_COOP_IDLE);
+}
+
+TEST_CASE("host menu: Join a game on this network with no password: the same-network key (docs/protocol.md)") {
+    Game game;
+    CoopHostMenu::Menu menu(game.hooks());
+    HosCoopJoinOptions o{};
+    o.size = sizeof o;
+    o.name = "Link";
+    o.target = "192.168.1.20:27600";
+    REQUIRE(menu.Join(&o) == 1);
+    CHECK(status_of(menu).state == HOS_COOP_CONNECTED);
+    CHECK(game.target()->password == std::string(coop::protocol::kSameNetworkPassword));
+    menu.Leave();
+    // A password typed is used as it is.
+    o.password = "pw-direct";
+    REQUIRE(menu.Join(&o) == 1);
+    CHECK(game.target()->password == "pw-direct");
+    menu.Leave();
+    // An internet address still needs one (127.0.0.1 too: above).
+    o.password = nullptr;
+    o.target = "8.8.4.4:27600";
+    CHECK(menu.Join(&o) == 0);
+    CHECK(status_of(menu).problem == HOS_COOP_PROBLEM_NO_PASSWORD);
 }
 
 TEST_CASE("host menu: Join with a room name through a relay: the relay lets this PC in, the game connects to it "

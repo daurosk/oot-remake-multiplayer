@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "coop/protocol/codec.hpp"
 #include "coop/protocol/messages.hpp"
 #include "coop_colors.h"
 #include "coop_look.h"
@@ -255,6 +256,7 @@ TEST_CASE("look: every part has its number, a key and a row, and the numbers nev
     CHECK(static_cast<int>(Part::hylian_frame) == 3);
     CHECK(static_cast<int>(Part::master_blade) == 11);
     CHECK(static_cast<int>(Part::gauntlets) == 16);
+    CHECK(static_cast<int>(Part::cap_trim) == 17);
 }
 
 TEST_CASE("look: every part is saved under its own key, and read back") {
@@ -758,11 +760,12 @@ TEST_CASE("look parts: every gear part has a texture, every texture once") {
         CHECK_FALSE(g.rules.empty());
         for (const auto& r : g.rules) {
             CHECK(r.part != Part::tunic);   // the tunic has the pack's colours (coop_look_tunic.h)
+            CHECK(r.part != Part::cap_trim);   // the Cap trim is painted with the tunic (TunicPainted)
             CHECK(r.tones != 0);
             parts.insert(r.part);
         }
     }
-    CHECK(parts.size() == CoopLook::kParts - 1);
+    CHECK(parts.size() == CoopLook::kParts - 2);
 }
 
 TEST_CASE("look parts: the gear painted in a look, a painting's name says its colours") {
@@ -1314,4 +1317,398 @@ TEST_CASE("look: green's own tunic files are known too (npc-colour)") {
     CHECK(CoopLook::PackStartTunic(std::vector<std::uint8_t>{7}, file, "red") == "green");
     CHECK(CoopLook::PackStartTunic(std::vector<std::uint8_t>{7}, file, "") == "green");
     CHECK(CoopLook::PackStartTunic(std::vector<std::uint8_t>{1}, file, "green") == "red");
+}
+
+namespace {
+// A green.bin of synthetic texels (nothing of the game): every tunic texture
+// in its format, eight blocks of greens each (ASTC: one-colour blocks).
+CoopLookTunic::Texels GreenTunic() {
+    using CoopLookPaint::Format;
+    const auto rgb565 = [](int r, int g, int b) {
+        return static_cast<std::uint16_t>(((r * 31 + 127) / 255) << 11 | ((g * 63 + 127) / 255) << 5 | ((b * 31 + 127) / 255));
+    };
+    CoopLookTunic::Texels out;
+    for (const auto& t : CoopLookParts::TunicTextures()) {
+        std::vector<std::uint8_t> texels;
+        for (int k = 0; k < 8; ++k) {
+            if (t.format == Format::astc) {
+                std::uint8_t block[16] = {0xFC, 0xFD, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};   // void extent, LDR
+                const int c[4] = {60 + 3 * k, 130 + 2 * k, 50, 255};
+                for (int i = 0; i < 4; ++i) {
+                    block[8 + 2 * i] = static_cast<std::uint8_t>(c[i]);
+                    block[9 + 2 * i] = static_cast<std::uint8_t>(c[i]);
+                }
+                texels.insert(texels.end(), block, block + 16);
+                continue;
+            }
+            if (t.format == Format::bc3) {
+                const std::uint8_t alpha[8] = {0xFF, 0xFF};
+                texels.insert(texels.end(), alpha, alpha + 8);
+            }
+            const std::uint16_t c0 = rgb565(70 + 4 * k, 150, 50), c1 = rgb565(30, 90, 20);
+            const std::uint8_t colour[8] = {static_cast<std::uint8_t>(c0), static_cast<std::uint8_t>(c0 >> 8),
+                                            static_cast<std::uint8_t>(c1), static_cast<std::uint8_t>(c1 >> 8),
+                                            0x1B, 0xE4, 0x1B, 0xE4};
+            texels.insert(texels.end(), colour, colour + 8);
+        }
+        out.push_back({t.name, kOffset, std::move(texels)});
+    }
+    return out;
+}
+}  // namespace
+
+TEST_CASE("look parts: your own tunic is painted in the exact colour, every texture of both ages") {
+    // Names: the game's own green when none, else the exact colour; read back.
+    CHECK(CoopLookParts::TunicPainting(std::nullopt) == "green");
+    CHECK(CoopLookParts::TunicPainting(0x30D040u) == "green");   // (the preset green: the game's own)
+    CHECK(CoopLookParts::TunicPainting(0x38D040u) == "tunic-38D040");
+    CHECK(CoopLookParts::TunicColour("tunic-30D040") == 0x30D040u);
+    CHECK(CoopLookParts::TunicColour(CoopLookParts::TunicPainting(0x0A0B0Cu)) == 0x0A0B0Cu);
+    CHECK_FALSE(CoopLookParts::TunicColour("green").has_value());
+    CHECK_FALSE(CoopLookParts::TunicColour("red").has_value());
+    CHECK_FALSE(CoopLookParts::TunicColour("tunic-30D04").has_value());
+    CHECK_FALSE(CoopLookParts::TunicColour("tunic-30D04G").has_value());
+    // Two near colours: the same preset for the puppets, two paintings of your own Link.
+    CHECK(CoopLook::TunicName(0x30D040u) == CoopLook::TunicName(0x38D040u));
+    CHECK(CoopLookParts::TunicPainting(0x30D040u) != CoopLookParts::TunicPainting(0x38D040u));
+
+    const auto green = GreenTunic();
+    REQUIRE(green.size() == 7);
+    CHECK(green[0].name == CoopLookParts::kTunicTile);
+    const auto a = CoopLookParts::TunicPainted(green, 0x30D040u);
+    const auto b = CoopLookParts::TunicPainted(green, 0x38D040u);
+    REQUIRE(a.size() == green.size());
+    CHECK(CoopLookTunic::SameLayout(a, green));
+    for (std::size_t i = 0; i < green.size(); ++i) {
+        CAPTURE(green[i].name);
+        CHECK(a[i].texels.size() == green[i].texels.size());   // what Draw needs: the size held
+        CHECK(a[i].offset == green[i].offset);
+        CHECK(a[i].texels != green[i].texels);                 // every texture painted
+        CHECK(a[i].texels != b[i].texels);                     // and each colour its own
+    }
+    // The tile's average becomes the colour (tunic.py); a colour far off is far off.
+    using CoopLookPaint::AverageLuma;
+    using CoopLookPaint::Format;
+    CHECK(AverageLuma(Format::bc3, a[0].texels) == doctest::Approx(CoopLookPaint::Luma({0x30, 0xD0, 0x40})).epsilon(0.05));
+    const auto red = CoopLookParts::TunicPainted(green, 0xD02020u);
+    const auto ends = CoopLookPaint::Ends(Format::bc3, red[0].texels);
+    CHECK(CoopLookPaint::ToneOf(ends[0]) == CoopLookPaint::kRed);
+    // A texture that is not the tunic's: as it is.
+    auto more = green;
+    more.push_back({"Something_Else_Alb", kOffset, green[2].texels});
+    CHECK(CoopLookParts::TunicPainted(more, 0xD02020u).back().texels == green[2].texels);
+}
+
+TEST_CASE("look tunic: your own Link wears the exact colour picked, not the pack's nearest tunic") {
+    // The colour editor's Red, Green and Blue rows on the Kokiri tunic: a step of 8 is drawn, and the game's
+    // own green comes back with no colour. The wardrobe paints green.bin's texels (the module's TunicFile).
+    FakeTextures m(kBase, 0x10000);
+    const auto green = GreenTunic();
+    std::vector<std::string> log, asked;
+    CoopLookTunic::Wardrobe::Host host;
+    host.textures = &m;
+    host.file = [&](const std::string& name) -> std::optional<std::vector<std::uint8_t>> {
+        asked.push_back(name);
+        if (name == "green") {
+            return CoopLookTunic::Pack(green);
+        }
+        if (const auto c = CoopLookParts::TunicColour(name)) {
+            return CoopLookTunic::Pack(CoopLookParts::TunicPainted(green, *c));
+        }
+        return std::nullopt;   // (no preset file is asked for)
+    };
+    host.log = [&](const std::string& l) { log.push_back(l); };
+    CoopLookTunic::Wardrobe w(host);
+    // The game has your own Link's tile and the adult's lower tunic (green: the files the kit put in).
+    const std::uint64_t tile = kBase + 0x2000, vest = kBase + 0x4000;
+    PutFile(m, tile, green[0].name, green[0].texels);
+    PutFile(m, vest, green[2].name, green[2].texels);
+    const auto drawn = [&](std::uint64_t at, const std::vector<std::uint8_t>& t) {
+        return m.Drawn(at + kOffset, t.size()) == t;
+    };
+    w.Wear(CoopLookParts::TunicPainting(0x3070FFu));
+    w.Step(0);
+    const auto a = CoopLookParts::TunicPainted(green, 0x3070FFu);
+    CHECK(drawn(tile, a[0].texels));
+    CHECK(drawn(vest, a[2].texels));
+    w.Wear(CoopLookParts::TunicPainting(0x3870FFu));   // one step of 8 on Red
+    w.Step(20);
+    const auto b = CoopLookParts::TunicPainted(green, 0x3870FFu);
+    CHECK(drawn(tile, b[0].texels));
+    CHECK(drawn(vest, b[2].texels));
+    CHECK_FALSE(drawn(tile, a[0].texels));
+    CHECK(std::any_of(log.begin(), log.end(), [](const std::string& l) { return l.find("is tunic-3870FF now") != std::string::npos; }));
+    w.Wear(CoopLookParts::TunicPainting(std::nullopt));   // the game's own
+    w.Step(40);
+    CHECK(drawn(tile, green[0].texels));
+    CHECK(m.overrides() == 0);
+    CHECK(std::none_of(asked.begin(), asked.end(), [](const std::string& n) { return n == "red" || n == "blue"; }));
+}
+
+// ---- the Cap trim (CoopLook::Part::cap_trim) ----
+
+TEST_CASE("look: the Cap trim is a part of its own: its number, key, row, settings and wire form") {
+    const CoopLook::PartInfo& info = CoopLook::InfoOf(Part::cap_trim);
+    CHECK(info.part == Part::cap_trim);
+    CHECK(std::string(info.key) == "cap_trim");
+    CHECK(std::string(info.item) == "Tunic");
+    CHECK(std::string(info.name) == "Cap trim");
+    CHECK(CoopLook::PartOf(17) == Part::cap_trim);
+    // On the menu: the Tunic heading's, after the tunics.
+    const auto& parts = CoopLook::Parts();
+    CHECK(parts[3].part == Part::cap_trim);
+    CHECK(parts[2].part == Part::zora_tunic);
+    // Saved under look_cap_trim and read back; unset again: commented out.
+    Look look;
+    look[Part::cap_trim] = 0xC02020u;
+    std::string coop = "server = 1.2.3.4\n";
+    CHECK(CoopLook::WriteSettings(look, coop, nullptr));
+    CHECK(coop.find("look_cap_trim = #C02020\n") != std::string::npos);
+    CHECK(CoopLook::ReadParts(coop)[Part::cap_trim] == 0xC02020u);
+    std::string options = "color = red\n";
+    CHECK(CoopLook::WriteSettings(look, coop, &options));   // a kit: coop-options.ini
+    CHECK(CoopLook::ReadParts(options)[Part::cap_trim] == 0xC02020u);
+    look[Part::cap_trim].reset();
+    CHECK(CoopLook::WriteSettings(look, coop, nullptr));
+    CHECK_FALSE(CoopTitleMenu::IniGet(coop, "look_cap_trim").has_value());
+    CHECK_FALSE(CoopLook::ReadParts(coop)[Part::cap_trim]);
+    // On the wire as part 17, read back; a build that knows 17 parts passes it over (as FromWire does past kParts).
+    look[Part::cap_trim] = 0x3070FFu;
+    look[Part::boots] = 0x112233u;
+    const auto wire = CoopLook::Wire(look);
+    REQUIRE(wire.size() == 2);
+    CHECK(wire[1] == std::pair<std::uint8_t, std::uint32_t>{17, 0x3070FFu});
+    CHECK(CoopLook::FromWire(wire) == look);
+    coop::protocol::PlayerLook m{coop::protocol::kPlayerSelf, {{15, 0x112233u}, {17, 0x3070FFu}}};
+    std::vector<std::uint8_t> bytes;
+    REQUIRE(coop::protocol::encode(coop::protocol::Message{m}, bytes) == coop::protocol::Error::none);
+    coop::protocol::Message back;
+    REQUIRE(coop::protocol::decode(bytes, back) == coop::protocol::Error::none);
+    CHECK(std::get<coop::protocol::PlayerLook>(back) == m);
+    // Not gear: the gear's painting and the puppets' copies are not made again for it.
+    Look cap;
+    cap[Part::cap_trim] = 0x3070FFu;
+    CHECK_FALSE(CoopLookParts::AnyGear(cap));
+    CHECK(CoopLookParts::Name(cap) == "gear");
+    CHECK(CoopLookParts::Name(look) == CoopLookParts::Name([&] {
+              Look l = look;
+              l[Part::cap_trim].reset();
+              return l;
+          }()));
+}
+
+TEST_CASE("look parts: a tunic painting's name says the tunic's colour and the Cap trim's") {
+    using CoopLookParts::TunicPaint;
+    using CoopLookParts::TunicPaintOf;
+    using CoopLookParts::TunicPainting;
+    // No cap colour: the names as before (the cap follows the tunic).
+    CHECK(TunicPainting(std::nullopt, std::nullopt) == "green");
+    CHECK(TunicPainting(0x38D040u, std::nullopt) == "tunic-38D040");
+    // With one: both, the game's own green said as "green".
+    CHECK(TunicPainting(0x38D040u, 0xC02020u) == "tunic-38D040-cap-C02020");
+    CHECK(TunicPainting(std::nullopt, 0xC02020u) == "tunic-green-cap-C02020");
+    CHECK(TunicPainting(0x30D040u, 0xC02020u) == "tunic-green-cap-C02020");   // (the preset green: the game's own)
+    // Read back.
+    CHECK(TunicPaintOf("tunic-38D040-cap-C02020") == TunicPaint{0x38D040u, 0xC02020u});
+    CHECK(TunicPaintOf("tunic-green-cap-C02020") == TunicPaint{std::nullopt, 0xC02020u});
+    CHECK(TunicPaintOf("tunic-38D040") == TunicPaint{0x38D040u, std::nullopt});
+    CHECK(TunicPaintOf(TunicPainting(0x0A0B0Cu, 0x010203u)) == TunicPaint{0x0A0B0Cu, 0x010203u});
+    CHECK_FALSE(TunicPaintOf("green"));
+    CHECK_FALSE(TunicPaintOf("red"));
+    CHECK_FALSE(TunicPaintOf("tunic-green"));
+    CHECK_FALSE(TunicPaintOf("tunic-38D040-cap-"));
+    CHECK_FALSE(TunicPaintOf("tunic-38D040-cap-C0202G"));
+    CHECK_FALSE(TunicPaintOf("tunic-38d040-cap-C02020"));
+    // The old reader takes the tunic-only names only.
+    CHECK_FALSE(CoopLookParts::TunicColour("tunic-38D040-cap-C02020").has_value());
+    // Each cap colour its own painting.
+    CHECK(TunicPainting(0x38D040u, 0xC02020u) != TunicPainting(0x38D040u, 0xC02028u));
+}
+
+namespace {
+// cap.bin's bytes (tools/puppet_pack/look_cap.py pack).
+struct CapEntry {
+    std::string name;
+    std::uint32_t block;
+    std::vector<std::uint32_t> offsets;
+};
+std::vector<std::uint8_t> CapFile(const std::vector<CapEntry>& entries) {
+    std::vector<std::uint8_t> out = {'C', 'O', 'O', 'P', 'C', 'A', 'P', '1'};
+    const auto put = [&](std::uint32_t v) {
+        for (int k = 0; k < 4; ++k) {
+            out.push_back(static_cast<std::uint8_t>(v >> (8 * k)));
+        }
+    };
+    put(static_cast<std::uint32_t>(entries.size()));
+    for (const CapEntry& e : entries) {
+        std::string n = e.name;
+        n.resize(64, '\0');
+        out.insert(out.end(), n.begin(), n.end());
+        put(e.block);
+        put(static_cast<std::uint32_t>(e.offsets.size()));
+        for (const std::uint32_t o : e.offsets) {
+            put(o);
+        }
+    }
+    return out;
+}
+const char* const kChildParts = "Mt_Cloth_Parts_Player_Child_Alb";   // ASTC: 16-byte blocks
+const char* const kAdultAcs = "Mt_Angin_Acs_Player_Adult_Alb";      // BC1: 8-byte blocks
+
+// The blocks (of `step` bytes) where two texels differ.
+std::vector<std::size_t> Changed(const std::vector<std::uint8_t>& a, const std::vector<std::uint8_t>& b,
+                                 std::size_t step) {
+    std::vector<std::size_t> out;
+    for (std::size_t at = 0; at + step <= std::min(a.size(), b.size()); at += step) {
+        if (std::memcmp(a.data() + at, b.data() + at, step) != 0) {
+            out.push_back(at);
+        }
+    }
+    return out;
+}
+
+const CoopLookTunic::Texture& TextureOf(const CoopLookTunic::Texels& t, const std::string& name) {
+    for (const auto& x : t) {
+        if (x.name == name) {
+            return x;
+        }
+    }
+    return t.front();
+}
+}  // namespace
+
+TEST_CASE("look parts: cap.bin is read whole or not at all") {
+    const auto file = CapFile({{kChildParts, 16, {0, 48}}, {kAdultAcs, 8, {8}}});
+    const auto cap = CoopLookParts::ParseCap(file);
+    REQUIRE(cap);
+    REQUIRE(cap->size() == 2);
+    CHECK((*cap)[0].texture == kChildParts);
+    CHECK((*cap)[0].block == 16);
+    CHECK((*cap)[0].offsets == std::vector<std::uint32_t>{0, 48});
+    CHECK((*cap)[1].offsets == std::vector<std::uint32_t>{8});
+    std::string why;
+    auto cut = file;
+    cut.pop_back();
+    CHECK_FALSE(CoopLookParts::ParseCap(cut, &why));
+    CHECK(why == "the cap file is cut short");
+    auto magic = file;
+    magic[4] = 'M';
+    CHECK_FALSE(CoopLookParts::ParseCap(magic, &why));
+    CHECK(why == "not a cap file");
+    CHECK_FALSE(CoopLookParts::ParseCap(CapFile({{kChildParts, 4, {0}}}), &why));
+    CHECK(why == "a cap entry has no block size");
+    CHECK(CoopLookParts::ParseCap(CapFile({}))->empty());
+}
+
+TEST_CASE("look parts: the Cap trim paints only the cap's blocks, over the tunic's colour") {
+    using CoopLookParts::TunicPaint;
+    const auto green = GreenTunic();
+    // The child's headband: blocks 1 and 3; the adult's hood trim: block 0. An offset off a block, one past the
+    // texels and an entry of another block size are passed over.
+    const auto cap = *CoopLookParts::ParseCap(CapFile(
+        {{kChildParts, 16, {16, 48, 20, 4096}}, {kAdultAcs, 8, {0}}, {"Mt_Vest_Player_Adult_Alb", 8, {0}}}));
+    const auto tunic = CoopLookParts::TunicPainted(green, TunicPaint{0x3070FFu, std::nullopt}, &cap);
+    CHECK(tunic.size() == green.size());
+    // No cap colour: the cap follows the tunic (the painting of the tunic alone, the same bytes).
+    const auto alone = CoopLookParts::TunicPainted(green, 0x3070FFu);
+    for (std::size_t i = 0; i < green.size(); ++i) {
+        CHECK(tunic[i].texels == alone[i].texels);
+    }
+    // A cap colour: the cap's blocks differ from the tunic's painting, every other byte is the same.
+    const auto both = CoopLookParts::TunicPainted(green, TunicPaint{0x3070FFu, 0xC02020u}, &cap);
+    REQUIRE(both.size() == green.size());
+    CHECK(CoopLookTunic::SameLayout(both, green));
+    for (std::size_t i = 0; i < green.size(); ++i) {
+        CAPTURE(green[i].name);
+        CHECK(both[i].texels.size() == green[i].texels.size());
+        if (green[i].name == kChildParts) {
+            CHECK(Changed(both[i].texels, alone[i].texels, 16) == std::vector<std::size_t>{16, 48});
+        } else if (green[i].name == kAdultAcs) {
+            CHECK(Changed(both[i].texels, alone[i].texels, 8) == std::vector<std::size_t>{0});
+        } else {
+            CHECK(both[i].texels == alone[i].texels);   // (the adult's vest: its entry's block size is wrong)
+        }
+    }
+    // The cap's blocks are red now, from green's own texels; the tunic's blue around them.
+    using CoopLookPaint::Format;
+    const auto& acs = TextureOf(both, kAdultAcs).texels;
+    const auto cap_ends = CoopLookPaint::Ends(Format::bc1, std::span<const std::uint8_t>(acs.data(), 8));
+    CHECK(CoopLookPaint::ToneOf(cap_ends[0]) == CoopLookPaint::kRed);
+    const auto rest = CoopLookPaint::Ends(Format::bc1, std::span<const std::uint8_t>(acs.data() + 8, 8));
+    CHECK(CoopLookPaint::ToneOf(rest[0]) == CoopLookPaint::kBlue);
+    // On the game's own green: only the cap's blocks change.
+    const auto own = CoopLookParts::TunicPainted(green, TunicPaint{std::nullopt, 0xC02020u}, &cap);
+    for (std::size_t i = 0; i < green.size(); ++i) {
+        CAPTURE(green[i].name);
+        if (green[i].name == kChildParts) {
+            CHECK(Changed(own[i].texels, green[i].texels, 16) == std::vector<std::size_t>{16, 48});
+        } else if (green[i].name == kAdultAcs) {
+            CHECK(Changed(own[i].texels, green[i].texels, 8) == std::vector<std::size_t>{0});
+        } else {
+            CHECK(own[i].texels == green[i].texels);
+        }
+    }
+    // The cap painted from green's texels: the same blocks whatever the tunic's colour.
+    const auto other = CoopLookParts::TunicPainted(green, TunicPaint{0xD0D020u, 0xC02020u}, &cap);
+    const auto& a = TextureOf(both, kChildParts).texels;
+    const auto& b = TextureOf(other, kChildParts).texels;
+    CHECK(std::equal(a.begin() + 16, a.begin() + 32, b.begin() + 16));
+    CHECK(std::equal(a.begin() + 48, a.begin() + 64, b.begin() + 48));
+    // No cap.bin (an older pack): a cap colour changes nothing.
+    const auto none = CoopLookParts::TunicPainted(green, TunicPaint{0x3070FFu, 0xC02020u}, nullptr);
+    for (std::size_t i = 0; i < green.size(); ++i) {
+        CHECK(none[i].texels == alone[i].texels);
+    }
+    // PaintCap alone: the blocks it changed, the rest of the bytes left.
+    std::vector<std::uint8_t> t = TextureOf(green, kChildParts).texels;
+    CHECK(CoopLookParts::PaintCap(cap, kChildParts, Format::astc, TextureOf(green, kChildParts).texels, t, 0xC02020u,
+                                  0.2) == 2);
+    CHECK(Changed(t, TextureOf(green, kChildParts).texels, 16) == std::vector<std::size_t>{16, 48});
+    CHECK(CoopLookParts::PaintCap(cap, "Something_Else_Alb", Format::astc, TextureOf(green, kChildParts).texels, t,
+                                  0xC02020u, 0.2) == 0);
+}
+
+TEST_CASE("look tunic: the wardrobe draws the tunic and the Cap trim as one painting") {
+    using CoopLookParts::TunicPaint;
+    FakeTextures m(kBase, 0x10000);
+    // (GreenTunic's ASTC textures hold the same texels; the wardrobe finds a texture by its texels, so the
+    // child's parts get one block of their own)
+    auto green = GreenTunic();
+    for (auto& t : green) {
+        if (t.name == kChildParts) {
+            t.texels[7 * 16 + 8] ^= 0x10;
+        }
+    }
+    const auto cap = *CoopLookParts::ParseCap(CapFile({{kChildParts, 16, {16}}}));
+    CoopLookTunic::Wardrobe::Host host;
+    host.textures = &m;
+    host.file = [&](const std::string& name) -> std::optional<std::vector<std::uint8_t>> {   // (the module's TunicFile)
+        if (name == "green") {
+            return CoopLookTunic::Pack(green);
+        }
+        if (const auto paint = CoopLookParts::TunicPaintOf(name)) {
+            return CoopLookTunic::Pack(CoopLookParts::TunicPainted(green, *paint, &cap));
+        }
+        return std::nullopt;
+    };
+    host.log = [](const std::string&) {};
+    CoopLookTunic::Wardrobe w(host);
+    const auto& parts = TextureOf(green, kChildParts);
+    const std::uint64_t at = kBase + 0x2000;
+    PutFile(m, at, parts.name, parts.texels);
+    const auto drawn = [&](const std::vector<std::uint8_t>& t) { return m.Drawn(at + kOffset, t.size()) == t; };
+    w.Wear(CoopLookParts::TunicPainting(0x3070FFu, 0xC02020u));
+    w.Step(0);
+    const auto both = CoopLookParts::TunicPainted(green, TunicPaint{0x3070FFu, 0xC02020u}, &cap);
+    CHECK(drawn(TextureOf(both, kChildParts).texels));
+    // The cap colour taken away: the cap follows the tunic again.
+    w.Wear(CoopLookParts::TunicPainting(0x3070FFu, std::nullopt));
+    w.Step(20);
+    CHECK(drawn(TextureOf(CoopLookParts::TunicPainted(green, 0x3070FFu), kChildParts).texels));
+    // The game's own green with a cap colour: only the cap's block drawn over.
+    w.Wear(CoopLookParts::TunicPainting(std::nullopt, 0xC02020u));
+    w.Step(40);
+    const auto own = CoopLookParts::TunicPainted(green, TunicPaint{std::nullopt, 0xC02020u}, &cap);
+    CHECK(drawn(TextureOf(own, kChildParts).texels));
+    CHECK(Changed(TextureOf(own, kChildParts).texels, parts.texels, 16) == std::vector<std::size_t>{16});
 }

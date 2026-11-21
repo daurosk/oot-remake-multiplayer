@@ -50,6 +50,11 @@ std::optional<AddressRange> parse_address_range(std::string_view text);
 // number with the first dotted part highest.
 std::uint32_t ipv4_of(std::uint32_t enet_host);
 
+// A private network address (first dotted part highest): 10/8, 172.16/12,
+// 192.168/16 or link-local 169.254/16. Not 127/8: a relay's and a join
+// helper's connections come from there, for players from anywhere.
+bool is_same_network(std::uint32_t ipv4);
+
 // Players a server takes unless told otherwise (coop_server --max-players).
 inline constexpr std::uint8_t kDefaultMaxPlayers = 16;
 
@@ -102,6 +107,11 @@ struct SessionConfig {
   // At most max_held_joins wait at once; one more is told the server is full.
   // Off: everyone with the password joins at once, as before.
   bool approve_joins = false;
+  // Players on the host's own network join without the password
+  // (docs/protocol.md "Same network"): a proof with the same-network key
+  // (protocol::kSameNetworkPassword) is taken from a private address only
+  // (is_same_network). Off: everyone needs the join password, as before.
+  bool same_network_open = false;
   std::uint64_t approve_wait_us = 60'000'000;
   std::size_t max_held_joins = 8;
   std::uint64_t silence_timeout_us = 10'000'000;  // nothing heard from a player
@@ -381,6 +391,9 @@ struct Stats {
   std::uint64_t stray_rejoin_claim = 0;
   // JOIN_PROOFs that did not match the join password (each one refused).
   std::uint64_t bad_password = 0;
+  // ... that matched the same-network key from a private address instead
+  // (SessionConfig::same_network_open): let in without the password.
+  std::uint64_t same_network_joins = 0;
   // JOIN_PROOFs nobody asked for: no challenge open on that connection.
   std::uint64_t stray_proof = 0;
   // A HELLO without a key share to a server with a join password (refused
@@ -529,6 +542,11 @@ class Session {
   // to everyone at once. 0: none. Only the in-game host's server sets it.
   void set_ngplus(std::uint8_t level);
   std::uint8_t ngplus() const { return ngplus_; }
+  // The join password from now on: a player who joins after this needs the new
+  // one; players already in keep their keys and stay in. Not empty (the host's
+  // own checks); on the session's thread.
+  void set_join_password(std::string password);
+  const std::string& join_password() const { return config_.join_password; }
   // Flags in the server's table.
   std::size_t flag_count() const { return flags_.size(); }
   // Connections from `address` still waiting for HELLO.
@@ -941,6 +959,7 @@ class Session {
  private:
   SessionConfig config_;
   std::string session_game_build_;  // set while players are in
+  std::string session_release_;     // the first player's co-op release (coop_release), "" none; while players are in
   std::map<ConnectionId, Connection> connections_;
   ConnectionId next_local_id_ = kLocalPlayerIds;
   // The host's connection; set while players are in.

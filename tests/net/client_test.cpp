@@ -701,16 +701,22 @@ TEST_CASE("client: an unknown refusal reason is kept") {
   Events events;
   REQUIRE(client.start());
   REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>().has_value(); }));
-  server.send_bytes({0x03, 0x00, 0x01, 0x00, 0x0A}, proto::kChannelSession);  // REFUSED 10
+  server.send_bytes({0x03, 0x00, 0x01, 0x00, 0x63}, proto::kChannelSession);  // REFUSED 99
   REQUIRE(wait_event(client, server, events, EventKind::refused));
   const Event& refused = events.all[*events.find(EventKind::refused)];
-  CHECK(static_cast<int>(refused.refuse_reason) == 10);
+  CHECK(static_cast<int>(refused.refuse_reason) == 99);
   CHECK(refuse_reason_text(refused.refuse_reason) == "unknown reason");
 }
 
 TEST_CASE("client: a version refusal tells the player to update every kit (0.11.5 vs 0.11.6)") {
   const std::string_view text = refuse_reason_text(proto::RefuseReason::wrong_protocol_version);
   CHECK(text.starts_with("wrong protocol version"));
+  CHECK(text.find("Update.bat") != std::string_view::npos);
+}
+
+TEST_CASE("client: another co-op release than the host's tells the player to update the older kit") {
+  const std::string_view text = refuse_reason_text(proto::RefuseReason::wrong_coop_version);
+  CHECK(text.starts_with("another co-op version"));
   CHECK(text.find("Update.bat") != std::string_view::npos);
 }
 
@@ -978,7 +984,8 @@ TEST_CASE("client: every refusal reason the protocol has is named") {
   CHECK(refuse_reason_text(proto::RefuseReason::kicked).starts_with("the host took you out"));
   CHECK(refuse_reason_text(proto::RefuseReason::banned).starts_with("the host banned you"));
   CHECK(refuse_reason_text(proto::RefuseReason::not_let_in).starts_with("the host did not let you in"));
-  CHECK(refuse_reason_text(static_cast<proto::RefuseReason>(10)) == "unknown reason");
+  CHECK(refuse_reason_text(proto::RefuseReason::wrong_coop_version).starts_with("another co-op version"));
+  CHECK(refuse_reason_text(static_cast<proto::RefuseReason>(11)) == "unknown reason");
 }
 
 TEST_CASE("client: send_chat sends CHAT and refuses empty, long or bad text") {

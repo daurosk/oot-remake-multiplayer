@@ -2,9 +2,15 @@
 // coop_pause_tab.h's logic: no game reads or calls, no log (the tests drive it).
 #include "coop_pause_tab.h"
 
+#include "coop_browse.h"
+
+#include "hos_coop_host.h"
+
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <utility>
 
 namespace CoopPauseTab {
@@ -13,6 +19,7 @@ namespace {
 
 // A screen whose updates stopped this long ago is taken as gone (the game updates an open menu once a frame).
 constexpr std::uint64_t kStaleMs = 250;
+constexpr std::uint64_t kTypingStartMs = 400;   // (an A this soon after the keyboard opened is the one that opened it)
 // A window over the page keeps it away this long after its last opening, open or closing update.
 constexpr std::uint64_t kBlockMs = 250;
 
@@ -48,16 +55,24 @@ Kind KindOf(std::uint64_t vtable_offset) {
 // --- TextField ---
 
 const std::string& TextField::Letters() const {
-    static const std::string room = "abcdefghijklmnopqrstuvwxyz0123456789-_";
+    static const std::string room = "abcdefghijklmnopqrstuvwxyz0123456789.:-_";   // (. and : for an address)
     // (a host's own password is 20 of the first 32, the letters of its codes, coop::server::nat::kLetters: those come
     // first, so the pad's up and down reach them soonest)
     static const std::string password =
         "ABCDEFGHJKLMNPQRSTUVWXYZ23456789IO01abcdefghijklmnopqrstuvwxyz!#$%&*+-.=?@_";
-    return kind_ == Kind::kRoom ? room : password;
+    static const std::string port = "0123456789";
+    static const std::string address = "abcdefghijklmnopqrstuvwxyz0123456789.-:";
+    return kind_ == Kind::kRoom ? room : kind_ == Kind::kPort ? port : kind_ == Kind::kAddress ? address : password;
+}
+
+int TextField::PortValue() const {
+    if (kind_ != Kind::kPort || text_.empty() || text_.size() > 5) return 0;
+    const int v = std::atoi(text_.c_str());
+    return v >= 1 && v <= 65535 ? v : 0;
 }
 
 bool TextField::Allowed(char c) const {
-    if (kind_ == Kind::kRoom) return Letters().find(c) != std::string::npos;
+    if (kind_ != Kind::kPassword) return Letters().find(c) != std::string::npos;
     return c > 0x20 && c < 0x7f;
 }
 
@@ -102,7 +117,7 @@ void TextField::Backspace() {
 bool TextField::Type(std::uint32_t cp) {
     if (cp >= 0x80) return false;
     char c = static_cast<char>(cp);
-    if (kind_ == Kind::kRoom && c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');   // (any case: the relay's)
+    if ((kind_ == Kind::kRoom || kind_ == Kind::kAddress) && c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');   // (any case)
     if (!Allowed(c) || text_.size() >= Max()) return false;
     if (cursor_ > text_.size()) cursor_ = text_.size();
     text_.insert(text_.begin() + static_cast<std::ptrdiff_t>(cursor_), c);
@@ -150,7 +165,7 @@ bool Page::CanStay(std::uint64_t now_ms) const {
                                         : strip_.state == 1;
     return usable_ && pages_.screen != 0 && strip_.screen != 0 && now_ms - strip_ms_ < kStaleMs && pages_open &&
            pages_.page == kSystemPage && pages_.asked == kSystemPage && (strip_.state == 1 || strip_.state == 2) &&
-           strip_.mode == kPlusMode && strip_.tabs == 5 && now_ms >= blocked_until_ms_;
+           strip_.mode == kPlusMode && strip_.tabs >= 4 && now_ms >= blocked_until_ms_;
 }
 
 void Page::Hide(const char* why, bool keep) {
@@ -171,13 +186,16 @@ void Page::Hide(const char* why, bool keep) {
 std::uint64_t Page::Track(const Facts& f) {
     if (f.kind != Kind::kPages && f.kind != Kind::kStrip) return 0;
     Seen& s = f.kind == Kind::kPages ? pages_seen_ : strip_seen_;
-    const bool reopened = f.state == 1 && s.state != 1;
+    // (a new opening: the screen opening or open after it was closed or closing. The pages went from 0 straight to
+    // 2 on the menu's second opening in a run (2026-11-20), never 1: the first opening's state was kept, our page did
+    // not show, and the game took the A on our Multiplayer button and stopped taking B, + and A)
+    const bool reopened = (f.state == 1 || f.state == 2) && (s.state == 0 || s.state == 3);
     if (s.gen == 0 || f.screen != s.screen || f.layout != s.layout || reopened) {
         s.screen = f.screen, s.layout = f.layout, s.gen = ++next_gen_;
         if (f.kind == Kind::kPages) {
             page_set_ = -1, texts_set_ = false;
         } else {
-            tab_key_ = -1, tab_filled_ = false;
+            (void)0;   // (the strip: nothing of ours in it)
         }
     }
     s.state = f.state;
@@ -222,9 +240,10 @@ Page::Do Page::OnScreen(const Facts& f, std::uint64_t now_ms) {
             Hide(closing ? "the menu is closing" : "the menu left the System page", closing);
         }
         ShowAgain(now_ms);
-        const int want = shown_ ? 1 : 0;
+        const int want = shown_ ? 1 + which_ : 0;
         if (page_set_ != want) {
-            d.set_page = true, d.page_shown = shown_, d.slide = std::exchange(slide_, 0), page_set_ = want;
+            d.set_page = true, d.page_shown = shown_, d.page_from = std::max(page_set_, 0), d.page_to = want;
+            d.slide = std::exchange(slide_, 0), page_set_ = want;
         }
         if (!texts_set_ && f.state == 2) {
             d.set_texts = true, texts_set_ = true;
@@ -239,20 +258,9 @@ Page::Do Page::OnScreen(const Facts& f, std::uint64_t now_ms) {
         ShowAgain(now_ms);
         // (back at the strip's first update of the opening: the pages' own comes a frame later, so the module shows
         // our page through the pages screen it knows, in this update)
-        if (shown_ && page_set_ != 1 && pages_.screen != 0) {
-            d.set_page = true, d.page_shown = true, d.slide = std::exchange(slide_, 0), page_set_ = 1;
-        }
-        // (shown from the strip's opening to the end of its closing, as the game's four tabs are: shown only once
-        // it was open, the fifth came in a moment after them; the module moves and fades it with the fourth. Filled
-        // once per opening: a fill again restarts the tab's own opening.)
-        const bool visible = f.tabs == 5 && f.mode == kPlusMode && f.state >= 1 && f.state <= 3;
-        const int key = (visible ? 1 : 0) | (shown_ ? 2 : 0) | ((f.lit & 0xff) << 2) | ((f.state & 0xf) << 10) |
-                        ((f.mode & 0xf) << 14);
-        if (f.tabs == 5 && key != tab_key_) {
-            tab_key_ = key;
-            d.set_tabs = true, d.tab_shown = visible, d.tab_lit = visible && shown_;
-            d.fill_tab = visible && !tab_filled_;
-            tab_filled_ = visible;
+        if (shown_ && page_set_ != 1 + which_ && pages_.screen != 0) {
+            d.set_page = true, d.page_shown = true, d.page_from = std::max(page_set_, 0), d.page_to = 1 + which_;
+            d.slide = std::exchange(slide_, 0), page_set_ = 1 + which_;
         }
         return d;
     }
@@ -264,6 +272,7 @@ Page::Do Page::OnScreen(const Facts& f, std::uint64_t now_ms) {
 
 std::uint64_t Page::OnPad(std::uint64_t buttons, std::uint64_t now_ms) {
     AfterStall(now_ms);
+    pad_ms_ = now_ms;
     const std::uint64_t down = buttons & ~pad_last_;
     pad_last_ = buttons;
     swallow_ &= buttons;   // (let go: the game gets it again)
@@ -271,12 +280,24 @@ std::uint64_t Page::OnPad(std::uint64_t buttons, std::uint64_t now_ms) {
         Hide("the menu's state changed", pages_.state == 3 || pages_.state == 0 || strip_.state == 3 || strip_.state == 0);
     }
     if (!shown_) {
-        if ((down & (kPadR | kPadZR)) != 0 && CanShow(now_ms)) {
-            shown_ = true, decide_ = false, why_.clear();
-            strip_sound_ = "mc_TabToRight";
-            slide_ = 1;   // (in from the right, as the game's next page)
-            swallow_ |= buttons & ~kPadPassed;   // (R and anything held with it: none of it reaches System)
+        if ((down & kPadA) != 0 && system_button_ >= 0 && (system_button_ != 1 || settings_ok_) && CanShow(now_ms)) {
+            // (A on one of System's buttons of ours: its page in System's place, at once; the game's own A never
+            // reaches the button, whose name its selectors do not know. Customize Link's is the Multiplayer page,
+            // opened on Settings and look's Customize page)
+            shown_ = true, decide_ = false, why_.clear(), which_ = system_button_ == 1 ? 1 : 0, sub_ = false, back_ = false;
+            opened_from_ = system_button_;
+            customize_open_ = system_button_ == 2;
+            slide_ = 0;
+            opened_ = true;
+            pages_sound_ = "button_decide";
+            swallow_ |= buttons & ~kPadPassed;
             return buttons & kPadPassed & ~swallow_;
+        }
+        if ((down & kPadA) != 0 && system_button_ >= 0 && now_ms >= blocked_until_ms_) {   // (a window's own A: its)
+            // (A on one of System's buttons of ours, the page not to show now: never the game's. It does not know the
+            // button, and after an A on it its System page took no B, + or A any more: the menu stuck open)
+            swallow_ |= kPadA;
+            refused_a_ = true;
         }
         return buttons & ~swallow_;
     }
@@ -285,10 +306,18 @@ std::uint64_t Page::OnPad(std::uint64_t buttons, std::uint64_t now_ms) {
         swallow_ |= buttons;
         return 0;
     }
-    if ((down & (kPadL | kPadZL)) != 0) {
-        Hide("L");
-        strip_sound_ = "mc_TabToLeft";
-        slide_ = -1;   // (out to the right, System back from the left)
+    if ((down & (kPadL | kPadZL | kPadR | kPadZR)) != 0) {
+        // (our pages are in System's place: System back at once, and the L or R is the game's, on to its next page)
+        Hide(which_ == 1 ? "L or R on Longshot Settings" : "L or R on the Multiplayer page");
+        swallow_ &= ~(kPadL | kPadZL | kPadR | kPadZR);   // (Hide keeps every held button from the game: these are its)
+        return buttons & ~swallow_;
+    }
+    if (!sub_ && (down & kPadB) != 0) {
+        // (B on a page's own rows: back to System at once, the game's cursor back on the page's button; the game's B
+        // would close the menu)
+        Hide(which_ == 1 ? "B on Longshot Settings" : "B on the Multiplayer page");
+        left_ = true;
+        swallow_ |= kPadB;
         return buttons & ~swallow_;
     }
     if ((down & kPadA) != 0) {
@@ -310,28 +339,65 @@ bool Page::TakeBack() {
 
 void Page::StartTyping(int which) {
     if (!shown_) return;
-    typing_ = which == 1 ? 1 : 0;
+    typing_ = which >= 0 && which < kFields ? which : 0;
+    typing_was_ = Field(typing_).text();
+    keys_.Reset();
     repeat_since_ = repeat_last_ = 0;
-    swallow_ |= pad_last_;   // (the A that started it is not the field's first press)
+    swallow_ |= pad_last_;   // (the A that started it is not the keyboard's first press)
+    typing_from_ms_ = pad_ms_;   // (nor the same A coming again: a click's A, in two pulses, typed the first key)
+}
+
+void Page::EndTyping(bool ok) {
+    if (typing_ < 0) return;
+    if (!ok) Field(typing_).Set(typing_was_);
+    typed_ = ok ? typing_ : -1;
+    typing_ = -1;
+    pages_sound_ = "button_decide";
+}
+
+void Page::PressKey(int row, int col) {
+    if (typing_ < 0) return;
+    keys_.Set(row, col);
+    TextField& f = Field(typing_);
+    const CoopKeyboard::KeyAt k = CoopKeyboard::At(row, col);
+    switch (k.key) {
+    case CoopKeyboard::Key::kChar: f.Type(static_cast<unsigned char>(k.ch)); break;
+    case CoopKeyboard::Key::kSpace: f.Type(' '); break;   // (a field without spaces does not take it)
+    case CoopKeyboard::Key::kDelete: f.Backspace(); break;
+    case CoopKeyboard::Key::kCancel: EndTyping(false); return;
+    case CoopKeyboard::Key::kOk: EndTyping(true); return;
+    case CoopKeyboard::Key::kNone: return;
+    }
+    pages_sound_ = "button_decide";
 }
 
 void Page::TypingPad(std::uint64_t down, std::uint64_t held, std::uint64_t now_ms) {
     TextField& f = Field(typing_);
-    if ((down & (kPadA | kPadB | kPadPlus)) != 0) {   // (done: the row shows what was typed)
-        typing_ = -1;
-        pages_sound_ = "button_decide";
+    if ((down & kPadPlus) != 0) {   // (done: the row shows what was typed)
+        EndTyping(true);
         return;
     }
-    if ((down & kPadY) != 0) f.Delete();
-    if ((down & kPadX) != 0) f.Clear();
+    if ((down & kPadA) != 0 && now_ms - typing_from_ms_ >= kTypingStartMs) {
+        PressKey(keys_.row(), keys_.col());
+        if (typing_ < 0) return;
+    }
+    // B is Cancel, the field as it was (a tester: B should back out of the keyboard, not take letters off); Y takes
+    // the letter before the cursor off, as the keyboard's Delete key does.
+    if ((down & kPadB) != 0) {
+        EndTyping(false);
+        return;
+    }
+    if ((down & kPadY) != 0) {
+        f.Backspace();
+        pages_sound_ = "button_on";
+    }
+    if ((down & (kPadL | kPadZL)) != 0) f.Move(-1);
+    if ((down & (kPadR | kPadZR)) != 0) f.Move(+1);
     const std::uint64_t up = kPadUp | kPadStickUp, dn = kPadDown | kPadStickDown;
     const std::uint64_t left = kPadLeft | kPadStickLeft, right = kPadRight | kPadStickRight;
     const std::uint64_t dirs = up | dn | left | right;
     const auto step = [&](std::uint64_t bits) {
-        if ((bits & up) != 0) f.Cycle(+1);
-        if ((bits & dn) != 0) f.Cycle(-1);
-        if ((bits & left) != 0) f.Move(-1);
-        if ((bits & right) != 0) f.Move(+1);
+        keys_.Move((bits & dn) != 0 ? 1 : (bits & up) != 0 ? -1 : 0, (bits & right) != 0 ? 1 : (bits & left) != 0 ? -1 : 0);
     };
     if ((down & dirs) != 0) {
         step(down & dirs);
@@ -350,13 +416,15 @@ bool Page::Key(std::uint32_t vk, bool repeat) {
     switch (vk) {
     case 0x25: f.Move(-1); return true;      // VK_LEFT
     case 0x27: f.Move(+1); return true;      // VK_RIGHT
-    case 0x26: f.Cycle(+1); return true;     // VK_UP
-    case 0x28: f.Cycle(-1); return true;     // VK_DOWN
+    case 0x26: keys_.Move(-1, 0); return true;   // VK_UP, VK_DOWN: the keyboard's cursor
+    case 0x28: keys_.Move(+1, 0); return true;
     case 0x08: f.Backspace(); return true;   // VK_BACK
     case 0x2e: f.Delete(); return true;      // VK_DELETE
-    case 0x0d:                               // VK_RETURN, VK_ESCAPE: done
-    case 0x1b:
-        if (!repeat) typing_ = -1;
+    case 0x0d:                               // VK_RETURN: done
+        if (!repeat) EndTyping(true);
+        return true;
+    case 0x1b:                               // VK_ESCAPE: as it was
+        if (!repeat) EndTyping(false);
         return true;
     default:
         return false;   // (a letter comes as its character, Char)
@@ -383,10 +451,6 @@ void Page::ShowAgain(std::uint64_t now_ms) {
     }
 }
 
-const char* Page::TakeStripSound() {
-    return std::exchange(strip_sound_, nullptr);
-}
-
 const char* Page::TakePagesSound() {
     return std::exchange(pages_sound_, nullptr);
 }
@@ -408,7 +472,7 @@ std::string Page::TakeWhy() {
 int RowOfButton(const std::string& name) {
     if (name.size() != 12 || name.compare(0, 11, "Pa_Button_0") != 0) return -1;
     const int row = name[11] - '0';
-    return row >= 0 && row < kRows ? row : -1;
+    return row >= 0 && row < kButtonRows ? row : -1;
 }
 
 float SlideProgress(std::uint64_t ms) {
@@ -429,14 +493,6 @@ std::pair<float, float> SlideOffsets(int dir, float p) {
     if (dir > 0) return {kPageWidth * (1.0f - p), -kPageWidth * p};
     if (dir < 0) return {kPageWidth * p, -kPageWidth * (1.0f - p)};
     return {0.0f, 0.0f};
-}
-
-float Ahead(float prev, float now, float limit) {
-    const float step = now - prev, next = now + step;
-    if ((step > 0 && now <= limit && next > limit) || (step < 0 && now >= limit && next < limit)) {
-        return limit;
-    }
-    return next;
 }
 
 int BrowseListed(const Session& s) {
@@ -479,12 +535,12 @@ std::pair<float, float> LayoutPoint(int px, int py, int w, int h) {
 }
 
 int RowAt(const RowBoxes& boxes, float x, float y) {
-    for (int i = 0; i < kRows; ++i) {
+    for (int i = 0; i < kButtonRows; ++i) {
         const RowBox& r = boxes[static_cast<std::size_t>(i)];
         if (!r.shown) continue;
         const float cx = (r.x0 + r.x1) / 2;
         float above = -1, below = -1;   // (the gaps to the nearest box above and below in the column)
-        for (int j = 0; j < kRows; ++j) {
+        for (int j = 0; j < kButtonRows; ++j) {
             const RowBox& o = boxes[static_cast<std::size_t>(j)];
             const float ox = (o.x0 + o.x1) / 2;
             if (j == i || !o.shown || ox - cx > 60 || cx - ox > 60) continue;
@@ -547,6 +603,37 @@ void MouseRows::Reset() {
     *this = MouseRows{};
 }
 
+std::uint64_t RowSkip::Step(const In& in) {
+    if (in.up || in.mouse_up) dir_ = -1;
+    if (in.down || in.mouse_down) dir_ = 1;
+    if (in.focused < 0) {   // (no button focused for a read or two while the cursor steps: what was, kept)
+        held_ = false;
+        return 0;
+    }
+    skipping_ = in.hidden || in.focused >= in.rows;
+    if (!skipping_) {
+        from_ = -1, held_ = false;
+        return 0;
+    }
+    if (held_) {
+        held_ = false;   // (let go a read between steps: each is a press of its own)
+        return 0;
+    }
+    if (in.up || in.down) return 0;   // (the player's own step moves it this read)
+    if (from_ == in.focused && in.now_ms - step_ms_ < kStepWaitMs) return 0;   // (not moved yet)
+    if (in.focused >= in.rows) {
+        dir_ = -1;   // (past our rows: back up to them)
+    } else if (from_ == in.focused) {
+        dir_ = -dir_;   // (it did not move: an end of the rows, the other way)
+    }
+    from_ = in.focused, step_ms_ = in.now_ms, held_ = true;
+    return dir_ < 0 ? kPadUp : kPadDown;
+}
+
+void RowSkip::Reset() {
+    *this = RowSkip{};
+}
+
 RowAction ActionFor(int row, const Session& s) {
     switch (row) {
     case kRowSession:
@@ -557,14 +644,20 @@ RowAction ActionFor(int row, const Session& s) {
         return s.in_one || s.by_launcher ? RowAction::kViewSession : RowAction::kViewJoin;
     case kRowPlayers:
         if (!s.in_one && !s.by_launcher) return RowAction::kViewLan;   // (not in a session: the games on this network)
-        return RowAction::kViewPlayers;
+        // (just us, or nobody known yet: no list to open; a tester expected nothing there with "Players: just you")
+        return s.listed > 1 ? RowAction::kViewPlayers : RowAction::kNone;
     case kRowLetIn:
         if (!s.in_one && !s.by_launcher) return RowAction::kAutoRejoin;   // (not in a session: the switch)
-        if (!s.hosting) return s.in_one && s.can_resync ? RowAction::kResync : RowAction::kNone;   // (only a host lets in)
-        return RowAction::kViewLetIn;   // (a friend's answer code is pasted on that view)
+        // (only a host lets in: a guest's row is Settings and look; Resync from host is on the Session view)
+        if (!s.hosting) return RowAction::kViewMenu;
+        // (somebody asks, or an invite code whose friends may send an answer code: the Let in view; else Settings and
+        // look: a tester pressed "Let in: nobody asks" and a view with nothing to do came)
+        return s.asking || s.invite ? RowAction::kViewLetIn : RowAction::kViewMenu;
     case kRowLeave:
-        if (s.by_launcher) return RowAction::kOpenMain;   // (not stopped here: the main page says to start the game again)
-        return s.in_one ? RowAction::kConfirmLeave : RowAction::kNone;   // (a second A leaves: never one stray press)
+        // (a second A leaves: never one stray press. In no session: Settings and look. Co-op the launcher started
+        // (Nucleus Co-op, Host.bat) leaves here too: before, its row opened the overlay to say "restart the game", a
+        // tester's "opens the overlay")
+        return s.in_one || s.by_launcher ? RowAction::kConfirmLeave : RowAction::kViewMenu;
     default:
         return RowAction::kNone;
     }
@@ -575,6 +668,7 @@ View BackOf(View view) {
     case View::kPlayerHost: return View::kPlayer;
     case View::kPlayer: return View::kPlayers;
     case View::kLanGame: return View::kLan;
+    case View::kPassword: return View::kSession;
     default: return View::kMain;
     }
 }
@@ -600,7 +694,8 @@ RowAction ActionFor(View view, int row, const Session& s) {
     case View::kMain: break;
     case View::kPlayers:
         if (s.listed > kRows - 1 && row == kRows - 2) return RowAction::kMorePlayers;
-        return PlayerIndex(s.listed, s.page, row) >= 0 ? RowAction::kViewPlayer : RowAction::kNone;
+        if (const int i = PlayerIndex(s.listed, s.page, row); i >= 0 && i != s.self) return RowAction::kViewPlayer;
+        return RowAction::kNone;   // (our own row: nothing to do to ourselves)
     case View::kPlayer:
         if (s.player != 2) return RowAction::kNone;   // (us, or they left: nothing to do to them)
         if (row == 0) return RowAction::kTeleport;
@@ -613,24 +708,33 @@ RowAction ActionFor(View view, int row, const Session& s) {
         if (row == 1) return RowAction::kHostChat;
         return row == 2 ? RowAction::kKick : RowAction::kBan;
     case View::kLan:
-        // (0 this network's games, 1 the relay's public rooms, 2 the cells' next page, 3 listing our own room when we
-        // host; the games themselves are in the cells: Right goes into them)
+        // (0 the list, online or this network's, 1 the search, 2 the filter, 3 the order; the games themselves are in
+        // the cells: Right goes into them. The list's heading pages it and asks it again)
         if (s.in_one || s.by_launcher) return RowAction::kNone;
-        if (row == 0) return RowAction::kBrowseLan;
-        if (row == 1) return RowAction::kBrowseOnline;
-        if (row == 2) return CellPages(BrowseListed(s)) > 1 ? RowAction::kBrowsePage : RowAction::kBrowseRefresh;
-        if (row == 3) return RowAction::kListRoom;
+        if (row == 0) return RowAction::kBrowseList;
+        if (row == 1) return RowAction::kTypeSearch;
+        if (row == 2) return RowAction::kBrowseFilter;
+        if (row == 3) return RowAction::kBrowseSort;
         return RowAction::kNone;
     case View::kLanGame:
-        // (0 the game, 1 its password typed on the row, 2 Join this game once one is typed; the last row is Back)
+        // (0 the game, 1 its password typed on the row if its host asks one, 2 Join this game; the last row is Back.
+        // A host on this network lets its players in without the password unless it said otherwise: docs/protocol.md
+        // "Same network")
         if (s.in_one || s.by_launcher) return RowAction::kNone;
         if (row == 1) return RowAction::kTypePassword;
-        if (row == 2) return s.lan_password ? RowAction::kJoinLanGame : RowAction::kTypePassword;
+        if (row == 2) return RowAction::kJoinLanGame;
         return RowAction::kNone;
+    case View::kMenu:
+        return row < kMenuTabs ? RowAction::kMenuTab : RowAction::kNone;
     case View::kLetIn:
+        // (an invite code's host, nobody asking: the main view's row is Let in, so Settings and look is here)
+        if (row == 2 && s.hosting && !s.asking) return RowAction::kViewMenu;
         if (row == 0 && s.hosting && s.asking) return RowAction::kAllow;
         if (row == 1 && s.hosting && s.asking) return RowAction::kDeny;
-        if (row == 3 && s.hosting && s.invite) return RowAction::kPasteAnswer;
+        // (nobody asks: Paste answer code first, nothing between it and Back; a tester saw a row there that took no A
+        // and a gap under it)
+        if (row == 0 && s.hosting && !s.asking && s.invite) return RowAction::kPasteAnswer;
+        if (row == 3 && s.hosting && s.asking && s.invite) return RowAction::kPasteAnswer;
         return RowAction::kNone;
     case View::kJoin: {
         const bool free = !s.in_one && !s.by_launcher;   // (as co-op's menu: nobody joins from inside a session)
@@ -643,10 +747,14 @@ RowAction ActionFor(View view, int row, const Session& s) {
         if (row == 3) return s.room_ready ? RowAction::kJoinRoom : s.rejoin ? RowAction::kRejoin : RowAction::kNone;
         return RowAction::kNone;
     }
+    case View::kPassword:
+        // (the host's join password: shown on the details list, or a new one typed on the keyboard)
+        if (!s.hosting || !s.has_password) return RowAction::kNone;
+        if (row == 0) return RowAction::kShowPassword;
+        return row == 1 ? RowAction::kChangePassword : RowAction::kNone;
     case View::kSession:
         if (s.hosting) {
-            if (s.password_shown) return row < kRows - 1 ? RowAction::kShowPassword : RowAction::kBack;   // (hidden)
-            if (row == 0) return s.has_password ? RowAction::kShowPassword : RowAction::kNone;
+            if (row == 0) return s.has_password ? RowAction::kShowPassword : RowAction::kNone;   // (shown on the list)
             if (row == 1) return s.code ? RowAction::kCopyCode : RowAction::kNone;
             return row == 2 ? RowAction::kCopyLan : row == 3 ? RowAction::kCopyVpn : RowAction::kNone;
         }
@@ -668,19 +776,27 @@ std::string Fit(std::string t) {
     return t.substr(0, n) + "...";
 }
 
-// A line over up to `rows` rows, broken at spaces (a word longer than a row is cut); the last row ends in "..." when
-// more is left.
-std::vector<std::string> Wrap(const std::string& text, std::size_t rows) {
+// At most `n` bytes, cut before a UTF-8 sequence's start, with "..." when cut.
+std::string FitWidth(std::string t, std::size_t n) {
+    if (t.size() <= n) return t;
+    std::size_t k = n - 3;
+    while (k > 0 && (static_cast<unsigned char>(t[k]) & 0xc0) == 0x80) --k;
+    return t.substr(0, k) + "...";
+}
+
+// A line over up to `rows` rows of `width` bytes, broken at spaces (a word longer than a row is cut); the last row ends
+// in "..." when more is left.
+std::vector<std::string> Wrap(const std::string& text, std::size_t rows, std::size_t width = kRowChars) {
     std::vector<std::string> out;
     std::size_t at = 0;
     while (out.size() < rows) {
         while (at < text.size() && text[at] == ' ') ++at;
         if (at >= text.size()) break;
-        if (out.size() + 1 == rows) {   // (the last row: the rest, Fit cuts it)
-            out.push_back(Fit(text.substr(at)));
+        if (out.size() + 1 == rows) {   // (the last row: the rest, cut to fit)
+            out.push_back(FitWidth(text.substr(at), width));
             break;
         }
-        std::size_t end = std::min(text.size(), at + kRowChars);
+        std::size_t end = std::min(text.size(), at + width);
         if (end < text.size() && text[end] != ' ') {
             const std::size_t space = text.rfind(' ', end);
             if (space != std::string::npos && space > at) end = space;
@@ -699,12 +815,13 @@ std::string Players(int n) {
 
 std::vector<std::string> RowTexts(const SessionView& v) {
     std::vector<std::string> rows(kRows);
+    // (why, and the session's details: the list on the right, DetailLines)
     if (v.s.failed && !v.s.in_one) {
-        rows[kRowSession] = "Co-op failed: A says why";
+        rows[kRowSession] = "Co-op failed";
     } else if (!v.turned_away.empty()) {
-        rows[kRowSession] = "Turned away: A says why";   // (co-op is still on: Leave, then join again)
+        rows[kRowSession] = "Turned away";   // (co-op is still on: Leave, then join again)
     } else if (v.connecting) {
-        rows[kRowSession] = "Connecting...";
+        rows[kRowSession] = v.s.hosting ? "Starting to host..." : "Connecting...";
     } else if (v.s.hosting) {
         rows[kRowSession] = "Hosting";
     } else if (v.s.in_one) {
@@ -719,34 +836,31 @@ std::vector<std::string> RowTexts(const SessionView& v) {
     } else if (v.s.hosting) {
         rows[kRowJoinCode] = !v.room.empty() ? "Room: " + v.room : v.s.code ? "Copy invite code" : "Room: coming...";
     } else {
-        rows[kRowJoinCode] = v.s.in_one || v.s.by_launcher ? "Session details" : "Join a game";
+        rows[kRowJoinCode] = v.s.in_one || v.s.by_launcher ? "Session details" : "Join by room or IP";
     }
-    rows[kRowPlayers] = !v.s.in_one && !v.s.by_launcher ? "Find a game"
+    rows[kRowPlayers] = !v.s.in_one && !v.s.by_launcher ? "Browse games"
                         : v.players <= 0   ? "Players"
                         : v.players == 1 ? "Players: just you"
                                          : "Players: " + std::to_string(v.players);
     if (v.s.hosting) {
         if (v.asking.empty()) {
-            rows[kRowLetIn] = "Let in: nobody asks";   // (a friend's answer code: on the Let in view)
+            rows[kRowLetIn] = v.s.invite ? "Let in: answer code" : "Settings and look";   // (ActionFor)
         } else if (v.asking.size() == 1) {
             rows[kRowLetIn] = "Let in " + v.asking.front();
         } else {
             rows[kRowLetIn] = "Let in " + v.asking.front() + " (+" + std::to_string(v.asking.size() - 1) + ")";
         }
-    } else if (v.s.in_one) {
-        rows[kRowLetIn] = v.s.can_resync ? "Resync from host" : "Let in: the host does";
-    } else if (!v.s.by_launcher) {
+    } else if (v.s.in_one || v.s.by_launcher) {
+        rows[kRowLetIn] = "Settings and look";   // (a guest's: Resync from host is on the Session view)
+    } else {
         rows[kRowLetIn] = !v.s.auto_rejoin ? "Auto-rejoin: Off" : v.s.rejoining ? "Auto-rejoin: trying..." : "Auto-rejoin: On";
-    } else {
-        rows[kRowLetIn] = "Let in: when you host";
     }
-    if (v.s.by_launcher) {
-        rows[kRowLeave] = "Leave: restart the game";
-    } else if (v.confirm_leave) {
-        rows[kRowLeave] = v.s.hosting ? "A again: stop hosting" : "A again: leave";
+    if (v.confirm_leave) {
+        rows[kRowLeave] = v.confirm_click ? (v.s.hosting ? "Click again to stop" : "Click again to leave")   // (kRowChars)
+                                          : (v.s.hosting ? "A again: stop hosting" : "A again: leave");
     } else {
-        rows[kRowLeave] = !v.s.in_one ? (v.version.empty() ? "Leave (not in a session)" : v.version)   // (no action)
-                          : v.s.hosting ? "Stop hosting" : "Leave";
+        // (in no session: nothing to leave, Settings and look there; the release is on the list, DetailLines)
+        rows[kRowLeave] = !v.s.in_one && !v.s.by_launcher ? "Settings and look" : v.s.hosting ? "Stop hosting" : "Leave";
     }
     for (std::string& r : rows) r = Fit(std::move(r));
     return rows;
@@ -777,17 +891,11 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
             rows[0] = v.s.by_launcher ? "Co-op came with the game" : "In a session already";
             break;
         }
-        // (the two lists as tabs: the one the cells show is bright, the other dimmed (the module's alpha); A on the one
-        // shown goes into its cells, as Right does)
-        rows[0] = "Local games (" + std::to_string(v.lan_rows.size()) + ")";
-        rows[1] = v.online_rows.empty() && v.online_state.empty()
-                      ? std::string("Online games")
-                      : "Online games (" + std::to_string(v.online_rows.size()) + ")";
-        const int pages = CellPages(BrowseListed(v.s));
-        rows[2] = pages > 1 ? "Next page (" + std::to_string((v.s.cell_page % pages + pages) % pages + 1) + "/" +
-                                  std::to_string(pages) + ")"
-                            : std::string("Refresh list");
-        rows[3] = v.s.list_room ? "List my room: On" : "List my room: Off";
+        // (the list shown and how many it keeps; A flips to the other one)
+        rows[0] = std::string(v.s.online ? "Online" : "This network") + " (" + std::to_string(BrowseListed(v.s)) + ")";
+        rows[1] = v.search.empty() && v.typing != 5 ? std::string("Search: A to type") : "Search: " + v.search;
+        rows[2] = std::string("Show: ") + CoopBrowse::FilterWords(v.s.browse_filter);
+        rows[3] = std::string("Sort: ") + CoopBrowse::SortWords(v.s.browse_sort);
         break;
     }
     case View::kLanGame:
@@ -798,8 +906,9 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
                                                : "In a session already";
             break;
         }
-        rows[1] = "Password: " + (v.password_field.empty() && v.typing != 1 ? std::string("A to type it") : v.password_field);
-        rows[2] = v.s.lan_password ? "Join this game" : "Join: type its password";
+        rows[1] = v.password_field.empty() && v.typing != 1 ? std::string("Password: if it asks")
+                                                              : "Password: " + v.password_field;
+        rows[2] = "Join this game";
         break;
     case View::kPlayer:
         if (v.s.player == 0) {
@@ -820,13 +929,16 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
         } else {
             rows[0] = (v.host_mutes & kMuteVoice) != 0 ? "Unmute voice for all" : "Mute voice for all";
             rows[1] = (v.host_mutes & kMuteChat) != 0 ? "Unmute chat for all" : "Mute chat for all";
-            rows[2] = v.confirm_kick ? "A again: kick " + v.player_name : "Kick " + v.player_name;
-            rows[3] = v.confirm_ban ? "A again: ban " + v.player_name : "Ban for this session";
+            const std::string again = v.confirm_click ? "Again: " : "A again: ";   // (a name after it: short)
+            rows[2] = v.confirm_kick ? again + "kick " + v.player_name : "Kick " + v.player_name;
+            rows[3] = v.confirm_ban ? again + "ban " + v.player_name : "Ban for this session";
         }
         break;
     case View::kLetIn:
         if (v.asking.empty()) {
-            rows[0] = "Nobody asks to join";
+            rows[0] = v.s.hosting && v.s.invite ? "Paste answer code" : "Nobody asks to join";
+            if (v.s.hosting) rows[2] = "Settings and look";
+            break;
         } else {
             rows[0] = "Let in " + v.asking.front();
             rows[1] = "Refuse " + v.asking.front();
@@ -842,40 +954,48 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
                                            : "Paste code and join";
         if (!v.s.in_one && !v.s.by_launcher) {
             // (the fields: the row's label, then what was typed, the letter at the cursor in brackets while typing)
-            rows[1] = "Room: " + (v.room_field.empty() && v.typing != 0 ? std::string("A to type its name") : v.room_field);
-            rows[2] = "Password: " + (v.password_field.empty() && v.typing != 1 ? std::string("A to type it") : v.password_field);
+            // (short labels: a tester saw "Room: A to type its name" squeezed to fit its button. The first field takes
+            // a room name, or an address with its port after a colon, as the title's Join: "Room or address")
+            // (typed: a short label, so an address and its port fit whole)
+            rows[1] = v.room_field.empty() && v.typing != 0 ? std::string("Room or IP: A to type")
+                      : (v.typing == 0 ? "Room or IP: " : "To: ") + v.room_field;
+            rows[2] = "Password: " + (v.password_field.empty() && v.typing != 1 ? std::string("A to type") : v.password_field);
             if (v.room_ready) {
-                rows[3] = v.relay_set ? "Join this room" : "Join room: no relay set";
+                // (an address: the port it joins on, so a tester sees where it goes; another is typed after a colon)
+                rows[3] = v.join_address ? "Join (port " + std::to_string(v.join_port > 0 ? v.join_port : 27510) + ")"
+                          : v.relay_set  ? "Join this room"
+                                         : "Join room: no relay set";
             } else if (v.s.rejoin) {
                 rows[3] = v.rejoin_host.empty() ? "Join the last game again" : "Join " + v.rejoin_host + " again";
             }
         }
         break;
+    case View::kMenu:
+        for (int i = 0; i < kMenuTabs; ++i) rows[static_cast<std::size_t>(i)] = kMenuTabNames[static_cast<std::size_t>(i)];
+        break;
+    case View::kPassword:
+        // (the host's join password: on the details list while shown; a new one on the keyboard)
+        if (v.s.hosting && v.s.has_password) {
+            rows[0] = v.s.password_shown && !v.host_password.empty() ? "Hide join password" : "Show join password";
+            rows[1] = "Change join password";
+        } else {
+            rows[0] = "Not hosting";
+        }
+        break;
     case View::kSession: {
-        if (!v.says.empty()) {   // (what co-op's menu would have said, on our rows: the reason over all four)
-            const std::vector<std::string> says = Wrap(v.says, 4);
-            for (std::size_t i = 0; i < says.size(); ++i) rows[i] = says[i];
+        // (what can be done; the session's details, co-op's problem or hint and the release are on the list on the
+        // right, DetailLines)
+        if (!v.says.empty()) {   // (a Host or Join of the page's that did not start: why, on the list)
+            rows[0] = "Could not start";
             break;
         }
         if (v.s.hosting) {
             if (!v.note.empty()) {
                 rows[0] = v.note;
-            } else if (v.s.password_shown && !v.host_password.empty()) {
-                // (over the rows below, in fives: a made one is 20 letters, two rows; A on any of them hides it)
-                // (two fives a row: a row of 23 capitals ran past the button's edges in a run, 2026-11-19)
-                rows[0] = "Password (A hides it):";
-                for (std::size_t r = 0; r < 3; ++r) {
-                    std::string line;
-                    for (std::size_t i = r * 10; i < v.host_password.size() && i < r * 10 + 10; ++i) {
-                        if (i > r * 10 && (i - r * 10) % 5 == 0) line += ' ';
-                        line += v.host_password[i];
-                    }
-                    if (r == 2 && v.host_password.size() > 30) line = Fit(line + "...");
-                    rows[1 + r] = line;
-                }
-                break;
             } else if (v.s.has_password) {
-                rows[0] = "Show join password";
+                // (shown or hidden on the list here; a new one is typed from the list's Join password line: a
+                // tester found it in two places)
+                rows[0] = v.s.password_shown ? "Hide join password" : "Show join password";
             } else {
                 rows[0] = "Hosting: " + Players(std::max(v.players, 1));
             }
@@ -884,14 +1004,11 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
             rows[3] = "Copy VPN line";
             break;
         }
-        std::size_t first = 1;   // (the rows co-op's own line, its problem or hint, may take: first .. the last free)
-        std::string why = v.why;
         if (v.s.failed && !v.s.in_one) {
-            rows[0] = "Co-op failed:";
+            rows[0] = "Co-op failed";
             if (!v.s.by_launcher) rows[3] = "Host again";
         } else if (!v.turned_away.empty()) {
-            rows[0] = "Turned away:";   // (the host's game: kicked, banned, full...; as co-op's menu says it)
-            why = v.turned_away + "." + (v.banned ? " Leave." : " Leave, then join again.");
+            rows[0] = "Turned away";   // (the host's game: kicked, banned, full...; as co-op's menu says it)
         } else if (!v.note.empty()) {
             rows[0] = v.note;
         } else if (v.s.wait_host) {
@@ -903,27 +1020,12 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
         } else {
             rows[0] = v.s.by_launcher ? "Co-op came with the game" : "Not in a session";
         }
-        if (v.s.wait_host) {
-            rows[1] = "Copy answer code";
-            first = 2;
-        } else if (v.s.in_one && !v.connecting && v.players > 0) {
-            rows[1] = "With " + Players(v.players);
-            first = 2;
-        }
+        if (v.s.wait_host) rows[1] = "Copy answer code";
         if (v.s.in_one && v.s.can_resync) rows[3] = "Resync from host";
-        const std::size_t last = rows[3].empty() ? 4 : 3;
-        const std::vector<std::string> lines = Wrap(why, last - first);
-        for (std::size_t i = 0; i < lines.size(); ++i) rows[first + i] = lines[i];
-        for (std::size_t i = 3; i >= first && !v.version.empty(); --i) {   // the release, on the lowest free row
-            if (rows[i].empty()) {
-                rows[i] = v.version;
-                break;
-            }
-        }
         break;
     }
     }
-    for (std::string& r : rows) r = r.empty() ? std::string(" ") : Fit(std::move(r));
+    for (std::string& r : rows) r = Fit(std::move(r));   // ("": the row not shown)
     return rows;
 }
 
@@ -963,6 +1065,15 @@ const char* ActionWords(RowAction a) {
     case RowAction::kMoreLan: return "the next page of games on this network";
     case RowAction::kAutoRejoin: return "auto-rejoin on or off";
     case RowAction::kShowPassword: return "the join password shown or hidden";
+    case RowAction::kViewPassword: return "the Join password view";
+    case RowAction::kChangePassword: return "a new join password typed on the keyboard";
+    case RowAction::kChangePort: return "the port when hosting typed on the keyboard";
+    case RowAction::kTypeRelay: return "the relay's address typed on the keyboard";
+    case RowAction::kTypeSearch: return "the browser's search typed on the keyboard";
+    case RowAction::kBrowseList: return "the browser's other list";
+    case RowAction::kBrowseFilter: return "the browser's next filter";
+    case RowAction::kBrowseSort: return "the browser's next order";
+    case RowAction::kTypeRoomName: return "this game's room name typed on the keyboard (saved)";
     case RowAction::kBrowseLan: return "the browser lists the games on this network";
     case RowAction::kBrowseOnline: return "the browser lists the relay's public rooms";
     case RowAction::kBrowsePage: return "the browser's next page of games";
@@ -971,6 +1082,8 @@ const char* ActionWords(RowAction a) {
     case RowAction::kTypePassword: return "the join password typed on its row";
     case RowAction::kJoinRoom: return "join that room through the kit's relay";
     case RowAction::kBan: return "ban that player for this session after a second A";
+    case RowAction::kViewMenu: return "Settings and look (co-op's menu's Customize, Settings, Commands, Local co-op)";
+    case RowAction::kMenuTab: return "that page's rows on the list, the list has the pad";
     case RowAction::kNone: break;
     }
     return "nothing";
@@ -1028,26 +1141,7 @@ std::string FitTo(std::string t, std::size_t n) {
     return t.substr(0, k) + "...";
 }
 
-// `s` in at most `n` bytes: cut before a UTF-8 letter's start, "..." when cut and there is room for it.
-std::string Cut(const std::string& s, std::size_t n) {
-    if (s.size() <= n) return s;
-    const bool dots = n > 3;
-    std::size_t k = dots ? n - 3 : n;
-    while (k > 0 && (static_cast<unsigned char>(s[k]) & 0xc0) == 0x80) --k;
-    return s.substr(0, k) + (dots ? "..." : "");
-}
 }  // namespace
-
-std::string RoomCell(const std::string& room, const std::string& host, const std::string& tail) {
-    const std::string sep = ": ";
-    if (room.size() + sep.size() + host.size() + tail.size() <= kRowChars) return room + sep + host + tail;
-    if (tail.size() + sep.size() + 2 > kRowChars) return Fit(room + sep + host + tail);
-    const std::size_t room_for = kRowChars - tail.size() - sep.size();   // (both names)
-    std::size_t h = std::min(host.size(), std::max(room_for / 2, room_for > room.size() ? room_for - room.size() : 0));
-    std::size_t r = room_for - h;
-    if (r > room.size()) h += r - room.size(), r = room.size();
-    return Cut(room, r) + sep + Cut(host, h) + tail;
-}
 
 std::string ListValue(int players, int max, bool same_version) {
     if (!same_version) return "Other version";
@@ -1065,15 +1159,90 @@ std::string ListName(const std::string& shown, const std::string& room) {
     return same ? shown : shown + " (" + room + ")";
 }
 
+std::vector<SettingRow> SettingsOf(const std::vector<SettingRow>& all, int category) {
+    std::vector<SettingRow> out;
+    if (category < 0 || category >= kSettingRows) return out;
+    // (Longshot names its tabs in lower case, "graphics": the match ignores case)
+    const std::string want = kSettingTabs[static_cast<std::size_t>(category)];
+    const auto same = [](const std::string& a, const std::string& b) {
+        return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+                   return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+               });
+    };
+    // (Longshot's NFC tab has one setting, the tag to use: it goes with Controls, as the game's reader is a pad's)
+    for (const SettingRow& r : all) {
+        if (same(r.tab, want) || (category == 3 && same(r.tab, "nfc"))) out.push_back(r);
+    }
+    return out;
+}
+
+int SettingPages(int count, int per_page) {
+    per_page = std::clamp(per_page, 1, kSettingsPerPageMost);
+    return count <= per_page ? 1 : (count + per_page - 1) / per_page;
+}
+
+std::vector<ListLine> SettingLines(const std::vector<SettingRow>& rows, int page, const std::string& title, int per_page) {
+    per_page = std::clamp(per_page, 1, kSettingsPerPageMost);
+    std::vector<ListLine> lines(kSettingListRows);
+    const int pages = SettingPages(static_cast<int>(rows.size()), per_page);
+    const int at_page = (page % pages + pages) % pages;
+    // (the header has no value: the module hides its value box and arrows, so it never looks like a setting)
+    // (the page with arrows a click on either half of the line turns: the module's mouse)
+    lines[0] = ListLine{FitTo(pages > 1 ? title + "  < " + std::to_string(at_page + 1) + " of " + std::to_string(pages) + " >"
+                                        : title,
+                              kListNameChars),
+                        ""};
+    for (int i = 0; i < per_page; ++i) {
+        const std::size_t at = static_cast<std::size_t>(at_page * per_page + i);
+        if (at >= rows.size()) break;
+        const SettingRow& r = rows[at];
+        lines[static_cast<std::size_t>(i) + 1] =
+            ListLine{FitTo(r.restart ? r.name + " *" : r.name, kListNameChars), FitTo(r.text, kListValueChars)};
+    }
+    return lines;
+}
+
+int SettingNext(const SettingRow& r, int dir) {
+    if (r.fixed || r.hi < r.lo) return r.value;
+    const int step = r.step > 0 ? r.step : 1;
+    if (dir == 0) {
+        if ((r.hi - r.lo) / step + 1 > kCycleChoices) return r.value;   // (a slider: Left and Right only)
+        return r.value + step > r.hi ? r.lo : r.value + step;
+    }
+    return std::clamp(r.value + (dir < 0 ? -step : step), r.lo, r.hi);
+}
+
+void SettingMove(int count, int dy, int* page, int* row, int per_page) {
+    per_page = std::clamp(per_page, 1, kSettingsPerPageMost);
+    if (count <= 0) {
+        *page = 0, *row = 0;
+        return;
+    }
+    const int at = std::clamp(*page * per_page + *row + dy, 0, count - 1);
+    *page = at / per_page, *row = at % per_page;
+}
+
 std::vector<ListLine> ListLines(const SessionView& v) {
     std::vector<ListLine> lines(kListRows);
     if (v.s.in_one || v.s.by_launcher) return lines;
-    lines[0] = ListLine{"Game", "Players"};
+    // (a heading of text: "Game | Players" with its value box read as a button that did nothing, a tester)
+    // (the heading: the list and its page, "< 1 of 3 >" when there are more (a click on its left half goes back a
+    // page, on its right half on); its box asks the list again (a click, or Y))
+    const int pages = CellPages(BrowseListed(v.s));
+    std::string head = v.s.online ? "Online games" : "This network";
+    if (pages > 1) head += "  < " + std::to_string((v.s.cell_page % pages + pages) % pages + 1) + " of " +
+                           std::to_string(pages) + " >";
+    lines[0] = ListLine{head, "Refresh", RowAction::kBrowseRefresh};
     const std::vector<ListLine>& list = v.s.online ? v.online_list : v.lan_list;
     if (list.empty()) {
-        lines[1].name = FitTo(v.s.online ? (v.online_state.empty() ? std::string("Asking the relay...") : v.online_state)
-                                         : std::string("Looking for games..."),
+        lines[1].name = FitTo(v.browse_all_out ? std::string("None match the search or Show")
+                              : v.s.online     ? (v.online_state.empty() ? std::string("Asking the relay...") : v.online_state)
+                                               : std::string("Looking for games..."),
                               kListNameChars);
+        if (v.s.online && !v.relay_set) {   // (no relay: typed here, saved as Co-op Settings' Relay row)
+            lines[1].name = "No relay set: A to type one";
+            lines[1].act = RowAction::kTypeRelay;
+        }
         return lines;
     }
     for (int c = 0; c < kCells; ++c) {
@@ -1083,6 +1252,214 @@ std::vector<ListLine> ListLines(const SessionView& v) {
         }
     }
     return lines;
+}
+
+bool RoomMatches(const std::string& room, const std::string& host, const std::string& search) {
+    if (search.empty()) return true;
+    const auto lower = [](std::string s) {
+        for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+    const std::string want = lower(search);
+    return lower(room).find(want) != std::string::npos || lower(host).find(want) != std::string::npos;
+}
+
+std::vector<ListLine> DetailLines(View view, const SessionView& v) {
+    std::vector<ListLine> lines(kListRows);
+    if (view != View::kMain && view != View::kSession && view != View::kPassword) return lines;
+    std::size_t at = 1;
+    const auto add = [&](const std::string& name, const std::string& value) {
+        if (at < lines.size()) lines[at++] = ListLine{FitTo(name, kListNameChars), FitTo(value, kListValueChars)};
+    };
+    // (the release a short value: "Squadala! v0.11.6" is "v0.11.6")
+    std::string release = v.version;
+    if (const std::string brand = "Squadala! "; release.rfind(brand, 0) == 0) release.erase(0, brand.size());
+    std::string header, why = v.why;
+    if (!v.says.empty()) {
+        header = "Could not start", why = v.says;
+    } else if (v.s.failed && !v.s.in_one) {
+        header = "Co-op failed";
+    } else if (!v.turned_away.empty()) {
+        header = "Turned away";
+        why = v.turned_away + "." + (v.banned ? " Leave." : " Leave, then join again.");
+    } else if (v.s.hosting) {
+        header = "Hosting";
+    } else if (v.s.wait_host) {
+        header = "Waiting for the host";
+    } else if (v.connecting) {
+        header = "Connecting...";
+    } else if (v.s.in_one) {
+        header = "In a session";
+    } else {
+        header = v.s.by_launcher ? "Co-op came with the game" : "Not in a session";
+    }
+    // (the header's value: hosting, who can reach this game. The header had none: the game's cursor frame, which
+    // Longshot's mouse puts on the line under it, framed an empty box there, a tester's screenshot 2026-11-19)
+    std::string reach;
+    if (v.s.hosting && v.says.empty()) {
+        if (v.port_open || !v.room.empty() || v.s.invite) {
+            reach = "Online";
+        } else if (v.problem == HOS_COOP_PROBLEM_NO_INVITE_CODE) {
+            reach = "This network";
+        } else {
+            reach = "Starting...";
+        }
+    }
+    lines[0] = ListLine{FitTo(header, kListNameChars), FitTo(reach, kListValueChars)};
+    // The host's known problems and hints in words of ours, one line each (the Router line above says the port's
+    // state): the server's message ("the router did not open the port (UPnP, PCP and NAT-PMP are off on it, or it said
+    // no)") cut over three lines read as pieces of a sentence (a tester's screenshot, 2026-11-19). Other messages as
+    // they are, with a capital letter.
+    if (v.s.hosting && v.says.empty()) {
+        if (v.problem == HOS_COOP_PROBLEM_UPNP_REFUSED) {
+            // (what to forward by hand; the invite code or a room still gets friends in meanwhile)
+            why = v.port > 0 ? "Forward UDP " + std::to_string(v.port) + " to this PC" : "Forward the port to this PC";
+        } else if (v.problem == HOS_COOP_PROBLEM_NO_INVITE_CODE) {
+            why = "Only this network can join";
+        } else if (v.problem == HOS_COOP_PROBLEM_SYMMETRIC_NAT) {
+            why = "Strict router: try a relay";
+        } else if (!why.empty() && why[0] >= 'a' && why[0] <= 'z') {
+            why[0] = static_cast<char>(why[0] - 'a' + 'A');
+        }
+    }
+    if (v.s.hosting && v.says.empty()) {
+        // (each line that can do something does it on an A or a click, as a tester expected of rows that look like
+        // the game's Options: the room's name or code copied, the players listed, a new join password, another port)
+        add("Room", !v.room.empty() ? v.room : v.s.invite ? "Invite code" : "Coming...");
+        if (v.s.code) lines[at - 1].act = RowAction::kCopyCode;
+        add("Players in", std::to_string(std::max(v.players, 1)));
+        if (v.s.listed > 1) lines[at - 1].act = RowAction::kViewPlayers;
+        if (!v.s.has_password) {
+            add("Join password", "None");
+        } else if (!v.s.password_shown || v.host_password.empty()) {
+            add("Join password", "Hidden");
+            lines[at - 1].act = RowAction::kChangePassword;
+        } else {
+            // (in fives, ten letters a line: a made one is 20, two lines; a longer one cut on its third)
+            for (std::size_t r = 0; r < 3 && r * 10 < v.host_password.size(); ++r) {
+                std::string line;
+                for (std::size_t i = r * 10; i < v.host_password.size() && i < r * 10 + 10; ++i) {
+                    if (i > r * 10 && (i - r * 10) % 5 == 0) line += ' ';
+                    line += v.host_password[i];
+                }
+                if (r == 2 && v.host_password.size() > 30) line = FitTo(line + "...", kListValueChars);
+                add(r == 0 ? "Join password" : " ", line);
+                lines[at - 1].act = RowAction::kChangePassword;
+            }
+        }
+        if (!v.asking.empty()) add("Asking to join", std::to_string(v.asking.size()));   // (nobody: the Let in row says so)
+        // (the port itself: a shut one is forwarded by hand; an A types another, and hosting starts again on it)
+        const std::string port = v.port > 0 ? std::to_string(v.port) + " " : std::string();
+        const std::size_t before = at;
+        if (v.port_open) {
+            add("Port", port + "open");
+        } else if (v.problem == HOS_COOP_PROBLEM_UPNP_REFUSED || v.problem == HOS_COOP_PROBLEM_NO_INVITE_CODE) {
+            add("Port", port + "shut");
+        } else if (v.port > 0) {
+            add("Port", std::to_string(v.port));
+        }
+        if (at > before) lines[at - 1].act = RowAction::kChangePort;
+    } else if (v.s.in_one && !v.connecting && v.says.empty() && v.turned_away.empty()) {
+        if (!v.host_name.empty()) add("Host", v.host_name);
+        if (v.players > 0) add("Players", std::to_string(v.players));
+    } else if (!v.s.in_one && !v.s.by_launcher && !v.s.failed && v.says.empty() && v.turned_away.empty()) {
+        // (the room this game hosts under, and whether the relay lists it: set here as on the title's Co-op Settings,
+        // a tester asked why it could not be set in the game)
+        add("Room name", v.room_name.empty() ? "None" : v.room_name);
+        lines[at - 1].act = RowAction::kTypeRoomName;
+        add("List my room", v.s.list_room ? "On" : "Off");
+        lines[at - 1].act = RowAction::kListRoom;
+        add("Auto-rejoin", !v.s.auto_rejoin ? "Off" : v.s.rejoining ? "Trying..." : "On");
+        // (it looks like a setting of the game's Options, so an A on it turns it on or off, as the row of the same
+        // name: a tester pressed it there and nothing happened)
+        lines[at - 1].act = RowAction::kAutoRejoin;
+    }
+    // (co-op's problem or hint as lines of text on the lines left, the release on the last when it is free: the hint
+    // takes it when it needs it)
+    const std::size_t left = lines.size() - at;
+    if (!why.empty() && left > 0) {
+        const bool all = release.empty() || Wrap(why, left, kListNameChars).size() >= left;
+        for (const std::string& l : Wrap(why, all ? left : left - 1, kListNameChars)) lines[at++] = ListLine{l, ""};
+    }
+    if (!release.empty()) add("Release", release);
+    return lines;
+}
+
+CoopPauseMenu::Page MenuTabPage(int tab) {
+    switch (tab) {
+    case 0: return CoopPauseMenu::Page::kCustomize;
+    case 1: return CoopPauseMenu::Page::kSettings;
+    case 2: return CoopPauseMenu::Page::kCommands;
+    default: return CoopPauseMenu::Page::kLocal;
+    }
+}
+
+std::string MenuValue(const CoopPauseMenu::Row& r, bool typing) {
+    using CoopPauseMenu::RowKind;
+    if (typing) return !r.value.empty() && r.value.back() == '_' ? r.value : r.value + "_";   // (some end in it already)
+    switch (r.kind) {
+    case RowKind::kToggle: return !r.value.empty() ? r.value : r.on ? "On" : "Off";
+    case RowKind::kChoice: {
+        std::string v = std::string(r.left ? "< " : "") + r.value + (r.right ? " >" : "");
+        // (with its arrows it would be cut: "< By player n..."; the value alone when that fits)
+        return v.size() > kListValueChars && r.value.size() <= kListValueChars ? r.value : v;
+    }
+    case RowKind::kHeading:
+    case RowKind::kNote: return "";
+    case RowKind::kAction: break;
+    }
+    return r.value;
+}
+
+std::string MenuHeadingOf(const CoopPauseMenu::View& menu, int row) {
+    for (int i = std::min(row, static_cast<int>(menu.rows.size()) - 1); i >= 0; --i) {
+        if (menu.rows[static_cast<std::size_t>(i)].kind == CoopPauseMenu::RowKind::kHeading) {
+            return menu.rows[static_cast<std::size_t>(i)].name;
+        }
+    }
+    return "";
+}
+
+MenuList MenuLines(const CoopPauseMenu::View& menu, int tab, int top, bool list, int per_page) {
+    using CoopPauseMenu::RowKind;
+    const int cells = std::clamp(per_page, 1, kMenuMost);
+    MenuList out;
+    out.lines.assign(kMenuMost + 1, ListLine{});
+    out.rows.fill(-1);
+    out.selectable.fill(false);
+    const int n = static_cast<int>(menu.rows.size());
+    const int most = std::max(0, n - cells);
+    top = std::clamp(top, 0, most);
+    const int sel = menu.selected;
+    if (list && sel >= 0 && sel < n) {   // (the selected row in view: the list scrolls with it)
+        if (sel < top) top = sel;
+        if (sel >= top + cells) top = sel - cells + 1;
+        // (a heading just above it shown too, when there is room: its part's name)
+        if (top > 0 && top == sel && menu.rows[static_cast<std::size_t>(top - 1)].kind == RowKind::kHeading) --top;
+    }
+    out.top = top;
+    std::string head = tab >= 0 && tab < kMenuTabs ? kMenuTabNames[static_cast<std::size_t>(tab)] : "";
+    if (n > cells) {
+        const int pages = (n + cells - 1) / cells;
+        const int page = top + cells >= n ? pages : std::min(pages, (top + cells / 2) / cells + 1);
+        head += "  < " + std::to_string(page) + " of " + std::to_string(pages) + " >";
+    }
+    out.lines[0] = ListLine{FitTo(head, kListNameChars), ""};
+    for (int c = 0; c < cells; ++c) {
+        const int i = top + c;
+        if (i >= n) break;
+        const CoopPauseMenu::Row& r = menu.rows[static_cast<std::size_t>(i)];
+        const std::size_t k = static_cast<std::size_t>(c) + 1;
+        const bool typing = menu.typing && i == sel;
+        std::string name = r.name;
+        if (r.kind == RowKind::kNote && name.empty()) name = r.value;   // (a note's words, whichever holds them)
+        out.lines[k] = ListLine{FitTo(name.empty() ? std::string(" ") : name, kListNameChars),
+                                FitTo(r.kind == RowKind::kNote ? std::string() : MenuValue(r, typing), kListValueChars)};
+        out.rows[k] = i;
+        out.selectable[k] = r.kind != RowKind::kHeading && r.kind != RowKind::kNote;
+        if (list && i == sel) out.picked = c;
+    }
+    return out;
 }
 
 }  // namespace CoopPauseTab

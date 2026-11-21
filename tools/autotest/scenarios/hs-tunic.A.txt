@@ -1,11 +1,13 @@
 # hs-tunic (Hookshot): the puppet settings are the emulator's (issue 202).
-# A wears blue (A:LICHII_COOP_COLOR=blue: run.ps1 puts the blue own files in, the module
-# sets LICHII_COOP_SELF_TUNIC from them, colour-agree) with a pack that has
-# the green puppets; B keeps its own colour. A steps off the cow and stands by B.
+# A wears blue (A:LICHII_COOP_COLOR=blue: run.ps1 puts green's own files in, as for
+# every colour since the module paints the exact colour on them: 0x3070FF) with a
+# pack that has the green puppets; B keeps its own colour. A steps off the cow and
+# stands by B.
 # Run on Hookshot: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-tunic
 #   -Switches LICHII_COOP_PUPPET=1, A:LICHII_COOP_COLOR=blue
-# Expect in A's log: "coop: your Link wears blue; green players get
-#   CoopPuppet_<Age>_Green" and B's puppet in a green tunic on A's screen.
+# Expect in A's log: "coop: your Link wears green at the start; green players get
+#   CoopPuppet_<Age>_Green" and "coop: look: your Link's tunic is tunic-3070FF now";
+#   A's Link blue on A's screen, B's puppet in a green tunic on A's screen.
 # Second run with -Switches LICHII_COOP_PUPPET=1, LICHII_COOP_TUNICS=0:
 #   both logs "coop: puppets on, actor by age, tunics off
 #   (LICHII_COOP_TUNICS=0)", both puppets green.

@@ -50,6 +50,7 @@
 
 #include "coop_objects.h"
 #include "coop_caller_orders.h"
+#include "coop_boss.h"
 #include "coop_hit_replay.h"
 #include "coop_every.h"
 #include "coop_event_result.h"
@@ -1368,6 +1369,11 @@ std::atomic<s32>& TheMaxLife() {
 }
 
 // SetMaxLifeLowerTo; -1: no hold.
+std::atomic<bool>& TheRefillAsked() {   // (AskRefill)
+    static std::atomic<bool> asked{false};
+    return asked;
+}
+
 std::atomic<s32>& TheMaxLifeLowerTo() {
     static std::atomic<s32> quarters{-1};
     return quarters;
@@ -1779,6 +1785,8 @@ public:
                 for (const std::uint64_t key : fresh) {
                     gold_taken_.insert(key);
                     world_.TakenKey(key);
+                    sync_.Take(key);       // (its Skulltula is no longer shared or copied here, as a take from another
+                    sync_.Take(key + 2);   // game's flag does: an announcement of it made a copy, 2026-11-20)
                     char hex[24];
                     std::snprintf(hex, sizeof hex, "%016llx", static_cast<unsigned long long>(key));
                     LOG_INFO(Core, "coop: objects: Gold Skulltula {} is taken in this save: its token goes",
@@ -3448,6 +3456,17 @@ private:
                         memory_->Write32(value->second + 8, static_cast<u32>(*raised));
                         LOG_INFO(Core, "coop: objects: our Link's max life {} -> {} (from MaxLife)",
                                  max, *raised);
+                        CoopBoss::NoteMaxLifeFromOthers(*raised);   // (not our pickup: no heart claim)
+                    }
+                    // Another player took the boss's heart container: our hearts full, as its pickup fills them.
+                    if (TheRefillAsked().load() && memory_ != nullptr &&
+                        memory_->IsValidVirtualAddressRange(value->first + 8, 4)) {
+                        const s32 full = raised ? *raised : max;
+                        if (full > 0 && TheRefillAsked().exchange(false)) {
+                            memory_->Write32(value->first + 8, static_cast<u32>(full));
+                            LOG_INFO(Core, "coop: objects: our Link's life {} -> {} (another player took the heart "
+                                           "container: as its pickup)", life, full);
+                        }
                     }
                     // Rows 136/137: the host's older save lowered MaxLife; the component follows it.
                     const s32 lower = TheMaxLifeLowerTo().load();
@@ -5175,6 +5194,10 @@ std::optional<LinkHearts> OurLife() {
 
 void SetMaxLife(std::optional<std::int32_t> quarters) {
     TheMaxLife().store(quarters.value_or(-1));
+}
+
+void AskRefill() {
+    TheRefillAsked().store(true);
 }
 
 void SetMaxLifeLowerTo(std::optional<std::int32_t> quarters) {

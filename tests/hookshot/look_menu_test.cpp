@@ -143,7 +143,7 @@ TEST_CASE("look menu: everything back to the game's own, the picture follows the
     CHECK(PictureHas(page.view(), 0x00FF00u));
     auto v = page.view();
     const auto all = static_cast<std::size_t>(v.rows.size() - 1);
-    CHECK(v.rows[all].name == "All parts back to the game's own");
+    CHECK(v.rows[all].name == "All parts to the game's own");
     page.Select(all);
     page.Press(Input::kDecide);
     CHECK(page.look() == Look{});
@@ -153,4 +153,43 @@ TEST_CASE("look menu: everything back to the game's own, the picture follows the
     page.Select(1);
     page.Press(Input::kUp);
     CHECK(page.view().selected == static_cast<int>(all));
+}
+
+TEST_CASE("look menu: the Cap trim, under the Tunic heading after the tunics, follows the tunic until set") {
+    Look start;
+    start[Part::tunic] = 0x3070FFu;
+    Page page;
+    page.Open(start);
+    const int zora = RowOf(page, "Tunic", "Zora Tunic");
+    const int cap = RowOf(page, "Tunic", "Cap trim");
+    REQUIRE(cap > 0);
+    CHECK(cap == zora + 1);
+    auto v = page.view();
+    CHECK(v.rows[static_cast<std::size_t>(cap)].value == "As the tunic");
+    CHECK(CoopLookMenu::Shown(start, Part::cap_trim) == 0x3070FFu);   // the picture's band: the tunic's colour
+    page.Select(static_cast<std::size_t>(cap));
+    v = page.view();
+    CHECK(v.help_title == "Tunic: Cap trim");
+    CHECK(v.help.find("headband") != std::string::npos);
+    CHECK(Outlined(v));   // the band on the Kokiri cap outlined
+    // Right: the first preset, the tunic as it was.
+    page.Press(Input::kRight);
+    const auto change = page.TakeChange();
+    REQUIRE(change);
+    CHECK((*change)[Part::cap_trim] == CoopColors::Parse("red"));
+    CHECK((*change)[Part::tunic] == 0x3070FFu);
+    CHECK(page.view().rows[static_cast<std::size_t>(cap)].value == "red");
+    CHECK(PictureHas(page.view(), *CoopColors::Parse("red")));
+    // Mixing an unset trim starts from the tunic's colour; Game's own colour sets it back to follow the tunic.
+    page.Press(Input::kLeft);   // back to unset
+    CHECK_FALSE(page.look()[Part::cap_trim]);
+    page.Press(Input::kDecide);
+    REQUIRE(page.editing());
+    v = page.view();
+    CHECK(v.rows[static_cast<std::size_t>(v.selected)].name == "Red");
+    CHECK(v.rows[1].value == "48");   // 0x30, the tunic's red
+    CHECK(v.rows[4].value == "As the tunic");   // the Preset row
+    page.Press(Input::kRight);
+    CHECK(page.look()[Part::cap_trim] == 0x3870FFu);
+    CHECK(page.look()[Part::tunic] == 0x3070FFu);
 }

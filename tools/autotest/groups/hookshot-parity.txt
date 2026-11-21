@@ -29,7 +29,7 @@
 
 [g1]
 # Puppet looks: the puppet shows (hs-puppets), tunics (#202), masks (#91), the HUD blocks under your hearts.
-hs-tunic  switches=LICHII_COOP_PUPPET=1,A:LICHII_COOP_COLOR=blue  expect='A:coop: your Link wears blue( at the start)?; green players get CoopPuppet_<Age>_Green'  never="A:the puppet pack's tunic files are green, your colour is blue"  label="#202 own colour"  see=hs-tunic-A  see=hs-tunic-B
+hs-tunic  switches=LICHII_COOP_PUPPET=1,A:LICHII_COOP_COLOR=blue  expect='A:coop: your Link wears green at the start; green players get CoopPuppet_<Age>_Green'  expect='A:coop: look: your Link.s tunic is tunic-3070FF now'  never="A:the puppet pack's tunic files are"  label="#202 own colour"  see=hs-tunic-A  see=hs-tunic-B
 hs-tunic  switches=LICHII_COOP_PUPPET=1,LICHII_COOP_TUNICS=0  expect='A:tunics off \(LICHII_COOP_TUNICS=0\)'  expect='B:tunics off \(LICHII_COOP_TUNICS=0\)'  label="#202 tunics off"  logonly="the switch is read; colours are in #202 own colour"
 hs-puppets  expect='B:P1: create CoopPuppet_(Child|Adult)\S* requested \(returned 0x1\)'  expect='B:P1 CoopPuppet_(Child|Adult)\S* spawned after'  expect='A:P2 CoopPuppet_(Child|Adult)\S* spawned after'  label="#202 puppet shows (fresh pack)"  see=hs-puppets-A  see=hs-puppets-B
 hs-spawn  expect='B:coop: puppet: P1 CoopPuppet_[A-Za-z_]+ spawned after'  never='B:coop: puppet: P1 snap '  label="spawn pop (B: no 'P1 snap' before the first hold)"  see=hs-spawn-A  see=hs-spawn-B

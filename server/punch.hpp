@@ -112,6 +112,9 @@ class HostRendezvous {
 
   bool stun_done() const { return stun_done_; }
   std::optional<Addr> public_address() const { return public_; }
+  // The host's new join password: punches and answer codes from now on are
+  // signed with it (an answer code made for the old one is no longer taken).
+  void set_password(const std::string& password);
   // Two STUN servers saw different ports: the router gives each destination
   // its own port, and punching will most likely not work.
   bool symmetric() const { return symmetric_; }

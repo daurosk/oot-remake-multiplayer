@@ -10,7 +10,9 @@
 // Same format, same size, nothing else moves.
 //
 // The puppet pack has those texels per colour (tools/puppet_pack/look_live.py:
-// coop_look/<colour>.bin, green being the game's own). A texture is one the
+// coop_look/<colour>.bin, green being the game's own); the Hookshot module
+// paints green's in the exact colour asked for (CoopLookParts::TunicPainted)
+// and hands them to the wardrobe as another colour's file. A texture is one the
 // game made (Longshot lists them) whose storage holds a colour's texels
 // exactly. The game copies texels into its texture memory with no file or name
 // in front (lane1, 2026-11-14), so the puppets' copies of the same texels carry

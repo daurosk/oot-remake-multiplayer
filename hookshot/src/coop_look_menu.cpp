@@ -38,6 +38,7 @@ std::uint32_t GameColour(Part part) {
     case Part::biggoron_hilt: return 0x344F93;
     case Part::boots: return 0x634D38;
     case Part::gauntlets: return 0xAAAAAA;
+    case Part::cap_trim: return 0x4C8C3C;   // (unset it is the tunic's: Shown)
     }
     return 0x808080;
 }
@@ -63,12 +64,17 @@ const char* Note(Part part) {
     case Part::biggoron_hilt: return "The blue grip.";
     case Part::boots: return "The leather of every pair: the Kokiri, Hover and Iron Boots (young Link's belts too).";
     case Part::gauntlets: return "The metal of the Silver and the Golden Gauntlets.";
+    case Part::cap_trim:
+        return "The cap's own trims: young Link's headband and knot, adult Link's hood trims (the cap's cloth is the tunic's). Your own Link only, for now.";
     }
     return "";
 }
 
-std::string ValueText(const std::optional<std::uint32_t>& colour) {
-    return colour ? CoopLook::ColourText(colour) : CoopI18n::Tr("Game's own");
+// What an unset part shows: the game's own colour; the Cap trim follows the tunic.
+const char* Unset(Part part) { return part == Part::cap_trim ? "As the tunic" : "Game's own"; }
+
+std::string ValueText(Part part, const std::optional<std::uint32_t>& colour) {
+    return colour ? CoopLook::ColourText(colour) : CoopI18n::Tr(Unset(part));
 }
 
 std::string Title(Part part) {
@@ -147,6 +153,10 @@ std::vector<Drawn> Doll(const CoopLook::Look& look, Part tunic, Part shield, Par
     add(std::nullopt, kHair, {{0.41f, 0.145f}, {0.59f, 0.145f}, {0.595f, 0.185f}, {0.405f, 0.185f}});
     add(tunic, t, {{0.40f, 0.155f}, {0.45f, 0.075f}, {0.56f, 0.065f}, {0.61f, 0.155f}});            // cap
     add(tunic, t, {{0.405f, 0.12f}, {0.44f, 0.15f}, {0.30f, 0.32f}, {0.27f, 0.30f}});               // its tail
+    if (tunic == Part::tunic) {   // the Kokiri cap's trim: the band round its bottom
+        add(Part::cap_trim, Shown(look, Part::cap_trim),
+            {{0.40f, 0.145f}, {0.61f, 0.145f}, {0.605f, 0.17f}, {0.405f, 0.17f}});
+    }
     add(Part::gauntlets, Shown(look, Part::gauntlets), {{0.29f, 0.445f}, {0.37f, 0.455f}, {0.365f, 0.51f}, {0.28f, 0.50f}});
     add(Part::gauntlets, Shown(look, Part::gauntlets), {{0.63f, 0.455f}, {0.71f, 0.445f}, {0.72f, 0.50f}, {0.635f, 0.51f}});
 
@@ -191,6 +201,9 @@ const std::vector<std::string>& Presets() {
 }
 
 std::uint32_t Shown(const CoopLook::Look& look, Part part) {
+    if (part == Part::cap_trim && !look[part]) {
+        return Shown(look, Part::tunic);   // the cap follows the tunic
+    }
     return look[part] ? (*look[part] & 0xFFFFFFu) : GameColour(part);
 }
 
@@ -221,7 +234,7 @@ std::vector<Page::Line> Page::Lines() const {
             }
         }
         if (!look_[p]) {
-            preset = "Game's own";
+            preset = Unset(p);
         }
         out.push_back({{"Preset", preset, 1, true, true}, What::kPreset, p, "Left and Right: the preset colours."});
         out.push_back({{"Game's own colour", "", 0}, What::kGameOwn, p, "This part back to the game's own colour."});
@@ -242,9 +255,10 @@ std::vector<Page::Line> Page::Lines() const {
         const std::string how = CoopI18n::Tr(
             "Left and Right try the colours; Confirm mixes your own. Your Link wears it when you close the menu "
             "(the other players see only the tunic's colour for now).");
-        out.push_back({{info.name, ValueText(look_[info.part]), 1, true, true}, What::kPart, info.part, note + " " + how});
+        out.push_back(
+            {{info.name, ValueText(info.part, look_[info.part]), 1, true, true}, What::kPart, info.part, note + " " + how});
     }
-    out.push_back({{"All parts back to the game's own", "", 0}, What::kAllGame, Part::tunic,
+    out.push_back({{"All parts to the game's own", "", 0}, What::kAllGame, Part::tunic,
                    "Every part in the game's own colours again (the tunic: your player number's colour for the others)."});
     return out;
 }
@@ -268,7 +282,9 @@ void Page::Open(const CoopLook::Look& look) {
 }
 
 void Page::Focus(Part part) {
-    if (IsTunic(part)) {
+    if (part == Part::cap_trim) {
+        tunic_ = Part::tunic;   // (the trim is on the Kokiri cap)
+    } else if (IsTunic(part)) {
         tunic_ = part;
     } else if (IsShield(part)) {
         shield_ = part;

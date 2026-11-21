@@ -19,6 +19,14 @@ inline constexpr std::size_t kJoinProofBytes = 32;
 // Longest password, in bytes. HMAC takes any length; this only keeps
 // coop-options.ini and the command line sane.
 inline constexpr std::size_t kMaxJoinPasswordBytes = 128;
+// The same-network key (docs/protocol.md "Same network"): a game joining a
+// private address with no password typed answers with this one. A server
+// takes it only when its host lets the same network in without the password
+// (SessionConfig::same_network_open), and only from a private address
+// (10/8, 172.16/12, 192.168/16, 169.254/16), never from 127/8, where a
+// relay's or a helper's connections come from. It is no secret: the traffic
+// is still sealed with fresh keys, it is only not a password.
+inline constexpr std::string_view kSameNetworkPassword = "squadala-same-network";
 
 using Sha256Digest = std::array<std::uint8_t, 32>;
 using JoinNonce = std::array<std::uint8_t, kJoinNonceBytes>;

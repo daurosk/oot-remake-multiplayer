@@ -16,6 +16,7 @@ const std::array<PartInfo, kParts>& Parts() {
         {Part::tunic, "tunic", "Tunic", "Kokiri Tunic"},
         {Part::goron_tunic, "goron_tunic", "Tunic", "Goron Tunic"},
         {Part::zora_tunic, "zora_tunic", "Tunic", "Zora Tunic"},
+        {Part::cap_trim, "cap_trim", "Tunic", "Cap trim"},
         {Part::hylian_frame, "hylian_frame", "Hylian Shield", "Frame"},
         {Part::hylian_face, "hylian_face", "Hylian Shield", "Face"},
         {Part::hylian_emblem, "hylian_emblem", "Hylian Shield", "Emblem"},

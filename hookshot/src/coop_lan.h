@@ -68,5 +68,9 @@ private:
 std::string RowText(const Heard& h, int my_protocol);
 // Whether it can be joined from here (same protocol, room for one more).
 bool Joinable(const Heard& h, int my_protocol);
+// Nucleus's "Join a game on this network" (coop.ini join_lan): the game to join among those heard. `want` "first" (or
+// empty): the first that can be joined, in the list's order; else the one whose host has that name (any case). None:
+// nothing.
+std::optional<Heard> PickToJoin(const std::vector<Heard>& heard, const std::string& want, int my_protocol);
 
 }  // namespace CoopLan

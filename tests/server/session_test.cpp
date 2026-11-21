@@ -343,6 +343,76 @@ TEST_CASE("a game build other than the session's is refused") {
   }
 }
 
+TEST_CASE("another co-op release than the host's is refused, an older or a newer one") {
+  for (const char* other : {"coop hookshot v0.11.6", "coop hookshot v0.11.8-3-gab12cd34"}) {
+    CAPTURE(other);
+    std::vector<std::string> lines;
+    SessionConfig config;
+    config.log = [&lines](const std::string& line) { lines.push_back(line); };
+    Harness h(config);
+    h.connect(1);
+    Hello host = hello_from("Link");
+    host.build_id = "coop hookshot v0.11.7-86-gab12cd34";
+    h.receive(1, host, kChannelSession);
+    REQUIRE(h.session.player_count() == 1);
+    h.clear();
+    h.connect(2);
+    Hello guest = hello_from("Zelda");
+    guest.build_id = other;
+    h.receive(2, guest, kChannelSession);
+    const auto refused = only_message_to<Refused>(h, 2);
+    REQUIRE(refused.has_value());
+    CHECK(refused->reason == RefuseReason::wrong_coop_version);
+    CHECK(h.session.player_count() == 1);
+    CHECK(std::any_of(lines.begin(), lines.end(), [](const std::string& l) {
+      return l.find("the host v0.11.7") != std::string::npos && l.find("Update.bat") != std::string::npos;
+    }));
+  }
+}
+
+TEST_CASE("the same co-op release joins whatever its commit, and a build naming none is let in") {
+  Harness h;
+  h.connect(1);
+  Hello host = hello_from("Link");
+  host.build_id = "coop hookshot v0.11.7-86-gab12cd34";
+  h.receive(1, host, kChannelSession);
+  const char* others[] = {"coop hookshot v0.11.7", "coop hookshot v0.11.7-90-gffffffff-dirty",
+                          "coop hookshot b614270-dirty (Navi)"};
+  ConnectionId id = 2;
+  for (const char* other : others) {
+    CAPTURE(other);
+    h.connect(id);
+    Hello guest = hello_from("P" + std::to_string(id));
+    guest.build_id = other;
+    h.receive(id, guest, kChannelSession);
+    bool refused = false;
+    for (const Sent& sent : h.to(id)) refused = refused || std::holds_alternative<Refused>(sent.message);
+    CHECK_FALSE(refused);
+    ++id;
+  }
+  CHECK(h.session.player_count() == 4);
+}
+
+TEST_CASE("the session's co-op release is the first player's, and goes with the last") {
+  Harness h;
+  h.connect(1);
+  Hello first = hello_from("Link");
+  first.build_id = "coop hookshot v0.11.6";
+  h.receive(1, first, kChannelSession);
+  REQUIRE(h.session.player_count() == 1);
+  h.session.disconnected(1, h.now);
+  REQUIRE(h.session.player_count() == 0);
+  h.clear();
+  h.connect(2);
+  Hello next = hello_from("Zelda");
+  next.build_id = "coop hookshot v0.11.7";
+  h.receive(2, next, kChannelSession);
+  bool refused = false;
+  for (const Sent& sent : h.to(2)) refused = refused || std::holds_alternative<Refused>(sent.message);
+  CHECK_FALSE(refused);
+  CHECK(h.session.player_count() == 1);
+}
+
 TEST_CASE("crossplay: players on different clients of the same game build share one session") {
   // docs/crossplay.md: what a game runs the module in (this kit's Longshot, Hookshot, another launcher's build) is
   // never a reason to refuse it; only the protocol version, the game build and the join password are.
@@ -3757,6 +3827,83 @@ TEST_CASE("join password: a game with no password (the empty one's proof) is ref
   auto refused = only_message_to<Refused>(h, 1);
   REQUIRE(refused);
   CHECK(refused->reason == RefuseReason::bad_password);
+}
+
+TEST_CASE("join password: the same network joins with the same-network key when the host lets it, and only it") {
+  SessionConfig config = with_password("hunter2");
+  config.same_network_open = true;
+  Harness h(config);
+  // From a private address: in, with the traffic sealed as for any player.
+  h.connect(1, enet_address(192, 168, 1, 20));
+  h.clear();
+  h.receive(1, hello_from("Link"), kChannelSession);
+  auto challenge = only_message_to<JoinChallenge>(h, 1);
+  REQUIRE(challenge);
+  h.clear();
+  h.receive(1, JoinProof{h.proof(std::string(kSameNetworkPassword), challenge->nonce)}, kChannelSession);
+  bool welcomed = false;
+  for (const Sent& s : h.to(1)) welcomed = welcomed || std::holds_alternative<Welcome>(s.message);
+  CHECK(welcomed);
+  CHECK(h.session.player_count() == 1);
+  CHECK(h.session.stats().same_network_joins == 1);
+  CHECK(h.session.stats().bad_password == 0);
+  // The join password still works from there, and counts as the password.
+  h.connect(2, enet_address(10, 0, 0, 7));
+  h.clear();
+  h.receive(2, hello_from("Saria"), kChannelSession);
+  challenge = only_message_to<JoinChallenge>(h, 2);
+  REQUIRE(challenge);
+  h.receive(2, JoinProof{h.proof("hunter2", challenge->nonce)}, kChannelSession);
+  CHECK(h.session.player_count() == 2);
+  CHECK(h.session.stats().same_network_joins == 1);
+  // From an internet address, from 127.0.0.1 (a relay's or a join helper's way in) or from no known address: refused.
+  ConnectionId id = 3;
+  for (std::optional<std::uint32_t> from : {std::optional<std::uint32_t>(enet_address(8, 8, 4, 4)),
+                                            std::optional<std::uint32_t>(enet_address(127, 0, 0, 1)),
+                                            std::optional<std::uint32_t>(enet_address(100, 64, 0, 9)),
+                                            std::optional<std::uint32_t>()}) {
+    h.connect(id, from);
+    h.clear();
+    h.receive(id, hello_from("Mido"), kChannelSession);
+    challenge = only_message_to<JoinChallenge>(h, id);
+    REQUIRE(challenge);
+    h.clear();
+    h.receive(id, JoinProof{h.proof(std::string(kSameNetworkPassword), challenge->nonce)}, kChannelSession);
+    auto refused = only_message_to<Refused>(h, id);
+    REQUIRE(refused);
+    CHECK(refused->reason == RefuseReason::bad_password);
+    ++id;
+  }
+  CHECK(h.session.player_count() == 2);
+  CHECK(h.session.stats().same_network_joins == 1);
+}
+
+TEST_CASE("join password: a host that keeps the password for its own network refuses the same-network key there") {
+  Harness h(with_password("hunter2"));   // (same_network_open off: as before)
+  h.connect(1, enet_address(192, 168, 1, 20));
+  h.clear();
+  h.receive(1, hello_from("Link"), kChannelSession);
+  auto challenge = only_message_to<JoinChallenge>(h, 1);
+  REQUIRE(challenge);
+  h.clear();
+  h.receive(1, JoinProof{h.proof(std::string(kSameNetworkPassword), challenge->nonce)}, kChannelSession);
+  auto refused = only_message_to<Refused>(h, 1);
+  REQUIRE(refused);
+  CHECK(refused->reason == RefuseReason::bad_password);
+  CHECK(h.session.stats().same_network_joins == 0);
+}
+
+TEST_CASE("join password: which addresses are the same network") {
+  CHECK(is_same_network(ipv4_of(enet_address(10, 1, 2, 3))));
+  CHECK(is_same_network(ipv4_of(enet_address(172, 16, 0, 1))));
+  CHECK(is_same_network(ipv4_of(enet_address(172, 31, 255, 254))));
+  CHECK(is_same_network(ipv4_of(enet_address(192, 168, 0, 10))));
+  CHECK(is_same_network(ipv4_of(enet_address(169, 254, 9, 9))));
+  CHECK(!is_same_network(ipv4_of(enet_address(127, 0, 0, 1))));     // (a relay's and a helper's)
+  CHECK(!is_same_network(ipv4_of(enet_address(172, 32, 0, 1))));
+  CHECK(!is_same_network(ipv4_of(enet_address(100, 64, 0, 1))));    // (a carrier's NAT, a VPN's: not this network)
+  CHECK(!is_same_network(ipv4_of(enet_address(25, 1, 2, 3))));
+  CHECK(!is_same_network(ipv4_of(enet_address(8, 8, 8, 8))));
 }
 
 TEST_CASE("join password: no proof at all times out like a missing HELLO") {

@@ -141,3 +141,33 @@ TEST_CASE("lan: the id goes through the datagram, and a new one is 16 hex digits
     REQUIRE(back);
     CHECK(back->id.empty());
 }
+
+TEST_CASE("lan: join_lan picks the first game that can be joined, or the named host's") {
+    const int mine = 13;
+    const auto game = [&](std::string name, std::string address, int players, int max, int protocol) {
+        Heard h;
+        h.address = std::move(address);
+        h.game.name = std::move(name);
+        h.game.port = 27510;
+        h.game.players = players;
+        h.game.max = max;
+        h.game.protocol = protocol;
+        return h;
+    };
+    const std::vector<Heard> heard = {game("Saria", "192.168.1.20", 4, 4, mine),      // (full)
+                                      game("Mido", "192.168.1.21", 1, 4, mine + 1),   // (another version)
+                                      game("Link", "192.168.1.22", 1, 4, mine),
+                                      game("Darunia", "192.168.1.23", 2, 4, mine)};
+    auto p = PickToJoin(heard, "first", mine);
+    REQUIRE(p);
+    CHECK(p->game.name == "Link");   // (the first that can be joined: not full, the same version)
+    p = PickToJoin(heard, "", mine);
+    REQUIRE(p);
+    CHECK(p->game.name == "Link");
+    p = PickToJoin(heard, "darunia", mine);   // (a host's name, any case)
+    REQUIRE(p);
+    CHECK(p->address == "192.168.1.23");
+    CHECK_FALSE(PickToJoin(heard, "Saria", mine));   // (that host's game is full: none)
+    CHECK_FALSE(PickToJoin(heard, "Ruto", mine));
+    CHECK_FALSE(PickToJoin({}, "first", mine));
+}

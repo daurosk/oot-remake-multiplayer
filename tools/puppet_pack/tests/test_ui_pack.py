@@ -586,9 +586,9 @@ class StringsTest(unittest.TestCase):
         for name in names:
             with self.subTest(file=name):
                 self.assertTrue(up.load_strings(name))
-        ours = up.load_strings("EUfr")["LayoutMsg/MenuOverlay_00.msbt"]
+        ours = up.load_strings("EUfr")["LayoutMsg/PlusMenu_00.msbt"]
         r = msbt.read(up.add_labels(make_msbt(GAME), ours))
-        self.assertEqual(r.text("Pa_Category_04-T_Text_00"), [ours["Pa_Category_04-T_Text_00"]])
+        self.assertEqual(r.text("Pa_System_00-Pa_Button_06-T_Btn_00"), [ours["Pa_System_00-Pa_Button_06-T_Btn_00"]])
 
 
 if __name__ == "__main__":

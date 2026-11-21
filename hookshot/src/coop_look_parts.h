@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -43,7 +44,8 @@ struct GearTexture {
 const std::vector<GearTexture>& Gear();
 
 // The pack's file of the game's own gear texels, and the name a look's
-// painting goes by in the wardrobe: "gear" when the look sets no gear part.
+// painting goes by in the wardrobe: "gear" when the look sets no gear part
+// (the tunic and the Cap trim are not gear: TunicPainting).
 inline constexpr const char* kBase = "gear";
 std::string Name(const CoopLook::Look& look);
 bool AnyGear(const CoopLook::Look& look);
@@ -104,6 +106,84 @@ using CopyLooks = std::vector<std::optional<CoopLook::Look>>;
 // name of a painting of them: kCopiesBase when no copy has a gear part set.
 inline constexpr const char* kCopiesBase = "puppets";
 std::string CopiesName(const CopyLooks& looks);
+
+// Your own Link's Kokiri tunic in any colour, painted while the game runs as
+// the gear is. The pack's coop_look/green.bin holds the game's own texels of
+// every tunic texture of both ages (marked as your own Link's green copies
+// are, tools/puppet_pack/look_live.py); the kit puts green's files in for your
+// own Link at every start, so those are the texels the game's memory holds,
+// and the tunic wardrobe draws them painted in the exact colour chosen. The
+// other players' puppets of you keep the pack's tunic colours (TunicName).
+//
+// The rules are the pack tool's (tools/puppet_pack/tunic.py, tunic_extra.py):
+// the tile is recoloured whole, the other textures only in their green
+// (CoopLookPaint::IsGreen), every one shaded against the tile's average, so
+// each keeps its brightness against the tile (the child's dark tile stays
+// about 0.64 of it, tunic.py DARK_SCALE).
+struct TunicTexture {
+    const char* name;   // in the game and in green.bin ("Angin_Tile_A_Alb")
+    CoopLookPaint::Format format;
+    CoopLookPaint::Takes takes;
+};
+// Every tunic texture (tools/puppet_pack/tunic.py TILE, DARK and
+// tunic_extra.py EXTRA: the same names, in the same order as green.bin).
+const std::vector<TunicTexture>& TunicTextures();
+// The tile whose average every tunic texture is shaded against.
+inline constexpr const char* kTunicTile = "Angin_Tile_A_Alb";
+// The tunic wardrobe's base: the game's own green (green.bin).
+inline constexpr const char* kTunicBase = "green";
+// The name a tunic colour's painting goes by in the wardrobe: kTunicBase for
+// none (the game's own), "tunic-RRGGBB" for a colour; TunicColour reads it
+// back (nothing for any other name). With a Cap trim colour (below) the name
+// says both: "tunic-RRGGBB-cap-RRGGBB", or "tunic-green-cap-RRGGBB" on the
+// game's own green; TunicPaintOf reads every painting's name back.
+std::string TunicPainting(const std::optional<std::uint32_t>& colour,
+                          const std::optional<std::uint32_t>& cap = std::nullopt);
+std::optional<std::uint32_t> TunicColour(const std::string& name);
+// The tunic texels of `green` painted in `colour` (0xRRGGBB): the same
+// textures, sizes and order; a texture not in TunicTextures as it is.
+CoopLookTunic::Texels TunicPainted(const CoopLookTunic::Texels& green, std::uint32_t colour);
+
+// The Cap trim (CoopLook::Part::cap_trim), your own Link only. The cap's
+// cloth is the tunic's tile (no texel of it is the cap's alone), so it keeps
+// the tunic's colour; but three tunic textures have blocks only the cap uses:
+// the child's headband and knot (Mt_Cloth_Parts_Player_Child_Alb) and the
+// adult's hood trims (Mt_Vest_Player_Adult_Alb, Mt_Angin_Acs_Player_Adult_Alb).
+// The pack lists them, from Link's models (tools/puppet_pack/look_cap.py,
+// coop_look/cap.bin: per texture the byte offsets of those blocks in
+// green.bin's texels, every mip level). A painting paints them after the
+// tunic, from green's own texels, by the tunic's rule for those textures
+// (their green ends, shaded against the tile's average). With no cap colour
+// they follow the tunic; a pack without cap.bin paints no cap blocks.
+struct CapBlocks {
+    std::string texture;                  // "Mt_Cloth_Parts_Player_Child_Alb"
+    std::uint32_t block = 0;              // bytes of a block: 8 (BC1) or 16
+    std::vector<std::uint32_t> offsets;   // of its blocks in the texels
+};
+using Cap = std::vector<CapBlocks>;
+// cap.bin's bytes; nothing (and `why`) when they are not one.
+std::optional<Cap> ParseCap(const std::vector<std::uint8_t>& file, std::string* why = nullptr);
+// What a tunic painting holds: the tunic's colour (nothing: the game's own
+// green) and the Cap trim's (nothing: as the tunic).
+struct TunicPaint {
+    std::optional<std::uint32_t> tunic;
+    std::optional<std::uint32_t> cap;
+    bool operator==(const TunicPaint&) const = default;
+};
+// A painting's name read back (TunicPainting); nothing for kTunicBase and for
+// a name that is no painting (a pack colour's file).
+std::optional<TunicPaint> TunicPaintOf(const std::string& name);
+// The tunic texels of `green` in `paint`: the tunic's colour first, then the
+// cap's blocks (`cap`, may be null) in the cap's colour.
+CoopLookTunic::Texels TunicPainted(const CoopLookTunic::Texels& green, const TunicPaint& paint, const Cap* cap);
+// The cap's blocks of the texture `name` (in `format`) painted in `colour`:
+// each block of `green` (the texture's own texels) recoloured into `texels`
+// (as long), shaded against `base`; the other bytes stay. Returns how many
+// blocks changed. An offset not on a block, past the texels, or of another
+// block size is passed over.
+std::size_t PaintCap(const Cap& cap, const std::string& name, CoopLookPaint::Format format,
+                     std::span<const std::uint8_t> green, std::vector<std::uint8_t>& texels, std::uint32_t colour,
+                     double base);
 
 // The boots in Link's own model (the adult's Kokiri boots, the child's
 // leather, which holds his belts too): not an item, so no item copies. Every

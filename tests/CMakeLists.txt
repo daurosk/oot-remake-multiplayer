@@ -186,6 +186,7 @@ target_sources(coop_tests PRIVATE hookshot/module_test.cpp hookshot/draw_test.cp
   hookshot/window_brand_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_window_brand.cpp
   hookshot/title_menu_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_title_menu.cpp
   hookshot/pause_menu_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_pause_menu.cpp
+  hookshot/original_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_original.cpp
   hookshot/host_menu_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_host_menu.cpp
   hookshot/input_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_input.cpp
   hookshot/mods_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_mod_json.cpp
@@ -204,8 +205,11 @@ target_sources(coop_tests PRIVATE hookshot/module_test.cpp hookshot/draw_test.cp
   hookshot/texture_override_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_texture.c
   hookshot/lobby_tab_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_lobby_tab.cpp
   hookshot/pause_tab_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_pause_tab.cpp
+  hookshot/keyboard_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_keyboard.cpp
+  hookshot/title_native_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_title_native.cpp
   hookshot/auto_rejoin_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_auto_rejoin.cpp
   hookshot/lan_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_lan.cpp
+  hookshot/browse_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_browse.cpp
   hookshot/longshot_settings_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_longshot_settings.cpp
   hookshot/pad_order_test.cpp
   hookshot/i18n_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_i18n.cpp)

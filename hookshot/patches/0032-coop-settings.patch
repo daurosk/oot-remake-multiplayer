@@ -114,7 +114,7 @@ index 889a0716..82b70a1e 100644
  static void at_exit(void) {
      if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_stop) coop_stop();
  }
-@@ -186,6 +211,7 @@ static void load(void) {
+@@ -186,6 +218,7 @@ static void load(void) {
      api.pad_buttons = bridge_pad_buttons;
      api.key_down = bridge_key_down;
      api.scratch = bridge_scratch;

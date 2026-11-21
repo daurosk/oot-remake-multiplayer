@@ -1218,6 +1218,7 @@ private:
         int resent = 0;
         std::uint64_t dead_at = 0;
         bool owner_life_zero = false;  // its owner's samples said life 0 (OwnerSaysDead)
+        std::int32_t boss_stand_in_life = 0;   // a boss copy: the owner's life its stand-in hit was replayed for (once each)
         std::optional<std::int32_t> owner_life;  // its owner's last life, from the owner's samples (KeepBossLives)
         bool death_given = false;      // a dying copy boss's remaining life went to its own Life step (once)
         bool dead_now = false;  // a kill from before we came: deleted at once

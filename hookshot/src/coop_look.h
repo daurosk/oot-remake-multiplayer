@@ -13,9 +13,10 @@
 // Co-op need not be running: alone, your Link changes and the look is saved.
 //
 // A look is one colour per part (docs/puppet.md, "The Link customizer"): the
-// tunic, the Goron and Zora tunics' cloth, and the parts of the shields,
-// swords, boots and gauntlets that their textures keep apart. Each part has
-// a number that never changes (the settings and the network use it).
+// tunic, the Goron and Zora tunics' cloth, the cap's trims, and the parts of
+// the shields, swords, boots and gauntlets that their textures keep apart.
+// Each part has a number that never changes (the settings and the network use
+// it); a new part takes the next number, whatever its place on the menu.
 #pragma once
 
 #include <array>
@@ -31,7 +32,7 @@
 namespace CoopLook {
 
 enum class Part : std::uint8_t {
-    tunic = 0,            // the Kokiri tunic and cap (one texture on the adult: the cap is not apart)
+    tunic = 0,            // the Kokiri tunic and cap (the cap's cloth is the tunic's weave texture)
     goron_tunic = 1,      // the Goron Tunic's red cloth
     zora_tunic = 2,       // the Zora Tunic's blue cloth
     hylian_frame = 3,     // the Hylian Shield's metal rim and the cross on its back
@@ -48,8 +49,10 @@ enum class Part : std::uint8_t {
     biggoron_hilt = 14,
     boots = 15,           // the leather of every pair of boots
     gauntlets = 16,       // the metal of the Silver and the Golden Gauntlets
+    cap_trim = 17,        // the cap's own trims: the child's headband and knot, the adult's hood trims
+                          // (your own Link only; unset: as the tunic)
 };
-inline constexpr std::size_t kParts = 17;
+inline constexpr std::size_t kParts = 18;
 
 // A part as the menu and the settings name it.
 struct PartInfo {
@@ -58,7 +61,7 @@ struct PartInfo {
     const char* item;   // the menu's heading: "Hylian Shield"
     const char* name;   // the row: "Frame"
 };
-// Every part, in the menu's order (by item).
+// Every part, in the menu's order (by item; not by number).
 const std::array<PartInfo, kParts>& Parts();
 const PartInfo& InfoOf(Part part);
 // A part by its number; nothing for a number this build does not know.
@@ -115,9 +118,11 @@ std::vector<std::pair<std::uint8_t, std::uint32_t>> Wire(const Look& look);
 // A received look; parts this build does not know are passed over.
 Look FromWire(const std::vector<std::pair<std::uint8_t, std::uint32_t>>& parts);
 
-// The tunic's colour as the puppet pack names it (coop_look/<name>.bin): the
-// pack colour nearest it (CoopColors::TunicOf), lower case; "green", the
-// game's own, when unset.
+// The tunic's colour as the puppet pack names it (coop_look/<name>.bin, the
+// puppets' CoopTunic_<Age>_<Colour> models): the pack colour nearest it
+// (CoopColors::TunicOf), lower case; "green", the game's own, when unset.
+// The other players' puppets of you wear it. Your own Link is painted in the
+// exact colour instead (CoopLookParts::TunicPainting).
 std::string TunicName(const std::optional<std::uint32_t>& colour);
 
 // The tunic colour your own Link wears: the chosen one; with none chosen
@@ -128,9 +133,11 @@ std::optional<std::uint32_t> OwnTunic(const std::optional<std::uint32_t>& chosen
 
 // The colour your own Link's tunic files in the puppet pack give it when the
 // game starts (colour-agree): at each start the kit (Set-KitSelfTunic,
-// puppet_pack/self_tunic.py for Linux and the autotest) copies your colour's
-// coop_self/ files in: your own tile romfs/Tex/Angin_Tile_S_Alb.bntx.zs (an
-// older pack: over the game's Angin_Tile_A_Alb). A start that skipped it
+// puppet_pack/self_tunic.py for Linux and the autotest) copies coop_self/
+// files in: green's when the pack has coop_look/green.bin (the module paints
+// your colour on them: CoopLookParts::TunicPainted), else your colour's;
+// your own tile romfs/Tex/Angin_Tile_S_Alb.bntx.zs (an older pack: over the
+// game's Angin_Tile_A_Alb). A start that skipped it
 // leaves whatever was copied last, and the game draws what is in the pack, so
 // that is the start colour, not LICHII_COOP_SELF_TUNIC: `tile` is the pack's
 // tile (nothing: none, "green", the game's own), `self_tile` a colour's

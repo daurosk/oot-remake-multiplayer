@@ -18,14 +18,18 @@ Each time:
 4. Plug in the controllers, start Nucleus and click "OoT Co-op (Longshot)".
 5. Drag each controller (and the keyboard, for a keyboard player) onto a part of the screen and give
    each player a name.
-6. Who can join: "This PC only" (the players on this PC), or "Allow online players" when friends on
-   other PCs join too.
+6. This PC: keep "Host on this PC", or choose "Join a game on this network" when another PC on
+   your network hosts. Nucleus keeps the choice in a saved profile.
 7. Press Play. The first time, Windows asks to let Nucleus make changes (the links to the game's
-   files); later starts do not ask. The games start about 15 seconds apart and join by themselves.
-8. With "Allow online players": the window "Squadala server" shows an invite code after a few seconds
-   and copies it to the clipboard (Alt+Tab to it). Send it to your friends in DMs only. Each friend
-   opens Join in the Multiplayer tab of their own game, pastes it and chooses Join. The first
-   time, Windows may ask to let coop_server.exe through its firewall: allow it.
+   files); later starts do not ask. The games start about 15 seconds apart and join by themselves:
+   the players on this PC need nothing else.
+8. Host on this PC, friends on other PCs: the window "Squadala server" shows an invite code after a
+   few seconds and copies it to the clipboard (Alt+Tab to it). Send it to your friends in DMs only.
+   Each friend opens Join in the Multiplayer tab of their own game, pastes it and chooses Join. The
+   first time, Windows may ask to let coop_server.exe through its firewall: allow it.
+   Join a game on this network: no server starts here. Each game joins the first game hosted on
+   your network (join_lan_host = <host's name> in coop-options.ini picks one). With none after
+   60 seconds, pick one under Browse games.
 9. To stop, end the session in Nucleus: it closes the games and the server.
 
 More: docs\SETUP.md, and on the web docs/play-lan.md, "Split screen (experimental)", and

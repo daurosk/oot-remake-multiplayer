@@ -94,6 +94,29 @@ class SelfTunicTest(unittest.TestCase):
             self.assertEqual(self.text(self.tile), "GREENS")
             self.assertFalse(os.path.exists(self.model))   # (red's model taken away)
 
+    def test_any_colour_wears_greens_files_when_the_module_paints_it(self):
+        # Longshot's module paints the exact colour on green's files (coop_look/green.bin): green's are
+        # put in whatever the colour, so the game's memory holds what it paints from
+        with open(os.path.join(self.pack, "coop_self", "green.Angin_Tile_S_Alb.bntx.zs"), "w") as f:
+            f.write("GREENS")
+        m = json.loads(self.text(os.path.join(self.pack, "coop_puppet.json")))
+        m["self_files"]["green"] = {"Tex/Angin_Tile_S_Alb.bntx.zs": "coop_self/green.Angin_Tile_S_Alb.bntx.zs"}
+        m["look_files"] = {"green": "coop_look/green.bin", "red": "coop_look/red.bin"}
+        self.manifest(m)
+        # no green.bin on disk yet: the nearest preset's files, as before
+        self.assertEqual(self_tunic.put(self.pack, "red"), "red")
+        os.makedirs(os.path.join(self.pack, "coop_look"))
+        with open(os.path.join(self.pack, "coop_look", "green.bin"), "w") as f:
+            f.write("LOOK")
+        for colour in ("red", "#FF3333", "black", "", "green"):
+            self.assertEqual(self_tunic.put(self.pack, "red", painted=False), "red")
+            self.assertEqual(self_tunic.put(self.pack, colour), "green", colour)
+            self.assertEqual(self.text(self.tile), "GREENS")
+            self.assertFalse(os.path.exists(self.model))   # (red's model taken away)
+        # without the module (painted=False) the nearest preset's
+        self.assertEqual(self_tunic.put(self.pack, "black", painted=False), "black")
+        self.assertEqual(self.text(self.tile), "BLACKS")
+
     def test_older_and_broken_packs(self):
         self.assertEqual(self_tunic.put(self.pack, "red"), "red")
         old = os.path.join(self.pack, "romfs", "Tex", "Angin_Tile_A_Alb.bntx.zs")

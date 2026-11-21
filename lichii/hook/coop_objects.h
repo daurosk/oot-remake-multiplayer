@@ -45,6 +45,9 @@ void SetMaxLife(std::optional<std::int32_t> quarters);
 // Rows 136/137: while the host's save load holds MaxLife lower (FlagWatcher::reset_lowered), the walk lowers our
 // Link's own Life component to it (and his life to that max), so the game stops writing the replaced save's hearts
 // back. Nothing: no hold (the usual case, and always with co-op idle).
+// Our Link's hearts filled to his maximum once, on his next read (another player took the boss's heart
+// container, whose pickup fills them: CoopBossScenes::Actions::refill). Any thread.
+void AskRefill();
 void SetMaxLifeLowerTo(std::optional<std::int32_t> quarters);
 
 // Our own Link's hearts as the object walk last read them from his Life

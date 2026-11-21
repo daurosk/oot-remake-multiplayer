@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The Hookshot module's side of coop_look.h: what applying a look does, and
-// the worker that keeps your own Link in it: the tunic in the pack's colours
-// (coop_look_tunic.h), the gear painted in any colour (coop_look_parts.h),
+// the worker that keeps your own Link in it: the tunic and the gear painted
+// in any colour (coop_look_tunic.h, coop_look_parts.h),
 // both drawn through Longshot's texture overrides (patch 0020), and the
 // other players' puppets' own copies of the gear (coop_look_share.h) the same way.
 #include <algorithm>
@@ -149,6 +149,55 @@ std::optional<std::vector<std::uint8_t>> GearFile(const std::string& name) {
         return base;   // the wardrobe says why when it reads the base
     }
     return CoopLookTunic::Pack(CoopLookParts::Painted(*gear, look));
+}
+
+// The tunic's file of a name the module asked for (CoopLookParts::TunicPainting):
+// green.bin's texels painted in its exact colour, and the Cap trim's blocks in
+// the cap's (coop_look/cap.bin); another name is the pack's own file (green,
+// or the colour the kit put in at the start). The worker's, from the
+// wardrobe's Step. The last kTunicKept paintings are kept, so the Customize
+// page's Red, Green and Blue rows going back and forth are drawn at once (a
+// painting of both ages' seven textures takes a few tenths of a second).
+constexpr std::size_t kTunicKept = 8;
+std::mutex g_tunic_mutex;
+std::shared_ptr<const CoopLookTunic::Texels> g_tunic_green;   // guarded: green.bin, read once
+std::vector<std::pair<std::string, std::vector<std::uint8_t>>> g_tunic_kept;   // guarded: the newest first
+// guarded: the cap's blocks (cap.bin, read at StartModule); none: the Cap trim changes nothing (an older pack)
+std::shared_ptr<const CoopLookParts::Cap> g_tunic_cap;
+
+// The Cap trim colour a painting of `look` takes: none without cap.bin.
+std::optional<std::uint32_t> CapOf(const CoopLook::Look& look) {
+    std::lock_guard lock(g_tunic_mutex);
+    return g_tunic_cap ? look[Part::cap_trim] : std::nullopt;
+}
+
+std::optional<std::vector<std::uint8_t>> TunicFile(const std::string& name) {
+    const auto paint = CoopLookParts::TunicPaintOf(name);
+    if (!paint) {
+        return ReadFile(LookDir() / (name + ".bin"));
+    }
+    std::lock_guard lock(g_tunic_mutex);
+    for (auto it = g_tunic_kept.begin(); it != g_tunic_kept.end(); ++it) {
+        if (it->first == name) {
+            std::rotate(g_tunic_kept.begin(), it, it + 1);
+            return g_tunic_kept.front().second;
+        }
+    }
+    if (!g_tunic_green) {
+        const auto file = ReadFile(LookDir() / (std::string(CoopLookParts::kTunicBase) + ".bin"));
+        auto green = file ? CoopLookTunic::Parse(*file) : std::nullopt;
+        if (!green) {
+            return std::nullopt;   // (the wardrobe says why when it reads green.bin itself)
+        }
+        g_tunic_green = std::make_shared<const CoopLookTunic::Texels>(std::move(*green));
+    }
+    g_tunic_kept.insert(g_tunic_kept.begin(),
+                        {name, CoopLookTunic::Pack(CoopLookParts::TunicPainted(*g_tunic_green, *paint,
+                                                                               g_tunic_cap.get()))});
+    if (g_tunic_kept.size() > kTunicKept) {
+        g_tunic_kept.pop_back();
+    }
+    return g_tunic_kept.front().second;
 }
 
 // The puppets' gear (coop_look_share.h, docs/puppet.md "Gear colours on the
@@ -312,6 +361,7 @@ bool g_stop = false;   // guarded by g_wake_mutex
 std::atomic<std::uint8_t> g_number{0};
 std::mutex g_chosen_mutex;
 std::optional<std::uint32_t> g_chosen;   // guarded by g_chosen_mutex
+std::optional<std::uint32_t> g_chosen_cap;   // guarded by g_chosen_mutex: the Cap trim worn (CapOf)
 
 // The worker's round: who wears which colour now, and the boots they chose.
 void FollowBoots() {
@@ -365,10 +415,11 @@ void FollowNumber() {
     if (number == g_number.exchange(number)) {
         return;
     }
-    std::optional<std::uint32_t> chosen;
+    std::optional<std::uint32_t> chosen, cap;
     {
         std::lock_guard lock(g_chosen_mutex);
         chosen = g_chosen;
+        cap = g_chosen_cap;
     }
     if (chosen) {
         return;   // a chosen colour wins
@@ -376,7 +427,7 @@ void FollowNumber() {
     const auto tunic = OwnTunic(chosen, number);
     LOG_INFO(Core, "coop: look: player number {}: your own Link wears {}", static_cast<int>(number),
              tunic ? "the slot colour " + ColourText(tunic) : std::string("the game's own colour"));
-    g_wardrobe->Wear(TunicName(tunic));
+    g_wardrobe->Wear(CoopLookParts::TunicPainting(tunic, cap));
     g_wardrobe->Kick();
 }
 
@@ -458,11 +509,14 @@ void PaintOwnLink(const Look& look) {
     if (!g_wardrobe || !g_gear) {
         return;   // (before StartModule or after StopModule)
     }
+    const auto cap = CapOf(look);
     {
         std::lock_guard lock(g_chosen_mutex);
         g_chosen = look[Part::tunic];
+        g_chosen_cap = cap;
     }
-    Wear(TunicName(OwnTunic(look[Part::tunic], g_number.load())), look);
+    // The tunic in its exact colour (the puppets of you: the pack's nearest, TunicName), the Cap trim over it.
+    Wear(CoopLookParts::TunicPainting(OwnTunic(look[Part::tunic], g_number.load()), cap), look);
 }
 
 void AgreeStartTunic() {
@@ -479,16 +533,20 @@ void AgreeStartTunic() {
     const std::string start = PackStartTunic(
         tile, [&](const std::string& c) { return ReadFile(pack / "coop_self" / (c + "." + own + "bntx.zs")); },
         hint);
-    // The colour chosen (sent to the others): the files should be its. They are when the kit's launcher or
-    // the autotest started the game; else your own Link starts in the files' colour and the wardrobe repaints
-    // it in the chosen one (your own textures only: the puppets' copies are marked).
+    // The module paints your colour on green's files (CoopLookParts::TunicPainted): the kit's launcher and the
+    // autotest put green's in whatever the colour, when the pack has coop_look/green.bin. Another colour's files
+    // are left from an older kit or a start without it: your Link starts in that colour and the wardrobe
+    // repaints it (your own textures only: the puppets' copies are marked), but a texture of that colour that is
+    // not green's size (the child's dark tile: BC3 there, ASTC in green) is not drawn over and keeps it.
     std::vector<std::string> errors;
     const auto chosen = CoopHook::LoadSettings(
         Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini", errors).color;
-    if (chosen && TunicName(chosen) != start) {
-        LOG_WARNING(Core, "coop: look: the puppet pack's tunic files are {}, your colour is {}: started without the "
-                          "kit's launcher? Your Link is repainted in {} once the game's textures are found",
-                    start, TunicName(chosen), TunicName(chosen));
+    std::error_code no_file;
+    if (start != "green" && fs::exists(LookDir() / "green.bin", no_file)) {
+        LOG_WARNING(Core, "coop: look: the puppet pack's tunic files are {}, not green: started without this kit's "
+                          "launcher? Your Link is repainted in {} once the game's textures are found (a child "
+                          "Link's tunic body may stay {})",
+                    start, chosen ? ColourText(chosen) : std::string("your colour"), start);
     }
     if (start == (hint.empty() ? std::string("green") : hint)) {
         return;
@@ -526,7 +584,7 @@ void StartModule() {
     }
     CoopLookTunic::Wardrobe::Host host;
     host.textures = g_textures.get();
-    host.file = [](const std::string& colour) { return ReadFile(LookDir() / (colour + ".bin")); };
+    host.file = TunicFile;
     // The game's tunic textures are not only your Link's: Angin_Tile_A_Alb is on
     // Mido's model (39 Kokiri actors), the dark tile on Saria's (18 more). The
     // wardrobe finds textures by their texels, so it may only look for your own
@@ -582,17 +640,39 @@ void StartModule() {
         LOG_INFO(Core, "coop: look: the puppet pack has no coop_look/metal.bin: painted metal parts stay metal "
                        "(make it again)");
     }
+    // The Cap trim's blocks: without cap.bin (an older pack) the Cap trim row changes nothing.
+    if (const auto cap_file = ReadFile(LookDir() / "cap.bin")) {
+        std::string why;
+        if (auto cap = CoopLookParts::ParseCap(*cap_file, &why)) {
+            std::size_t blocks = 0;
+            for (const auto& b : *cap) {
+                blocks += b.offsets.size();
+            }
+            LOG_INFO(Core, "coop: look: the Cap trim paints {} blocks of {} tunic textures", blocks, cap->size());
+            std::lock_guard lock(g_tunic_mutex);
+            g_tunic_cap = std::make_shared<const CoopLookParts::Cap>(std::move(*cap));
+        } else {
+            LOG_WARNING(Core, "coop: look: coop_look/cap.bin: {}; the Cap trim changes nothing", why);
+        }
+    } else if (fs::exists(LookDir() / "green.bin", no_file)) {
+        LOG_INFO(Core, "coop: look: the puppet pack has no coop_look/cap.bin: the Cap trim changes nothing (make "
+                       "the puppet pack again)");
+    }
     CoopLookShare::EnableSlots(slots);
     LOG_INFO(Core, "coop: look: other players' gear colours on their puppets {}",
              slots       ? "on (pack copies, drawn by Longshot's texture overrides)"
              : gear_file ? "off (this Longshot has no texture overrides, patch 0020)"
                          : "off (the puppet pack has no coop_look/gear.bin; make it again)");
-    // The game started in the settings' colour (the pack's own tiles): the
-    // wardrobe looks for that colour's texels too.
-    g_wardrobe->Wear(TunicName(worn[Part::tunic]));
+    // The game started in green's files (the kit puts them in: the colour is
+    // painted on them): the worker's first step paints the settings' colour.
+    // With another colour's files (LICHII_COOP_SELF_TUNIC) the wardrobe looks
+    // for that colour's texels too.
+    const auto cap = CapOf(worn);
+    g_wardrobe->Wear(CoopLookParts::TunicPainting(worn[Part::tunic], cap));
     {
         std::lock_guard lock(g_chosen_mutex);
         g_chosen = worn[Part::tunic];
+        g_chosen_cap = cap;
     }
     g_number = 0;   // the worker's first round puts on the slot colour once the number is known
     // The gear starts in the game's own colours: the settings' look is painted.
@@ -641,6 +721,12 @@ void StopModule() {
         std::lock_guard lock(g_copies_mutex);
         g_copies.clear();
         g_copies_named.clear();
+    }
+    {
+        std::lock_guard lock(g_tunic_mutex);
+        g_tunic_green.reset();   // (the pack may be made again before the next start)
+        g_tunic_kept.clear();
+        g_tunic_cap.reset();
     }
     CoopLookShare::EnableSlots(false);
     g_number = 0;

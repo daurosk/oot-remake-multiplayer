@@ -12,6 +12,7 @@
 
 #include <enet/enet.h>
 
+#include "coop/protocol/join_password.hpp"
 #include "coop/protocol/messages.hpp"
 #include "host_service.hpp"
 #include "join_helper.hpp"
@@ -175,6 +176,7 @@ int Menu::HostStart(const HosCoopHostOptions* o) {
     job.invite = COOP_HAS(o, HosCoopHostOptions, invite) && o->invite != 0;
     job.pvp = COOP_HAS(o, HosCoopHostOptions, pvp) && o->pvp != 0;
     job.approve_joins = COOP_HAS(o, HosCoopHostOptions, approve_joins) && o->approve_joins != 0;
+    job.same_network_open = !(COOP_HAS(o, HosCoopHostOptions, same_network_password) && o->same_network_password != 0);
     job.relay_via = Trim(COOP_HAS(o, HosCoopHostOptions, relay_via) ? Text(o->relay_via) : std::string());
     job.relay_key = COOP_HAS(o, HosCoopHostOptions, relay_key) ? Text(o->relay_key) : std::string();
     job.relay_room = Trim(COOP_HAS(o, HosCoopHostOptions, relay_room) ? Text(o->relay_room) : std::string());
@@ -224,6 +226,7 @@ void Menu::RunHost(HostJob job) {
         config.session.join_password = job.password;
         config.session.pvp = job.pvp;
         config.session.approve_joins = job.approve_joins;
+        config.session.same_network_open = job.same_network_open;
         config.session.max_players = job.max_players;
         config.session.pose_upload_bytes_per_second = job.pose_upload_kbps * 125u;
         config.max_connections = static_cast<std::size_t>(job.max_players) + 4;
@@ -267,9 +270,26 @@ void Menu::RunHost(HostJob job) {
             host.set_ngplus(hooks_.ngplus_level ? hooks_.ngplus_level() : 0);   // (Navi) New Game+ (Hooks)
             host.service(kRoundMs);
             std::deque<std::string> pasted;
+            std::optional<std::string> new_password;
             {
                 std::lock_guard lock(mutex_);
                 pasted.swap(answers_);
+                new_password.swap(new_password_);
+            }
+            if (new_password) {   // (the host's new join password: new joins need it, players in stay in)
+                std::string why;
+                const bool ok = host.set_join_password(*new_password, why);
+                std::lock_guard lock(mutex_);
+                if (ok) {
+                    job.password = *new_password;
+                    CopyText(status_.password, sizeof status_.password, *new_password);
+                    status_.problem = HOS_COOP_PROBLEM_NONE;
+                    CopyText(status_.message, sizeof status_.message,
+                             "new join password is set");   // (one line of the list)
+                } else {
+                    status_.problem = HOS_COOP_PROBLEM_BAD_PASSWORD;
+                    CopyText(status_.message, sizeof status_.message, "join password not changed: " + why);
+                }
             }
             for (const std::string& code : pasted) {
                 const nat::CodeError e = host.add_answer(code);
@@ -373,6 +393,11 @@ int Menu::Join(const HosCoopJoinOptions* o) {
     if (!where) {
         Fail("'" + target + "' is neither an invite code nor an address this PC can find", HOS_COOP_PROBLEM_NO_TARGET);
         return 0;
+    }
+    // A game on this network with no password typed: the same-network key (docs/protocol.md "Same network"), which
+    // its host takes from a private address when it lets the same network in without the password.
+    if (password.empty() && coop::server::is_same_network(where->ip)) {
+        password = std::string(coop::protocol::kSameNetworkPassword);
     }
     if (password.empty()) {
         Fail("type the join password the host sent you (every session has one)", HOS_COOP_PROBLEM_NO_PASSWORD);
@@ -555,6 +580,25 @@ int Menu::Answer(const char* code) {
     }
     status_.message[0] = '\0';
     answers_.push_back(text);
+    return 1;
+}
+
+int Menu::SetPassword(const char* password) {
+    const std::string text = Trim(Text(password));
+    std::lock_guard lock(mutex_);
+    const char* why = status_.state != HOS_COOP_HOSTING ? "the join password changes only while hosting"
+                      : text.empty()                    ? "type the new join password first"
+                      : text.find(' ') != std::string::npos ? "the join password has a space; use one without"
+                                                            : coop::server::password_problem(text);
+    if (why != nullptr) {
+        status_.problem = HOS_COOP_PROBLEM_BAD_PASSWORD;
+        CopyText(status_.message, sizeof status_.message,
+                 status_.state != HOS_COOP_HOSTING || text.empty() || text.find(' ') != std::string::npos
+                     ? std::string(why)
+                     : std::string("the join password is ") + why);
+        return 0;
+    }
+    new_password_ = text;
     return 1;
 }
 

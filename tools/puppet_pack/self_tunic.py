@@ -6,7 +6,10 @@ colour the others are sent, on every start.
 The colour is decided as the co-op module decides it: LICHII_COOP_COLOR (a switch), else the kit's
 coop-options.ini `color`, else coop.ini's `color`; none or green: green's own files (npc-colour: your own Link
 never wears the game's tunic textures, which Mido's and Saria's models share; the module then
-wears your slot colour live on your own copies only). The pack's coop_puppet.json
+wears your slot colour live on your own copies only). Both users start Longshot, whose co-op module paints
+your exact colour on green's files while the game runs (hookshot/src/coop_look_live.cpp, from the pack's
+coop_look/green.bin): a pack with green's own files and coop_look/green.bin gets green's whatever the colour
+(`painted`), so the game's memory always holds the texels the module paints from. The pack's coop_puppet.json
 `self_files` ({colour: {romfs path: file beside romfs}}) names the files of each colour; every one
 any colour may put in is taken away first, so no file of an earlier start stays.
 
@@ -116,9 +119,21 @@ def start_color(switch, options_ini=None, coop_ini=None, tunics=""):
     return ini_color(coop_ini) if coop_ini else ""
 
 
-def put(pack, color):
+def painted_here(pack, manifest):
+    """Whether the pack lets the module paint any colour on green's files: green's own files and
+    coop_look/green.bin (look_files)."""
+    files = manifest.get("self_files") if isinstance(manifest.get("self_files"), dict) else {}
+    looks = manifest.get("look_files") if isinstance(manifest.get("look_files"), dict) else {}
+    green = looks.get("green")
+    return (isinstance(files.get("green"), dict) and isinstance(green, str) and bool(green)
+            and os.path.isfile(os.path.join(pack, green)))
+
+
+def put(pack, color, painted=True):
     """Puts the colour's own files in the pack's romfs (Set-KitSelfTunic); no colour: green's.
-    Returns the tunic put in, or '' (no such colour in the pack, an older or broken pack)."""
+    `painted` (Set-KitSelfTunic -Painted, Longshot): green's whatever the colour when the pack has
+    what the module paints from (painted_here); else the nearest preset's. Returns the tunic put
+    in, or '' (no such colour in the pack, an older or broken pack)."""
     romfs = os.path.join(pack, "romfs")
     want = tunic_of(color) or "green"
     try:
@@ -128,6 +143,8 @@ def put(pack, color):
         manifest = {}
     if not isinstance(manifest, dict):
         manifest = {}
+    if painted and painted_here(pack, manifest):
+        want = "green"
     targets = list(FIXED)
     files = manifest.get("self_files") if isinstance(manifest.get("self_files"), dict) else {}
     for per in files.values():

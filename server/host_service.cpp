@@ -9,6 +9,7 @@
 
 #include "coop/protocol/messages.hpp"
 #include "join_helper.hpp"
+#include "options.hpp"
 #include "nat_net.hpp"
 #include "pcp.hpp"
 #include "punch.hpp"
@@ -65,6 +66,37 @@ void HostService::set_ngplus(std::uint8_t level) {
   if (server_) server_->session().set_ngplus(level);
 }
 
+bool HostService::set_join_password(const std::string& password, std::string& error) {
+  if (!server_ || stopped_) {
+    error = "not hosting";
+    return false;
+  }
+  if (password.empty()) {
+    error = "a join password is needed: every session has one";
+    return false;
+  }
+  if (const char* why = password_problem(password)) {
+    error = std::string("the join password is ") + why;
+    return false;
+  }
+  if (password.find(' ') != std::string::npos) {   // (the invite code cannot hold one, as at the start)
+    error = "the join password has a space; use one without";
+    return false;
+  }
+  config_.session.join_password = password;
+  server_->session().set_join_password(password);
+  if (rendezvous_) rendezvous_->set_password(password);
+  std::optional<std::string> code;
+  if (invite_where_) code = nat::make_invite(nat::Invite{*invite_where_, password});
+  if (code) {
+    std::lock_guard lock(status_mutex_);
+    status_.invite = *code;
+  }
+  say(std::string("the join password changed: players who join from now on need the new one; players already in stay "
+                  "in") + (code ? " (the invite code is a new one too)" : ""));
+  return true;
+}
+
 bool HostService::start(std::string& error) {
   auto fail = [&](const std::string& why, HostProblem problem) {
     error = why;
@@ -116,6 +148,7 @@ bool HostService::start(std::string& error) {
   say("players must give the join password to join; the traffic is encrypted");
   if (config_.session.pvp) say("PvP is on: players can hurt each other");
   if (config_.session.approve_joins) say("each new player waits until the host lets them in (/allow or /deny)");
+  if (config_.session.same_network_open) say("players on this network join without the join password");
   if (!config_.session.allowed.empty()) {
     say("only the " + std::to_string(config_.session.allowed.size()) +
         " address range(s) given with --allow may connect");
@@ -264,6 +297,7 @@ void HostService::finish_invite() {
     say("invite: note: your router gives every address its own port (symmetric NAT), so friends may not get "
         "through; upnp = yes or a VPN helps (docs/play-online.md)");
   }
+  invite_where_ = where;
   std::lock_guard lock(status_mutex_);
   status_.invite = *code;
   status_.invite_done = true;

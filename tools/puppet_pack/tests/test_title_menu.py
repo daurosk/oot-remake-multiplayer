@@ -122,7 +122,7 @@ class MsbtTest(unittest.TestCase):
         self.assertEqual(labels["0100"], 3)
         self.assertEqual([t[:-1].decode() for t in texts], ["New Game", "Continue", "Options", "Host", "Join",
                                                             "Co-op Settings", "Start", "Multiplayer", "Options",
-                                                            "Back"])
+                                                            "Back"] + ["." * 64] * 4)   # (the live texts' placeholders)
         self.assertEqual(struct.unpack_from("<I", tm.add_rows(m), 0x12)[0], len(tm.add_rows(m)))
 
     def test_labels_land_in_their_hash_bucket(self):

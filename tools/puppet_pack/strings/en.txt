@@ -8,10 +8,6 @@
 # Translations: fr.txt, de.txt, ... (or the game's code for one region: USfr.txt, CNzh.txt), with
 # the same files and labels. A label a translation leaves out keeps its English text from here.
 
-[LayoutMsg/MenuOverlay_00.msbt]
-# The pause menu's fifth tab (pause_menu.py): its text pane, T_Text_00 of the part Pa_Category_04.
-Pa_Category_04-T_Text_00 = Multiplayer
-
 [LayoutMsg/PlusMenu_00.msbt]
 # The Multiplayer page's five rows (pause_menu.py: Pa_Coop_00, a copy of the System page). The co-op
 # module changes some of them while the page shows (the session's state, the join code).
@@ -20,6 +16,16 @@ Pa_Coop_00-Pa_Button_01-T_Btn_00 = Join code
 Pa_Coop_00-Pa_Button_02-T_Btn_00 = Players
 Pa_Coop_00-Pa_Button_03-T_Btn_00 = Let in
 Pa_Coop_00-Pa_Button_04-T_Btn_00 = Leave
+# System's two buttons of ours (pause_menu.py's Pa_Button_05 and Pa_Button_06): Longshot Settings and Multiplayer.
+Pa_System_00-Pa_Button_05-T_Btn_00 = Longshot Settings
+Pa_System_00-Pa_Button_06-T_Btn_00 = Multiplayer
+Pa_System_00-Pa_Button_07-T_Btn_00 = Customize Link
+# Longshot Settings' five rows (Pa_Settings_00): Longshot's options by their tab in its own menu.
+Pa_Settings_00-Pa_Button_00-T_Btn_00 = Graphics
+Pa_Settings_00-Pa_Button_01-T_Btn_00 = Audio
+Pa_Settings_00-Pa_Button_02-T_Btn_00 = Gameplay
+Pa_Settings_00-Pa_Button_03-T_Btn_00 = Controls
+Pa_Settings_00-Pa_Button_04-T_Btn_00 = Motion
 # Room for the module's own words (the rows' live texts: the session's state, the room, who asks to join): it writes
 # into these messages' text and shows them in the rows. 64 bytes each; never shown as they are.
 Coop_Live_00 = ................................................................
@@ -31,6 +37,7 @@ Coop_Live_05 = ................................................................
 Coop_Live_06 = ................................................................
 Coop_Live_07 = ................................................................
 # (08..21: the game browser's rows, Pa_Coop_00/Pa_List_00..06, each its name and its value; 22..47 kept for more)
+# (42, 43: Longshot Settings' eighth list row, Pa_Settings_00/Pa_List_07, its name and its value)
 Coop_Live_08 = ................................................................
 Coop_Live_09 = ................................................................
 Coop_Live_10 = ................................................................

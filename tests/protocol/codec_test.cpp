@@ -366,8 +366,25 @@ TEST_CASE("a client's name with a long version is cut to HELLO's limit, so the H
   CHECK(encode(Message{hello}) != std::nullopt);
 }
 
+TEST_CASE("the co-op release a build_id names") {
+  CHECK(coop_release("coop hookshot v0.11.7") == "v0.11.7");
+  CHECK(coop_release("coop hookshot v0.11.7-86-gab12cd34-dirty") == "v0.11.7");
+  CHECK(coop_release("coop hookshot 0.11.3") == "v0.11.3");
+  CHECK(coop_release("coop fritchii-v5 0.11.3") == "v0.11.3");
+  CHECK(coop_release("coop hookshot b614270-dirty (Navi)").empty());
+  CHECK(coop_release("coop hookshot longshot-mirror-v3.0.0-rc.5").empty());
+  CHECK(coop_release("test 0.0") == "v0.0");
+  CHECK(coop_release("recomp 0.1") == "v0.1");
+  CHECK(coop_release("coop hookshot unknown").empty());
+  CHECK(coop_release("").empty());
+  CHECK(coop_release("coop v.1 1. .2 1..2 v12").empty());
+}
+
 TEST_CASE("the protocol version check") {
   Hello hello{kProtocolVersion, "recomp 0.1", "e0f3ccfaf50065ae", "1.1.1", "Link"};
+  CHECK(check_hello(hello, "e0f3ccfaf50065ae") == std::nullopt);
+  // (the co-op release is the server's own check: check_hello does not look at build_id)
+  hello.build_id = "coop hookshot v0.0.1";
   CHECK(check_hello(hello, "e0f3ccfaf50065ae") == std::nullopt);
   CHECK(check_hello(hello, "0000000000000000") == RefuseReason::wrong_game_build);
 

@@ -277,6 +277,7 @@ void Director::Take(const proto::Message& m, const Local& local, std::uint64_t n
                               std::to_string(h->max_life));
             if (h->player_number != local.self) {
                 out.chat.push_back({h->player_number, "got the heart container for everyone"});
+                out.refill = true;
             }
         }
         f.heart = std::max(f.heart, h->max_life);
@@ -530,6 +531,14 @@ Actions Director::Tick(const Local& local, const std::vector<Request>& ours, std
             // the container: the max rule would give it to everyone): one container on our maximum when
             // the boss died, or the server's answer once known, never below that maximum of ours.
             out.max_life_cap = f.heart != 0 ? std::max(f.heart, f.base) : f.base + kContainer;
+        }
+        if (beaten_here && local.max_life && max_life_ && *local.max_life > *max_life_ && !f.claimed &&
+            local.max_life_from_others) {
+            // Another game's container raised it (the shared MaxLife flag): not our pickup. Every game claimed then,
+            // and the first claim to reach the server (not the player who took it) was named (2026-11-20).
+            f.claimed = true;
+            out.log.push_back(std::string(kBosses[b].name) + "'s heart container: our maximum " +
+                              std::to_string(*local.max_life) + " came from another player's pickup: no claim");
         }
         if (beaten_here && local.max_life && max_life_ && *local.max_life > *max_life_ && !f.claimed) {
             f.claimed = true;

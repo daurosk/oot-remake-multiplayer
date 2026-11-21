@@ -154,6 +154,9 @@ std::string_view refuse_reason_text(proto::RefuseReason reason) {
     case proto::RefuseReason::not_let_in:
       return "the host did not let you in (they said no, did not answer in time, or left): "
              "ask them, then join again";
+    case proto::RefuseReason::wrong_coop_version:
+      return "another co-op version: this game and the host's are different releases; "
+             "run Update.bat in the older kit so both have the newest";
     case proto::RefuseReason::not_encrypted:
       return "the server did not ask for the join password, so the game did not join it "
              "unencrypted (every session has a password and is encrypted): the host's server "

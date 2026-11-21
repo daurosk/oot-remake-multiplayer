@@ -88,6 +88,7 @@ private:
         bool same_network_open = false;   // (players from a private address join without the password: chosen only)
         std::uint8_t max_players = 0;  // HostMaxPlayers'
         std::uint32_t pose_upload_kbps = 0;
+        bool public_game = false;   // (HosCoopHostOptions::public_game)
     };
     struct JoinJob {
         std::string name, password;

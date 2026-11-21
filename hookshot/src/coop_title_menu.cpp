@@ -243,6 +243,18 @@ bool PasswordOk(std::string_view password) {
     });
 }
 
+std::string Options::RandomRoomName(std::uint64_t seed) {
+    static constexpr const char* kWords[] = {"forest", "lake",  "field", "river",  "valley", "meadow",
+                                             "canyon", "grove", "cliff", "marsh",  "harbor", "summit"};
+    std::uint64_t x = seed * 0x9E3779B97F4A7C15ull + 0xD1B54A32D192ED03ull;   // (splitmix64)
+    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+    x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+    x ^= x >> 31;
+    const char* word = kWords[x % (sizeof kWords / sizeof kWords[0])];
+    const unsigned digits = static_cast<unsigned>((x >> 16) % 9000) + 1000;
+    return std::string(word) + "-" + std::to_string(digits);
+}
+
 Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     Options o;
     if (const auto v = IniGet(coop_ini, "name"); v && NameOk(*v)) {
@@ -277,6 +289,7 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     o.same_network_open = On(IniGet(options_ini, "same_network_open"));
     o.auto_rejoin = On(IniGet(options_ini, "auto_rejoin"));
     o.list_room = On(IniGet(options_ini, "list_room"));
+    o.public_game = On(IniGet(options_ini, "public_game"));
     o.upnp = !Off(IniGet(options_ini, "upnp"));
     if (const auto v = IniGet(options_ini, "server_password"); v && PasswordOk(*v)) {
         o.password = *v;
@@ -369,6 +382,7 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     o = auto_rejoin ? IniSet(o, "auto_rejoin", "on", true) : IniUnset(o, "auto_rejoin");
     o = same_network_open ? IniSet(o, "same_network_open", "on", true) : IniUnset(o, "same_network_open");
     o = list_room ? IniSet(o, "list_room", "on", true) : IniUnset(o, "list_room");
+    o = public_game ? IniSet(o, "public_game", "on", true) : IniUnset(o, "public_game");
     // (the relay: the kit's default needs no line; a room name, or none)
     // A line whose value did not change is kept as the player wrote it (its spacing and a comment after it).
     {

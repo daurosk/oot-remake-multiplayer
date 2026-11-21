@@ -39,6 +39,9 @@ typedef struct HosCoopHostOptions {
     const char *relay_list; /* with relay_room: the name the room is shown as on the relay's public room list
                                (coop-options.ini list_room, list_name: the room name without one); NULL or "": not
                                listed */
+    uint32_t public_game;   /* 1: a public game (anyone can join, no password): needs relay_via and relay_room; the
+                               password is made from the room (password ignored), the room is listed (relay_list,
+                               or the room name), relay only (upnp, invite and same_network_open off) */
 } HosCoopHostOptions;
 
 typedef struct HosCoopJoinOptions {

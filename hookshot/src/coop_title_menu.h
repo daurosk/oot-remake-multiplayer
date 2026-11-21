@@ -87,6 +87,10 @@ struct Options {
                                       // without the join password; off, the default, they need it too)
     bool auto_rejoin = false;      // auto_rejoin (join the last friend's game again by itself: coop_auto_rejoin.h)
     bool list_room = false;        // list_room (hosting with a relay room: the room on the relay's public list)
+    // public_game (the Host view's choice, remembered): on, a public game (anyone can join with no password,
+    // through the relay only, listed in Public games; HosCoopHostOptions::public_game); off, the default, a
+    // private game (friends with the password).
+    bool public_game = false;
     bool upnp = true;              // upnp (the host's router forward)
     std::string password;          // server_password ("": a new one each session)
     bool debug_panel = false;      // LICHII_COOP_DEBUG_PANEL
@@ -105,6 +109,9 @@ struct Options {
     std::string relay_room;        // relay_room (a room name on the relay, issue 261; Co-op Settings' Room name)
     std::string list_name;         // list_name (the name list_room shows the room as; "": the room name; read only)
 
+    // A ready room name for a public game ("forest-4821"): a plain word, a dash, four digits; `seed` any number
+    // (the time), so each call can offer another.
+    static std::string RandomRoomName(std::uint64_t seed);
     // From the two files' texts (a missing file: "").
     static Options Read(std::string_view coop_ini, std::string_view options_ini);
     // The two files with these settings in them.

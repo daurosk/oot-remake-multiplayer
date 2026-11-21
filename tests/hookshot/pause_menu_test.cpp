@@ -182,7 +182,7 @@ TEST_CASE("pause tab: the host's player count goes round 2 to 16 and is saved") 
     CHECK(m.options().max_players == 2);
 }
 
-TEST_CASE("pause tab: Host page: Private game is the default; Public game offers a ready room name, is remembered, "
+TEST_CASE("pause tab: Host page: Private game is the default, Public game offers a ready room name, is remembered, "
           "and while hosting public no row holds an address") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});

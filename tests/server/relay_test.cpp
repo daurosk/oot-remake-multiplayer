@@ -21,6 +21,7 @@
 #include "coop/protocol/join_password.hpp"
 #include "coop/protocol/traffic_crypto.hpp"
 #include "enet_server.hpp"
+#include "host_service.hpp"
 #include "relay.hpp"
 #include "relay_link.hpp"
 #include "relay_wire.hpp"
@@ -1118,3 +1119,160 @@ TEST_CASE("relay loopback: a host's link lists its room, the game's list_rooms_o
 }
 
 }  // namespace room_list_tests
+
+// Public games (HostServiceConfig::public_game, docs/play-online.md "Public games").
+namespace {
+bool join_with(Guest& guest, const std::string& password, const std::function<void()>& pump,
+               const std::function<bool()>& joined) {
+  Hello hello;
+  hello.build_id = "relay test";
+  hello.game_build_id = "e0f3ccfaf50065ae";
+  hello.game_version = "1.1.1";
+  hello.nickname = "Saria";
+  const KeyPair keys = KeyPair::generate();
+  hello.key_share = keys.share();
+  auto bytes = coop::protocol::encode(coop::protocol::Message{hello});
+  REQUIRE(bytes.has_value());
+  ENetPacket* p = enet_packet_create(bytes->data(), bytes->size(), ENET_PACKET_FLAG_RELIABLE);
+  REQUIRE(enet_peer_send(guest.peer, kChannelSession, p) == 0);
+  const auto until = [&](const std::function<bool()>& done) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline) {
+      pump();
+      if (done()) return true;
+    }
+    return false;
+  };
+  REQUIRE(until([&] { return guest.find<JoinChallenge>() != nullptr; }));
+  const JoinChallenge challenge = *guest.find<JoinChallenge>();
+  REQUIRE(challenge.key_share.has_value());
+  auto proof = coop::protocol::encode(coop::protocol::Message{
+      JoinProof{join_proof(password, challenge.nonce, keys.share(), *challenge.key_share)}});
+  REQUIRE(proof.has_value());
+  p = enet_packet_create(proof->data(), proof->size(), ENET_PACKET_FLAG_RELIABLE);
+  REQUIRE(enet_peer_send(guest.peer, kChannelSession, p) == 0);
+  return until(joined);
+}
+}  // namespace
+
+TEST_CASE("public game: the password comes from the room, a private game cannot use one of that shape") {
+  using coop::protocol::is_public_join_password;
+  using coop::protocol::public_join_password;
+  CHECK(public_join_password("Forest-4821") == public_join_password("forest-4821"));
+  CHECK(public_join_password("forest-4821") != public_join_password("forest-4822"));
+  CHECK(is_public_join_password(public_join_password("lake")));
+  CHECK(is_public_join_password("Squadala-Public-Game:x"));
+  CHECK_FALSE(is_public_join_password("squadala-public-game"));
+  CHECK_FALSE(is_public_join_password("my-friends-pass"));
+  CHECK(coop::protocol::public_listing_version() == (0x8000 | coop::protocol::kProtocolVersion));
+
+  EnetLife enet;
+  {
+    // A public game needs the relay and a room name.
+    HostServiceConfig c;
+    c.port = 0;
+    c.public_game = true;
+    c.relay_room = "forest-4821";
+    HostService s(c);
+    std::string error;
+    CHECK_FALSE(s.start(error));
+    CHECK(s.status().problem == HostProblem::kRelay);
+  }
+  {
+    // A private game with a password of the public shape is refused (a public secret never opens a private room).
+    HostServiceConfig c;
+    c.port = 0;
+    c.session.join_password = public_join_password("forest-4821");
+    HostService s(c);
+    std::string error;
+    CHECK_FALSE(s.start(error));
+    CHECK(s.status().problem == HostProblem::kNoPassword);
+  }
+  {
+    // ... nor can a private host change to one while hosting.
+    HostServiceConfig c;
+    c.port = 0;
+    c.bind = 0x7F000001u;
+    c.session.join_password = "friends-only";
+    HostService s(c);
+    std::string error;
+    REQUIRE(s.start(error));
+    CHECK_FALSE(s.set_join_password(public_join_password("forest-4821"), error));
+    CHECK(s.set_join_password("friends-only-2", error));
+    s.stop();
+  }
+}
+
+TEST_CASE("public game: listed with the public bit, relay only, a guest joins with the room's password, never another") {
+  EnetLife enet;
+  RelayServer relay_server(0, 0x7F000001u, RelayConfig{});  // (127.0.0.1 only)
+  REQUIRE(relay_server.start());
+  const std::uint16_t relay_port = relay_server.port();
+
+  HostServiceConfig c;
+  c.port = 0;
+  c.public_game = true;
+  c.relay_via = "127.0.0.1:" + std::to_string(relay_port);
+  c.relay_room = "Forest-4821";
+  c.session.join_password = "ignored";  // a public game's password is the room's
+  c.upnp = true;                        // all forced off: relay only
+  c.invite = true;
+  c.session.same_network_open = true;
+  HostService host(c);
+  std::string error;
+  REQUIRE(host.start(error));
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while ((host.status().relay_room.empty() || relay_server.relay().listed() == 0) &&
+         std::chrono::steady_clock::now() < deadline) {
+    host.service(0);
+    relay_server.service(1);
+  }
+  REQUIRE(relay_server.relay().listed() == 1);
+  CHECK_FALSE(host.status().upnp_open);
+  CHECK(host.status().invite.empty());
+
+  ENetAddress relay_at{};
+  enet_address_set_host_ip(&relay_at, "127.0.0.1");
+  relay_at.port = relay_port;
+  std::atomic<bool> done{false};
+  std::thread serve([&] {
+    while (!done) {
+      relay_server.service(5);
+      host.service(0);
+    }
+  });
+  const auto list = list_rooms_on_relay(relay_at);
+  done = true;
+  serve.join();
+  REQUIRE(list.has_value());
+  REQUIRE(list->rooms.size() == 1);
+  CHECK(list->rooms[0].room == "Forest-4821");
+  CHECK(list->rooms[0].host == "Forest-4821");  // the room's name: nothing of the host's PC
+  CHECK(list->rooms[0].version == coop::protocol::public_listing_version());
+
+  // The game port is on 127.0.0.1 only (the relay's link reaches it there); a guest on this PC stands in for the
+  // relay's flow. The wrong password (a private one) is refused, the room's opens it.
+  auto pump = [&] {
+    host.service(0);
+    relay_server.service(0);
+  };
+  Guest wrong;
+  wrong.connect(host.port());
+  for (int i = 0; i < 200 && !wrong.connected; ++i) {
+    pump();
+    wrong.pump();
+  }
+  REQUIRE(wrong.connected);
+  CHECK_FALSE(join_with(wrong, "ignored", [&] { pump(); wrong.pump(); },
+                        [&] { return host.session()->player_count() == 1; }));
+  Guest right;
+  right.connect(host.port());
+  for (int i = 0; i < 200 && !right.connected; ++i) {
+    pump();
+    right.pump();
+  }
+  REQUIRE(right.connected);
+  CHECK(join_with(right, coop::protocol::public_join_password("forest-4821"), [&] { pump(); right.pump(); },
+                  [&] { return host.session()->player_count() == 1; }));
+  host.stop();
+}

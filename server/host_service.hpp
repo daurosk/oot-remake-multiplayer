@@ -64,6 +64,13 @@ struct HostServiceConfig {
   // list shown as this name (the room name when the host gives none), with the
   // players and most players; never the password. Off ("") unless the host asks.
   std::string relay_list;
+  // A public game (anyone can join without typing a password; docs/play-online.md "Public games"): needs
+  // relay_via and relay_room. start() then sets the join password to protocol::public_join_password(relay_room)
+  // (the traffic stays encrypted), lists the room (relay_list: the room's name when empty) with
+  // protocol::public_listing_version(), and keeps the game relay only: no router forward, no invite code, no
+  // same-network door, and the game port listens on 127.0.0.1 only, so nobody reaches it but through the relay
+  // and no player learns the host's address. A private game (false) may not use a password of the public shape.
+  bool public_game = false;
   // coop_server's window shows the invite code (the host copies it from
   // there). The game's log must not have it: it holds the join password and
   // logs are shared (collect-logs). false: the code is only in status().

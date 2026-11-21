@@ -30,6 +30,11 @@ namespace coop::protocol {
 // 15: PLATFORM_CLOCK keys in a mover's GroundControl node (regions 0xfffe / 0xfffd, #196, 0.11.6): a protocol 14
 // reader refuses them as bad_value and drops the whole message, so a 0.11.5 game must be refused at HELLO.
 inline constexpr std::uint16_t kProtocolVersion = 15;
+// A public game (anyone joins without typing a password) lists itself on the relay's room list with this bit
+// on top of kProtocolVersion; the relay repeats the version as given. A listing without it is a private game
+// (or an older kit's): the joiner asks for the host's password and never tries the public one on it.
+inline constexpr std::uint16_t kPublicListingBit = 0x8000;
+constexpr std::uint16_t public_listing_version() { return kPublicListingBit | kProtocolVersion; }
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 16;  // protocol 11; 4 before
 

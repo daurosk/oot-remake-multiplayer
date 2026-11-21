@@ -7,6 +7,7 @@
 #include <exception>
 #include <utility>
 
+#include "coop/protocol/join_password.hpp"
 #include "coop/protocol/messages.hpp"
 #include "join_helper.hpp"
 #include "options.hpp"
@@ -71,8 +72,16 @@ bool HostService::set_join_password(const std::string& password, std::string& er
     error = "not hosting";
     return false;
   }
+  if (config_.public_game) {
+    error = "a public game has no password to change; host a private game to use one";
+    return false;
+  }
   if (password.empty()) {
     error = "a join password is needed: every session has one";
+    return false;
+  }
+  if (protocol::is_public_join_password(password)) {
+    error = "that join password is kept for public games; choose another one";
     return false;
   }
   if (const char* why = password_problem(password)) {
@@ -107,6 +116,20 @@ bool HostService::start(std::string& error) {
     return false;
   };
   if (server_) return fail("the session is already running", HostProblem::kNone);
+  if (config_.public_game) {
+    if (config_.relay_via.empty() || config_.relay_room.empty()) {
+      return fail("a public game needs the game list's server (Relay) and a room name", HostProblem::kRelay);
+    }
+    config_.session.join_password = protocol::public_join_password(config_.relay_room);
+    if (config_.relay_list.empty()) config_.relay_list = config_.relay_room;
+    // Relay only (HostServiceConfig::public_game): nothing that shows or opens the host's address.
+    config_.upnp = false;
+    config_.invite = false;
+    config_.session.same_network_open = false;
+    config_.bind = 0x7F000001u;
+  } else if (protocol::is_public_join_password(config_.session.join_password)) {
+    return fail("that join password is kept for public games; choose another one", HostProblem::kNoPassword);
+  }
   if (config_.session.join_password.empty()) {
     return fail("a join password is needed: every session has one, and it also encrypts the traffic",
                 HostProblem::kNoPassword);
@@ -145,7 +168,12 @@ bool HostService::start(std::string& error) {
   const std::string where = config_.bind ? "only " + show_ipv4(*config_.bind) : "all network adapters";
   say("listening on port " + std::to_string(server_->port()) + " (" + where + ", datagrams of " +
       std::to_string(coop::protocol::kDatagramBytes) + " bytes)");
-  say("players must give the join password to join; the traffic is encrypted");
+  if (config_.public_game) {
+    say("public game: anyone with the room name can join without a password, only through the relay; the traffic "
+        "is encrypted");
+  } else {
+    say("players must give the join password to join; the traffic is encrypted");
+  }
   if (config_.session.pvp) say("PvP is on: players can hurt each other");
   if (config_.session.approve_joins) say("each new player waits until the host lets them in (/allow or /deny)");
   if (config_.session.same_network_open) {
@@ -213,7 +241,7 @@ bool HostService::start(std::string& error) {
           const Session& session = server_->session();
           e.players = static_cast<std::uint8_t>(std::min<std::size_t>(session.player_count(), 255));
           e.max_players = config_.session.max_players;
-          e.version = protocol::kProtocolVersion;
+          e.version = config_.public_game ? protocol::public_listing_version() : protocol::kProtocolVersion;
           return e;
         };
       }

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Tue, 10 Nov 2026 00:48:47 -0900
-Subject: [PATCH 4/5] coop: log who writes to guest address 0
+Subject: [PATCH 4/6] coop: log who writes to guest address 0
 
 A write to address 0 is an object built at a null pointer: an allocation
 that failed, then the constructor's vtable store. With memory aborts
@@ -10,23 +10,15 @@ Log the pc, lr, sp and up to 10 return addresses from the frame-pointer
 chain, the first 16 times in a run, so the caller can be found in main
 (oot-remake-multiplayer issue 111: the adult puppet's create).
 ---
- src/core/arm/dynarmic/arm_dynarmic_64.cpp | 19 +++++++++++++++++++
- 1 file changed, 19 insertions(+)
+ src/core/arm/dynarmic/arm_dynarmic_64.cpp | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
 
 diff --git a/src/core/arm/dynarmic/arm_dynarmic_64.cpp b/src/core/arm/dynarmic/arm_dynarmic_64.cpp
-index 4a478d7cd9..d5504fba26 100644
+index 08ba2b43cf..78a62d3c77 100644
 --- a/src/core/arm/dynarmic/arm_dynarmic_64.cpp
 +++ b/src/core/arm/dynarmic/arm_dynarmic_64.cpp
-@@ -6,6 +6,7 @@
- 
- #include <atomic>
- #include <cstdlib>
-+#include <string>
- #if defined(_M_X64) || defined(__x86_64__)
- #include <immintrin.h>
- #endif
-@@ -79,6 +80,24 @@ std::optional<u32> DynarmicCallbacks64::MemoryReadCode(u64 vaddr) {
- }
+@@ -188,6 +188,24 @@ private:
+ } // Anonymous namespace
  
  void DynarmicCallbacks64::MemoryWrite(Dynarmic::A64::VAddr vaddr, u64 value, std::size_t size) {
 +#ifdef LICHII_COOP

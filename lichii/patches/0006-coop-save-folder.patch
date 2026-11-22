@@ -14,10 +14,10 @@ save there.
  1 file changed, 38 insertions(+), 5 deletions(-)
 
 diff --git a/src/core/file_sys/savedata_factory.cpp b/src/core/file_sys/savedata_factory.cpp
-index c756734..631e1bc 100644
+index aa10ddb6af..6b110ab600 100644
 --- a/src/core/file_sys/savedata_factory.cpp
 +++ b/src/core/file_sys/savedata_factory.cpp
-@@ -12,10 +12,36 @@
+@@ -11,10 +11,36 @@
  #include "core/file_sys/savedata_factory.h"
  #include "core/file_sys/vfs/vfs.h"
  
@@ -54,7 +54,7 @@ index c756734..631e1bc 100644
  bool ShouldSaveDataBeAutomaticallyCreated(SaveDataSpaceId space, const SaveDataAttribute& attr) {
      return attr.type == SaveDataType::Cache || attr.type == SaveDataType::Temporary ||
             (space == SaveDataSpaceId::User && ///< Normal Save Data -- Current Title & User
-@@ -62,16 +88,22 @@ SaveDataFactory::SaveDataFactory(Core::System& system_, ProgramId program_id_,
+@@ -61,16 +87,22 @@ SaveDataFactory::SaveDataFactory(Core::System& system_, ProgramId program_id_,
  SaveDataFactory::~SaveDataFactory() = default;
  
  VirtualDir SaveDataFactory::Create(SaveDataSpaceId space, const SaveDataAttribute& meta) const {
@@ -82,7 +82,7 @@ index c756734..631e1bc 100644
  
      auto out = dir->GetDirectoryRelative(save_directory);
  
-@@ -79,6 +111,7 @@ VirtualDir SaveDataFactory::Open(SaveDataSpaceId space, const SaveDataAttribute&
+@@ -78,6 +110,7 @@ VirtualDir SaveDataFactory::Open(SaveDataSpaceId space, const SaveDataAttribute&
          return Create(space, meta);
      }
  

@@ -226,7 +226,24 @@ TEST_CASE("puppet cave: a game mod at a place co-op patches is found, others' by
     // The emulator's own built-ins and other bytes in the padding are not ours.
     main[0x3c46200] = 0xff;  // Dynamic FPS
     main[0x3c46e00] = 0xff;  // Fritchii v5.7 high refresh
+    main[0x3c46b00] = 0xff;  // Fritchii v6 pickup counter stub
+    main[0x3c46dc0] = 0xff;  // Fritchii v6 shadow steps
+    main[0x3c46f10] = 0xff;  // Fritchii v6 texture pool routine
     CHECK_FALSE(CoopSites::ChangedSite(main).has_value());
+    // Fritchii v6's high refresh fixes put stubs in main+0x3c463a0..0x3c46b00 (patch_manager.cpp
+    // HR_FIX_STUBS), over our hold table and the pause counters' cave and ring: with them in, co-op
+    // refuses as for a code mod. CoopHook::Start sets FRITCHII_NO_HR_FIXES=1 so they stay out.
+    {
+        auto hr = main;
+        for (std::uint64_t i = 0x3c463a0; i < 0x3c46b00; ++i) hr[i] = 0xff;
+        const auto hit = CoopSites::ChangedSite(hr);
+        REQUIRE(hit.has_value());
+        CHECK(*hit >= 0x3c463a0);
+        CHECK(*hit < 0x3c46b00);
+        CHECK(CoopHold::kTableOffset + CoopHold::kTableSize > 0x3c463a0);
+        CHECK(CoopCounters::kCaveOffset < 0x3c46b00);
+        CHECK(CoopCounters::kRingPointer + 8 <= 0x3c46b00);
+    }
     // The Hyrule Cheat Menu v0.1 writes its stubs from main+0x3c46280: our cave.
     auto mod = main;
     put(mod, 0x3c46280, 0xd503201f);

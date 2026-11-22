@@ -10,7 +10,7 @@ Co-op inside Frizti's emulator (Lichii, now [Fritchii](https://github.com/Frizti
 | `patches/0002-coop-camera.patch` | One call per draw in the Vulkan renderer that hands the game's camera to the hook, for markers. |
 | `patches/0003-coop-puppet.patch` | Two calls for the puppets: the code cave written into Ocarina's `main` when it is loaded, and the cave's `svc 0xf4` handed to the hook. |
 | `patches/0004-coop-null-write-log.patch` | A debug log line: who writes to guest address 0 (issue 111). |
-| `patches/0005-coop-portable-switches.patch` | A portable kit reads only its own `nx2_switches.txt`, never the one in `%APPDATA%\fritchii` or `eden` (v5.8). |
+| `patches/0005-coop-portable-switches.patch` | A portable kit's player switch file is its own `user\nx2_switches.txt`, never the one in `%APPDATA%\fritchii` or `eden` (v5.8; since v6.5 for Tools > Switches too). |
 | `patches/0006-coop-save-folder.patch` | A guest's game reads and writes the co-op save folder `<title>-coop` beside its own (issue 167); the hook (`hook/coop_save.cpp`) decides and is told the folder. |
 | `hook/` | The co-op code the patch builds into the emulator (`core.cmake` and `qt.cmake` say what), so changing it needs no new patch. How it runs and its settings: [docs/lichii.md](../docs/lichii.md). |
 
@@ -73,14 +73,14 @@ With `LICHII_COOP` off (the default) the patch changes nothing in the build.
 | `CMakeLists.txt` | The `LICHII_COOP` option and `LICHII_COOP_DIR`. Stops the configure when `ENABLE_UPDATE_CHECKER` is on as well (see "The emulator's own updater"). When on, adds this repo with `add_subdirectory` (no tests, no server, no test tool) before `src/`. |
 | `src/core/CMakeLists.txt` | When on, includes `hook/core.cmake`: the hook and its settings built into `core`, linked with our `coop`, `coop_net`, `coop_host`, `coop_presence` and `coop_overlay`. |
 | `src/yuzu/CMakeLists.txt` | When on, includes `hook/qt.cmake`: the co-op panel (`hook/coop_window.cpp`) built into the Qt frontend. |
-| `src/yuzu/main_window.cpp` | Starts co-op and its panel once the render window exists (`CoopWindow::Attach`), and stops it when the window closes (`CoopHook::Shutdown`). |
+| `src/yuzu/main_window.cpp` | Starts co-op and its panel once the render window exists (`CoopWindow::Attach`), and stops it when the window closes (`CoopHook::Shutdown`, as the step "frontend close: co-op" of Fritchii's shutdown watch). |
 | `src/core/hle/service/nx2_gsv.h` | In `Composite` (the Switch 2 present path, the one Ocarina uses), calls `CoopHook::OnFrame` after the speed limiter and the frame-time stats. |
 | `src/core/hle/service/nvdrv/devices/nvdisp_disp0.cpp` | The same in `nvdisp_disp0::Composite` (the Switch 1 present path). |
-| `src/video_core/renderer_vulkan/vk_rasterizer.cpp` | (0002) After each draw's pipeline is configured, calls `CoopCamera::Track` (`hook/coop_camera_track.h`), which looks for the game's camera buffer as the DLSS path does, without DLSS. `video_core` sees the hook folder and `LICHII_COOP` because `core.cmake` makes both public on `core`, which `video_core` links. |
+| `src/video_core/renderer_vulkan/vk_rasterizer.cpp` | (0002) After each draw's pipeline is configured, calls `CoopCamera::Track` (`hook/coop_camera_track.h`), which looks for the game's camera buffer as the DLSS path does, without DLSS. The patch reads the camera block for it the way `TrackOcarinaCamera` does on each of v6's paths (the draw packet's tracker record, `FRITCHII_OOT_CAMERA_GUEST`, the bound view) and keeps the record on while co-op wants the camera (`SetTrackerRecord`). `video_core` sees the hook folder and `LICHII_COOP` because `core.cmake` makes both public on `core`, which `video_core` links. |
 | `src/core/file_sys/patch_manager.cpp` | (0003) In `PatchNSO`, after the built-in patches, calls `CoopSvc::PatchMain`, which writes the puppet code cave into Ocarina's `main` (checked against the original words; only with `LICHII_COOP_PUPPET=1` or `LICHII_COOP_DEBUG_PUPPET=1`). |
 | `src/core/hle/kernel/svc.cpp` | (0003) `Kernel::Svc::Call` asks `CoopSvc::Call` first: it handles `svc 0xf4` from the cave and returns false for every other call, which goes on as before. |
 | `src/core/arm/dynarmic/arm_dynarmic_64.cpp` | (0004, only under `LICHII_COOP`) In `MemoryWrite`, a write to guest address 0 (an object built at a null pointer after a failed allocation) logs `Write to address 0 ... at pc ... lr ... sp ...; return addresses: ...` from the frame-pointer chain, the first 16 times in a run. The emulator's own `Unmapped Write64` line has no pc. The JIT syncs guest registers at block boundaries, so pc (and possibly lr and x29) can be the block's start or a little stale; the return addresses from the stack are the useful part. Only `MemoryWrite` is hooked: a 128-bit (q register) or exclusive store to address 0 is not logged. |
-| `src/yuzu/main.cpp` | (0005) `LoadNx2Switches`: with a `user\` folder beside the exe (a portable kit) only the exe folder's `nx2_switches.txt` is read, then the switches are set and it returns before the `%APPDATA%` file. |
+| `src/yuzu/main.cpp` | (0005, only under `LICHII_COOP`) `Nx2UserSwitchFile`: in portable mode (`user\` beside the exe, `Common::FS::IsPortableMode`) the player's switch file is `user\nx2_switches.txt`, and `Nx2LegacyUserSwitchFile` is none. The start's reading, the 6.2 `EDEN_HYBRID_CORES` rewrite and Tools > Switches all go through it, so a kit never reads or writes `%APPDATA%`. |
 
 Our top-level `CMakeLists.txt` reuses the emulator's own `enet` target (the same ENet 1.3.18) when one exists, so there is one ENet in the program.
 
@@ -129,6 +129,17 @@ What in v5.8 matters to co-op:
 - DLSS quality modes, faster texture uploads, the settings-during-load freeze fixed; Fritchii's tuned settings are applied once more on the first start.
 
 Then `fritchii-v5.8.4` (2026-11-11). 0001-0005 applied as they were. Its 12 commits (settings revision 12, Saves backups, a reverted read-back experiment) do not touch the hook, the patch sites (Dynamic FPS main+0x3C46200, high refresh and water ripples main+0x3C46E00 and 0x475F8, all as in v5.8) or portable mode.
+
+Then `fritchii-v6.5` (2026-11-22, issue #311; 1419 commits after v5.8.4, past v6, v6.1 and v6.2, whose autobuilds failed the same way: #280, #287). 0003 and 0006 applied with a 3-way merge. The others needed work:
+- **0001:** `MainWindow::closeEvent` now opens Fritchii's shutdown watch right after the line our call sat beside. `CoopHook::Shutdown` runs after it as its own step ("frontend close: co-op"), so a hang there is named. Both `OnFrame` calls sit at the same frame ends as before.
+- **0002:** `PrepareDraw` was rebuilt around v6's memory stage (`FRITCHII_MEMSTAGE_THREAD`) and one-follower split (`FRITCHII_ONEF`, draws recorded on a render thread). With either on, a draw can be recorded after the game wrote later values, so the camera block comes with the draw's packet (its tracker record). `CoopCamera::Track` now takes the bytes from the patch, which reads them as `TrackOcarinaCamera` does on every path, and the record is kept while co-op wants the camera, with DLSS off too. Both switches are off by default (not in `BuiltinSwitches`); the bound view is then read as before.
+- **0004:** `<string>` is included upstream now (that hunk is gone); `MemoryWrite` moved.
+- **0005:** `LoadNx2Switches` was rewritten, and v6 added Tools > Switches, which writes the player's file. The port moves the player's file itself into the kit (`Nx2UserSwitchFile`) instead of returning early, which covers the reading, the 6.2 `EDEN_HYBRID_CORES` rewrite (it writes that file) and Tools > Switches.
+
+What in v6.5 matters to co-op:
+- **"High refresh fixes (built-in)"** write stubs to `main+0x3C463A0..0x3C46B00` at every game start, in both frame modes (each does nothing unless Ctrl+U's high refresh mode runs). Co-op's hold cave and table (`main+0x3C46300..0x3C46610`) and the pause counters' cave and ring (`main+0x3C46700..0x3C46788`) are there, so `CoopSites::ChangedSite` took them for a code mod and kept co-op off. `CoopHook::Start` sets `FRITCHII_NO_HR_FIXES=1` (Fritchii's own switch, read when `main` loads) unless the player set it; `=0` keeps co-op off and the log says why. Ctrl+U still works without those fixes. The other new built-ins (pickup counter `main+0x3C46B00`, shadow steps `main+0x3C46DC0`, texture pool `main+0x3C46F10`, water `main+0x3C46F20`) and every built-in hook site are clear of ours (`tests/lichii/puppet_test.cpp`).
+- The 14 emulator headers the hook includes are all still there; the only removal among them (`LosslessDir` in `path_util.h`) is not used. `ForEachBoundBuffer` keeps its callback.
+- The updater is still only built with `ENABLE_UPDATE_CHECKER`; `update-old` is still in every build (`src/frontend_common/update_installer.h`).
 
 ### The emulator's own updater
 

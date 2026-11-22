@@ -1,48 +1,51 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Tue, 10 Nov 2026 15:02:58 -0900
-Subject: [PATCH 5/5] coop: a portable kit reads only its own nx2_switches.txt
+Subject: [PATCH 5/6] coop: a portable kit reads only its own nx2_switches.txt
 
-Fritchii reads nx2_switches.txt beside the exe and then the one in
+Fritchii reads nx2_switches.txt beside the exe and then the player's one in
 %APPDATA%\fritchii (v5.8; eden before). An OoT co-op kit is portable
 (user\ beside lichii.exe) and must stay apart from the player's normal
-install, so with a user\ folder only the kit's own file is read.
+install, so with LICHII_COOP and portable mode the player's switch file is
+the kit's own user\nx2_switches.txt and there is no old eden file. That one
+place covers every user of the file since v6: the start's reading, the 6.2
+EDEN_HYBRID_CORES rewrite and Tools > Switches (open, load, save).
 ---
- src/yuzu/main.cpp | 19 ++++++++++++++++++-
- 1 file changed, 18 insertions(+), 1 deletion(-)
+ src/yuzu/main.cpp | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
 
 diff --git a/src/yuzu/main.cpp b/src/yuzu/main.cpp
-index fc4306f66b..aed6f86d85 100644
+index 42d2b18dce..4efc647049 100644
 --- a/src/yuzu/main.cpp
 +++ b/src/yuzu/main.cpp
-@@ -210,9 +210,26 @@ static void LoadNx2Switches(const char* argv0) {
-     for (const auto& [name, value] : BuiltinSwitches) {
-         entries.emplace(name, value);
-     }
--    if (const auto exe_dir = GetSwitchExeDirectory(argv0); !exe_dir.empty()) {
-+    const auto exe_dir = GetSwitchExeDirectory(argv0);
-+    if (!exe_dir.empty()) {
-         ParseSwitchFile(exe_dir / "nx2_switches.txt", entries);
-     }
-+    // OoT co-op: a portable kit (user\ beside the exe) reads only its own switches, never the
-+    // player's normal install's (%APPDATA%\fritchii or eden): the kit stays apart from it.
-+    std::error_code portable_ec;
-+    if (!exe_dir.empty() && std::filesystem::is_directory(exe_dir / PORTABLE_DIR, portable_ec)) {
-+        for (const auto& [name, value] : entries) {
-+            if (std::getenv(name.c_str()) != nullptr) {
-+                continue;
-+            }
-+#ifdef _WIN32
-+            _putenv_s(name.c_str(), value.c_str());
-+#else
-+            setenv(name.c_str(), value.c_str(), 1);
-+#endif
-+        }
-+        return;
+@@ -379,6 +379,14 @@ bool Nx2IsTestSwitch(std::string_view name) {
+ 
+ // The player's switch file, in Fritchii's data folder: the one Tools > Switches writes.
+ std::filesystem::path Nx2UserSwitchFile() {
++#ifdef LICHII_COOP
++    // OoT co-op: a portable kit (user\ beside the exe) keeps the player's switch file in its own
++    // data folder, never the normal install's (%APPDATA%\fritchii or eden): the kit stays apart
++    // from it, for reading, the 6.2 EDEN_HYBRID_CORES rewrite and Tools > Switches alike.
++    if (Common::FS::IsPortableMode()) {
++        return Common::FS::GetEdenPath(Common::FS::EdenPath::EdenDir) / "nx2_switches.txt";
 +    }
++#endif
  #ifdef _WIN32
      const auto app_data = Common::FS::GetAppDataRoamingDirectory();
  #else
+@@ -390,6 +398,12 @@ std::filesystem::path Nx2UserSwitchFile() {
+ // Before the first launch's import has copied it, the player's file is still in the old folder
+ // (Fritchii v5.8 moved from eden to fritchii): read, never written.
+ std::filesystem::path Nx2LegacyUserSwitchFile() {
++#ifdef LICHII_COOP
++    // A portable kit has no old eden folder to read from (an empty path: never there).
++    if (Common::FS::IsPortableMode()) {
++        return {};
++    }
++#endif
+     return Nx2UserSwitchFile().parent_path().parent_path() / EDEN_LEGACY_DIR / "nx2_switches.txt";
+ }
+ 
 -- 
 2.56.0.windows.4
 

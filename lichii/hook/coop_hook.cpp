@@ -3393,6 +3393,34 @@ static void WithPlayerKey(Settings& settings) {
     }
 }
 
+// Fritchii v6's "High refresh fixes (built-in)" write their stubs into main+0x3C463A0..0x3C46B00
+// whenever the game loads, in both frame modes (each stub does nothing unless Ctrl+U's high
+// refresh mode runs). Co-op's hold cave and table (main+0x3C46300..0x3C46610) and the pause
+// counters' cave and ring (main+0x3C46700..0x3C46788) sit there, so CoopSites::ChangedSite would
+// take Fritchii's stubs for a code mod and keep co-op off, and writing our caves over them would
+// break their hooks. Their own switch skips them (patch_manager.cpp, disable_env, read when main
+// loads, which is after this): set here, before any game starts. A value the player set (the
+// environment or nx2_switches.txt) is kept; =0 keeps co-op off, and the log says why.
+static void KeepCavesFree() {
+    constexpr const char* kSwitch = "FRITCHII_NO_HR_FIXES";
+    if (const char* set = std::getenv(kSwitch)) {
+        if (std::string_view{set} != "1") {
+            LOG_WARNING(Core, "coop: {}={} keeps Fritchii's high refresh fixes in main+0x3c463a0.., "
+                              "where co-op's caves are: co-op stays off with it. Remove the line.",
+                        kSwitch, set);
+        }
+        return;
+    }
+#ifdef _WIN32
+    _putenv_s(kSwitch, "1");
+#else
+    setenv(kSwitch, "1", 1);
+#endif
+    LOG_INFO(Core, "coop: {}=1: Fritchii's high refresh fixes (Ctrl+U above 60 fps) left out, they "
+                   "use main+0x3c463a0.. where co-op's caves are",
+             kSwitch);
+}
+
 void Start() {
     std::lock_guard lock(g_mutex);
     if (g_started || g_shut_down) {
@@ -3402,6 +3430,7 @@ void Start() {
     const auto v = coop::enet_linked_version();
     LOG_INFO(Core, "coop: loaded (ENet {}.{}.{})", (v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff);
     LOG_INFO(Core, "coop: build {}, protocol {}", LICHII_COOP_VERSION, coop::protocol::kProtocolVersion);
+    KeepCavesFree();
 
     // A game mod patches the game where co-op does (CoopSvc::Refusal, issue
     // 136): co-op stays off for this run, and the overlay says why.

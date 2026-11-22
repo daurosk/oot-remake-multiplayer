@@ -103,8 +103,8 @@ ninja -C "$build" -j "$jobs" yuzu
 bin="$build/bin/lichii"
 [ -x "$bin" ] || fail "no $bin after the build"
 grep -aq 'coop: loaded' "$bin" || fail "$bin has no co-op hook"
-# The updater's menu text. Not "update-old": Fritchii v5.8.4 has that string in every build,
-# with the updater compiled out too (src/yuzu/fritchii/update_installer.h:25).
+# The updater's menu text. Not "update-old": Fritchii (v5.8.4 to v6.5) has that string in every build,
+# with the updater compiled out too (v6.5: src/frontend_common/update_installer.h:25).
 if grep -aq 'Check for Updates' "$bin"; then
     fail "$bin has Fritchii's own updater"
 fi

@@ -1,41 +1,109 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Sun, 8 Nov 2026 17:46:31 -0900
-Subject: [PATCH 2/5] coop: hand the game's camera to the co-op hook
+Subject: [PATCH 2/6] coop: hand the game's camera to the co-op hook
 
 With LICHII_COOP on, each draw calls CoopCamera::Track from the hook's
 coop_camera_track.h after its pipeline is configured. It looks for the same
 camera buffer as the DLSS path (TrackOcarinaCamera) without needing DLSS,
 so co-op can draw player markers in the world.
+
+Since v6 a draw can be recorded on another thread than the one that filled
+its buffers (FRITCHII_MEMSTAGE_THREAD, FRITCHII_ONEF), so the camera block
+is read the way TrackOcarinaCamera reads it: from the draw packet's tracker
+record (its copied bytes with the window open), else the guest's slot 3
+(FRITCHII_OOT_CAMERA_GUEST), else the bound view. The record is kept while
+co-op wants the camera, not only with DLSS on.
 ---
- src/video_core/renderer_vulkan/vk_rasterizer.cpp | 7 +++++++
- 1 file changed, 7 insertions(+)
+ .../renderer_vulkan/vk_rasterizer.cpp         | 60 +++++++++++++++++++
+ 1 file changed, 60 insertions(+)
 
 diff --git a/src/video_core/renderer_vulkan/vk_rasterizer.cpp b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
-index 7d973646f4..3d3168469e 100644
+index bdf5cbc779..28ba13d522 100644
 --- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
 +++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
-@@ -81,6 +81,9 @@
- #include "video_core/nx2_debug_control.h"
- #include "video_core/nx2_perf.h"
+@@ -114,6 +114,9 @@
+ #include "video_core/nx2_list_dispatch.h"
+ #include "video_core/nx2_list_draw.h"
  #include "video_core/nx2_profile.h"
 +#ifdef LICHII_COOP
 +#include "coop_camera_track.h"
 +#endif
+ #include "video_core/one_follower.h"
  
- namespace Vulkan {
- 
-@@ -892,6 +895,10 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
-         return;
+ // One follower (one_follower.h), step 1: on E (the back) every entry into the renderer runs lent
+@@ -2984,6 +2987,57 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
+         OcarinaTemporalEnabled()) [[unlikely]] {
+         VerifyTrackerRecord(tracker_record ? &*tracker_record : nullptr);
      }
- 
 +#ifdef LICHII_COOP
-+    CoopCamera::Track(texture_cache, buffer_cache, device_memory, maxwell3d->regs,
-+                      render_trace_frame);
++    // Co-op's markers: the camera block of vertex uniform slot 3, read as TrackOcarinaCamera
++    // reads it on each path (the packet's record, FRITCHII_OOT_CAMERA_GUEST, the bound view).
++    CoopCamera::Track(
++        texture_cache, maxwell3d->regs, render_trace_frame, [&](void* out, u32 bytes) {
++            if (tracker_record) {
++                const MemStage::TrackerRecord& record = *tracker_record;
++                if (record.lean_skipped != 0) [[unlikely]] {
++                    // FRITCHII_FILL_BRACKET_LEAN: a record that left slot 0 out has no camera.
++                    VideoCommon::FillCuts::NoteTrackerRead(record.lean_skipped, 1);
++                    if ((record.lean_skipped & 1) != 0) {
++                        return false;
++                    }
++                }
++                const MemStage::TrackerSlot& slot = record.slots[0];
++                if (!slot.bound || slot.size < bytes || slot.gpu_modified) {
++                    return false;
++                }
++                if (const u8* const copied = mem_stage.TrackerBytes(record, 0)) {
++                    // Step 7 (the window open): the bytes the packet's fill copied.
++                    if (record.copied[0] < bytes) {
++                        return false;
++                    }
++                    std::memcpy(out, copied, bytes);
++                    return true;
++                }
++                device_memory.ReadBlockUnsafe(slot.address, out, bytes);
++                return true;
++            }
++            if (VideoCommon::OcarinaCameraFromGuest()) {
++                const auto [address, size] = buffer_cache.GuestGraphicsUniform(0, 3);
++                if (size < bytes || buffer_cache.IsRegionGpuModified(address, bytes)) {
++                    return false;
++                }
++                device_memory.ReadBlockUnsafe(address, out, bytes);
++                return true;
++            }
++            bool read = false;
++            buffer_cache.ForEachBoundBuffer(false, [&](u32 stage, bool storage, u32 index, bool,
++                                                        const auto& binding, u32 bound_size,
++                                                        const auto*, u32) {
++                if (read || stage != 0 || storage || index != 3 || bound_size < bytes ||
++                    buffer_cache.IsRegionGpuModified(binding.device_addr, bytes)) {
++                    return;
++                }
++                device_memory.ReadBlockUnsafe(binding.device_addr, out, bytes);
++                read = true;
++            });
++            return read;
++        });
 +#endif
-     TrackOcarinaCamera();
-     TrackOcarinaActor(pipeline->ShaderHashes()[1], is_indexed, is_indirect);
-     TracePendingCpuWrites(false, pipeline->ShaderHashes());
+     TrackOcarinaCamera(tracker_record ? &*tracker_record : nullptr);
+     TrackOcarinaActor(pipeline->ShaderHashes()[1], is_indexed, is_indirect,
+                       tracker_record ? &*tracker_record : nullptr);
+@@ -10181,7 +10235,13 @@ void RasterizerVulkan::TickFrame() {
+     NoteDrawReuseProbeFrame();
+     // The OoT trackers read the draw packet's record (fable_memstage_6b_plan.md 5.1): the fill
+     // adds it while they are on (and draws have packets), published here once a frame.
++#ifdef LICHII_COOP
++    // Co-op's markers read the record too (CoopCamera::Track), with DLSS off as well.
++    mem_stage.SetTrackerRecord(mem_stage.Packets() &&
++                               (OcarinaTemporalEnabled() || CoopCamera::Wanted()));
++#else
+     mem_stage.SetTrackerRecord(mem_stage.Packets() && OcarinaTemporalEnabled());
++#endif
+     // FRITCHII_MEMSTAGE_THREAD = 2: draws the stage must not fill (a diagnostic reads the bound
+     // buffers on the back; EDEN_NX2_INVALIDATE_BEFORE_DISPATCH gathers before every draw).
+     VideoCommon::MemStageShadow::g_ring_level_draws.store(
 -- 
 2.56.0.windows.4
 

@@ -1,0 +1,40 @@
+# hs-meg-decoys-231, B: lands in MegStage with A and watches each split (see the A file), then kills her with A.
+mark start
+warp MegStage MegStage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+event DreamBossStage_Rematch_Arrive   # the boot event the game's own rematch gives these stages (SubEvent_AllBossBattle / DreamBossStage flow): a bare warp has none and places no boss (run 1 VOID: 'share present 0 enemies')
+wait 600
+wait 600
+mark b-fight
+await 3600 coop: objects: \+ Enemy_MiddleBoss_Poe_Meg_Dummy
+mark b-split1
+wait 20
+mark b-split1b
+wait 600
+await 2400 coop: objects: \+ Enemy_MiddleBoss_Poe_Meg_Dummy
+mark b-split2
+wait 20
+mark b-split2b
+wait 600
+await 2400 coop: objects: \+ Enemy_MiddleBoss_Poe_Meg_Dummy
+mark b-split3
+wait 20
+mark b-split3b
+wait 600
+kill Enemy_MiddleBoss_Poe_Meg   # with the other game's: whichever game owns her kills her (a kill on a copy is held at 1)
+wait 120
+mark b-kill
+wait 300
+mark b-death
+wait 1200
+mark end

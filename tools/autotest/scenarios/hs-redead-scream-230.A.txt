@@ -1,0 +1,44 @@
+# hs-redead-scream-230 (row 230, enemies-01110 fd6092f1): a Redead's scream freezes every Link in its reach, not only
+# the Link of the game that owns the Redead. Both Links adult in the ruined Market (Market_Adult), in front of the
+# standing Redead at (-3.17 100.15 13.13) (Banc Market_Adult_Dynamic; it faces (0.64, -0.76); IsInitialStateCrouching
+# false: up at once; run 1 used the crouched one at -16.44 3.59: it stayed in Sit, no scream). B stands 3.4 m in front, A walks in from 6 m to 2.6 m (both inside
+# its reach, 5.5 m / 45 deg). Either game may own the Redead (the other's is a copy). Two rounds.
+# Run: hookshot.py run --lane 1 --name hs-redead-scream-230 --script-a <this> --script-b <.B.txt>   (save loaded)
+# PASS (at least one round, no FAIL in the other):
+#  1. The owner's game: "scream: our Enemy_ReDead froze our Link ('<anim>', N quarters): shared for the Links in its reach".
+#  2. The other game: "scream: the owner's Enemy_ReDead froze its Link; ours is in its reach (X m): frozen here too".
+#  3. Shots <x>-scream1 and <x>-frozen1 (~1 s later), BOTH windows: both Links in the paralysed pose on both screens,
+#     the Redead in its scream pose.
+# FAIL (row 230): 1 without 2 (or "out of its reach" with that Link inside 5.5 m in front), or on the shots one Link
+#  moves freely while the other is frozen.
+# VOID: no "scream:" line in either game (no Redead here, it never woke), or "no owner known" (co-op not on).
+# A copy's own scream ("from a copy of ... not ours") does not count as 2.
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 1200
+mark start
+setflag Sequence_IsChildhood 0
+warp Market_Adult Market_Entrance
+wait 1200               # the warp's load, the Redeads made
+mark a-in
+place 0.67 100.2 8.57    # 6 m in front of the Redead
+toward -3.17 13.13 8
+goto -1.51 11.15 0.5 300  # walk in to 2.6 m
+await 2400 scream: (our Enemy_ReDead froze our Link|the owner's Enemy_ReDead froze its Link)
+mark a-scream1
+wait 60
+mark a-frozen1
+wait 300
+place -1.7 102.2 60.0   # away, back by the entrance
+wait 900
+mark a-away
+place 0.67 100.2 8.57    # round 2
+toward -3.17 13.13 8
+goto -1.51 11.15 0.5 300
+await 2400 scream: (our Enemy_ReDead froze our Link|the owner's Enemy_ReDead froze its Link)
+mark a-scream2
+wait 60
+mark a-frozen2
+wait 300
+place -1.7 102.2 60.0
+wait 300
+mark end

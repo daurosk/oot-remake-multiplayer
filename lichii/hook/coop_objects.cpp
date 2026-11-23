@@ -1903,6 +1903,22 @@ std::mutex& PvpMutex() {
     static std::mutex mutex;
     return mutex;
 }
+// Row 230 (NoteOurLinkStepHit): our Link's hits as its Life step took them, for the next walk.
+constexpr u64 kLinkStepHitMs = 1000;
+struct LinkStepHit {
+    std::uint32_t id = 0;
+    CoopHitReplay::Record record{};
+    std::int32_t sum = 0;
+    u64 at_ms = 0;  // (SteadyNowMs: a hit older than kLinkStepHitMs is not shared)
+};
+std::mutex& LinkStepHitsMutex() {
+    static std::mutex m;
+    return m;
+}
+std::vector<LinkStepHit>& TheLinkStepHits() {
+    static std::vector<LinkStepHit> hits;
+    return hits;
+}
 // Native puppets phase 3 (PlaceOurLink): where another player's Link holds ours, and when it was asked.
 struct OurLinkPut {
     std::array<float, 3> at{};
@@ -4570,7 +4586,7 @@ private:
         life_components_ = std::move(life_components);
         CoopDbno::NoteEnemiesNear(player && CoopDbno::AnyNear(*player, foes));
         sync_.SetPlayer(player);
-        NoteOurLinkHit(r);  // row 230: a Redead's or Gibdo's scream on our Link
+        NoteOurLinkHit();  // row 230: a Redead's or Gibdo's scream on our Link (its Life step's hits)
         sync_.SetLures(CoopProjectiles::TheLures().Get());  // issue 151: our cast lures
         player_ = player;
         {  // issue 144 / scrub sales: a scrub near our Link or bound into our event holds its flags
@@ -6243,7 +6259,7 @@ private:
     CoopEvery::Every scan_{CoopEvery::kTwoFramesUs};
     CoopPivot::Follower pivot_;
     u32 link_hit_said_ = 0xffffffffu;  // the scream probe: our Link's last hit id seen
-    u32 link_hit_id_ = 0xffffffffu;    // row 230 (NoteOurLinkHit): our Link's last hit id read in the walk
+    u32 link_hit_id_ = 0xffffffffu;    // row 230 (NoteOurLinkHit): the last hit id of our Link taken from its Life step
     CoopPresenceGates::Probe presence_;  // row 233
     std::string presence_scene_;
 
@@ -6273,31 +6289,34 @@ private:
         rocks_said_us_ = now_us;
     }
 
-    // Row 230: our Link's Life took a new hit since the last walk (its last hit id moved): who dealt it, its kind
-    // words and the life it took, for the Sync (a screamer of ours shares its scream). Read only.
-    void NoteOurLinkHit(Reader& r) {
-        const u64 link = TheLinkActor().load();
-        const auto table = link != 0 ? r.Ptr(link + kActorComponents) : std::nullopt;
-        const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
-        const auto id = life ? r.Get<u32>(*life + kLastHitId) : std::nullopt;
-        if (!id || *id == link_hit_id_) {
-            return;
+    // Row 230: the hits our Link's Life step took since the last walk (NoteOurLinkStepHit: the step sets and clears
+    // its hit id inside one frame, so the walk itself never reads one), each with its kind words, the life it took
+    // and the attacker's place (the record's +0x2a0; its +0x240 word is the hit's sensor, not an actor), for the
+    // Sync: a screamer of ours at that place shares its scream.
+    void NoteOurLinkHit() {
+        std::vector<LinkStepHit> hits;
+        {
+            std::lock_guard lock(LinkStepHitsMutex());
+            hits.swap(TheLinkStepHits());
         }
-        const bool first = link_hit_id_ == 0xffffffffu;
-        link_hit_id_ = *id;
-        if (first) {
-            return;  // (the hit before we looked)
+        for (const LinkStepHit& h : hits) {
+            if (SteadyNowMs() - h.at_ms > kLinkStepHitMs) {
+                continue;  // (a walk that did not run for a while: an old hit is no scream now)
+            }
+            if (h.id == link_hit_id_) {
+                continue;  // (the same hit, seen by a second step)
+            }
+            link_hit_id_ = h.id;
+            std::array<std::uint32_t, coop::protocol::kStrikeKindWords> kind{};
+            for (std::size_t i = 0; i < kind.size(); ++i) {
+                kind[i] = h.record[CoopHitReplay::kRecKind + i];
+            }
+            coop::protocol::Vec3 from{};
+            for (std::size_t i = 0; i < 3; ++i) {
+                std::memcpy(&from[i], &h.record[CoopHitReplay::kRecFrom + i], 4);
+            }
+            sync_.NoteOurLinkHit(from, kind, std::max(h.sum, 0));
         }
-        const u64 attacker = r.Get<u64>(*life + kHitRecord).value_or(0);
-        const auto rec = r.Get<coop::protocol::HitRecord>(*life + kHitRecord);
-        if (attacker == 0 || !rec) {
-            return;
-        }
-        std::array<std::uint32_t, coop::protocol::kStrikeKindWords> kind{};
-        for (std::size_t i = 0; i < kind.size(); ++i) {
-            kind[i] = (*rec)[CoopHitReplay::kRecKind + i];
-        }
-        sync_.NoteOurLinkHit(attacker, kind, r.Get<s32>(*life + kLifeHurt).value_or(0));
     }
     u64 pivot_actor_ = 0;
     u64 pivot_look_ms_ = 0;
@@ -6487,6 +6506,14 @@ void HurtOurLinkNative(std::int32_t quarters, const std::array<float, 3>& at, co
         ask.native = true;
         ask.record = KindRecord(kind);
         PvpAsks().push_back(ask);
+    }
+}
+
+void NoteOurLinkStepHit(std::uint32_t id, const std::array<std::uint32_t, 0x98 / 4>& record, std::int32_t sum) {
+    static_assert(std::tuple_size_v<CoopHitReplay::Record> == 0x98 / 4);
+    std::lock_guard lock(LinkStepHitsMutex());
+    if (TheLinkStepHits().size() < 16) {  // (a walk every two frames takes them; more would be a stuck walk)
+        TheLinkStepHits().push_back({id, record, sum, SteadyNowMs()});
     }
 }
 

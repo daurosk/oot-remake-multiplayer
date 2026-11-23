@@ -3045,6 +3045,15 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                             " given to its own Life step: " + o.name);
     }
 
+    // Row 230: each hit our Link took (NoteOurLinkHit) goes to the screamer standing at its attacker's place (the
+    // nearest within kScreamerAtM): the hit record names no actor (its +0x240 word is the hit's sensor).
+    std::unordered_map<std::uint64_t, LinkHit> scream_hits;
+    for (const LinkHit& hit : link_hits_) {
+        if (const std::uint64_t at = ScreamerAt(objects_, hit.from); at != 0) {
+            scream_hits[at] = hit;  // (two hits from one screamer in one walk: the later)
+        }
+    }
+
     for (auto& [address, o] : objects_) {
         // A hurt the game did not take (or took differently) in time: the
         // rest goes to the game's own Life step (WriteLife; an enemy's life is
@@ -3195,8 +3204,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
         // Row 230: our own Link was frozen by this Redead's or Gibdo's scream (NoteOurLinkHit): its samples carry
         // the hit's kind (ObjectStrike), so each other game whose Link is in the scream's reach freezes its own.
-        if (link_hit_ && link_hit_->attacker == address) {
-            const LinkHit hit = *std::exchange(link_hit_, std::nullopt);
+        if (const auto took_hit = scream_hits.find(address); took_hit != scream_hits.end()) {
+            const LinkHit hit = took_hit->second;
             const std::string anim = o.animation ? o.animation->name : std::string();
             if (!IsScreamer(o.name)) {
                 // (not a screamer: nothing to share)
@@ -3262,7 +3271,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             }
         }
     }
-    link_hit_.reset();  // row 230: a hit from an actor not shared (not in the walk) is not kept for a later one
+    link_hits_.clear();  // row 230: a hit with no screamer of the walk at its place is not kept for a later one
 
     // churn-b: an away object that came back goes on with its owner; one
     // still off the walk after kAwayKeepUs is gone (left), its owner forgotten.

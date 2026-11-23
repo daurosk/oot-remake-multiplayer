@@ -434,6 +434,32 @@ inline constexpr float kScreamHighM = 2.5f;  // (its DisableLookIKHeight: one fl
 inline constexpr float kScreamAngleDeg = 45.0f;
 bool InScreamReach(const coop::protocol::Vec3& enemy, const std::optional<coop::protocol::Quat>& facing,
                    const coop::protocol::Vec3& link);
+// Row 230: a hit on our Link names its attacker only by place (the hit record's +0x2a0: the Redead's own place, live
+// 2026-11-23 0.2 m off it; its +0x240 word is the hit's sensor from a pool, not an actor). The screamer (IsScreamer)
+// of `objects` (address -> anything with .name and .position) nearest to `from` within kScreamerAtM, else 0. An
+// unknown place (not finite, or all zero) names none.
+inline constexpr float kScreamerAtM = 1.5f;
+template <typename Objects>
+std::uint64_t ScreamerAt(const Objects& objects, const coop::protocol::Vec3& from) {
+    if (!std::isfinite(from[0]) || !std::isfinite(from[1]) || !std::isfinite(from[2]) ||
+        (from[0] == 0.0f && from[1] == 0.0f && from[2] == 0.0f)) {
+        return 0;
+    }
+    std::uint64_t best = 0;
+    float best_m = kScreamerAtM;
+    for (const auto& [address, o] : objects) {
+        if (!IsScreamer(o.name)) {
+            continue;
+        }
+        const float dx = o.position[0] - from[0], dy = o.position[1] - from[1], dz = o.position[2] - from[2];
+        const float m = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (m <= best_m) {
+            best = address;
+            best_m = m;
+        }
+    }
+    return best;
+}
 
 // A placed actor that may come into being in one game only, after the scene
 // loaded: the Gold Skulltula a player shakes out of a tree. Its owner names
@@ -919,12 +945,15 @@ public:
     // unloaded.
     void SetPlayer(std::optional<coop::protocol::Vec3> player) { player_ = player; }
 
-    // Row 230. Present thread, before Tick: our own Link took a new hit (its Life's last hit id moved) from the actor
-    // at `attacker`, with these kind words (the hit record's +0x250 words) and `took` quarters. The next Tick shares
-    // it when that actor is a screamer we own and the hit is its scream (IsScream).
-    void NoteOurLinkHit(std::uint64_t attacker, const std::array<std::uint32_t, coop::protocol::kStrikeKindWords>& kind,
-                        std::int32_t took) {
-        link_hit_ = LinkHit{attacker, kind, took};
+    // Row 230. Present thread, before Tick: our own Link took a new hit (its Life step, CoopObjects::NoteOurLinkStepHit)
+    // whose attacker stood at `from` (the hit record's +0x2a0; its +0x240 word is a sensor, not an actor), with these
+    // kind words (+0x250..) and `took` quarters. The next Tick shares it when a screamer we own stands at `from`
+    // (ScreamerAt) and the hit is its scream (IsScream).
+    void NoteOurLinkHit(const coop::protocol::Vec3& from,
+                        const std::array<std::uint32_t, coop::protocol::kStrikeKindWords>& kind, std::int32_t took) {
+        if (link_hits_.size() < 8) {
+            link_hits_.push_back(LinkHit{from, kind, took});
+        }
     }
     // Row 230. Present thread, after Tick: the screams of other games' screamers that reach our Link (each once):
     // the hook gives our Link that hit (CoopObjects::HurtOurLinkNative, no life).
@@ -1639,11 +1668,11 @@ private:
     std::uint64_t scene_since_ = 0;  // server time of the scene's first walk
     std::optional<coop::protocol::Vec3> player_;
     struct LinkHit {  // row 230 (NoteOurLinkHit)
-        std::uint64_t attacker = 0;
+        coop::protocol::Vec3 from{};  // the attacker's place
         std::array<std::uint32_t, coop::protocol::kStrikeKindWords> kind{};
         std::int32_t took = 0;
     };
-    std::optional<LinkHit> link_hit_;
+    std::vector<LinkHit> link_hits_;
     std::vector<LinkStrike> strikes_;
     bool in_event_ = false;  // issue 200: SetEvent
     std::uint64_t event_end_ = 0;  // when the last event here ended (SetEvent)

@@ -86,6 +86,11 @@ inline constexpr std::size_t kPvpKindWords = 11;
 // stays not taken (docs/native-puppets.md 5.5). `quarters` 0: a no-life kind, the game's hit only. Any thread.
 void HurtOurLinkNative(std::int32_t quarters, const std::array<float, 3>& at, const std::array<float, 3>& from,
                        const std::array<std::uint32_t, kPvpKindWords>& kind);
+// Row 230: our own Link's Life step (patch 0007 LIFE_STEP, hookshot/src/coop_hookshot.cpp) saw a new hit id on it,
+// with its incoming hit record (+0x240..+0x2d8, CoopHitReplay::Record) and the frame's damage sum. The step sets and
+// clears our Link's hit id inside one frame, so the walk can never read it there; the next walk takes these.
+// The record's +0x240 word is the hit's sensor, not an actor: the attacker is found by its place (+0x2a0). Any thread.
+void NoteOurLinkStepHit(std::uint32_t id, const std::array<std::uint32_t, 0x98 / 4>& record, std::int32_t sum);
 // Phase 4, every other screen (PVP_RESULT): the landed kind replayed on our `_Pvp` copy `actor` of the victim
 // (CoopPuppet::Director::LivePvpActor), as protocol 14 replays a hit on an enemy copy: its invincible Life shows
 // flash, sparks and sound, nothing is taken. Any thread.

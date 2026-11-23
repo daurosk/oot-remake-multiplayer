@@ -85,6 +85,7 @@
 #include "coop_ngplus.h"
 #include "coop_live_events.h"
 #include "coop_objects_sync.h"
+#include "coop_hit_replay.h"
 #include "coop_input.h"
 #include "coop_look.h"
 #include "coop_look_view.h"
@@ -1904,6 +1905,19 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         }
         if (!CoopActorEvents::LifeStepSeen().exchange(true, std::memory_order_relaxed)) {
             LOG_INFO(Core, "coop: actors: the game's Life step calls the module (patch 0007): hits go in through it");
+        }
+        // Row 230: our own Link's hits, read here, where its step has them: the step sets our Link's hit id and
+        // clears it inside the frame, so the walk never saw one (scream-diag-230, 2026-11-23). A scream (no life)
+        // reaches this step too (sum 0). The walk hands them to the Sync (CoopObjects::NoteOurLinkStepHit).
+        if (a != 0 && a == CoopDbno::OurLifeComponent()) {
+            static std::atomic<std::uint32_t> last_id{0xffffffffu};
+            std::uint32_t id = 0xffffffffu;
+            CoopHitReplay::Record rec{};
+            if (CoopRuntime::Read(a + CoopHitReplay::kLastHitId, &id, sizeof id) && id != 0xffffffffu &&
+                last_id.exchange(id, std::memory_order_relaxed) != id &&
+                CoopRuntime::Read(a + CoopHitReplay::kHitRecord, rec.data(), sizeof rec)) {
+                CoopObjects::NoteOurLinkStepHit(id, rec, *sum);
+            }
         }
         // Difficulty (coop_difficulty.h): what the game takes of the frame's own damage. What another
         // game's hit gives (the life table) was scaled where that hit was dealt.

@@ -6068,6 +6068,7 @@ private:
             }
         }
         LinkHitNote(r);
+        ScreamWatchTick(r);
         for (auto it = actors_.begin(); it != actors_.end();) {
             if (seen.contains(it->first) || ++it->second.missed < 2) {
                 ++it;
@@ -6131,6 +6132,91 @@ private:
             }
         }
         LOG_INFO(Core, "coop: scream: {} {:#x} plays '{}' (our Link {:.1f} m away)", actor.name, a, name, apart);
+        if ((name == "Shout" || name == "CryStanding") && link != 0) {
+            ScreamWatchStart(r, a, link);
+        }
+    }
+
+    // Row 230 diag (scream-diag-230, not for merge): from a screamer's Shout/CryStanding on, for 3 s, our Link's
+    // animation as it changes, and which u32 words of our Link's actor (0x1000) and Life component (0x2000) and of
+    // the screamer's actor (0x1000) changed since the shout began (at 0.25, 0.5, 1 and 2 s), so the native place
+    // where the game puts the scream's paralysis on our Link can be found. Read only.
+    static constexpr std::size_t kWatchActorWords = 0x1000 / 4;
+    static constexpr std::size_t kWatchLifeWords = 0x2000 / 4;
+    struct ScreamWatch {
+        u64 screamer = 0, link = 0, life = 0;
+        u64 start_us = 0;
+        int step = 0;
+        std::string link_anim;
+        std::vector<u32> link0, life0, screamer0;
+    };
+    std::optional<ScreamWatch> scream_watch_;
+    static std::vector<u32> ReadWords(Reader& r, u64 at, std::size_t words) {
+        std::vector<u32> out(words, 0xdeadbeefu);
+        for (std::size_t i = 0; i < words; ++i) {
+            out[i] = r.Get<u32>(at + i * 4).value_or(0xdeadbeefu);
+        }
+        return out;
+    }
+    void ScreamWatchStart(Reader& r, u64 screamer, u64 link) {
+        if (scream_watch_ && CoopEvery::NowUs() - scream_watch_->start_us < 3'000'000) {
+            return;
+        }
+        ScreamWatch w;
+        w.screamer = screamer;
+        w.link = link;
+        const auto table = r.Ptr(link + kActorComponents);
+        w.life = table ? r.Ptr(*table + kComponentLife).value_or(0) : 0;
+        w.start_us = CoopEvery::NowUs();
+        w.link0 = ReadWords(r, link, kWatchActorWords);
+        w.life0 = w.life ? ReadWords(r, w.life, kWatchLifeWords) : std::vector<u32>{};
+        w.screamer0 = ReadWords(r, screamer, kWatchActorWords);
+        const auto anim = Animation(r, link);
+        w.link_anim = anim ? anim->name : std::string();
+        LOG_INFO(Core, "coop: scream diag: watch from {:#x}'s shout: our Link {:#x} life {:#x} plays '{}'", screamer,
+                 link, w.life, w.link_anim);
+        scream_watch_ = std::move(w);
+    }
+    static void LogChanged(const char* what, u64 base, const std::vector<u32>& before, const std::vector<u32>& now) {
+        std::string line;
+        int n = 0;
+        for (std::size_t i = 0; i < before.size() && i < now.size(); ++i) {
+            if (before[i] != now[i]) {
+                if (n < 40) {
+                    line += fmt::format(" +{:#x}:{:08x}->{:08x}", i * 4, before[i], now[i]);
+                }
+                ++n;
+            }
+        }
+        LOG_INFO(Core, "coop: scream diag: {} {:#x}: {} words changed:{}", what, base, n, line);
+    }
+    void ScreamWatchTick(Reader& r) {
+        if (!scream_watch_) {
+            return;
+        }
+        ScreamWatch& w = *scream_watch_;
+        const u64 now_us = CoopEvery::NowUs();
+        const u64 since = now_us - w.start_us;
+        if (TheLinkActor().load() != w.link || since > 3'000'000) {
+            scream_watch_.reset();
+            return;
+        }
+        const auto anim = Animation(r, w.link);
+        const std::string name = anim ? anim->name : std::string();
+        if (name != w.link_anim) {
+            LOG_INFO(Core, "coop: scream diag: +{} ms our Link plays '{}'", since / 1000, name);
+            w.link_anim = name;
+        }
+        static constexpr u64 kSteps[] = {250'000, 500'000, 1'000'000, 2'000'000};
+        if (w.step < 4 && since >= kSteps[w.step]) {
+            ++w.step;
+            LOG_INFO(Core, "coop: scream diag: +{} ms", since / 1000);
+            LogChanged("our Link", w.link, w.link0, ReadWords(r, w.link, kWatchActorWords));
+            if (w.life != 0) {
+                LogChanged("our Link's Life", w.life, w.life0, ReadWords(r, w.life, kWatchLifeWords));
+            }
+            LogChanged("the screamer", w.screamer, w.screamer0, ReadWords(r, w.screamer, kWatchActorWords));
+        }
     }
 
     void LinkHitNote(Reader& r) {

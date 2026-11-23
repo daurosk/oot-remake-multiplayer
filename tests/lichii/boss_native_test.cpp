@@ -2948,3 +2948,57 @@ TEST_CASE("native boss: row 222 probe 3, the owner's action put into a copy with
     REQUIRE(off.Step(h, true, kBlock, kMain));
     CHECK(h.Get<float>(kBlock + addr::kReqPlaces) == 10.0f);
 }
+
+TEST_CASE("native boss: row 222 diag says the owner's asks, the copy's own asks and our put-ins, once per move") {
+    constexpr std::uint64_t kPlug = 0x5000000;
+    const auto diag = [](Table& t) {
+        const auto notes = t.TakeNotes();
+        return std::count_if(notes.begin(), notes.end(),
+                             [](const std::string& n) { return n.find("diag222") != std::string::npos; });
+    };
+    // Off (the default): nothing said.
+    Table off;
+    off.SetOn(true, true);
+    CHECK_FALSE(off.Diag222On());
+    off.Publish({Boss{kActor, kBsa, Role::owner, "Enemy_DungeonBoss_Twinrova", 2}});
+    off.OnActionVerb(kBsa, GameRequest(121, kNode), true, false, std::string{});
+    CHECK(diag(off) == 0);
+    // The owner: its ask said on the change, not again while it repeats; another move is said.
+    Table own;
+    own.SetOn(true, true);
+    own.SetDiag222(true);
+    own.Publish({Boss{kActor, kBsa, Role::owner, "Enemy_DungeonBoss_Twinrova", 2}});
+    Request ice = GameRequest(121, kNode, false);
+    std::memcpy(ice.data() + addr::kReqPlug, &kPlug, 8);
+    ice[addr::kReqHasPlug] = 1;
+    own.OnActionVerb(kBsa, ice, true, false, std::string("Ice"));
+    own.OnActionVerb(kBsa, ice, false, false, std::string("Ice"));
+    own.OnActionVerb(kBsa, GameRequest(28, kNode), true, false, std::string{});
+    const auto notes = own.TakeNotes();
+    CHECK(std::count_if(notes.begin(), notes.end(), [](const std::string& n) {
+              return n.find("diag222") != std::string::npos && n.find("owner asks") != std::string::npos;
+          }) == 2);
+    CHECK(std::any_of(notes.begin(), notes.end(),
+                      [](const std::string& n) { return n.find("verb 121") != n.npos && n.find("'Ice'") != n.npos; }));
+    // A copy on the owner's move: its own ask (skipped) said, and our put-in.
+    Table copy;
+    copy.SetOn(true, true);
+    copy.SetDiag222(true);
+    copy.Publish({Boss{kActor, kBsa, Role::copy, "Enemy_DungeonBoss_Twinrova", 2}});
+    BossAction a = *ActionFromRequest(GameRequest(121, 0));
+    a.changed = true;
+    copy.Receive(kActor, BossBsa{1, 2, a, {}});
+    CHECK(copy.OnActionVerb(kBsa, ice, true, false, std::string("Ice")));
+    FakeGuest g;
+    const std::int32_t verb = 2;
+    g.Write(kBsa + addr::kBsaBrainVerb, &verb, 4);
+    REQUIRE(copy.Step(g, false, 0, kMain));
+    REQUIRE(copy.Step(g, true, kBlock, kMain));
+    const auto said = copy.TakeNotes();
+    CHECK(std::any_of(said.begin(), said.end(), [](const std::string& n) {
+        return n.find("diag222") != n.npos && n.find("SKIPPED") != n.npos;
+    }));
+    CHECK(std::any_of(said.begin(), said.end(), [](const std::string& n) {
+        return n.find("diag222") != n.npos && n.find("put in") != n.npos;
+    }));
+}

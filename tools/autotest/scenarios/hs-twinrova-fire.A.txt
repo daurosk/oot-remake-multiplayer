@@ -14,7 +14,7 @@
 # FAIL: an owner's fire shot with no fire bullet/floor on the copy, an ice shot for a fire one, or a stuck copy.
 #! noload
 #! start coop: test warp done
-#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1,LICHII_COOP_BOSS_COPY_OWN_PLACES=1
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1,LICHII_COOP_BOSS_COPY_OWN_PLACES=1,LICHII_COOP_BOSS_DIAG_222=1
 #! timeout 900
 mark start
 warp TwinrovaStage TwinrovaStage

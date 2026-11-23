@@ -433,6 +433,11 @@ public:
     // its own (its AI's target).
     void SetCopyOwnPlaces(bool on);
     bool CopyOwnPlacesOn() const;
+    // Row 222 diag (twinrova-diag-222 test branch; off unless LICHII_COOP_BOSS_DIAG_222=1): every action request of a
+    // boss's move change, whole (places, plug, slot, verb, node, bytes): the owner's asks, the copy's own asks (run or
+    // skipped) and our put-ins (with how often the last move was put in again), and the copy's own brain changes.
+    void SetDiag222(bool on);
+    bool Diag222On() const;
     bool OnActionVerb(std::uint64_t bsa, const Request& request, bool changed, bool own,
                       std::optional<std::string> plug_name = std::nullopt);
 
@@ -662,6 +667,9 @@ public:
 
 private:
     struct Entry {
+        // Row 222 diag: the last request said per kind (who + slot/verb/plug), and put-ins since the last change.
+        std::map<std::string, std::string, std::less<>> diag_last;
+        std::uint32_t diag_puts = 0;
         std::uint64_t actor = 0;
         Role role = Role::owner;
         std::string name;
@@ -797,6 +805,10 @@ private:
     bool brain_on_ = false;
     bool actions_on_ = false;
     std::atomic<bool> copy_own_places_{false};  // row 222 probe 3 (SetCopyOwnPlaces)
+    std::atomic<bool> diag_222_{false};         // row 222 diag (SetDiag222)
+    std::size_t diag_said_ = 0;                 // (diag lines said, at most kDiagMax)
+    static constexpr std::size_t kDiagMax = 600;
+    void Diag(Entry& e, std::string_view who, const Request& r, bool changed, const std::optional<std::string>& plug);
     bool turns_ = false;
     bool event_ = false;           // our game runs an event (SetEvent)
     std::vector<std::string> dying_;  // the bodies whose death has begun (SetDying)

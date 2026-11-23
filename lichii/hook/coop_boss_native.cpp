@@ -170,6 +170,47 @@ bool Table::CopyOwnPlacesOn() const {
     return copy_own_places_.load(std::memory_order_relaxed);
 }
 
+void Table::SetDiag222(bool on) {
+    diag_222_.store(on, std::memory_order_relaxed);
+}
+
+bool Table::Diag222On() const {
+    return diag_222_.load(std::memory_order_relaxed);
+}
+
+void Table::Diag(Entry& e, std::string_view who, const Request& r, bool changed,
+                 const std::optional<std::string>& plug) {
+    // (under mutex_) Row 222 diag: said on a change of the move, or the first time a kind asks another move.
+    if (!diag_222_.load(std::memory_order_relaxed) || diag_said_ >= kDiagMax) {
+        return;
+    }
+    const std::int32_t slot = Get<std::int32_t>(r, addr::kReqSlot);
+    const std::int32_t verb = Get<std::int32_t>(r, addr::kReqVerb);
+    const bool has_plug = r[addr::kReqHasPlug] == 1;
+    std::string key = std::to_string(slot) + "/" + std::to_string(verb) + "/" + (has_plug ? plug.value_or("?") : "");
+    auto& last = e.diag_last[std::string(who)];
+    if (!changed && last == key) {
+        return;
+    }
+    last = key;
+    ++diag_said_;
+    char line[640];
+    int n = std::snprintf(line, sizeof line, "diag222 %s %.*s: slot %d verb %d changed %d plug %s'%s' node %llx places",
+                          e.name.c_str(), static_cast<int>(who.size()), who.data(), slot, verb, changed ? 1 : 0,
+                          has_plug ? "" : "(none) ", has_plug ? plug.value_or("?").c_str() : "",
+                          static_cast<unsigned long long>(Get<std::uint64_t>(r, addr::kReqNode)));
+    for (std::size_t i = 0; i < 9 && n > 0 && static_cast<std::size_t>(n) < sizeof line; ++i) {
+        n += std::snprintf(line + n, sizeof line - n, " %.2f", static_cast<double>(Get<float>(r, addr::kReqPlaces + 4 * i)));
+    }
+    if (n > 0 && static_cast<std::size_t>(n) < sizeof line) {
+        n += std::snprintf(line + n, sizeof line - n, "; bytes");
+    }
+    for (std::size_t i = 0; i < r.size() && n > 0 && static_cast<std::size_t>(n) + 4 < sizeof line; i += 4) {
+        n += std::snprintf(line + n, sizeof line - n, " %02x%02x%02x%02x", r[i], r[i + 1], r[i + 2], r[i + 3]);
+    }
+    Note(line);
+}
+
 void Table::SetOn(bool brain, bool actions) {
     std::lock_guard lock(mutex_);
     brain_on_ = brain;
@@ -578,6 +619,13 @@ bool Table::OnBrainVerb(std::uint64_t bsa, std::int32_t verb, bool force, bool o
         return false;
     }
     Keep(*e, BossBrain{verb, force});
+    if (diag_222_.load(std::memory_order_relaxed) && diag_said_ < kDiagMax &&
+        e->diag_last["brain"] != std::to_string(verb)) {
+        e->diag_last["brain"] = std::to_string(verb);
+        ++diag_said_;
+        Note("diag222 " + e->name + " copy's own brain SKIPPED: verb " + std::to_string(verb) + " force " +
+             std::to_string(force ? 1 : 0) + " (the owner's brain " + std::to_string(e->wanted->brain_verb) + ")");
+    }
     ++counts_.copy_skipped;
     if (e->plain && verb != e->wanted->brain_verb) {
         ++counts_.plain_wants;
@@ -608,6 +656,7 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed
             Stream(*e, "ours asks slot " + std::to_string(a->slot) + " verb " + std::to_string(a->verb) +
                            " (changed " + std::to_string(changed ? 1 : 0) + (plug ? ", by plug)" : ")"));
             e->mine.action = *a;
+            Diag(*e, "owner asks", request, changed, plug_name);
             Record(*e, std::move(*a));
             // Row 222 part 2: its variation (plain, or the plug's name), sent with this change (component 24). A
             // plug we could not read as a name: not known (the copies name their own AI's, as before).
@@ -659,10 +708,12 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed
         return false;
     }
     if (OwnTime(*e)) {
+        Diag(*e, "copy's own ask RUN", request, changed, plug_name);
         ++counts_.copy_own_run;
         e->own_action_ran = true;  // its body leaves the owner's move: a resync asks that move again
         return false;
     }
+    Diag(*e, "copy's own ask SKIPPED", request, changed, plug_name);
     if (auto a = ActionFromRequest(request)) {
         a->changed = changed;
         Keep(*e, std::move(*a));
@@ -1350,6 +1401,14 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
         }
         if (!guest.Write(block_, r.data(), r.size())) {
             break;
+        }
+        if (diag_222_.load(std::memory_order_relaxed)) {
+            if (action.changed && e.diag_puts > 0 && diag_said_ < kDiagMax) {
+                ++diag_said_;
+                Note("diag222 " + e.name + " put-ins of the last move: " + std::to_string(e.diag_puts));
+            }
+            e.diag_puts = action.changed ? 1 : e.diag_puts + 1;
+            Diag(e, "put in", r, action.changed, d.variant);
         }
         Stream(e, "owner's put in: slot " + std::to_string(action.slot) + " verb " + std::to_string(action.verb) +
                       " (changed " + std::to_string(action.changed ? 1 : 0) + ", our node " +

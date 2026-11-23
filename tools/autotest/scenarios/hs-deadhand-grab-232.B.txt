@@ -18,7 +18,7 @@ wait 600
 place 0.0 92.4 -99.6    # by the order-2 hand
 wait 60
 mark b-placed
-await 4800 grab: our Enemy_DeadHand's piece holds our Link
+await 7200 grab: our Enemy_DeadHand's piece holds our Link
 mark b-grab
 wait 180
 mark b-grab-3s

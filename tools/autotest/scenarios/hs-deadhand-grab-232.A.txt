@@ -38,7 +38,7 @@ wait 600
 place 0.0 92.4 -107.2   # by the first hand (0, -108.43)
 wait 60
 mark a-placed
-await 2400 grab: our Enemy_DeadHand's piece holds our Link
+await 3600 grab: our Enemy_DeadHand's piece holds our Link
 mark a-grab
 wait 180
 mark a-grab-3s

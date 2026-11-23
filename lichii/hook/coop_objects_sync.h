@@ -422,6 +422,8 @@ bool IsBattleManager(std::string_view name);
 // object_presence::grabbed_here, and the server hands the boss to us (Session::grab_owner): his AI rises only for a
 // grab in his own game (OneShotDeadHandHandSendMessage MessageAppear).
 std::string_view GrabbingSummoner(std::string_view name);
+// enemies-dying-01111: a boss or part some boss room names (CoopBoss::Rooms parts): the director handles its death.
+bool InBossRoomTable(std::string_view name);
 // A hit our Link took from a screamer is its scream (not its bite) when it plays the scream's AS node (Shout,
 // CryStanding), or took no life while it plays none of the bite's (Attack_*).
 bool IsScream(std::string_view animation, std::int32_t took);
@@ -1824,6 +1826,12 @@ private:
     bool takes_turns_ = false;  // SetTakesTurns
     bool shares_orders_ = false;  // SetSharesOrders
     std::vector<std::string> dying_;  // SetDying
+    // enemies-dying-01111: a copy boss whose death has begun here (SetDying: the director's outro in its area), or,
+    // for a boss or part no boss room names (InBossRoomTable: every mini-boss, Meg, Dead Hand, Dark Link, Big Octo,
+    // Stalfos...), whose owner says it is dead (its samples' life 0, or its dead remove): no director ever names
+    // those dying. A boss room's own (CoopBoss::Rooms parts) waits for the director, whose outro joins the owner's
+    // death first (review-boss-0114 order: the death setting then finds the copy dead).
+    bool CopyBossDying(const Object& o) const;
     unsigned dying_finished_ = 0;     // DyingFinished
     std::size_t hurt_taken_ = 0;   // hurts the game took as asked
     std::size_t own_hits_kept_ = 0;  // OwnHitsKept

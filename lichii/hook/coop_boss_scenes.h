@@ -188,6 +188,10 @@ public:
     // any event running in our game (last Tick). Otherwise nothing of ours will run it: CoopBossBeaten::Apply gives
     // the boss's beaten set in its area then. Present thread (the inbox under its lock).
     bool DeathMayRun(std::uint8_t boss) const;
+    // enemies-dying-01111: whether `boss`'s death has begun (outro or done) and we are in its area (Here: its room's
+    // dungeon scene, or elsewhere, as in the boss rush's DodongoStage, the starter's scene near the starter). Its
+    // copy in our game is no copy any more then (SetDyingBosses).
+    bool DeathBegunHere(std::uint8_t boss, const Local& local) const;
 
 private:
     struct Fight {

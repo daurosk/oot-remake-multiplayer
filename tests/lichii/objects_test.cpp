@@ -6978,6 +6978,66 @@ TEST_CASE("objects: a dying copy boss gets its remaining life once when its owne
     CHECK(ours.DyingFinished() == 0);
 }
 
+TEST_CASE("enemies-dying-01111: a mini-boss copy whose owner's is dead dies once, its killing blow is not replayed again") {
+    // Run 20261122-092813: after the owner's kill every owner sample at life 0 replayed the killing blow on our
+    // dying copy; each was refused and timed out ("did not take"), ~50 times. A boss no boss room names has no
+    // director to name it dying: its owner saying it is dead is enough, and its death is given once.
+    CHECK(CoopObjects::InBossRoomTable("Enemy_DungeonBoss_Dodongo"));
+    CHECK(CoopObjects::InBossRoomTable("Enemy_DungeonBoss_Gohma"));
+    CHECK_FALSE(CoopObjects::InBossRoomTable("Enemy_DeadHand"));
+    CHECK_FALSE(CoopObjects::InBossRoomTable("Enemy_MiddleBoss_Poe_Meg"));
+    CHECK_FALSE(CoopObjects::InBossRoomTable("Enemy_DungeonBoss_Ganondorf"));  // (no room: the director never names him)
+    for (const std::string boss : {"Enemy_DeadHand", "Enemy_MiddleBoss_Poe_Meg", "Enemy_DungeonBoss_Ganondorf"}) {
+        CAPTURE(boss);
+        const auto body = [&boss](std::int32_t life) { return Enemy(0x100, 0x11, life, 0.0f, boss); };
+        Sync copy;
+        copy.SetHurt(true);
+        Tick(copy, 0, {body(16)});
+        const proto::ObjectId id = *copy.IdOf(0x100);
+        Own(copy, id, 2, 1);  // player 2's; we are player 1
+        Tick(copy, 10 * kMs, {body(16)});
+        copy.Receive(LifeSample(id, 0, 16));  // the owner's kill
+        auto step = Tick(copy, 20 * kMs, {body(16)});
+        REQUIRE(step.writes.size() == 1);  // the replay
+        CHECK_FALSE(step.writes[0].direct);
+        step = Tick(copy, 500 * kMs, {body(16)});  // refused: the rest to its own Life step, once
+        REQUIRE(step.writes.size() == 1);
+        CHECK(step.writes[0].direct);
+        CHECK(step.writes[0].life == 0);
+        CHECK(step.writes[0].hurt == 16);
+        CHECK(copy.HurtsMissed() == 1);
+        // Its death runs in its own game (it still reads 16 for a while); the owner's samples at 0 keep coming.
+        for (std::uint64_t t = 600; t <= 3000; t += 400) {
+            copy.Receive(LifeSample(id, 0, 16));
+            CHECK(Tick(copy, t * kMs, {body(16)}).writes.empty());
+        }
+        CHECK(copy.HurtsMissed() == 1);
+    }
+}
+
+TEST_CASE("enemies-dying-01111: a boss room's copy waits for the director's dying, then dies once, no replay after") {
+    const std::string boss = "Enemy_DungeonBoss_Dodongo";
+    const auto body = [&boss](std::int32_t life) { return Enemy(0x100, 0x11, life, 0.0f, boss); };
+    Sync copy;
+    copy.SetHurt(true);
+    Tick(copy, 0, {body(24)});
+    const proto::ObjectId id = *copy.IdOf(0x100);
+    Own(copy, id, 2, 1);
+    Tick(copy, 10 * kMs, {body(24)});
+    copy.Receive(LifeSample(id, 0, 24));
+    REQUIRE(Tick(copy, 20 * kMs, {body(24)}).writes.size() == 1);  // the replay
+    CHECK(Tick(copy, 500 * kMs, {body(24)}).writes.empty());  // refused, not dying yet: never written (review-boss-0114)
+    copy.SetDying({boss});  // the director's outro here (DeathBegunHere in the boss rush's stage)
+    auto step = Tick(copy, 600 * kMs, {body(24)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].direct);
+    CHECK(step.writes[0].life == 0);
+    for (std::uint64_t t = 700; t <= 3000; t += 400) {
+        copy.Receive(LifeSample(id, 0, 24));
+        CHECK(Tick(copy, t * kMs, {body(24)}).writes.empty());  // no killing blow replayed again
+    }
+}
+
 TEST_CASE("objects: a boss is pre-battle while a body plays Sleep or Pre_Battle_* (boss-copy-b)") {
     constexpr std::array<std::string_view, 1> kGohma{"Enemy_DungeonBoss_Gohma"};
     CHECK(CoopObjects::IsPreBattleAnimation("Sleep"));

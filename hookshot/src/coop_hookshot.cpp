@@ -432,6 +432,13 @@ void SetBossNative() {
         t.SetTurns(turns);
         LOG_INFO(Core, "coop: bosses: turns {} (LICHII_COOP_BOSS_TURNS)", turns ? "on" : "off");
     }
+    // Row 222 probe 2 (twinrova-fire-01112, off unless set): a copy's own asks of its owner's move run (Table).
+    const bool own_move = Env("LICHII_COOP_BOSS_COPY_OWN_MOVE") == "1";
+    if (t.CopyOwnMoveOn() != own_move) {
+        t.SetCopyOwnMove(own_move);
+        LOG_INFO(Core, "coop: bosses: probe2 {}: a copy's own asks of its owner's move {} (LICHII_COOP_BOSS_COPY_OWN_MOVE)",
+                 own_move ? "on" : "off", own_move ? "run" : "are skipped");
+    }
     if (t.BrainOn() == brain && t.ActionsOn() == actions) {
         return;
     }
@@ -494,7 +501,8 @@ void LogBossNative() {
         c.copy_life_held == said.copy_life_held && c.copy_killed == said.copy_killed &&
         c.copy_finished == said.copy_finished && c.copy_shot_hits == said.copy_shot_hits &&
         c.copy_hits_to_owner == said.copy_hits_to_owner && c.copy_own_stuns == said.copy_own_stuns &&
-        c.plain_wakes == said.plain_wakes && c.plain_deaths == said.plain_deaths) {
+        c.plain_wakes == said.plain_wakes && c.plain_deaths == said.plain_deaths &&
+        c.copy_own_move == said.copy_own_move && c.owner_move_left == said.owner_move_left) {
         return;
     }
     said_ms = now;
@@ -504,11 +512,12 @@ void LogBossNative() {
                    "{} hits that took life left to the owner), "
                    "{} own minions not made, {} busy; {} own Life steps held at 1, {} let die after the owner's, {} ended in their death; "
                    "plain enemies: {} own other phases told, {} own wakes run, {} deaths begun; "
-                   "owner's brain verbs given to copies {} ({} the copy was in already)",
+                   "owner's brain verbs given to copies {} ({} the copy was in already); "
+                   "probe2: {} own asks of the owner's move run, {} owner's repeats left out",
              c.owner_brain, c.owner_action, c.plug_actions, c.copy_skipped, c.brain_applied, c.action_applied,
              c.action_waiting, c.copy_own_run, c.copy_own_late, c.copy_shot_hits, c.copy_own_stuns, c.copy_hits_to_owner, c.minions_stopped, c.busy, c.copy_life_held,
              c.copy_killed, c.copy_finished, c.plain_wants, c.plain_wakes, c.plain_deaths, c.brain_came,
-             c.brain_already);
+             c.brain_already, c.copy_own_move, c.owner_move_left);
 }
 
 // ---- Name tags on the game's own balloons (coop_native_tags.h, B3 of reports/ui-audit-01112.md), at the frame hook.
@@ -2176,7 +2185,15 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
         if (!t.ActionsOn()) {
             return 0;
         }
-        if (!t.OnActionVerb(x[0], r, (x[2] & 1) != 0, t_own_call)) {
+        // Row 222 probe 2 (LICHII_COOP_BOSS_COPY_OWN_MOVE): the request's plug as text, for the log.
+        std::string plug_name;
+        if (!t_own_call && t.CopyOwnMoveOn() && r[CoopBossNative::addr::kReqHasPlug] == 1) {
+            std::uint64_t plug = 0;
+            std::memcpy(&plug, r.data() + CoopBossNative::addr::kReqPlug, sizeof plug);
+            plug_name = CoopBossNative::PlugName(
+                [](std::uint64_t a, void* out, std::size_t n) { return CoopRuntime::Read(a, out, n); }, plug);
+        }
+        if (!t.OnActionVerb(x[0], r, (x[2] & 1) != 0, t_own_call, plug_name)) {
             return 0;
         }
         // Skipped: the result its callers pass up is what the game gives for a request it took (0, its main path

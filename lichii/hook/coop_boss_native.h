@@ -199,6 +199,41 @@ Request RequestFromAction(const BossAction& a, const OwnAsk& ask);
 std::optional<OwnAsk> AskFor(const std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk>& by_move,
                              const std::map<std::int32_t, OwnAsk>& by_slot, std::uint64_t last, const BossAction& a);
 
+// Row 222 probe 2 (log only): a request's plug as text. The plug (request +0x38, used when +0x40 is 1) is read as a
+// C string first, else as a pointer to one ('*' before the name); else its first word in hex ('?'). `read` is
+// bool(std::uint64_t address, void* out, std::size_t size), the guest reader.
+inline constexpr std::size_t kPlugNameMax = 48;
+std::string PlugText(std::span<const std::uint8_t> bytes);  // the name at the start of `bytes`, else empty
+template <class Read>
+std::string PlugName(Read&& read, std::uint64_t plug) {
+    if (plug == 0) {
+        return "none";
+    }
+    std::array<std::uint8_t, kPlugNameMax> b{};
+    if (!read(plug, b.data(), b.size())) {
+        return "unread";
+    }
+    if (std::string s = PlugText(b); !s.empty()) {
+        return s;
+    }
+    std::uint64_t to = 0;
+    for (std::size_t i = 0; i < sizeof to; ++i) {
+        to |= static_cast<std::uint64_t>(b[i]) << (8 * i);
+    }
+    std::array<std::uint8_t, kPlugNameMax> c{};
+    if (to != 0 && read(to, c.data(), c.size())) {
+        if (std::string s = PlugText(c); !s.empty()) {
+            return "*" + s;
+        }
+    }
+    static constexpr char kHex[] = "0123456789abcdef";
+    std::string out = "?0x";
+    for (int i = 60; i >= 0; i -= 4) {
+        out += kHex[(to >> i) & 0xf];
+    }
+    return out;
+}
+
 enum class Role : std::uint8_t { owner, copy };
 // A boss whose new copy runs its own start first (Table::kStartSteps): a
 // mid-boss (Enemy_MiddleBoss_*: Lizalfos, Stalfos, ...) appears in its room
@@ -328,6 +363,10 @@ struct Counts {
     // asked again: the owner's game sends every request it makes, also one its own game answered so.
     std::uint64_t action_slot_busy = 0;
     std::uint64_t action_refused = 0;
+    // Row 222 probe 2 (SetCopyOwnMove): a copy's own asks of the move its owner's last put-in named, run by the
+    // game; and the owner's repeats of that move left out while its own asks run it.
+    std::uint64_t copy_own_move = 0;
+    std::uint64_t owner_move_left = 0;
 };
 
 class Table {
@@ -354,7 +393,18 @@ public:
     // a busy table lets the game run its own. changed: the game's w2 (the
     // verb changed), sent with the owner's action and given to the copies.
     bool OnBrainVerb(std::uint64_t bsa, std::int32_t verb, bool force, bool own);
-    bool OnActionVerb(std::uint64_t bsa, const Request& request, bool changed, bool own);
+    // `plug_name`: the request's plug as text (PlugName), given only while probe 2 is on (log only).
+    bool OnActionVerb(std::uint64_t bsa, const Request& request, bool changed, bool own,
+                      std::string_view plug_name = {});
+
+    // Row 222 probe 2 (twinrova-fire-01112; off unless LICHII_COOP_BOSS_COPY_OWN_MOVE=1). A copy's own AI asks of
+    // the move its owner's last put-in named (same slot and verb) are not skipped: the game runs them, with the
+    // node and plug its own AI names (the module that runs the move keeps asking it every frame, as the owner's
+    // does). While its own asks run that move (within kOwnMoveSteps), the owner's repeats of it (verb changed 0)
+    // are left out; the owner's start of a move (changed 1) and every other move are put in as before. Logs each
+    // new (slot, verb, node, plug) a copy's own AI names once ('probe2: ...').
+    void SetCopyOwnMove(bool on);
+    bool CopyOwnMoveOn() const;
 
     // Our game runs an event now (the boss glue, every frame; the player
     // reader's event flag). Copies then run their own changes; the owner keeps
@@ -575,6 +625,8 @@ public:
     static constexpr std::size_t kMaxSkippedKept = 8;
     static constexpr std::size_t kMaxHeld = 8;  // copy bosses held at once (more: not held)
     static constexpr std::size_t kMaxOwnAsks = 64;     // moves kept per copy (AskFor)
+    static constexpr std::uint64_t kOwnMoveSteps = 3;  // probe 2: its own ask of the move this recent runs it
+    static constexpr std::size_t kMaxProbeAsks = 64;   // probe 2: (slot, verb, node, plug) logged per copy
     static constexpr std::uint64_t kMaxStreamNotes = 240;  // row 177's action stream lines per game
 
 private:
@@ -603,6 +655,10 @@ private:
         std::map<std::int32_t, OwnAsk> own_slot_asks;
         // Row 177's log: the action stream's last kind (who, slot, verb, changed, plug or node source) and its run.
         std::string stream_last;
+        // Row 222 probe 2: per slot, the move its own AI last asked of the owner's (verb, step); and the own asks
+        // logged once ('slot verb node plug').
+        std::map<std::int32_t, std::pair<std::int32_t, std::uint64_t>> own_moves;
+        std::vector<std::string> probe_asks;
         std::uint64_t stream_run = 0;
         // Copy: its own changes skipped lately (step, change), and those to
         // make late; the step until which its own run (our hit); whether its
@@ -691,6 +747,7 @@ private:
     std::map<std::uint64_t, Entry> by_bsa_;
     bool brain_on_ = false;
     bool actions_on_ = false;
+    std::atomic<bool> copy_own_move_{false};  // row 222 probe 2 (SetCopyOwnMove)
     bool turns_ = false;
     bool event_ = false;           // our game runs an event (SetEvent)
     std::vector<std::string> dying_;  // the bodies whose death has begun (SetDying)

@@ -116,6 +116,28 @@ std::optional<OwnAsk> AskFor(const std::map<std::pair<std::int32_t, std::int32_t
     return std::nullopt;
 }
 
+std::string PlugText(std::span<const std::uint8_t> bytes) {
+    std::string out;
+    for (const std::uint8_t c : bytes) {
+        if (c == 0) {
+            return out;
+        }
+        if (c < 0x20 || c > 0x7e) {
+            return {};
+        }
+        out += static_cast<char>(c);
+    }
+    return {};  // no end within the bytes read: not a name
+}
+
+void Table::SetCopyOwnMove(bool on) {
+    copy_own_move_.store(on, std::memory_order_relaxed);
+}
+
+bool Table::CopyOwnMoveOn() const {
+    return copy_own_move_.load(std::memory_order_relaxed);  // (no lock: the wraps ask it on any game thread)
+}
+
 void Table::SetOn(bool brain, bool actions) {
     std::lock_guard lock(mutex_);
     brain_on_ = brain;
@@ -503,7 +525,8 @@ bool Table::OnBrainVerb(std::uint64_t bsa, std::int32_t verb, bool force, bool o
     return true;
 }
 
-bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed, bool own) {
+bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed, bool own,
+                         std::string_view plug_name) {
     std::unique_lock lock(mutex_, std::try_to_lock);
     if (!lock.owns_lock()) {
         ++counts_.busy;
@@ -524,7 +547,10 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed
         if (auto a = ActionFromRequest(request, &plug)) {
             a->changed = changed;
             Stream(*e, "ours asks slot " + std::to_string(a->slot) + " verb " + std::to_string(a->verb) +
-                           " (changed " + std::to_string(changed ? 1 : 0) + (plug ? ", by plug)" : ")"));
+                           " (changed " + std::to_string(changed ? 1 : 0) +
+                           (plug ? (plug_name.empty() ? std::string(", by plug)")
+                                                      : ", by plug '" + std::string(plug_name) + "')")
+                                 : std::string(")")));
             e->mine.action = *a;
             Record(*e, std::move(*a));
             ++counts_.owner_action;
@@ -562,6 +588,25 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed
         ++counts_.copy_own_run;
         e->own_action_ran = true;  // its body leaves the owner's move: a resync asks that move again
         return false;
+    }
+    if (copy_own_move_ && node != 0) {
+        const std::int32_t slot = Get<std::int32_t>(request, addr::kReqSlot);
+        const std::int32_t verb = Get<std::int32_t>(request, addr::kReqVerb);
+        const bool has_plug = request[addr::kReqHasPlug] == 1;
+        const bool owners = e->put_action && e->put_action->slot == slot && e->put_action->verb == verb;
+        std::string said = "slot " + std::to_string(slot) + " verb " + std::to_string(verb) + " node " + Hex(node) +
+                           " plug " + (has_plug ? "'" + std::string(plug_name) + "'" : std::string("none"));
+        if (e->probe_asks.size() < kMaxProbeAsks &&
+            std::find(e->probe_asks.begin(), e->probe_asks.end(), said) == e->probe_asks.end()) {
+            Note(e->name + ": probe2: copy's own ask " + said + " (changed " + std::to_string(changed ? 1 : 0) +
+                 (owners ? ", the owner's move: the game runs it)" : ", skipped)"));
+            e->probe_asks.push_back(std::move(said));
+        }
+        if (owners) {
+            e->own_moves[slot] = {verb, steps_};
+            ++counts_.copy_own_move;
+            return false;
+        }
     }
     if (auto a = ActionFromRequest(request)) {
         a->changed = changed;
@@ -1189,17 +1234,37 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
             call = std::move(c);
             return true;
         }
+        if (copy_own_move_ && !action.changed) {
+            // Probe 2: its own AI runs this move now (asked it within kOwnMoveSteps): the owner's repeat is left out.
+            const auto own = e.own_moves.find(action.slot);
+            if (own != e.own_moves.end() && own->second.first == action.verb &&
+                steps_ - own->second.second <= kOwnMoveSteps) {
+                ++counts_.owner_move_left;
+                Stream(e, "owner's left out: slot " + std::to_string(action.slot) + " verb " +
+                              std::to_string(action.verb) + " (its own asks run it)");
+                e.due.pop_front();
+                continue;
+            }
+        }
         const OwnAsk ask = AskFor(e.own_asks, e.own_slot_asks, e.own_node, action).value_or(OwnAsk{e.own_node});
         const Request r = RequestFromAction(action, ask);
         if (!guest.Write(block_, r.data(), r.size())) {
             break;
+        }
+        std::string node_said;
+        if (copy_own_move_) {
+            node_said = " " + Hex(ask.node) + (r[addr::kReqHasPlug] == 1
+                                                   ? " '" + PlugName([&guest](std::uint64_t a, void* out, std::size_t n) {
+                                                         return guest.Read(a, out, n);
+                                                     }, ask.plug) + "'"
+                                                   : std::string());
         }
         Stream(e, "owner's put in: slot " + std::to_string(action.slot) + " verb " + std::to_string(action.verb) +
                       " (changed " + std::to_string(action.changed ? 1 : 0) + ", our node " +
                       (e.own_asks.contains({action.slot, action.verb}) ? "of this move"
                        : e.own_slot_asks.contains(action.slot)        ? "of this slot"
                                                                        : "last asked") +
-                      (r[addr::kReqHasPlug] == 1 ? ", our plug)" : ")"));
+                      node_said + (r[addr::kReqHasPlug] == 1 ? ", our plug)" : ")"));
         CoopPuppet::Call c;
         c.function = main_base + addr::kRequestActionVerb;
         c.x[0] = bsa;

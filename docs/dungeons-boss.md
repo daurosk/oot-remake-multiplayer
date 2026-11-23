@@ -209,6 +209,26 @@ step, did. Suspected for every boss whose module waits on its own AS (shots, spa
 on, `Table::CopiesOnOwnerActions()` names those copies and the objects tick leaves the owner's plays out for them
 (their place still comes). Log: `coop: objects: probe: N boss copy(ies) on their owner's actions play their own
 animations (M owner plays left out ...)`. A proof run decides whether this becomes the default.
+Result (run 20261123-041540): FAIL. With the owner's plays left out, copy A still fired nothing while B owned her
+(B: two ice and two fire shots, each with its floor), and fired at once when she became ours. The owner's plays are
+not the cause; the probe stays off.
+
+**Probe 2: a copy's own asks of its owner's move (row 222 follow-up, `LICHII_COOP_BOSS_COPY_OWN_MOVE=1`, off by
+default).** In that run the owner asked her ranged attack (slot 0, verb 121) every frame (267 asks, changed 0 after the
+first) from her own AI; the copy got the same asks put in, named with the node its AI named for that slot (another
+move's, until its own AI asked 121 itself, which was then skipped like all its own asks), and its `PreAttack` gave way
+to `Attack_R` within a few frames where the owner's lasted about a second, with no shot. Only one copy shot was ever
+seen: one whose put-in carried the copy's own plug for that move. With probe 2 on, a copy's own ask of the move its
+owner's last put-in named (same slot and verb) is not skipped: the game runs it with the node and plug its own AI
+names. While its own asks run that move (asked within `kOwnMoveSteps`, 3 frames) the owner's repeats of it (changed
+0) are left out; the owner's start of a move (changed 1) and every other move are put in as before. Logs: once per
+new ask `...: probe2: copy's own ask slot S verb V node 0x.. plug '<name>'|none (changed C, the owner's move: the game
+runs it|skipped)`; the action stream adds the node and the plug's name to each put-in and the owner's asks `by plug
+'<name>'`; the 10 s line ends `probe2: N own asks of the owner's move run, M owner's repeats left out`. The plug's
+name is read as a C string, else as a pointer to one (`*name`), else its first word (`?0x..`): the log tells which.
+A proof run decides: the copy fires its own bullet and floor -> the fix runs a copy's own asks of its owner's move
+by default; else the module's arguments on the copy (`QueryBSAGetActionVerbArgs`) are read next. Either way the
+owner's variation (the plug: Ice, the feints) is not sent yet (a protocol change, asked of the owner first).
 
 **Every case with the same cause** (all four windows, every boss and mid-boss with native sync):
 - A copy's own intro / appear event (this report; also a late arrival's own `BossAppear` with a copy Gohma).

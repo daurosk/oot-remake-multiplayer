@@ -2433,3 +2433,81 @@ TEST_CASE("native boss: the copies on their owner's actions (row 222 probe)") {
     ours.Publish({Gohma(Role::owner)});
     CHECK(ours.CopiesOnOwnerActions().empty());
 }
+
+TEST_CASE("native boss: row 222 probe 2, a copy's own asks of its owner's move run, the owner's repeats wait") {
+    constexpr std::uint64_t kRangedNode = 0x4000400;  // its own AI's node that asks the ranged attack (verb 121)
+    const Boss twinrova{kActor, kBsa, Role::copy, "Enemy_DungeonBoss_Twinrova", 2};
+    Table t;
+    t.SetOn(true, true);
+    t.SetCopyOwnMove(true);
+    CHECK(t.CopyOwnMoveOn());
+    t.Publish({twinrova});
+    t.OnActionVerb(kBsa, GameRequest(65, kNode), true, false);  // (its own, before the owner's state: runs)
+    BossAction a = *ActionFromRequest(GameRequest(121, 0));
+    a.changed = true;
+    t.Receive(kActor, BossBsa{1, 2, a, {}});
+    FakeGuest g;
+    const std::int32_t verb = 2;
+    g.Write(kBsa + addr::kBsaBrainVerb, &verb, 4);
+    REQUIRE(t.Step(g, false, 0, kMain));  // the block
+    auto c = t.Step(g, true, kBlock, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kRequestActionVerb);  // the owner's start of the move: put in
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    t.TakeNotes();
+    // Its own AI asks that move (the module that runs it, every frame): the game runs it, named as its AI names it.
+    CHECK_FALSE(t.OnActionVerb(kBsa, GameRequest(121, kRangedNode), false, false, "Ice"));
+    CHECK(t.Totals().copy_own_move == 1);
+    // Another move of its own is still skipped.
+    CHECK(t.OnActionVerb(kBsa, GameRequest(28, kRangedNode), true, false));
+    const auto notes = t.TakeNotes();
+    const auto has = [&](const std::string& s) {
+        return std::any_of(notes.begin(), notes.end(), [&](const std::string& n) { return n.find(s) != std::string::npos; });
+    };
+    CHECK(has("probe2: copy's own ask slot 0 verb 121 node 0x4000400 plug none (changed 0, the owner's move"));
+    CHECK(has("probe2: copy's own ask slot 0 verb 28 node 0x4000400 plug none (changed 1, skipped)"));
+    // The owner's repeat of the move (changed 0) while its own asks run it: left out, no call.
+    BossAction again = a;
+    again.changed = false;
+    t.Receive(kActor, BossBsa{2, 2, again, {BossChange{2, again}}});
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+    CHECK(t.Totals().owner_move_left == 1);
+    // Its own asks stopped (more than kOwnMoveSteps frames): the owner's repeat is put in again.
+    for (int i = 0; i < 4; ++i) {  // (kOwnMoveSteps is 3)
+        t.Step(g, false, 0, kMain);
+    }
+    t.Receive(kActor, BossBsa{3, 2, again, {BossChange{3, again}}});
+    c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kRequestActionVerb);
+    CHECK(t.Totals().owner_move_left == 1);
+    // Probe off (the default): its own asks of the owner's move are skipped as before.
+    Table off;
+    off.SetOn(true, true);
+    CHECK_FALSE(off.CopyOwnMoveOn());
+    off.Publish({twinrova});
+    off.OnActionVerb(kBsa, GameRequest(65, kNode), true, false);
+    off.Receive(kActor, BossBsa{1, 2, a, {}});
+    REQUIRE(off.Step(g, false, 0, kMain));
+    REQUIRE(off.Step(g, true, kBlock, kMain));
+    off.Step(g, true, 0, kMain);
+    CHECK(off.OnActionVerb(kBsa, GameRequest(121, kRangedNode), false, false));
+    CHECK(off.Totals().copy_own_move == 0);
+}
+
+TEST_CASE("native boss: row 222 probe 2, a plug's name: a C string, else a pointer to one") {
+    FakeGuest g;
+    constexpr std::uint64_t kName = 0x6000000;
+    constexpr std::uint64_t kHolder = 0x6000100;
+    const char name[] = "RangedAttack:Ice";
+    g.Write(kName, name, sizeof name);
+    g.Write(kHolder, &kName, sizeof kName);
+    const auto read = [&g](std::uint64_t a, void* out, std::size_t n) { return g.Read(a, out, n); };
+    CHECK(PlugName(read, kName) == "RangedAttack:Ice");
+    CHECK(PlugName(read, kHolder) == "*RangedAttack:Ice");
+    CHECK(PlugName(read, 0) == "none");
+    const std::uint8_t bad[2] = {0x01, 0x00};
+    CHECK(PlugText(std::span<const std::uint8_t>(bad, 2)).empty());
+    const std::uint8_t unended[3] = {'a', 'b', 'c'};
+    CHECK(PlugText(std::span<const std::uint8_t>(unended, 3)).empty());  // no end: not a name
+}

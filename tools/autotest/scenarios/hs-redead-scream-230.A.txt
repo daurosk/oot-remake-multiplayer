@@ -1,7 +1,7 @@
 # hs-redead-scream-230 (row 230, enemies-01110 fd6092f1): a Redead's scream freezes every Link in its reach, not only
 # the Link of the game that owns the Redead. Both Links adult in the ruined Market (Market_Adult), in front of the
-# lone Redead at (-16.44 100.07 3.59) (Banc Market_Adult_Dynamic; it faces +x; Enemy_Redead_IsForceSleepParalysisFirst:
-# its first attack is the scream). A stands 2.6 m in front of it, B 3.4 m in front and a bit to the side (both inside
+# standing Redead at (-3.17 100.15 13.13) (Banc Market_Adult_Dynamic; it faces (0.64, -0.76); IsInitialStateCrouching
+# false: up at once; run 1 used the crouched one at -16.44 3.59: it stayed in Sit, no scream). B stands 3.4 m in front, A walks in from 6 m to 2.6 m (both inside
 # its reach, 5.5 m / 45 deg). Either game may own the Redead (the other's is a copy). Two rounds.
 # Run: hookshot.py run --lane 1 --name hs-redead-scream-230 --script-a <this> --script-b <.B.txt>   (save loaded)
 # PASS (at least one round, no FAIL in the other):
@@ -20,8 +20,9 @@ setflag Sequence_IsChildhood 0
 warp Market_Adult Market_Entrance
 wait 1200               # the warp's load, the Redeads made
 mark a-in
-place -13.9 100.1 2.6   # 2.6 m in front of the Redead
-toward -16.44 3.59 8
+place 0.67 100.2 8.57    # 6 m in front of the Redead
+toward -3.17 13.13 8
+goto -1.51 11.15 0.5 300  # walk in to 2.6 m
 await 2400 scream: (our Enemy_ReDead froze our Link|the owner's Enemy_ReDead froze its Link)
 mark a-scream1
 wait 60
@@ -30,8 +31,9 @@ wait 300
 place -1.7 102.2 60.0   # away, back by the entrance
 wait 900
 mark a-away
-place -13.9 100.1 2.6   # round 2
-toward -16.44 3.59 8
+place 0.67 100.2 8.57    # round 2
+toward -3.17 13.13 8
+goto -1.51 11.15 0.5 300
 await 2400 scream: (our Enemy_ReDead froze our Link|the owner's Enemy_ReDead froze its Link)
 mark a-scream2
 wait 60

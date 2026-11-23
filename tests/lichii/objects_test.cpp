@@ -8470,8 +8470,9 @@ TEST_CASE("objects: a boss part's killing hit while its owner's lives is held, t
             } else {
                 copy.Receive(LifeSample(id, 0, 12));
             }
-            CHECK(copy.OwnerSaysDead(0x200));
+            CHECK_FALSE(copy.OwnerSaysDead(0x200));  // (received: taken in the next Tick)
             step = Tick(copy, at, {Enemy(0x200, 0x12, 1, 0.0f, part)});
+            CHECK(copy.OwnerSaysDead(0x200));  // (what releases its Life step in CoopBossNative's Publish)
             REQUIRE(step.writes.size() == 1);
             CHECK(step.writes[0].address == 0x200);
             CHECK(step.writes[0].life == 0);

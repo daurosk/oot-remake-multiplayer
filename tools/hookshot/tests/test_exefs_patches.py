@@ -99,6 +99,30 @@ class ExefsPatchesTest(unittest.TestCase):
             f.write("coop-mods 2\non Second\n")
         self.assertIsNone(self.m.coop_list(root))   # another version: not ours
 
+    def test_a_default_off_list_builds_no_code_of_a_mod_it_does_not_name(self):
+        # Original game (report 266): its list names every mod off and says "default off", so a code mod put into the
+        # folder later is built out, as host/mods.c leaves its files out (hos_coop_mods_rank).
+        root = os.path.join(self.work, "mods-default-off")
+        os.makedirs(root, exist_ok=True)
+        with open(os.path.join(root, self.m.COOP_LIST), "w", encoding="utf-8") as f:
+            f.write("coop-mods 1\r\n# Original game\r\ndefault off\r\noff OoT Character Select\r\non kept\r\n")
+        rows, default_off = self.m.coop_list_default(root)
+        self.assertTrue(default_off)
+        self.assertEqual(rows, [("OoT Character Select", False), ("kept", True)])
+        self.assertEqual(self.m.coop_list(root), rows)
+        mods = [("randomizer-SpeedyKokiri", "/r", True), ("OoT Character Select", "/c", True), ("kept", "/k", True)]
+        got = self.m.coop_ordered(mods, rows, default_off)
+        self.assertEqual([(n, on) for n, _, on in got],
+                         [("randomizer-SpeedyKokiri", False), ("OoT Character Select", False), ("kept", True)])
+        # Without the line the unnamed one keeps mods.json's switch and its place under the named ones, as before (the
+        # off row first, then it, then the named "on" row).
+        self.assertEqual([(n, on) for n, _, on in self.m.coop_ordered(mods, rows)],
+                         [("OoT Character Select", False), ("randomizer-SpeedyKokiri", True), ("kept", True)])
+        for near in ("default  off", "Default off", "default on"):
+            with open(os.path.join(root, self.m.COOP_LIST), "w", encoding="utf-8") as f:
+                f.write("coop-mods 1\n%s\n" % near)
+            self.assertEqual(self.m.coop_list_default(root), ([], False))
+
 
 if __name__ == "__main__":
     unittest.main()

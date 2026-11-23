@@ -28,6 +28,22 @@ CODE_PATCH = os.path.join(DATA, "charsel-native.ips")
 BUILD_ID = "E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348"
 CHARSEL_MOD = "OoT Character Select"
 MAGIC = b"CDLT1\0"
+# The data's own hash (data_hash(): every file of charsel/data), kept here so that a change of the data alone changes
+# this file and with it the tool's hash (build.py tool_hash, *.py only): packs made with other data are made again
+# (the kit's Test-KitPuppetPackStale, the Linux kit's pack stamp). test_charsel_ui checks it is the data's.
+DATA_SHA256 = "f7012683ca4b0cc414434f849bea654eff14e81f80512184308235ffebd018d6"
+
+
+def data_hash(data_dir=DATA):
+    """sha256 over "<name>:<sha256 of the file>\\n" of each file in data_dir, names in byte order."""
+    import hashlib
+    names = sorted((n for n in os.listdir(data_dir) if os.path.isfile(os.path.join(data_dir, n))),
+                   key=lambda n: n.encode("utf-8"))
+    text = ""
+    for n in names:
+        with open(os.path.join(data_dir, n), "rb") as f:
+            text += "%s:%s\n" % (n, hashlib.sha256(f.read()).hexdigest())
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 class CharselError(ValueError):

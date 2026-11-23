@@ -496,6 +496,11 @@ jobs:
           (cd "$RUNNER_TEMP/kit" && sha256sum -c Squadala-*-linux.zip.sha256)
           if ls "$RUNNER_TEMP"/kit/oot-coop-* >/dev/null 2>&1; then echo "::error::the kit has an oot-coop-* asset"; exit 1; fi
           unzip -l "$RUNNER_TEMP"/kit/Squadala-*-linux.zip | tail -n +4 | head -n 60
+          # every pack data file (charsel/data: the Characters tab and its code patch; coopmenu/data: CoopMenu_00), byte for byte
+          kitdir=$(ls -d "$RUNNER_TEMP"/kit/Squadala-*-linux)
+          for f in tools/puppet_pack/*/data/*; do
+            cmp -s "$f" "$kitdir/data/$f" || { echo "::error::the kit misses $f (or it differs)"; exit 1; }
+          done
           echo "KIT=$(ls -d "$RUNNER_TEMP"/kit/Squadala-*-linux)" >> "$GITHUB_ENV"
       # The kit's own puppet pack tool, run from the kit alone (python -I): every module build.py imports, every path a
       # module names (charsel/data, coopmenu/data, strings) and the data they read (as kit_pack_test.ps1 for Windows;

@@ -1302,8 +1302,33 @@ function Invoke-KitGameRepair([string]$KitDir) {
     }
 }
 
+# The window's lines into the start log (player report 266; kit-paths.ps1 Start-KitStartLog, which this copy cannot
+# dot-source: it runs from a copy in TEMP while the kit's own files are replaced): appended to the file of the start
+# that runs this (OOT_COOP_START_LOG, play.ps1 stopped its own meanwhile), or, from Update.bat, a new
+# <kit>\hookshot\logs\start-log.txt with the one before kept as start-log.1.txt. Not for -Check, -Status or -Tidy (a
+# start's quiet look while its own log is open). Never stops the update.
+function Start-KitUpdateLog([string]$KitDir) {
+    try {
+        $log = $env:OOT_COOP_START_LOG
+        if (-not $log) {
+            if (-not $KitDir -or -not (Test-Path -LiteralPath (Join-Path $KitDir 'hookshot') -PathType Container)) { return $false }
+            $logDir = Join-Path $KitDir 'hookshot\logs'
+            $log = Join-Path $logDir 'start-log.txt'
+            New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+            if (Test-Path -LiteralPath $log) { Move-Item -LiteralPath $log -Destination (Join-Path $logDir 'start-log.1.txt') -Force -ErrorAction Stop }
+        }
+        Start-Transcript -LiteralPath $log -Append -Force -ErrorAction Stop | Out-Null
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 if (-not $NoRun) {
-    if (-not ($Check -or $Status -or $Tidy)) { [void](Disable-KitQuickEdit) }
+    if (-not ($Check -or $Status -or $Tidy)) {
+        [void](Disable-KitQuickEdit)
+        [void](Start-KitUpdateLog $(if ($Kit) { $Kit } else { Split-Path -Parent $PSScriptRoot }))
+    }
     try {
         $code = Invoke-KitUpdate
         # (not for play.ps1's -Launch, whose new play.ps1 does the same step next, nor going back: the older kit's start does)

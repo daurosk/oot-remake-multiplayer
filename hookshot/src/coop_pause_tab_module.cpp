@@ -2087,7 +2087,8 @@ std::string g_minus_help_text;      // the help shown ("" none: hidden), MinusWo
 int g_minus_help_vis = -1;          // shown (1) or not (0) as last set; -1 not set
 std::atomic<bool> g_map_hide{false};                    // the Map page under ours to be hidden
 std::atomic<bool> g_minus_on{false};                    // our page shown, its slide out back to the Map included
-std::uint64_t g_map_layout = 0;
+std::uint64_t g_map_layout = 0, g_map_screen = 0;   // the Map screen its panes were looked up in
+int g_map_state = -1;                                 // that screen's state at its last update (LayoutLookAgain)
 // The Map page's own content in MapMenu_00 (read from the game's layout, tabs-overhaul-01110 (a)): hidden under ours.
 // Its RootPane is NOT hidden: it holds the - menu's full-screen backdrop BG_00 (3840 x 2160, material MenuOpenBg_00) and
 // the vignette (N_WorldMap_00/N_Vignette_00), which our page shows on as the game's own pages do (hiding the root left
@@ -2522,9 +2523,14 @@ void FollowMapUnder(void* ctx, std::uint64_t screen) {
             if (g_map_content[i] != 0 && g_map_content_was[i]) SetVisible(ctx, g_map_content[i], true);
         }
     };
-    if (layout != g_map_layout) {
-        if (g_map_hidden) give_back();   // (an old layout's: shown back)
-        g_map_layout = layout, g_map_hidden = false, g_map_sliding = false;
+    // (looked up again with another layout, and at every opening of a Map screen at the same addresses: one freed and
+    // made again there has its own panes, the old ones are gone and never touched again; CoopPauseTab::LayoutLookAgain)
+    const int map_state = Read<std::uint8_t>(screen + kScreenState);
+    const bool reopened = layout == g_map_layout && LayoutLookAgain(true, g_map_screen, g_map_state, screen, map_state);
+    g_map_state = map_state;
+    if (layout != g_map_layout || reopened) {
+        if (g_map_hidden && !reopened) give_back();   // (an old layout's: shown back)
+        g_map_layout = layout, g_map_screen = screen, g_map_hidden = false, g_map_sliding = false;
         int found = 0;
         for (std::size_t i = 0; i < kMapContentPanes; ++i) {
             g_map_content[i] = FindOwnPane(ctx, layout, kMapContent[i]);
@@ -2606,6 +2612,8 @@ void CoopMenuScreen(void* ctx, std::uint64_t screen) {
     static std::mutex layouts_mutex;
     const int state = Read<std::uint8_t>(screen + kScreenState);
     {
+        // (looked at again at every opening: CoopMenu_00 may come at the addresses another screen just freed, Character
+        // Select's Customize screen in run 4620f3e7, whose "not ours" was kept; its panes may come late in its opening)
         std::lock_guard lock(layouts_mutex);
         const bool ours = layouts.Update(layout, screen, state == 1 || state == 2, NowMs(), [&] {
             return FindOwnPane(ctx, layout, "Pa_CoopMinus_00") != 0 && FindOwnPane(ctx, layout, "W_Window_00") != 0;

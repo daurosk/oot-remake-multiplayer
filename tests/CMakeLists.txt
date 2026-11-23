@@ -56,6 +56,7 @@ add_executable(coop_tests
   lichii/hit_replay_test.cpp
   lichii/fairy_test.cpp
   lichii/map_refresh_test.cpp
+  lichii/life_gauge_test.cpp
   lichii/rooms_test.cpp
   lichii/objects_test.cpp
   lichii/bomb_share_test.cpp

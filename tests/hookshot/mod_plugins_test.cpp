@@ -190,7 +190,7 @@ struct Run {
     std::function<bool(unsigned long)> running;  // which other games run (the loader asks about a leftover marker)
     CoopMods::Loader loader{folder.root,
                             {[this](const std::string& l) { log.push_back("mods: " + l); }, 1,
-                             [this](unsigned long pid) { return running && running(pid); }}};
+                             [this](unsigned long pid) { return running && running(pid); }, nullptr}};
     Game game;
     std::unique_ptr<Host> host;
     explicit Run(const std::function<void(Run&)>& before = {}) {
@@ -444,7 +444,7 @@ TEST_CASE("mod plugins: after a crash inside a library's load no other library i
     REQUIRE(marker);
     CHECK(marker->name == "z-boom");
     std::vector<std::string> log;
-    CoopMods::Loader next(r.folder.root, {[&](const std::string& l) { log.push_back(l); }, 2, nullptr});
+    CoopMods::Loader next(r.folder.root, {[&](const std::string& l) { log.push_back(l); }, 2, nullptr, nullptr});
     next.Start();
     bool off = false;
     for (const auto& row : next.Rows()) {
@@ -474,7 +474,7 @@ TEST_CASE("mod plugins: the sample mod (hookshot/samples/hello-mod) through the 
     fs::copy_file(COOP_SAMPLE_MOD_JSON, root / "hello-mod" / "mod.json");
     std::vector<std::string> log;
     {
-        CoopMods::Loader loader(root, {[&](const std::string& l) { log.push_back("mods: " + l); }, 1, nullptr});
+        CoopMods::Loader loader(root, {[&](const std::string& l) { log.push_back("mods: " + l); }, 1, nullptr, nullptr});
         loader.Start();
         Game game;
         game.log = [&](const std::string& l) { log.push_back(l); };

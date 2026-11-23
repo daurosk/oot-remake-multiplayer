@@ -1,0 +1,51 @@
+# hs-join-hearts-238 (player row 238): a guest that joins with MORE hearts than the host takes the host's count and
+# does not raise the host (the join's ResetHold in FlagWatcher::apply_snapshot). Both games on their own save,
+# LICHII_COOP_CHEATS=1 for `give`.
+# Hosts after the restart (run 20261123-030254): the first game back in a restarted server hosts (docs/protocol.md: the
+# first player in hosts; a restarted server knows no earlier host). There B got back first, hosted with its 5 hearts and
+# A joined and took them (A "Synced with the group: 1 heart containers"): the join rule working, the roles swapped, by
+# chance (both retry every <= 5 s). So B is frozen (its process suspended) over `server start` until A is back in and
+# hosts again; a-hosts checks it (A never takes a join snapshot). Run by proof-join-hearts-238.ps1 -Rejoin.
+# Setup: both start and join (same hearts). The server goes away; B gains a heart container while its session still
+# runs (B notices the loss only after ~12 s of silence), so its own object walk raises its Link's Life component (B 1
+# more than A, for real); the server comes back and B rejoins with that against the host's count.
+# Why not a give after B noticed the loss (run 20261123-010422): the cheat's give writes only the MaxLife flag; with no
+# session the object walk is off, so nothing raises Link's Life component, which writes its own lower max back into
+# the flag within a quarter second (docs/items.md, "PlayerStatus.MaxLife is not where the game keeps its hearts"). The
+# HUD keeps the 5th heart it read from the cheat's write (it re-reads only on the game's setter), so B showed one heart
+# more than its game had: the rejoin's snapshot found B's flag already at the host's value and had nothing to lower.
+# PASS (shots decide, read both):
+#  1. j-before-A / j-before-B: equal hearts.  2. j-offline-B: B shows one heart more than A's j-offline-A.
+#  3. j-joined-A / -B (~40 s after the rejoin): BOTH show the host's count (A did not rise to B's), B went DOWN.
+#  4. j-picked-A / -B: after B takes a heart container, both show the host's count + 1.
+# Logs (lines steps below): B's walk raised its Link before the loss; B's walk lowered it after the rejoin
+# ("MaxLife is held lower"); A's Link never rose before B's pick; b-hud-lowered: the game's own gauge refresh
+# (coop_life_gauge.h) took B's HUD from 20 down to 16, as its Link (both lane1 baselines have MaxLife 16, B gains 4).
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
+start A
+start B
+sleep 40
+load A B
+sleep 20
+shot j-before
+server stop
+play B hs-join-hearts-238.B.txt
+lines b-raised B min=1 coop: objects: our Link's max life \d+ -> \d+ \(from MaxLife\)
+sleep 20
+lines b-lost B min=1 connection lost; reconnecting
+shot j-offline
+freeze B
+server start
+sleep 15
+lines a-back A min=2 coop: welcomed as player
+thaw B
+sleep 40
+lines b-rejoined B min=2 coop: welcomed as player
+lines a-hosts A max=0 coop: notice: Synced with the group
+lines b-lowered B min=1 coop: objects: our Link's max life .*MaxLife is held lower
+lines b-hud-lowered B min=1 coop: life gauge: the game's refresh ran: HUD max 20 -> 16 .*our Link's life -?\d+ of 16 \(
+lines a-not-raised A max=0 coop: objects: our Link's max life \d+ -> \d+ \(from MaxLife\)
+shot j-joined
+play B hs-join-hearts-238.B2.txt
+sleep 20
+shot j-picked

@@ -1,4 +1,4 @@
-From 9783a20ded72cf1cca6323d6d7f7d1edb55fda25 Mon Sep 17 00:00:00 2001
+From ee8807fb859da797275c8724334f05b555025969 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 19 Nov 2026 17:24:39 -0900
 Subject: [PATCH] Mods' code patches: the functions they write into keep their
@@ -21,26 +21,32 @@ The co-op kit's Mods tab keeps its switches and order in
 patches follow it (an off mod's patches stay out; the list's first row
 wins, as host/mods.c indexes it). host/mods.c's log line no longer says
 the patches are left out.
+
+A list with the "default off" line (co-op's Original game) leaves the
+patches of a mod it does not name out too, as host/mods.c leaves its files
+out (player report 266).
 ---
- nx2/exefs_patches.py | 76 ++++++++++++++++++++++++++++++++++++++++++++
+ nx2/exefs_patches.py | 88 ++++++++++++++++++++++++++++++++++++++++++++
  nx2/lift.py          |  5 +++
- 2 files changed, 81 insertions(+)
+ 2 files changed, 93 insertions(+)
 
 diff --git a/nx2/exefs_patches.py b/nx2/exefs_patches.py
-index 54916f67..486fcce7 100644
+index 54916f67..680fef10 100644
 --- a/nx2/exefs_patches.py
 +++ b/nx2/exefs_patches.py
-@@ -59,6 +59,78 @@ def mods_root(game):
+@@ -59,6 +59,90 @@ def mods_root(game):
      return os.environ.get("HOS_MODS") or os.path.join(game, "mods")
  
  
 +# ---- (oot-remake-multiplayer, patch 0035) the co-op kit's Mods tab: <mods>/coop-mods.list, as patch 0011's host/mods.c
 +# reads it (hos_coop_mods.h): "coop-mods 1", then "on <name>" / "off <name>" a line, its first row indexed last (it wins);
 +# an off one is not indexed. On Longshot 3.1 the list goes over mods.json's order and switches (host/mods.c
-+# coop_mods_rank): a mod it does not name keeps mods.json's place and switch, under the named ones. The patches follow the
++# coop_mods_rank): a mod it does not name keeps mods.json's place and switch, under the named ones, or is off with the
++# list's "default off" line (co-op's Original game: a mod put into the folder later stays out). The patches follow the
 +# same order and switches as the game's files.
 +
 +COOP_LIST = "coop-mods.list"
++COOP_DEFAULT_OFF = "default off"   # (hos_coop_mods.h HOS_COOP_MODS_DEFAULT_OFF)
 +
 +
 +def _fold(name):
@@ -50,6 +56,12 @@ index 54916f67..486fcce7 100644
 +
 +def coop_list(root):
 +    """The Mods tab's rows [(name, on)] from <root>/coop-mods.list, or None (no file, or not version 1)"""
++    got = coop_list_default(root)
++    return None if got is None else got[0]
++
++
++def coop_list_default(root):
++    """(rows, default_off): coop_list's rows and whether the list has the "default off" line; None as coop_list"""
 +    try:
 +        with open(os.path.join(root, COOP_LIST), "rb") as f:
 +            text = f.read().decode("utf-8", "replace")
@@ -58,9 +70,12 @@ index 54916f67..486fcce7 100644
 +    lines = text.split("\n")
 +    if lines[0].rstrip("\r") != "coop-mods 1":
 +        return None
-+    rows, seen = [], set()
++    rows, seen, default_off = [], set(), False
 +    for line in lines[1:]:
 +        line = line.rstrip("\r")
++        if line == COOP_DEFAULT_OFF:
++            default_off = True
++            continue
 +        for head, on in (("on ", True), ("off ", False)):
 +            if line.startswith(head) and len(line) > len(head):
 +                name = line[len(head):]
@@ -68,16 +83,17 @@ index 54916f67..486fcce7 100644
 +                    seen.add(_fold(name))
 +                    rows.append((name, on))
 +                break
-+    return rows
++    return rows, default_off
 +
 +
-+def coop_ordered(mods, rows):
++def coop_ordered(mods, rows, default_off=False):
 +    """mods ([(name, path, on)] in mods.json's order, ordered) with the co-op list over it, as host/mods.c coop_mods_rank: by
 +    the list's rank (an off one first, then the mods it does not name in mods.json's order, then the named ones, its first
 +    row last: the last one wins, as the later patch file does here); a named mod on or off as the list says, the others as
-+    mods.json says"""
++    mods.json says, or off with default_off (the list's "default off" line)"""
 +    rank = {_fold(n): (len(rows) - i if on else -1) for i, (n, on) in enumerate(rows)}
-+    out = sorted(((rank.get(_fold(n), 0), i, n, p, on) for i, (n, p, on) in enumerate(mods)), key=lambda t: (t[0], t[1]))
++    unnamed = -1 if default_off else 0
++    out = sorted(((rank.get(_fold(n), unnamed), i, n, p, on) for i, (n, p, on) in enumerate(mods)), key=lambda t: (t[0], t[1]))
 +    return [(n, p, on if r == 0 else r > 0) for r, _, n, p, on in out]
 +
 +
@@ -109,13 +125,13 @@ index 54916f67..486fcce7 100644
  def find_mods(root):
      """[(name, path)] of the mod folders under root: a folder holding romfs, exefs or cheats, up to four deep; '-' and '_'
      left out (host/mods.c find_mods)"""
-@@ -437,6 +509,10 @@ def collect(exefs, game, log=print, user=None):
+@@ -437,6 +521,10 @@ def collect(exefs, game, log=print, user=None):
      elif os.path.normcase(os.path.abspath(beside)) == os.path.normcase(os.path.abspath(listed)):
          beside = None   # (the list is the game folder's)
      mods = ordered(find_mods(root), listed, old, said.append, beside)
-+    rows = coop_list(root)   # (oot-remake-multiplayer, patch 0035: the co-op kit's Mods tab, when it has its list)
-+    if rows is not None:
-+        mods = coop_ordered(mods, rows)
++    got = coop_list_default(root)   # (oot-remake-multiplayer, patch 0035: the co-op kit's Mods tab, when it has its list)
++    if got is not None:
++        mods = coop_ordered(mods, *got)
 +        said.append("exefs: the co-op Mods tab's order and switches over the list's: %s" % os.path.join(root, COOP_LIST))
      files = [(name, path, on, f) for name, path, on in mods for f in patch_files(path)]
      for line in said if files else ():

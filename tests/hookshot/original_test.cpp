@@ -4,12 +4,14 @@
 
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <string>
 
 #include "coop_original.h"
 #include "coop_title_menu.h"
 #include "hos_coop_menu.h"
+#include "hos_coop_mods.h"
 
 namespace fs = std::filesystem;
 
@@ -79,6 +81,28 @@ TEST_CASE("original game: every mod in the folder is named, the pack and code mo
     CHECK(list.find("off contents/0400486024DEC000/coop-puppet\n") != std::string::npos);
     CHECK(list.find("off save-profiles\n") != std::string::npos);
     CHECK(list.find("on ") == std::string::npos);
+    CHECK(list.find("\ndefault off\n") != std::string::npos);
+}
+
+TEST_CASE("original game: a mod put into the folder after the switch went on stays out (report 266)") {
+    Folder f;
+    std::string why;
+    REQUIRE(CoopOriginal::ApplyMods(f.mods, true, why));
+    // Added after the list was written: the list never names them (a code mod, a romfs mod under contents).
+    fs::create_directories(f.mods / "randomizer-SpeedyKokiri" / "exefs");
+    fs::create_directories(f.mods / "contents" / "0400486024DEC000" / "late-texture-mod" / "romfs");
+    const std::string text = Slurp(f.mods / "coop-mods.list");
+    auto list = std::make_unique<HosCoopModsList>();
+    REQUIRE(hos_coop_mods_parse(text.data(), text.size(), list.get()));
+    CHECK(list->default_off == 1);
+    for (const auto& name : CoopOriginal::ModNames(f.mods)) {
+        CHECK(hos_coop_mods_rank(list.get(), name.c_str()) == -1);
+    }
+    CHECK(hos_coop_mods_rank(list.get(), "randomizer-SpeedyKokiri") == -1);
+    CHECK(hos_coop_mods_rank(list.get(), "contents/0400486024DEC000/late-texture-mod") == -1);
+    // Off again: the player's list (none here) comes back, so the new mods are on as any unnamed mod.
+    REQUIRE(CoopOriginal::ApplyMods(f.mods, false, why));
+    CHECK_FALSE(fs::exists(f.mods / "coop-mods.list"));
 }
 
 TEST_CASE("original game: on keeps the player's list, off puts it back as it was") {

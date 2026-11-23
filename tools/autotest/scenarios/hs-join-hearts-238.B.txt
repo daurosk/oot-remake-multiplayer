@@ -1,0 +1,7 @@
+# B right after the server stopped (its session still runs until it notices the loss, ~12 s): gains a heart container;
+# its own object walk raises its Link to it (a real container, not only the flag). The host's game never hears of it.
+mark b-offline
+wait 30
+give PlayerStatus.MaxLife
+wait 300
+mark b-gave

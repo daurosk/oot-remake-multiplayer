@@ -37,11 +37,12 @@ inline constexpr int kOcarinaEquip = 66;  // rows 93/103: the shared ocarina's e
 inline constexpr int kPvpShield = 67;     // phase 4: the _Pvp copies' Life invincible (coop_objects.cpp)
 inline constexpr int kTestDress = 68;     // test only: `dress` asks the game's own equip for our Link (coop_hook.cpp)
 inline constexpr int kKeptShield = 69;    // row 160 (b): kept kills' copies held unhittable (coop_objects.cpp)
+inline constexpr int kLifeGauge = 70;     // row 238: HUD gauges refreshed after co-op life writes (coop_life_gauge.h)
 
 inline constexpr std::array kAll{kSpawn,     kShotReflect, kFairy,       kMover,     kDrops,   kGrass,        kTime,
                                  kBossTable, kBossOrders, kLiftRide,    kDbnoBody,  kSwitchShare, kBossRooms, kEventResult, kEyeSwitch,
                                  kLiveEvents, kTeleportEvent, kScrubs, kCounters, kStory,      kOcarinaEquip, kPvpShield,
-                                 kTestDress, kKeptShield};
+                                 kTestDress, kKeptShield, kLifeGauge};
 
 constexpr bool Unique() {
     for (std::size_t i = 0; i < kAll.size(); ++i) {

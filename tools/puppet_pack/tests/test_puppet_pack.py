@@ -3023,6 +3023,14 @@ class FullBuildTest(unittest.TestCase):
         with open(os.path.join(mods, "coop-mods.list"), "w", encoding="utf-8") as f:
             f.write("coop-mods 1\non OoT Character Select\n")
         self.assertEqual(build.find_characters(pack, log=lambda *_: None)["numbers"], {5: 7})
+        # Original game's "default off" (report 266): no row for it in such a list is off, as the game reads it.
+        with open(os.path.join(mods, "coop-mods.list"), "w", encoding="utf-8") as f:
+            f.write("coop-mods 1\ndefault off\non contents/0400486024DEC000/coop-puppet\n")
+        self.assertTrue(build.mod_list_off(mods, "OoT Character Select"))
+        self.assertIsNone(build.find_characters(pack, log=lambda *_: None))
+        with open(os.path.join(mods, "coop-mods.list"), "w", encoding="utf-8") as f:
+            f.write("coop-mods 1\ndefault off\non OoT Character Select\n")
+        self.assertFalse(build.mod_list_off(mods, "OoT Character Select"))
 
     def test_charsel_native_wanted(self):
         # Co-op's own Characters tab (charsel_ui.py) unless Character Select is in the mods (on, with models) with a

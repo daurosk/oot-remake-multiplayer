@@ -86,6 +86,7 @@ inline void allow_sessions_per_address(RelayConfig& c, std::size_t n) {
   if (c.registers_per_window < count) c.registers_per_window = count;
   if (c.new_listings_per_window < count) c.new_listings_per_window = count;
   if (c.listings_per_window < count * 12) c.listings_per_window = count * 12;
+  if (c.lists_per_window < count * 12) c.lists_per_window = count * 12;
 }
 
 struct RelayStats {

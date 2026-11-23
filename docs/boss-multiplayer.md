@@ -12,6 +12,11 @@ the plan; [dungeons-boss.md](dungeons-boss.md) says how the sync works today.
   wraps, which wait for the boss table while another thread holds it (2026-11-23, probe 3 f-19): they used to let
   the game run its own then, about once a second, so Twinrova's copy dropped the owner's fire attack for its own
   Fly_Start and started it over from PreAttack again and again, never reaching the shot.
+  A boss body that is dead in a game (its life 0 there, or its owner's death) runs its own changes on that game's copy
+  from then on, as a plain enemy does, whether or not the fight's outro has begun: Koume and Kotake's own death flow
+  starts the fusion event (run 20261123-092928: with every copy change skipped neither game fused), a Bongo Bongo
+  hand falls and grows back on its own (then takes the owner's verbs again and its Life is held again), a mini-boss
+  or Barinade jellyfish dies as in its owner's game.
 - **Boss turns** (#308 and `boss-turns-0119`): the boss goes to the next player by number at the end of **every**
   attack in its owner's game (4 s at least with one player, `boss_turn_us`, so a quick combo is not split), so its
   AI fights each player in turn. A player who is down, dead or paused is skipped, and is in the round again at the
@@ -286,3 +291,18 @@ Each boss gets a proof run that walks it through every stage with two games: the
 each stage's life (as `hs-boss-turns-pg` takes Phantom Ganon 42 -> 12 into the rally), both players watch it act
 there for a minute (turns, its attacks at each player), then the kill. Checked per stage: the same move on both
 screens, an attack at each player, a turn at an attack's end, no stall, one death.
+
+### A copy's death after its owner's kill (enemies-dying-01111)
+A copy boss never has its life written. Once its owner's boss is dead, the copy's remaining life goes once into
+its own Life step (direct), and the game runs its own death. When that happens:
+- A boss with a boss room (`CoopBoss::Rooms`): when the director's outro is on in its area (`SetDyingBosses`).
+  The area is the room's dungeon scene, or the director's own area (`Director::DeathBegunHere`: the starter's
+  scene near the starter), so the boss rush's stages (`DodongoStage`, `GohmaStage` ...) count too.
+- Every other boss or part (mini-bosses: Meg, Dead Hand, Dark Link, Big Octo ...; Ganondorf and Ganon, who have no
+  room): as soon as its owner says it is dead (life 0 in its samples, or its dead remove). No director names
+  those dying.
+- After that, the owner's life-0 samples that keep coming are the same death: no killing blow is replayed again.
+  Before, each one was refused by the dying copy and timed out ("a hit the boss's game did not take"), about 50
+  times in run 20261122-092813. Doubled effects are guarded elsewhere: one death cutscene per game
+  (`refuse_deaths`, in the director's area), and an event-result kill trigger waits only while its event has not
+  played.

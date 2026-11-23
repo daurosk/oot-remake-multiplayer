@@ -978,6 +978,13 @@ using CoopScreen::kScreenLookMs;
 using CoopScreen::ScreenInstance;
 using CoopScreen::ScreenPanes;
 enum class SnailEdge { kWait, kOpen, kClose };
+// The Map screen's content panes (FollowMapUnder) are kept by its layout's address. The game frees a closed screen and
+// may make the next one at the very same screen and layout addresses (charsel-native-0119-5, run 4620f3e7: CoopMenu_00
+// came at the addresses his Customize screen had just freed). So they are looked up again: with none kept yet, with
+// another screen object, and at every opening (the state turns 1, opening, or turns open, 1 or 2, from anything else: a
+// new screen at the same place starts there). `known_state`: the state at its last update (-1 none). (Whose screen a
+// layout is, his Customize screen's or CoopMenu_00's: ScreenPanes, row 262.)
+bool LayoutLookAgain(bool known, std::uint64_t known_screen, int known_state, std::uint64_t screen, int state);
 SnailEdge SnailEdgeFrom(bool open, std::uint64_t edge_ms, int strip_state, std::uint64_t strip_seen_ms, std::uint64_t now_ms);
 // The pad while Character Select's Customize screen is taken as open, from when its screen last updated (`seen_ms`):
 // kDrive, co-op's keys; kPause, not updated for kSnailPauseMs (a stall, or gone without a close seen): the game gets

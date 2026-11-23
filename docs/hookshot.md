@@ -234,7 +234,7 @@ Longshot's own options (its Insert menu's rows) in the game's UI, from a button 
 A row of Co-op settings (F1 and the pause menu's Settings and look), **Original game** (coop-options.ini `original_game = on`; `hookshot/src/coop_original.h`), makes the game as it came from the next start:
 
 - **The module stays off.** `CoopHookshot::Start` returns before anything of co-op (no session, no pages or buttons of ours on System or the title, no look on Link, no HUD, no networking, no code mods), and the window's title and the Discord line are Longshot's own.
-- **Longshot loads no mod.** When the row is turned on, `coop-mods.list` (patch 0011) names every mod in the mods folder as off, the co-op pack and Save Profiles too. The list as it was is kept as `coop-mods.list.before-original` and put back when the row goes off, so each mod comes back as the player had it.
+- **Longshot loads no mod.** When the row is turned on, `coop-mods.list` (patch 0011) names every mod in the mods folder as off, the co-op pack and Save Profiles too. Its `default off` line (`hos_coop_mods.h`) leaves out a mod the list does not name too, so a mod put into the folder after the row went on stays out as well (player report 266); the game build (patch 0035), the kit's stamp and pack steps read the line the same way. The list as it was is kept as `coop-mods.list.before-original` and put back when the row goes off, so each mod comes back as the player had it.
 - **The launcher touches nothing.** `play.ps1` starts the game without the pack, size table or Discord steps.
 - **The way back stays in the game.** While original, the module gives Longshot's F1 menu one tab, **Original game**, with the switch alone. Turned off there, the next start is the co-op game again.
 

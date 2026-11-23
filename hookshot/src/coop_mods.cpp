@@ -2,6 +2,8 @@
 // is released.
 #include "coop_mods.h"
 
+#include "hos_coop_mods.h"
+
 #include <algorithm>
 #include <utility>
 
@@ -70,6 +72,10 @@ void Loader::Start() {
         Normalize(state_, mods_);
         const Applied applied = LoadApplied(root_);
         exe_reads_list_ = applied.valid && applied.pid == hooks_.pid;
+        exefs_list_.reset();
+        if (hooks_.exefs_list) {
+            exefs_list_ = hooks_.exefs_list();
+        }
         files_now_.clear();
         if (exe_reads_list_) {
             for (const auto& [name, files] : applied.on) {
@@ -162,6 +168,32 @@ std::vector<std::string> Loader::Indexed() const {
     return files_now_;
 }
 
+int Loader::BuiltState(const Mod& m) const {
+    if (!exefs_list_ || !exe_reads_list_ || m.exefs_patches.empty() || !GameSees(m)) {
+        return -1;
+    }
+    const std::string& list = *exefs_list_;
+    int waiting = 0;
+    for (const auto& [file, hash] : m.exefs_patches) {
+        waiting += hos_coop_mods_built_file(list.data(), list.size(), m.name.c_str(), file.c_str(), hash) ? 0 : 1;
+    }
+    return hos_coop_mods_built_changed(hos_coop_mods_built(list.data(), list.size(), m.name.c_str()), waiting);
+}
+
+int Loader::Held(const Mod& m) const {
+    const int built = BuiltState(m);
+    if (built < 0) {
+        return -1;
+    }
+    const bool on = Wanted(m, state_);
+    const int use = hos_coop_mods_as_built(on ? 1 : 0, built, static_cast<int>(m.exefs_patches.size()), m.name.c_str());
+    return use == (on ? 1 : 0) ? -1 : use;
+}
+
+bool Loader::CodeChanged(const Mod& m) const {
+    return BuiltState(m) == HOS_COOP_MODS_BUILT_CHANGED && !m.internal;
+}
+
 const Mod* Loader::Find(std::string_view name) const {
     for (const Mod& m : mods_) {
         if (NameSame(m.name, name)) {
@@ -195,8 +227,18 @@ std::vector<Row> Loader::Rows() const {
         const bool reachable = m->listable && !m->folder_off;
         r.can_switch = reachable && (exe_reads_list_ || !GameSees(*m));
         r.can_move = reachable && exe_reads_list_;
+        const int held = Held(*m);
         if (!m->problem.empty()) {
             r.note = m->problem;
+        } else if (held == 0) {
+            r.note = "It has code, which is not in the game yet: start the game with Start Squadala to build it in "
+                     "(5 to 25 minutes). Until then the game leaves this mod out, its files too.";
+        } else if (held == 1) {
+            r.note = "Its code is built into the game: start the game with Start Squadala to build it out. Until then "
+                     "the game keeps this mod on, its files too.";
+        } else if (CodeChanged(*m)) {
+            r.note = "Its code changed since the game was built: start the game with Start Squadala to build the new code "
+                     "in. Until then the game runs its old code.";
         } else if (code != code_now_.end() && !code->second.empty()) {
             r.note = code->second;
         } else if (const auto skip = skipped_.find(m->name); skip != skipped_.end()) {
@@ -208,8 +250,8 @@ std::vector<Row> Loader::Rows() const {
                      "switch or move it.";
         } else if (!exe_reads_list_ && GameSees(*m)) {
             r.note = "This hookshot.exe was built before the mod loader: build the game again to switch or move mods.";
-        } else if (m->has_exefs) {
-            r.note = "Its code patches (exefs) are not used: this game's code is compiled ahead of time.";
+        } else if (BuiltState(*m) == HOS_COOP_MODS_BUILT_NAMED) {
+            r.note = "Its code patches are for another version of the game: they change nothing.";
         }
         rows.push_back(std::move(r));
     }
@@ -464,17 +506,32 @@ Restart Loader::RestartNeeded() const {
             }
         }
     }
+    // (a mod whose code waits for a game build: a start from longshot.exe keeps it as the game was built, Held)
+    const auto held = [&](std::string_view name) {
+        const Mod* m = Find(name);
+        return m != nullptr ? Held(*m) : -1;
+    };
     bool same_set = next.size() == files_now_.size();
     for (const std::string& name : next) {
         if (!Has(files_now_, name)) {
             same_set = false;
-            say(title(name) + " is on: the game uses its files from the next start.");
+            say(held(name) == 0 ? title(name) + " is on, and its code is not in the game yet: start the game with Start "
+                                                "Squadala to build it in."
+                                : title(name) + " is on: the game uses its files from the next start.");
         }
     }
     for (const std::string& name : files_now_) {
         if (!Has(next, name)) {
             same_set = false;
-            say(title(name) + " is off or gone: the game uses its files until it is started again.");
+            say(held(name) == 1 ? title(name) + " is off, but its code is built into the game: start the game with "
+                                                "Start Squadala to build it out."
+                                : title(name) + " is off or gone: the game uses its files until it is started again.");
+        }
+    }
+    for (const Mod& m : mods_) {
+        if (Wanted(m, state_) && held(m.name) < 0 && CodeChanged(m)) {
+            say(m.manifest.name + "'s code changed since the game was built: start the game with Start Squadala to build "
+                                  "it in.");
         }
     }
     if (same_set && !std::equal(next.begin(), next.end(), files_now_.begin(),

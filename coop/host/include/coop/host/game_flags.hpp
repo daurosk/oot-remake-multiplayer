@@ -98,6 +98,12 @@ class GameFlags {
   // getters see a write that still waits there. nullptr: the queues again.
   // `calls` must outlive its use. Set once at start, before any flag call.
   static void use_calls(GameFlagCalls* calls);
+  // Row 238: called after each Int write set_int queued (any thread, with
+  // the hash and value), so the hook can ask the game to show it (the HUD
+  // gauges take Life / MaxLife / MP in only on their refresh,
+  // coop_life_gauge.h). nullptr: none. Set once at start.
+  using IntWritten = void (*)(std::uint32_t hash, std::int32_t value);
+  static void on_int_written(IntWritten callback);
   // True while the game's write queue of this type has room for one of our
   // writes (half of it stays the game's own, as with the queue writes): only
   // then may the game's setter be called for us, as the game's own setters

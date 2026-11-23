@@ -1,0 +1,6 @@
+# B after the rejoin: takes a heart container (the group goes to the host count + 1 in both games)
+mark b-pick
+wait 300
+give PlayerStatus.MaxLife
+wait 600
+mark b-picked

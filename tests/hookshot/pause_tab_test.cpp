@@ -3153,6 +3153,47 @@ TEST_CASE("pause tab (tabs-overhaul-01110 step 2): the Map under CoopMenu_00 hid
     CHECK_FALSE(MapUnderHidden(false, true, false, true, 5000, 6000, 6000));   // (L: given back at once)
 }
 
+TEST_CASE("pause tab (charsel-native-0119, run 4620f3e7): a screen layout's verdict is looked at again at every opening") {
+    // No verdict yet, or another screen object at that layout: look.
+    CHECK(LayoutLookAgain(false, 0, -1, 0x100, 1));
+    CHECK(LayoutLookAgain(true, 0x100, 2, 0x200, 2));
+    // The same screen open, frame after frame: kept (no pane walk each frame).
+    CHECK_FALSE(LayoutLookAgain(true, 0x100, 2, 0x100, 2));
+    CHECK_FALSE(LayoutLookAgain(true, 0x100, 1, 0x100, 1));
+    CHECK_FALSE(LayoutLookAgain(true, 0x100, 1, 0x100, 2));    // (opening -> open: the same opening)
+    // The run: his Customize screen closed (3, then 0) and CoopMenu_00 came at the very same screen and layout
+    // addresses, opening (1): looked at again, so his "his" / our "not ours" is not kept for it.
+    CHECK(LayoutLookAgain(true, 0x100, 3, 0x100, 1));
+    CHECK(LayoutLookAgain(true, 0x100, 0, 0x100, 1));
+    CHECK(LayoutLookAgain(true, 0x100, 0, 0x100, 2));          // (open again without an opening state seen)
+    CHECK(LayoutLookAgain(true, 0x100, 2, 0x100, 1));          // (freed while open, the next one opening there)
+    CHECK(LayoutLookAgain(true, 0x100, -1, 0x100, 1));         // (no state kept yet)
+    // Closing or closed: no new look (nothing to take).
+    CHECK_FALSE(LayoutLookAgain(true, 0x100, 2, 0x100, 3));
+    CHECK_FALSE(LayoutLookAgain(true, 0x100, 3, 0x100, 0));
+}
+
+TEST_CASE("pause tab (run 4620f3e7): CoopMenu_00 made at his freed Customize screen's addresses is ours, never his") {
+    // SnailScreen and CoopMenuScreen each keep a ScreenPanes; both see every screen update (state 1/2: open).
+    ScreenPanes snail, coop;
+    bool his_panes = true, coop_pane = false;
+    const auto his = [&] { return his_panes; };
+    const auto ours = [&] { return coop_pane; };
+    // (one update of the screen: 1 his, 2 ours, 0 neither, 3 both)
+    const auto frame = [&](bool open, std::uint64_t t) {
+        return (snail.Update(0x100, 0x200, open, t, his) ? 1 : 0) + (coop.Update(0x100, 0x200, open, t, ours) ? 2 : 0);
+    };
+    CHECK(frame(true, 1000) == 1);  // his Customize screen
+    CHECK(frame(false, 1016) == 1);  // it closes (his close is seen)
+    // Freed; CoopMenu_00 made at the same screen and layout addresses, its page pane a few frames late.
+    his_panes = false;
+    CHECK(frame(true, 1032) == 0);  // (not his: his panes are not there)
+    coop_pane = true;
+    for (std::uint64_t t = 1048; t <= 1048 + 2 * kScreenLookMs; t += 16) {
+        CHECK(frame(true, t) == 2);  // ours from its pane on; never his for the whole opening
+    }
+}
+
 TEST_CASE("pause tab: an A on Title Screen just after the cursor left Longshot Settings is the game's (player report 261)") {
     using CoopPauseTab::SystemButtonOf;
     using CoopPauseTab::SystemButtonSeen;

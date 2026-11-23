@@ -3,6 +3,7 @@
 #include "coop_mod_library.h"
 
 #include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <cstdio>
@@ -73,14 +74,36 @@ std::string_view Leaf(std::string_view name) {
     return slash == std::string_view::npos ? name : name.substr(slash + 1);
 }
 
-bool StartsFolded(std::string_view s, std::string_view prefix) {
-    return s.size() >= prefix.size() && NameSame(s.substr(0, prefix.size()), prefix);
+// Co-op's own packs (the puppet pack, the HUD pack): the kit installs and updates them (hos_coop_mods_own: host/mods.c
+// keeps them as switched).
+bool Internal(std::string_view name) {
+    return hos_coop_mods_own(std::string(name).c_str()) != 0;
 }
 
-// Co-op's own packs (the puppet pack, the HUD pack): the kit installs and updates them.
-bool Internal(std::string_view name) {
-    const std::string_view leaf = Leaf(name);
-    return StartsFolded(leaf, "coop-puppet") || StartsFolded(leaf, "coop_hud") || StartsFolded(leaf, "coop-hud");
+// Its ExeFS patch files, as host/mods.c exefs_status finds and hashes them: the .ips and .pchtxt files right in its exefs
+// folder, each with the FNV-1a 32 of its bytes (a file that cannot be read is left out, as there).
+std::vector<std::pair<std::string, unsigned long>> ExefsPatchFiles(const fs::path& exefs) {
+    std::error_code ec;
+    std::vector<std::pair<std::string, unsigned long>> out;
+    for (fs::directory_iterator it(exefs, ec), end; !ec && it != end; it.increment(ec)) {
+        std::string ext = it->path().extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        std::error_code file_ec;
+        if ((ext != ".ips" && ext != ".pchtxt") || !it->is_regular_file(file_ec)) {
+            continue;
+        }
+        std::ifstream in(it->path(), std::ios::binary);
+        if (!in) {
+            continue;
+        }
+        unsigned long h = HOS_COOP_MODS_FNV32_START;
+        char buf[4096];
+        while (in.read(buf, sizeof buf) || in.gcount() > 0) {
+            h = hos_coop_mods_fnv32(h, buf, static_cast<std::size_t>(in.gcount()));
+        }
+        out.emplace_back(ToUtf8(it->path().filename()), h);
+    }
+    return out;
 }
 
 bool Listable(std::string_view name) {
@@ -547,6 +570,9 @@ void Found(const fs::path& dir, const std::string& name, bool off, std::vector<M
     mod.folder = dir;
     mod.has_romfs = fs::is_directory(dir / "romfs", ec);
     mod.has_exefs = fs::is_directory(dir / "exefs", ec);
+    if (mod.has_exefs) {
+        mod.exefs_patches = ExefsPatchFiles(dir / "exefs");
+    }
     mod.has_manifest = fs::is_regular_file(dir / kManifestFile, ec);
     mod.folder_off = off;
     mod.internal = Internal(name);
@@ -670,6 +696,13 @@ void Normalize(State& state, const std::vector<Mod>& mods) {
             off.push_back(m->name);
         }
     }
+    if (state.default_off) {   // (the ones no row named are off, as Hookshot reads the list: hos_coop_mods_rank)
+        for (const std::string& name : order) {
+            if (!has(state.order, name) && !has(off, name)) {
+                off.push_back(name);
+            }
+        }
+    }
     state.order = std::move(order);
     state.off = std::move(off);
 }
@@ -678,6 +711,10 @@ std::string ListText(const State& state, const std::vector<Mod>& mods) {
     State s = state;
     Normalize(s, mods);
     std::string text = "coop-mods " + std::to_string(HOS_COOP_MODS_VERSION) + "\n";
+    if (s.default_off) {
+        text += HOS_COOP_MODS_DEFAULT_OFF;
+        text += '\n';
+    }
     std::size_t rows = 0;
     for (const std::string& name : s.order) {
         if (rows++ == HOS_COOP_MODS_MAX) {
@@ -697,6 +734,7 @@ bool ReadListText(std::string_view text, State& state) {
     }
     state.order.clear();
     state.off.clear();
+    state.default_off = list->default_off != 0;
     for (int i = 0; i < list->count; ++i) {
         state.order.emplace_back(list->rows[i].name);
         if (list->rows[i].off) {

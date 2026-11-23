@@ -19,6 +19,7 @@
 #include "coop_mod_plugins.h"
 #include "coop_mod_screens.h"
 #include "coop_mod_share.h"
+#include "coop_pause.h"
 #include "coop_rando.h"
 #include "coop_shop_sale.h"
 #include "coop_runtime.h"
@@ -293,7 +294,7 @@ void Start() {
     }
     g_loader = std::make_unique<CoopMods::Loader>(
         ModsRoot(), CoopMods::Loader::Hooks{[](const std::string& l) { CoopRuntime::Log("coop: mods: " + l); },
-                                            ThisProcess(), ProcessRuns});
+                                            ThisProcess(), ProcessRuns, [] { return CoopPause::ExefsList(); }});
     g_loader->Start();
     CoopRando::Rando::Hooks rando;
     rando.log = [](const std::string& l) { CoopRuntime::Log("coop: mods: " + l); };

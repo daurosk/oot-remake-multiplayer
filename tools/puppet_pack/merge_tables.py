@@ -77,7 +77,8 @@ ROWS_KEEP = "_coop-rows"
 ROWS_HEAD = "coop-rows 1"
 ROWS_MARK = "coop-rows.txt"   # (the module's kRowsFile)
 MENU_KEEP = "_coop-menus"     # the pack's menu files while the table the game reads cannot hold them (guard_menus)
-MENU_KEYS = ("title_menu", "pause_menu")   # (coop_puppet.json: the files build.py's menu steps wrote)
+# (coop_puppet.json's "menu_keys": the file lists kept aside together, ui_pack.MENU_KEYS when the pack was made; a pack
+# without the field has the two old keys)
 MEMBERS_KEEP = "_coop-archives"   # a mod's own copies of archives the pack's members were merged into (merge_members)
 MEMBERS_HEAD = "coop-members 1"
 
@@ -113,19 +114,26 @@ def find_mods(root):
     return out
 
 
-def read_list(root):
-    """The Mods tab's rows [(name, off)] from coop-mods.list, or [] (no list, or not version 1)."""
+DEFAULT_OFF = "default off"   # hos_coop_mods.h HOS_COOP_MODS_DEFAULT_OFF: a mod the list does not name is off too
+
+
+def read_list_default(root):
+    """The Mods tab's rows [(name, off)] from coop-mods.list and whether it has the "default off" line (Original game:
+    a mod the list does not name is off, hos_coop_mods_rank); ([], False) with no list, or not version 1."""
     try:
         with open(os.path.join(root, LIST_FILE), "rb") as f:
             text = f.read().decode("utf-8", "replace")
     except OSError:
-        return []
+        return [], False
     lines = text.split("\n")
     if lines[0].rstrip("\r") != "coop-mods 1":
-        return []
-    rows, seen = [], set()
+        return [], False
+    rows, seen, default_off = [], set(), False
     for line in lines[1:]:
         line = line.rstrip("\r")
+        if line == DEFAULT_OFF:
+            default_off = True
+            continue
         if line.startswith("on ") and len(line) > 3:
             name, off = line[3:], False
         elif line.startswith("off ") and len(line) > 4:
@@ -136,15 +144,22 @@ def read_list(root):
             continue
         seen.add(fold(name))
         rows.append((name, off))
-    return rows
+    return rows, default_off
+
+
+def read_list(root):
+    """The Mods tab's rows [(name, off)] from coop-mods.list, or [] (no list, or not version 1)."""
+    return read_list_default(root)[0]
 
 
 def load_order(root):
-    """The mods that are on, in the order Longshot indexes them (the last one's file wins)."""
-    rows = read_list(root)
+    """The mods that are on, in the order Longshot indexes them (the last one's file wins). A mod the list does not
+    name keeps Longshot's own place, or is off with the list's "default off" line."""
+    rows, default_off = read_list_default(root)
     rank = {fold(n): (-1 if off else len(rows) - i) for i, (n, off) in enumerate(rows)}
+    unnamed = -1 if default_off else 0
     mods = find_mods(root)
-    on = [(rank.get(fold(n), 0), fold(n), n) for n in mods if rank.get(fold(n), 0) >= 0]
+    on = [(rank.get(fold(n), unnamed), fold(n), n) for n in mods if rank.get(fold(n), unnamed) >= 0]
     return [(n, mods[n]) for _, _, n in sorted(on)]
 
 
@@ -1078,12 +1093,39 @@ def menu_files(pack_path):
             m = json.loads(f.read().decode("utf-8"))
     except (OSError, ValueError):
         return []
+    keys = m.get("menu_keys")
+    if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
+        keys = list(ui_pack.OLD_MENU_KEYS)
     out = []
-    for key in MENU_KEYS:
+    for key in keys:
         for rel in m.get(key) or []:
             if isinstance(rel, str) and rel and rel not in out:
                 out.append(rel)
     return out
+
+
+def charsel_native_parked(pack_path):
+    """Whether co-op's own Characters tab's files (coop_puppet.json "charsel_native", one of the menu lists) are kept
+    aside in <pack>/_coop-menus (guard_menus, park_menus, the kit's Move-KitMenuFilesAside) and not in the pack's romfs.
+    The tab's code patch (charsel-native.ips in the pack's exefs) must go with them: the game built with the tab's code
+    over the game's own three-tab menu files said MsgNotFound on slot 0, lost the Map tab and left L dead. So the kit's
+    code-patch rule (kit-paths.ps1 Sync-KitCharselNativePatch, build.sh charsel_native_sync) leaves the code out while
+    this is true, and the start parks or puts back before that rule runs."""
+    import json
+    try:
+        with open(os.path.join(pack_path, "coop_puppet.json"), "rb") as f:
+            m = json.loads(f.read().decode("utf-8"))
+    except (OSError, ValueError):
+        return False
+    rels = m.get("charsel_native") if isinstance(m, dict) else None
+    for rel in rels if isinstance(rels, list) else []:
+        if not isinstance(rel, str) or not rel:
+            continue
+        parts = rel.split("/")
+        if (os.path.isfile(os.path.join(pack_path, MENU_KEEP, *parts))
+                and not os.path.isfile(os.path.join(pack_path, "romfs", *parts))):
+            return True
+    return False
 
 
 def _menu_short(codec, order, pack_path, files):

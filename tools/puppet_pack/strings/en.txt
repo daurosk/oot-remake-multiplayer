@@ -109,6 +109,8 @@ Coop_Live_47 = ................................................................
 # The Characters page (charsel_ui.py: Snail's page, Link only, when his mod is not in the mods): its title and X's words.
 T_Title_00 = Characters
 T_Custom_00 = Customize
+# Under Link's cell (make_data.py stage 2, ours): credit to Snail and where his playable characters are.
+T_Note_00 = This Characters tab is from OoT Character Select by Snail.\nGet his mod for the other playable characters.
 
 [LayoutMsg/CharacterCustomize_00.msbt]
 # The Customize screen's title before the co-op module writes its own (Coop_Custom_00).

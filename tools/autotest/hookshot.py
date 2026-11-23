@@ -45,6 +45,8 @@ WINDOWS = os.name == "nt"
 TICKS = 60.0              # script ticks a second
 PRESS_TICKS = 6           # press KEYS: held this long, then let go as long
 GOTO_TICKS = 600          # goto gives up after 10 s
+MAX_STEP_TICKS = 60 * 60 * 10  # a played step's TICKS: 1 up to this (coop_testinput.cpp kMaxStepTicks, 10 min)
+MAX_NUMBER = 1e6          # a coordinate, radius or stick value: at most this far from 0 (coop_testinput.cpp Number)
 MAIN_BASE = 0x80020000    # where Hookshot maps main (docs/hookshot.md)
 GAMEUI_SLOT = 0x4e7cfa8   # main offset of the GameUI module pointer (integration docs/player-state-map.md)
 POS_VALID = 0x58a         # GameUI +0x58a bit 0: the position below is Link's
@@ -107,7 +109,7 @@ class BridgeError(Exception):
 
 class Step:
     def __init__(self, kind, line, ticks=0):
-        self.kind = kind          # timed, mark, goto, toward, warp, or one of MODULE_ONLY
+        self.kind = kind          # timed, mark, goto, toward, warp, await, or one of MODULE_ONLY
         self.line = line
         self.ticks = ticks
         self.buttons = []         # the bridge's names
@@ -123,20 +125,47 @@ class Step:
         return "Step(%s line %d)" % (self.kind, self.line)
 
 
+# One scenario grammar for both readers (row 325 review): the module's parser (lichii/hook/coop_testinput.cpp Parse,
+# LICHII_COOP_TEST_SCRIPT and the C++ test that reads every scenario) and this one take the same words for TICKS and
+# numbers, so a line one of them plays is never refused by the other. Whole numbers are plain digits (no sign, no
+# underscore), numbers plain decimals (no hex, no underscore, no inf/nan).
+_WHOLE = re.compile(r"[0-9]+")
+_DECIMAL = re.compile(r"[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?")
+
+
 def _ticks(text):
-    try:
-        v = int(text)
-    except ValueError:
+    """A played step's TICKS (wait, hold, press, stick, goto, toward): 1 up to MAX_STEP_TICKS (module Ticks)."""
+    if len(text) > 9 or not _WHOLE.fullmatch(text):
         return None
-    return v if v >= 0 else None
+    v = int(text)
+    return v if 1 <= v <= MAX_STEP_TICKS else None
+
+
+def _whole_in(text, low, high):
+    """hit N, drop METRES, hurt QUARTER_HEARTS: plain digits from low to high (module from_chars + its range), or None.
+    (str.isdigit also takes digits int() refuses, such as superscripts: a ValueError, not the line's error.)"""
+    return int(text) if _WHOLE.fullmatch(text) and low <= int(text) <= high else None
+
+
+def _int32(text):
+    """setflag VALUE: a whole number, '-' allowed, that fits 32 bits (module from_chars into int32_t), or None."""
+    if not re.fullmatch(r"-?[0-9]+", text):
+        return None
+    v = int(text)
+    return v if -2 ** 31 <= v < 2 ** 31 else None
+
+
+def _await_ticks(text):
+    """await's TICKS, the runner's own step: any whole number from 0 up, 0 = no wait (module RunnerTicks)."""
+    return int(text) if _WHOLE.fullmatch(text) else None
 
 
 def _number(text):
-    try:
-        v = float(text)
-    except ValueError:
+    """A coordinate, radius or stick value: a plain decimal, finite, at most MAX_NUMBER from 0 (module Number)."""
+    if not _DECIMAL.fullmatch(text):
         return None
-    return v if math.isfinite(v) else None
+    v = float(text)
+    return v if math.isfinite(v) and abs(v) <= MAX_NUMBER else None
 
 
 def _axis(text):
@@ -280,12 +309,12 @@ def parse(text):
                 fail("want: %s %s" % (cmd.lower(), "ACTOR" if cmd == "KILL" else "ITEM"))
             s.kind, s.name = cmd.lower(), w[1]
         elif cmd == "HIT":
-            if len(w) != 3 or not w[2].isdigit() or not 1 <= int(w[2]) <= 80:
+            if len(w) != 3 or _whole_in(w[2], 1, 80) is None:
                 fail("want: hit ACTOR N (1 to 80)")
             s.kind, s.name, s.start = "hit", w[1], w[2]
         elif cmd == "DROP":
             # Row 178: the nearest boss of that name that this game owns goes METRES straight down (test only).
-            if len(w) != 3 or not w[2].isdigit() or not 1 <= int(w[2]) <= 500:
+            if len(w) != 3 or _whole_in(w[2], 1, 500) is None:
                 fail("want: drop ACTOR METRES (1 to 500)")
             s.kind, s.name, s.start = "drop", w[1], w[2]
         elif cmd == "STUN":
@@ -293,12 +322,12 @@ def parse(text):
                 fail("want: stun BOSS")
             s.kind, s.name = "stun", w[1]
         elif cmd == "HURT":
-            if len(w) != 2 or not w[1].isdigit() or not 1 <= int(w[1]) <= 80:
+            if len(w) != 2 or _whole_in(w[1], 1, 80) is None:
                 fail("want: hurt QUARTER_HEARTS (1 to 80)")
             s.kind, s.name = "hurt", w[1]
         elif cmd == "SETFLAG":
-            if len(w) != 3 or not w[2].lstrip("-").isdigit():
-                fail("want: setflag NAME VALUE (an Int or Bool flag, a whole number)")
+            if len(w) != 3 or _int32(w[2]) is None:
+                fail("want: setflag NAME VALUE (an Int or Bool flag, a whole number that fits 32 bits)")
             s.kind, s.name, s.start = "setflag", w[1], w[2]
         elif cmd == "NOFAIRY":
             if len(w) != 1:
@@ -341,6 +370,19 @@ def parse(text):
             if len(w) != 2 or w[1].lower() not in ("customize", "close", "host"):
                 fail("want: menu customize|close|host")
             s.kind, s.name = "menu", w[1].lower()
+        elif cmd == "AWAIT":
+            # Row 325: "await TICKS REGEX": until a NEW line of this game's own log (written after the step began)
+            # matches REGEX (the rest of the line, spaces kept), at most TICKS. The runner reads the log itself: no
+            # module step, so it plays on any build. A timeout is logged and the script goes on.
+            pattern = line.strip()[len(w[0]):].strip()
+            pattern = pattern[len(w[1]):].strip() if len(w) >= 2 else ""
+            if len(w) < 3 or _await_ticks(w[1]) is None or not pattern:
+                fail("want: await TICKS REGEX (the rest of the line, matched in this game's log)")
+            try:
+                re.compile(pattern)
+            except re.error as e:
+                fail("await: bad REGEX: %s" % e)
+            s.kind, s.ticks, s.name = "await", _await_ticks(w[1]), pattern
         elif cmd == "MARK":
             if len(w) != 2:
                 fail("want: mark NAME (one word)")
@@ -515,8 +557,11 @@ class Player:
     """Plays steps into one game. clock and sleep are for the tests."""
 
     def __init__(self, bridge, log, shot=None, connect=None, clock=time.monotonic, sleep=time.sleep,
-                 main_base=MAIN_BASE, steer_every=0.1, warp_for=90.0, commands=None, take_for=5.0):
+                 main_base=MAIN_BASE, steer_every=0.1, warp_for=90.0, commands=None, take_for=5.0, read_log=None,
+                 await_every=0.25):
         self.b = bridge
+        self.read_log = read_log      # () -> this game's log text so far ('' if none yet), or None: await skipped
+        self.await_every = await_every
         self.commands = commands      # the game's LICHII_COOP_TEST_COMMANDS file, or None: module steps skipped
         self.take_for = take_for      # seconds the module has to take them (it checks 4 times a second)
         self.sent = 0
@@ -808,6 +853,35 @@ class Player:
         except OSError:
             return False
 
+    def _log_matches(self, rx):
+        try:
+            text = self.read_log() or ""
+        except OSError:
+            return 0, ""
+        found = [ln.rstrip("\r") for ln in text.split("\n") if rx.search(ln.rstrip("\r"))]
+        return len(found), (found[-1] if found else "")
+
+    def await_line(self, s, t0):
+        """await TICKS REGEX (row 325): from t0 until this game's log has more lines matching REGEX than it had at t0
+        (a line written since), at most s.ticks. Logs the line seen or the timeout; the script goes on either way."""
+        if self.read_log is None:
+            self.log("coop: test await skipped (line %d: this run reads no game log)" % s.line)
+            return t0
+        self._until(t0)
+        rx = re.compile(s.name)
+        before, _ = self._log_matches(rx)
+        end = t0 + s.ticks / TICKS
+        while True:
+            n, last = self._log_matches(rx)
+            now = self.clock()
+            if n > before:
+                self.log("coop: test await seen after %.1f s: %s" % (now - t0, last.strip()))
+                return now
+            if now >= end:
+                self.log("coop: test await timed out after %.1f s (line %d: %s)" % (now - t0, s.line, s.name))
+                return now
+            self._until(min(end, now + self.await_every))
+
     def play(self, steps):
         self.log("coop: test script %d steps" % len(steps))
         t = self.clock()
@@ -835,6 +909,8 @@ class Player:
                 t = max(t, self.clock())
             elif s.kind in ("goto", "toward"):
                 t = max(t, self.steer(s, max(t, self.clock())))
+            elif s.kind == "await":
+                t = max(t, self.await_line(s, max(t, self.clock())))
             elif s.kind == "warp":
                 self.warp(s)
         self.log("coop: test script done")
@@ -1277,9 +1353,13 @@ def run(a):
             bridges[x] = (sock, Bridge.connect(sock, timeout=120))
             if i == 0:
                 time.sleep(3)
-        for x in tags:   # both games drawing before anything is pressed (a cold shader cache: minutes)
+        def game_log(x):
+            # Each game's own log so far: the kit's start writes the game's file, ours game-out-<x>.txt.
             go = os.path.join(out, "game-out-%s.txt" % x)
-            log = (lambda: fresh_log(games[x], started[x])) if kits[x] else (lambda: read_text(go))
+            return (lambda: fresh_log(games[x], started[x])) if kits[x] else (lambda: read_text(go))
+
+        for x in tags:   # both games drawing before anything is pressed (a cold shader cache: minutes)
+            log = game_log(x)
             waited = wait_renderer(log, lambda: procs[x].poll() is None, a.renderer_wait, a.renderer_stall,
                                    a.renderer_limit)
             if a.renderer_wait > 0:
@@ -1328,7 +1408,8 @@ def run(a):
                 pb = Bridge.connect(bridges[x][0])
                 try:
                     p = Player(pb, Log(os.path.join(out, "player-%s.txt" % x)), shot=shooter(x, a.name),
-                               connect=lambda: Bridge.connect(bridges[x][0]), commands=commands[x])
+                               connect=lambda: Bridge.connect(bridges[x][0]), commands=commands[x],
+                               read_log=game_log(x))
                     players[x] = p
                     p.play(parsed[x])
                 finally:

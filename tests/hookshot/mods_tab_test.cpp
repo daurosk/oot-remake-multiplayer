@@ -45,7 +45,7 @@ struct Mods {
               {"key": "glow", "name": "Glow", "type": "toggle", "restart": true},
               {"key": "seed", "name": "Seed", "type": "text", "shared": true}]})");
         Put(root / "a-tunic" / "romfs" / "UI" / "a.zs", "y");
-        loader = std::make_unique<CoopMods::Loader>(root, CoopMods::Loader::Hooks{nullptr, 1, nullptr});
+        loader = std::make_unique<CoopMods::Loader>(root, CoopMods::Loader::Hooks{nullptr, 1, nullptr, nullptr});
         loader->Start();
     }
     ~Mods() {
@@ -309,7 +309,7 @@ TEST_CASE("mods tab: an empty folder says where mods go") {
     std::error_code ec;
     fs::remove_all(root, ec);
     fs::create_directories(root);
-    CoopMods::Loader loader(root, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(root, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Tab tab({&loader, nullptr, nullptr});
     tab.Show();
@@ -360,7 +360,7 @@ TEST_CASE("mods tab: a mod's long description shows as several rows of its page"
     Put(root / "long" / "mod.json",
         R"json({"id": "long", "name": "Long", "description": "打乱宝箱、迷宫道具和奖励（OOTRR）。联机时所有人玩房主的种子，拾取共享。换种子只需重启游戏，不用重新构建。"})json");
     {
-        CoopMods::Loader loader(root, {nullptr, 1, nullptr});
+        CoopMods::Loader loader(root, {nullptr, 1, nullptr, nullptr});
         loader.Start();
         Tab tab({&loader, nullptr, nullptr});
         tab.Show();

@@ -154,6 +154,10 @@ std::int32_t Director::Base(const Local& local) const {
     return max_life_.value_or(local.max_life.value_or(0));
 }
 
+bool Director::DeathBegunHere(std::uint8_t boss, const Local& local) const {
+    return boss < fights_.size() && fights_[boss].phase >= Phase::outro && Here(boss, local);
+}
+
 bool Director::Here(std::uint8_t b, const Local& local) const {
     const Fight& f = fights_[b];
     return local.scene && local.position && InArea(kBosses[b], f.scene, f.starter_at, *local.scene, *local.position);

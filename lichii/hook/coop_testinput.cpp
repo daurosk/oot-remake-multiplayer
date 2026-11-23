@@ -67,7 +67,63 @@ bool Ticks(std::string_view word, std::uint32_t& out) {
     return true;
 }
 
+// One scenario grammar for both readers (row 325 review): tools/autotest/hookshot.py's parse takes the same words for
+// TICKS and numbers as this parser (its _ticks, _await_ticks, _number, _whole_in, _int32), so a line one of them
+// plays is never refused by the other.
+//
+// A runner-only step's TICKS (await): hookshot.py's _await_ticks, any whole number from 0 up (the most it waits; 0: no
+// wait). Not Ticks: that is the rule of the module's own timed steps (1 up to kMaxStepTicks), and a line the runner
+// plays must not be refused here.
+bool RunnerTicks(std::string_view word) {
+    if (word.empty()) {
+        return false;
+    }
+    for (const char c : word) {
+        if (c < '0' || c > '9') {
+            return false;
+        }
+    }
+    return true;
+}
+
+// A plain decimal: [+-] digits [. digits] or [+-] . digits, then an optional exponent (e [+-] digits); hookshot.py's
+// _DECIMAL. strtod alone also takes hex ("0x10"), "inf" and "nan", which Python's float() reads otherwise or not.
+bool Decimal(std::string_view word) {
+    std::size_t i = 0;
+    const auto digits = [&] {
+        const std::size_t from = i;
+        while (i < word.size() && word[i] >= '0' && word[i] <= '9') {
+            ++i;
+        }
+        return i - from;
+    };
+    if (i < word.size() && (word[i] == '+' || word[i] == '-')) {
+        ++i;
+    }
+    std::size_t mantissa = digits();
+    if (i < word.size() && word[i] == '.') {
+        ++i;
+        mantissa += digits();
+    }
+    if (mantissa == 0) {
+        return false;
+    }
+    if (i < word.size() && (word[i] == 'e' || word[i] == 'E')) {
+        ++i;
+        if (i < word.size() && (word[i] == '+' || word[i] == '-')) {
+            ++i;
+        }
+        if (digits() == 0) {
+            return false;
+        }
+    }
+    return i == word.size();
+}
+
 bool Axis(std::string_view word, std::int32_t& out) {
+    if (!Decimal(word)) {
+        return false;
+    }
     const std::string s(word);
     char* end = nullptr;
     const double v = std::strtod(s.c_str(), &end);
@@ -134,6 +190,9 @@ bool Keys(std::string_view word, Step& step, std::string& bad) {
 }
 
 bool Number(std::string_view word, float& out) {
+    if (!Decimal(word)) {
+        return false;
+    }
     const std::string s(word);
     char* end = nullptr;
     const double v = std::strtod(s.c_str(), &end);
@@ -520,6 +579,15 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             }
             step.kind = Kind::mark;
             step.mark = std::string(w[1]);
+        } else if (cmd == "AWAIT") {
+            // tools/autotest/hookshot.py's own step (row 325): it reads the game's log until a new line matches, the
+            // module is never asked anything for it (never in the commands file). One scenario grammar for both
+            // readers: its shape is checked here and it makes no module step (test_hookshot.py checks that every
+            // verb the runner reads is one of this parser's).
+            if (w.size() < 3 || !RunnerTicks(w[1])) {
+                return fail("want: await TICKS REGEX (the runner's own step)");
+            }
+            continue;
         } else {
             return fail("unknown command " + std::string(w[0]));
         }

@@ -25,6 +25,7 @@ Pa_Settings_00-Pa_Button_04-T_Btn_00 = 體感
 [LayoutMsg/CharacterMenu_00.msbt]
 T_Title_00 = 角色
 T_Custom_00 = 自訂
+T_Note_00 = 此角色頁面來自 Snail 的 OoT Character Select。\n下載他的模組即可使用其他可玩角色。
 
 [LayoutMsg/CharacterCustomize_00.msbt]
 T_Head_00 = 自訂

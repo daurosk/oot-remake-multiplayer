@@ -478,6 +478,7 @@ TEST_CASE("relay: --relay-max-per-address 9 lets 9 hosts in from one address, th
       }
     }
     CHECK(in == (raised ? 9u : 2u));
+    CHECK(config.lists_per_window == (raised ? 108u : 30u));
     CHECK(relay.sessions() == in);
   }
 }

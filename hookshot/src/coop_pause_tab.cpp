@@ -825,6 +825,13 @@ std::vector<float> TabRowX(float first, float step, int game, const std::vector<
     return x;
 }
 
+bool LayoutLookAgain(bool known, std::uint64_t known_screen, int known_state, std::uint64_t screen, int state) {
+    if (!known || known_screen != screen) return true;
+    const auto open = [](int s) { return s == 1 || s == 2; };
+    if (state == 1 && known_state != 1) return true;   // (an opening: maybe another screen at this place)
+    return open(state) && !open(known_state);          // (open again after closing or closed)
+}
+
 HopStep CharactersHopNext(CharactersHop& h, bool ours, bool minus_open, int lit, std::uint64_t now_ms) {
     if (!minus_open) return HopStep::kGiveUp;   // (not the open screen any more: not one tap more)
     if (h.started_ms == 0) h.started_ms = now_ms;

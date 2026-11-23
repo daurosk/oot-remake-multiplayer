@@ -635,7 +635,9 @@ one turn rule; it now also waits for the boss's own attack edge, read in the own
   over; no rally ever reached a stun. The ball and his answer to it (the volley, or the stun of a rally won) are one
   attack. So the owner's walk keeps the boss's `attacking` on while a rally ball of its own (a boss ball a sword sends
   back: Ganondorf's `_Bullet_LightBall` and `_Bullet_ChargeLightBall`, Phantom Ganon's `_Bullet_LightBall`) is in
-  that walk, and the edge comes when the ball is gone (it hit a Link or a wall; sent back into him it ends in his
+  that walk's actor list (read in `Collect` and handed to the sync, `Sync::SetRallyMakers`: a shot is no shared
+  object, so it is never in the walk's shared list; the first build read that list and the hold never came on, run
+  20261123-045939, where no turn came only because the other player was still loading), and the edge comes when the ball is gone (it hit a Link or a wall; sent back into him it ends in his
   stun, which holds the turn anyway). Logged once a hold: `<boss>: its own rally ball flies here: its attack goes on,
   no boss turn (row 211)`. Every other boss shot checked (the kShots / kSplit tables): their makers never answer
   them (Phantom Ganon's bolt and shockwaves, Ganondorf's shockwave, thunder and spread, Ganon's shots, King Dodongo's
@@ -654,7 +656,8 @@ one turn rule; it now also waits for the boss's own attack edge, read in the own
   `bosses: ours sent` line: `N answered a busy slot, M of them asked again next frame`.
 - *The new owner goes on (`CoopBossNative::PlanMadeOurs`).* Handed over between moves, the copy's own brain asked the
   move its body runs: nothing is asked again, its AI goes on from that phase and move. Mid-move (a forced hand-over:
-  owner downed or gone) the row 178 start-over or the row 149 re-choice, as before.
+  owner downed or gone, a stun of the copy): an attack starts over (row 178); a move that is no attack (a walk, a
+  turn, a reaction's tail) never does: its AI chooses again from its body (row 149's re-choice; row 325 below).
 - *Every boss fights the Player only* while turns are on (`LICHII_COOP_BOSS_TURNS`, on unless "0";
   `Table::PlayerOnlyBoss`): a boss whose perception picked a puppet gets no attack permission, never attacks, so never
   reaches an attack end. Each game's boss fights its own Link; the turns bring it to each player.
@@ -868,3 +871,34 @@ Phase4_St with no crash, and the host's log shows `boss part kills to its Life s
 3. Whether the force skip of a boss intro leaves the boss in its fight state (the graphs use it for going back to the title).
 4. Whether a moved player's game starts the intro itself, and whether the outro is the first event after the fight (an event in the fight is now checked against the boss's life, step 4; whether the remake removes or zeroes a dead boss actor is not checked).
 5. Whether a boss door's own event (the boss key, the door opening) counts as the intro: it starts before Link is inside the circle, so it should not.
+
+## King Dodongo rolls forever in the lava pit (tracker row 325, GitHub #325, 0.11.11)
+
+**Seen.** IlJokeslI, 0.11.11: King Dodongo stuck rolling mid-arena, the fight could not go on. Reproduced in
+kd-roll-hold-325 (runs 20261123-035842, -043946): KD in `Rolling_Loop` with his place frozen inside the centre lava
+pit (y 72.53, the arena floor 73.4), `ours held 'Rolling_Loop' ... (1/2/3 of 3)` and still rolling.
+
+**Why (root cause).** A forced hand-over mid-move started the move over (row 178) also when it was no attack. Run
+-043946: his turn after a roll (verb 104), started over, became a new roll in his old facing that took him along the
+far wall; his walk (verb 1), started over, ended at once at mid-wall; from there his fire and his roll aimed at Link
+went across the pit, and a roll inside the pit never reaches its end (no wall to hit; the row 149 re-choice does not
+end it). With one game in the session (kd-pit-solo-325, run -051747) every roll followed the walls and ended (18 of
+18). Row 178's start-over is needed for an attack (Phantom Ganon's rush, else lost); a walk or a turn is the AI's own
+placing between attacks and started over from where the copy stands it leaves the boss's own cycle.
+
+**Now** (module only, `CoopBossNative::PlanMadeOurs`). Made ours mid-move in a move that is no attack (its game's
+`addr::IsAttack`, read): its own AI goes on if it asked that move itself, else its brain chooses again (row 149's
+forced brain verb), nothing started over. Log: `made ours mid-move (verb V, no attack): its AI chooses again from its
+body, nothing started over (row 325)`. An attack, or an unread one, starts over as before.
+
+**Cases sharing the cause.** One rule for every boss and mid-boss on the native table (Gohma, King Dodongo,
+Barinade, Phantom Ganon, Volvagia, Morpha, Bongo Bongo, Twinrova, Ganondorf, Ganon and the mid-bosses): any move
+whose action verb is no attack in the new owner's game, e.g. KD's walk (verb 1) and after-roll turn (verb 104), and a
+reaction's tail such as Phantom Ganon's Run (verb 40) after SmallDamage (the same start-over left him running,
+runs 20261120-180245/-184021; the attack-sequence bit already keeps most of it an attack). Not changed: attacks
+(row 178), an unread attack bit, the row 169 own-stun time. Solo or co-op idle: nothing handed over, nothing changed.
+
+**Tests.** `boss_native_test` (row 325: PlanMadeOurs cases; a copy made ours in a turn with its own AI elsewhere gets
+a brain re-choice, mid-attack still the start-over). **Not proven in game.** Check: kd-roll-hold-325 again: no
+`made ours mid-move: its move (slot 0 verb 1|104) starts over`, the row 325 line instead; KD's y stays 73.2-73.5
+(no `diag 325` / roll centre at y 75.03) and every roll ends; screenshots on both games.

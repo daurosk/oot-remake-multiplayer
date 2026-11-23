@@ -1011,6 +1011,109 @@ class DropTest(unittest.TestCase):
                 hs.parse(bad)
 
 
+class AwaitTest(unittest.TestCase):
+    """Row 325: `await TICKS REGEX`, until a new line of the game's own log matches (the runner reads it, no module)."""
+
+    LINE = "[hos Presentation Thread] coop: objects: anim Enemy_DungeonBoss_Dodongo 0x1050 'Rolling_Loop'"
+    RX = r"anim Enemy_DungeonBoss_Dodongo \S+ 'Rolling_Loop'$"
+
+    def test_parses_the_rest_of_the_line_as_the_regex(self):
+        steps = hs.parse("await 600 %s   # a comment\n" % self.RX)
+        self.assertEqual((steps[0].kind, steps[0].ticks, steps[0].name), ("await", 600, self.RX))
+        self.assertNotIn("await", hs.MODULE_ONLY)   # the runner's own step: plays on any module
+        for bad in ("await\n", "await 600\n", "await x foo\n", "await -1 foo\n", "await 60 (\n"):
+            with self.assertRaises(hs.ScriptError):
+                hs.parse(bad)
+
+    def test_waits_for_a_new_matching_line_only(self):
+        game = FakeGame()
+        text = ["coop: hello", self.LINE + "\r"]   # an old match (and a CRLF log) does not count
+        polls = []
+
+        def read_log():
+            polls.append(game.clock())
+            if len(polls) == 6:
+                text.append("coop: objects: anim Enemy_DungeonBoss_Dodongo 0x1050 'Rolling_End' (ours)")
+            if len(polls) == 9:
+                text.append(self.LINE)
+            return "\n".join(text)
+
+        _, log, shots, _, end = play("mark a\nawait 600 %s\nmark b\n" % self.RX, game, read_log=read_log)
+        seen = [ln for ln in log.lines if ln.startswith("coop: test await seen")]
+        self.assertEqual(len(seen), 1, log.lines)
+        self.assertTrue(seen[0].endswith(self.LINE), seen)
+        self.assertEqual(shots, ["a", "b"])
+        self.assertLess(end - polls[0], 600 / hs.TICKS)   # went on at the line, not at the step's end
+
+    def test_times_out_and_goes_on(self):
+        game = FakeGame()
+        _, log, shots, _, end = play("await 120 %s\nmark after\n" % self.RX, game, read_log=lambda: self.LINE)
+        self.assertTrue(any(ln.startswith("coop: test await timed out") for ln in log.lines), log.lines)
+        self.assertEqual(shots, ["after"])
+
+    def test_skipped_without_a_log(self):
+        _, log, shots, _, _ = play("await 120 foo\nmark after\n")
+        self.assertTrue(any(ln.startswith("coop: test await skipped") for ln in log.lines), log.lines)
+        self.assertEqual(shots, ["after"])
+
+
+class GrammarTest(unittest.TestCase):
+    """Row 325 review: one scenario grammar for both readers. The same lists are in tests/lichii/testinput_test.cpp
+    ('testinput: the runner's grammar'): every line here is taken by both parsers or refused by both."""
+
+    TAKEN = ("wait 1", "wait 36000", "wait 0007", "hold A 36000", "press A 1", "stick -1 +1 5", "stick .5 -0.5 5",
+             "toward 1 2 36000", "goto 1.5 -2 0.2 600", "goto .5 5. 1", "goto 1e3 -1E-2", "goto 1000000 -1000000",
+             "await 0 x", "await 99999999999 x", "hit X 80", "drop X 500", "hurt 1", "setflag F -2147483648",
+             "setflag F 2147483647", "setflag F 007")
+    REFUSED = ("wait 0", "wait 36001", "wait +5", "wait -0", "wait 1_0", "wait 0000000001", "hold A 0", "press A 0",
+               "stick 0 0 0", "toward 1 2 0", "toward 1 2 36001", "goto 1 2 1 0", "await -1 x", "await +1 x",
+               "await 1_0 x", "goto 0x10 2", "goto 1_0 2", "goto inf 2", "goto nan 2", "goto 1000001 2", "goto 1e7 2",
+               "goto . 2", "goto 1e 2", "stick 0x1 0 5", "hit X 0", "hit X 81", "hit X ²", "drop X 501",
+               "hurt 81", "hurt ³", "setflag F 2147483648", "setflag F -2147483649", "setflag F --5",
+               "setflag F +5")
+
+    def test_taken_by_the_runner(self):
+        for line in self.TAKEN:
+            with self.subTest(line=line):
+                hs.parse(line + "\nmark z\n")
+
+    def test_refused_by_the_runner_as_the_line_s_error(self):
+        for line in self.REFUSED:
+            with self.subTest(line=line):
+                with self.assertRaises(hs.ScriptError) as e:
+                    hs.parse(line + "\nmark z\n")
+                self.assertIn("line 1:", str(e.exception))
+
+
+class ScenarioFilesTest(unittest.TestCase):
+    """Row 325's proof pair parses (await, stun, event steps)."""
+
+    def test_kd_roll_hold_325_parses(self):
+        here = os.path.join(HERE, "..", "scenarios")
+        for x in ("A", "B"):
+            steps = hs.parse(hs.read_script(os.path.join(here, "kd-roll-hold-325.%s.txt" % x)))
+            kinds = [s.kind for s in steps]
+            self.assertIn("await", kinds)
+            self.assertIn("stun", kinds)
+            self.assertIn("event", kinds)
+
+    def test_every_runner_verb_is_the_modules(self):
+        # Row 325 review: the module's own parser (lichii/hook/coop_testinput.cpp Parse) reads every scenario too
+        # (testinput_test 'every autotest scenario script parses', and the emulator played them whole), so a verb
+        # only this runner plays (await) must still be one of its verbs, or that test goes red on a scenario using it.
+        import re
+        with open(os.path.join(HERE, "..", "hookshot.py"), encoding="utf-8") as f:
+            runner = f.read()
+        with open(os.path.join(HERE, "..", "..", "..", "lichii", "hook", "coop_testinput.cpp"), encoding="utf-8") as f:
+            module = set(re.findall(r'cmd == "([A-Z]+)"', f.read()))
+        verbs = set(re.findall(r'cmd == "([A-Z]+)"', runner))
+        for group in re.findall(r'cmd in \(([^)]*)\)', runner):
+            verbs.update(re.findall(r'"([A-Z]+)"', group))
+        self.assertIn("AWAIT", verbs)
+        self.assertGreater(len(verbs), 20)
+        self.assertEqual(sorted(verbs - module), [], "verbs hookshot.py reads that coop_testinput.cpp's Parse does not")
+
+
 class PackStartTest(unittest.TestCase):
     """Row 265 (0.11.12): a game this file starts gets the kit's start of the pack (play.ps1 Use-KitPuppetPack, then
     Invoke-KitSizeTableMerge): your own tunic files first, then the merge, so another mod's Link model (Character

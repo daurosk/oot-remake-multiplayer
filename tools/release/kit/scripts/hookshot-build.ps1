@@ -215,6 +215,9 @@ $Out = [System.IO.Path]::GetFullPath($Out)
 # Character Select mod's code, out with it: kit-paths.ps1 Sync-KitCharselNativePatch; the pack step writes the same).
 $charselSync = Sync-KitCharselNativePatch $kit (Join-Path $Out 'mods\contents\0400486024DEC000\coop-puppet')
 if ($charselSync -eq 'in') { Write-Host '  Characters tab: co-op''s own (Link) goes into the game''s build' }
+elseif ($charselSync -eq 'out' -and (Test-KitCharselNativeParked (Join-Path $Out 'mods\contents\0400486024DEC000\coop-puppet'))) {
+    Write-Host '  Characters tab: off this start with the menus kept aside (the size table the game reads cannot hold them), its code too'
+}
 elseif ($charselSync -eq 'out') { Write-Host '  Characters tab: Character Select''s own (his mod is in the mods)' }
 $gameWant = $stamp + (Get-KitExefsStampLine $Out)
 $python = Join-Path $tools 'python\python.exe'

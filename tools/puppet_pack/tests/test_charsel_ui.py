@@ -228,6 +228,27 @@ class PackStepTest(unittest.TestCase):
                     if name:
                         self.assertTrue(os.path.exists(os.path.join(cu.DATA, name)), name)
 
+    def test_data_hash_pinned(self):
+        """A change of charsel/data alone must change charsel_ui.py (the tool's hash: packs are made again)."""
+        if os.path.exists(cu.MANIFEST):
+            self.assertEqual(cu.data_hash(), cu.DATA_SHA256,
+                             "charsel/data changed: set charsel_ui.DATA_SHA256 to %s" % cu.data_hash())
+        d = os.path.join(self.tmp.name, "hd")
+        os.makedirs(d)
+        with open(os.path.join(d, "a.cdelta"), "wb") as f:
+            f.write(b"x")
+        one = cu.data_hash(d)
+        with open(os.path.join(d, "a.cdelta"), "wb") as f:
+            f.write(b"y")
+        self.assertNotEqual(cu.data_hash(d), one)
+
+    def test_shipped_strings_have_the_page_note(self):
+        """The page's line crediting Snail (make_data.py stage 2's T_Note_00) in English, with its line break."""
+        en = ui_pack.load_strings("USen")
+        note = en["LayoutMsg/CharacterMenu_00.msbt"]["T_Note_00"]
+        self.assertIn("Snail", note)
+        self.assertIn("\n", note)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -68,6 +68,12 @@ class FakeGames:
         self.calls.append(("kill", x, keep_log))
         self.running[x] = False
 
+    def freeze(self, x):
+        self.calls.append(("freeze", x))
+
+    def thaw(self, x):
+        self.calls.append(("thaw", x))
+
     def server_stop(self):
         self.calls.append(("server", "stop"))
 
@@ -114,9 +120,13 @@ try B refused
 expect both A=1 B=0
 shot here
 lines keep-number-A A max=0 coop: welcomed as player [2-4] on
+freeze B
+thaw B
 """)
         self.assertEqual([s.verb for s in steps], ["start", "load", "play", "close", "kill", "server", "sleep",
-                                                   "password", "password", "try", "expect", "shot", "lines"])
+                                                   "password", "password", "try", "expect", "shot", "lines",
+                                                   "freeze", "thaw"])
+        self.assertEqual(steps[13].args, ["B"])
         self.assertEqual(steps[2].args, [("A", "stray-out.A.txt"), ("B", "x.B.txt")])
         self.assertEqual(steps[6].args, [2.5])
         self.assertEqual(steps[7].args, ["B", "zelda-1"])
@@ -126,7 +136,8 @@ lines keep-number-A A max=0 coop: welcomed as player [2-4] on
         self.assertEqual(steps[12].pattern, "coop: welcomed as player [2-4] on")
 
     def test_errors(self):
-        for text in ("start", "start C", "play A", "close A B", "server restart", "sleep x", "password B",
+        for text in ("start", "start C", "play A", "close A B", "freeze", "thaw C", "freeze A B", "server restart",
+                     "sleep x", "password B",
                      "try B maybe", "expect x", "expect x C=1", "lines x A most=1 r", "dance A"):
             with self.assertRaises(hs.StepsError, msg=text):
                 hs.parse_steps(text)
@@ -274,6 +285,13 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(verbs.count("load"), 3)
         self.assertTrue(any(c[0] == "play" and ("A", "stray-out.A.txt") in c[1] for c in self.g.calls))
         self.assertEqual(sum(1 for line in self.counts() if line.startswith(("PASS", "FAIL", "UNPROVEN"))), 12)  # 10 expect, 2 lines
+
+
+    def test_freeze_and_thaw_reach_the_game_in_order(self):
+        self.r.run(hs.parse_steps("freeze B\nserver start\nthaw B\n"))
+        calls = [c for c in self.g.calls if c[0] in ("freeze", "server", "thaw")]
+        self.assertEqual(calls, [("freeze", "B"), ("server", "start"), ("thaw", "B")])
+        self.assertEqual(self.r.fails, 0)
 
 
 class DryRunTest(unittest.TestCase):

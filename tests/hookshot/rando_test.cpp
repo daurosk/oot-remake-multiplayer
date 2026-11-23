@@ -272,7 +272,7 @@ TEST_CASE("rando: OOTRR's command lines") {
 
 TEST_CASE("rando: switched on, a seed is made, built once and switched on first, and a restart is asked for") {
     World w;
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -316,7 +316,7 @@ TEST_CASE("rando: the seed is built beside every other mod's size table, the pup
     Put(w.mods / "randomizer-old" / table, "old seed");
     Put(w.mods / "randomizer-old" / kSeedFile, "old\n");
     Put(w.mods / "bb" / table, "bb");
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     REQUIRE(loader.SetOn("bb", false));
     Rando rando(loader, w.Hooks());
@@ -337,7 +337,7 @@ TEST_CASE("rando: a failed build leaves no stage and no seed folder") {
     World w;
     Put(w.mods / "contents" / "0400486024DEC000" / "coop-puppet" / "romfs" / "System" / "Resource" / "T.rsizetable.zs", "pack");
     w.fail_at = 1;  // the build
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -353,7 +353,7 @@ TEST_CASE("rando: a failed build is said once and not tried again until the sett
     World w;
     w.fail_at = 1;
     w.fail_output = "This build cannot apply these settings yet: bridge is dungeons\n";
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     std::vector<std::string> log;
     auto hooks = w.Hooks();
@@ -391,7 +391,7 @@ TEST_CASE("rando: a failed build is said once and not tried again until the sett
 
 TEST_CASE("rando: without OOTRR or the game folder it says what to set") {
     World w;
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -404,7 +404,7 @@ TEST_CASE("rando: without OOTRR or the game folder it says what to set") {
 
 TEST_CASE("rando: a guest builds the host's seed, and its own seed is not made") {
     World w;
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -422,7 +422,7 @@ TEST_CASE("rando: a guest builds the host's seed, and its own seed is not made")
 
 TEST_CASE("rando: off by default - a fresh mods folder builds nothing and switches no seed on") {
     World w;
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -440,7 +440,7 @@ TEST_CASE("rando: off by default - a seed left from an older kit is switched off
     Put(w.mods / "randomizer-OLD1" / kSeedFile, "OLD1\n");
     Put(w.mods / "randomizer-OLD1" / kPresetFile, "default\n");  // our kit built it
     Put(w.mods / "randomizer-OLD1" / "romfs" / "System" / "a.bin", "seeded");
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     REQUIRE(On(loader, "randomizer-OLD1"));  // a folder dropped in is on, as every mod
     Rando rando(loader, w.Hooks());
@@ -457,7 +457,7 @@ TEST_CASE("rando: row 145 - a seed put in by hand is never switched off behind t
     Put(w.mods / "randomizer-insanity" / kSeedFile, "INSANE\n");
     Put(w.mods / "randomizer-insanity" / "romfs" / "System" / "a.bin", "seeded");
     {
-        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
         loader.Start();
         REQUIRE(On(loader, "randomizer-insanity"));
         Rando rando(loader, w.Hooks());
@@ -477,7 +477,7 @@ TEST_CASE("rando: row 145 - a seed put in by hand is never switched off behind t
         CHECK_FALSE(On(loader, "randomizer-MINE2"));
     }
     {   // The next start, our switch still 0: the player switches the hand seed on in the Mods tab; it stays on.
-        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
         loader.Start();
         REQUIRE(loader.SetOn("randomizer-insanity", true));
         Rando rando(loader, w.Hooks());
@@ -543,7 +543,7 @@ TEST_CASE("rando: row 145 - a guest's own seed put in by hand is back on after t
     World w;
     Put(w.mods / "randomizer-hand" / kSeedFile, "HAND\n");
     Put(w.mods / "randomizer-hand" / "romfs" / "System" / "a.bin", "seeded");
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -563,7 +563,7 @@ TEST_CASE("rando: row 145 - a guest's own seed put in by hand is back on after t
 
 TEST_CASE("rando: switching it on or off says to restart, in the chat and in the tab") {
     World w;
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -588,7 +588,7 @@ TEST_CASE("rando: switching it on or off says to restart, in the chat and in the
 
 TEST_CASE("rando: a host's switch reaching a guest says to restart") {
     World w;
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -601,7 +601,7 @@ TEST_CASE("rando: a host's switch reaching a guest says to restart") {
 
 TEST_CASE("rando: a guest of a host without the randomizer plays without it") {
     World w;
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -627,7 +627,7 @@ TEST_CASE("rando: a guest of a host without the randomizer plays without it") {
 TEST_CASE("rando: a guest restarted on the host's seed is not told to restart again") {
     World w;
     {   // Run 1: joins a host with the randomizer on; the seed is built and the guest is told to restart.
-        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
@@ -646,7 +646,7 @@ TEST_CASE("rando: a guest restarted on the host's seed is not told to restart ag
         text += line;
         Put(w.mods / HOS_COOP_MODS_APPLIED_FILE, text);
     }
-    CoopMods::Loader loader(w.mods, {nullptr, 2, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 2, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();  // before the join: the host's values were kept as the guest's own
@@ -678,7 +678,7 @@ TEST_CASE("rando: the kit's own OOTRR and game files are found with no setting")
     CHECK(FindGameFolder("", w.base / "bin") == w.game);  // the program in <game>/bin
     CHECK_FALSE(FindGameFolder("", w.base / "a" / "b"));
     CHECK_FALSE(FindGameFolder(CoopMods::ToUtf8(w.base / "elsewhere"), w.base));  // a wrong setting is not passed over
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -714,7 +714,7 @@ TEST_CASE("rando: without the kit's OOTRR or game files it says what to do") {
     if (std::getenv("OOT_ROMFS") != nullptr) return;
     World w;
     fs::remove_all(w.game);
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -735,7 +735,7 @@ TEST_CASE("rando: game files of another version than 1.1.1 say what to do") {
     World w;
     w.fail_at = 1;
     w.fail_output = "error: the game folder has no System/Resource/ResourceSizeTable.Product.112.rsizetable.zs\n";
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -754,7 +754,7 @@ TEST_CASE("rando: the line a guest sends fits a chat line") {
 
 TEST_CASE("rando: a guest that cannot build the host's seed tells the others, once") {
     World w;  // no OOTRR set and none in the kit's place
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     std::mutex told_mutex;
     std::vector<std::string> told;
@@ -803,7 +803,7 @@ TEST_CASE("rando: a host or a player alone whose build fails tells nobody") {
         ++told;
         return true;
     };
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, hooks);
     rando.Start();
@@ -846,7 +846,7 @@ TEST_CASE("rando: the line a guest tells the others never holds a local path or 
     Told told;
     auto hooks = w.Hooks();
     hooks.tell_others = told.Hook();
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, hooks);
     rando.Start();
@@ -883,7 +883,7 @@ TEST_CASE("rando: a line not sent yet is dropped when the host's seed changes or
     told.connected = false;
     auto hooks = w.Hooks();
     hooks.tell_others = told.Hook();
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, hooks);
     rando.Start();
@@ -969,7 +969,7 @@ TEST_CASE("rando: only the presets this OOTRR can make are offered, a bad one go
     w.probe = true;
     w.bad_presets = {"full_shuffle"};
     {
-        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
@@ -992,7 +992,7 @@ TEST_CASE("rando: only the presets this OOTRR can make are offered, a bad one go
     // The next run of the game, the same OOTRR: not tried again.
     const std::size_t before = w.runs.size();
     {
-        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
@@ -1009,7 +1009,7 @@ TEST_CASE("rando: only the presets this OOTRR can make are offered, a bad one go
     Put(w.ootrr, "MZ new");
     const std::size_t before2 = w.runs.size();
     {
-        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
@@ -1064,7 +1064,7 @@ TEST_CASE("rando: a preset whose try was stopped is offered, not cached, and tri
     w.stopped_presets = {"keysanity"};
     w.bad_presets = {"full_shuffle"};
     {
-        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
@@ -1087,7 +1087,7 @@ TEST_CASE("rando: a preset whose try was stopped is offered, not cached, and tri
     w.stopped_presets.clear();
     const std::size_t shuffles = Generates(w, "full_shuffle");
     {
-        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
@@ -1176,7 +1176,7 @@ TEST_CASE("rando: a puppet pack made after the seed: the seed's size table is ma
     // only the seed's size table, built before the pack, so the puppets' files have no sizes)
     World w;
     {   // Run 1: the seed is built while there is no pack yet.
-        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
@@ -1193,7 +1193,7 @@ TEST_CASE("rando: a puppet pack made after the seed: the seed's size table is ma
     Put(w.mods / "randomizer-PACK1" / "romfs" / "System" / "a.bin", "the seed as played");
     PlaysSeed(w, "randomizer-PACK1", 2);
     {
-        CoopMods::Loader loader(w.mods, {nullptr, 2, nullptr});
+        CoopMods::Loader loader(w.mods, {nullptr, 2, nullptr, nullptr});
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
@@ -1212,7 +1212,7 @@ TEST_CASE("rando: a puppet pack made after the seed: the seed's size table is ma
     }
     {   // Run 3: built beside these tables: nothing to do.
         PlaysSeed(w, "randomizer-PACK1", 3);
-        CoopMods::Loader loader(w.mods, {nullptr, 3, nullptr});
+        CoopMods::Loader loader(w.mods, {nullptr, 3, nullptr, nullptr});
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
@@ -1227,7 +1227,7 @@ TEST_CASE("rando: a seed from before the stamp whose table is already right is n
     World w;
     Put(w.mods / "contents" / "0400486024DEC000" / "coop-puppet" / kTable, "puppet");
     {
-        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
@@ -1238,7 +1238,7 @@ TEST_CASE("rando: a seed from before the stamp whose table is already right is n
     }
     fs::remove(w.mods / "randomizer-OLD1" / kTablesFile);  // as a 0.11.0 seed
     PlaysSeed(w, "randomizer-OLD1", 2);
-    CoopMods::Loader loader(w.mods, {nullptr, 2, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 2, nullptr, nullptr});
     loader.Start();
     std::mutex log_mutex;
     std::vector<std::string> log;
@@ -1272,7 +1272,7 @@ TEST_CASE("rando: the restart line comes again when joining and every few minute
         const std::lock_guard lock(clock_mutex);
         return clock;
     };
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, hooks);
     rando.Start();
@@ -1304,7 +1304,7 @@ TEST_CASE("rando: the restart line comes again when joining and every few minute
 
 TEST_CASE("rando: a host's failed build is said in its own chat") {
     World w;
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -1320,7 +1320,7 @@ TEST_CASE("rando: a host's failed build is said in its own chat") {
 TEST_CASE("rando: a seed that cannot be made again for the puppets is kept, and the chat says why") {
     World w;
     {
-        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
@@ -1336,7 +1336,7 @@ TEST_CASE("rando: a seed that cannot be made again for the puppets is kept, and 
     Told told;
     auto hooks = w.Hooks();
     hooks.tell_others = told.Hook();
-    CoopMods::Loader loader(w.mods, {nullptr, 2, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 2, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, hooks);
     rando.Start();
@@ -1415,7 +1415,7 @@ TEST_CASE("rando: a run that reads an outside mod's size table holds the pack an
     World w;
     Put(w.mods / "ootrr-site" / kTable, "site, without the puppets");
     PlaysSeed(w, "ootrr-site", 7);
-    CoopMods::Loader loader(w.mods, {nullptr, 7, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 7, nullptr, nullptr});
     loader.Start();
     std::mutex told_mutex;
     std::vector<std::string> told;
@@ -1542,7 +1542,7 @@ TEST_CASE("rando: a run that reads a kit-merged outside table makes the puppets 
     Put(w.mods / kPackFolder / kTable, "puppet");
     MarkMerged(w.mods, "ootrr-site", "site + puppet");
     PlaysSeed(w, "ootrr-site", 7);
-    CoopMods::Loader loader(w.mods, {nullptr, 7, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 7, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -1556,7 +1556,7 @@ TEST_CASE("rando: a run that reads our own seed's size table is not held for an 
     Put(w.mods / "ootrr-site" / kTable, "site");
     PlaysSeed(w, "contents/0400486024DEC000/coop-puppet", 8);  // only the pack indexed: the site mod came later
     Put(w.mods / "contents" / "0400486024DEC000" / "coop-puppet" / kTable, "puppet");
-    CoopMods::Loader loader(w.mods, {nullptr, 8, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 8, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -1587,7 +1587,7 @@ TEST_CASE("rando: a settings string from OOTRR's page is known, named short, and
 
 TEST_CASE("rando: the host's settings string is built in place of the preset, in the guest's game too") {
     World w;
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -1612,7 +1612,7 @@ TEST_CASE("rando: the host's settings string is built in place of the preset, in
 
 TEST_CASE("rando: a Settings string that is not one is said once and the preset is used") {
     World w;
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -1636,7 +1636,7 @@ TEST_CASE("rando: a control mod written before the Settings string gets it at th
     old.erase(from, old.find('\n', old.find("\"help\"", from)) + 1 - from);
     REQUIRE(old.find("\"key\": \"settings\"") == std::string::npos);
     Put(w.mods / kFolder / "mod.json", old);
-    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -1688,7 +1688,7 @@ TEST_CASE("rando: every built seed carries OOTRR's spoiler.txt and its settings.
     World w;
     const std::string folder = "randomizer-SP1";
     {
-        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
@@ -1708,7 +1708,7 @@ TEST_CASE("rando: every built seed carries OOTRR's spoiler.txt and its settings.
     fs::remove(w.mods / kFolder / (folder + ".spoiler.txt"));
     PlaysSeed(w, folder, 2);
     {
-        CoopMods::Loader loader(w.mods, {nullptr, 2, nullptr});
+        CoopMods::Loader loader(w.mods, {nullptr, 2, nullptr, nullptr});
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
@@ -1723,7 +1723,7 @@ TEST_CASE("rando: every built seed carries OOTRR's spoiler.txt and its settings.
     // And not again.
     PlaysSeed(w, folder, 3);
     {
-        CoopMods::Loader loader(w.mods, {nullptr, 3, nullptr});
+        CoopMods::Loader loader(w.mods, {nullptr, 3, nullptr, nullptr});
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
@@ -1738,7 +1738,7 @@ TEST_CASE("rando: a settings string seed's settings.txt is that string, and an O
     const std::string s = "OOTRR1-EYAQCTABAHIHE";
     const std::string folder = FolderFor("SP2", s);
     {
-        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr, nullptr});
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
@@ -1753,7 +1753,7 @@ TEST_CASE("rando: a settings string seed's settings.txt is that string, and an O
     }
     PlaysSeed(w, folder, 2);
     {
-        CoopMods::Loader loader(w.mods, {nullptr, 2, nullptr});
+        CoopMods::Loader loader(w.mods, {nullptr, 2, nullptr, nullptr});
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
@@ -1814,7 +1814,7 @@ TEST_CASE("rando: a run whose actor table lacks the pack's rows holds the pack a
     Put(w.mods / "randomizer-S1" / kActors, "game rows, the seed's changes");
     PlaysSeed(w, "randomizer-S1", 7);
     {
-        CoopMods::Loader loader(w.mods, {nullptr, 7, nullptr});
+        CoopMods::Loader loader(w.mods, {nullptr, 7, nullptr, nullptr});
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
@@ -1828,7 +1828,7 @@ TEST_CASE("rando: a run whose actor table lacks the pack's rows holds the pack a
     }
     MarkRows(w.mods, "randomizer-S1");
     {
-        CoopMods::Loader loader(w.mods, {nullptr, 7, nullptr});
+        CoopMods::Loader loader(w.mods, {nullptr, 7, nullptr, nullptr});
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
@@ -2042,7 +2042,7 @@ TEST_CASE("rando: a host playing a hand-put seed sends it once its files are has
     Put(w.mods / "randomizer-hand" / kSeedFile, "HAND\n");
     Put(w.mods / "randomizer-hand" / "romfs" / "System" / "a.bin", "seeded");
     PlaysSeed(w, "randomizer-hand", 8);
-    CoopMods::Loader loader(w.mods, {nullptr, 8, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 8, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -2062,7 +2062,7 @@ TEST_CASE("rando: a host playing its own built seed sends no hand-put seed") {
     Put(w.mods / "randomizer-MINE1" / kPresetFile, "default\n");
     Put(w.mods / "randomizer-MINE1" / "romfs" / "System" / "a.bin", "seeded");
     PlaysSeed(w, "randomizer-MINE1", 8);
-    CoopMods::Loader loader(w.mods, {nullptr, 8, nullptr});
+    CoopMods::Loader loader(w.mods, {nullptr, 8, nullptr, nullptr});
     loader.Start();
     Rando rando(loader, w.Hooks());
     rando.Start();
@@ -2084,7 +2084,7 @@ struct HandGuest {
         Put(w.mods / "randomizer-hand" / "romfs" / "System" / "a.bin", "seeded");
         Put(w.mods / "randomizer-mine" / kSeedFile, "MINE\n");
         Put(w.mods / "randomizer-mine" / "romfs" / "System" / "a.bin", "mine");
-        loader.emplace(w.mods, CoopMods::Loader::Hooks{nullptr, 1, nullptr});
+        loader.emplace(w.mods, CoopMods::Loader::Hooks{nullptr, 1, nullptr, nullptr});
         loader->Start();
         if (!on) REQUIRE(loader->SetOn("randomizer-hand", false));
         Rando::Hooks hooks = w.Hooks();

@@ -93,7 +93,24 @@ C.write_slink()
 archive = nxfmt.unzs(C.read_installed(ui.COMMON), ui.COMMON)
 page_layout = nxfmt.sarc_files(archive)[ui.LAYOUT + ".buil"]
 known = {n[:-5] for n, _, _ in nxfmt.sarc_entries(archive)}
+import uiedit
+# Co-op's line on the page (ours, C #67: credit to Snail and where his playable characters are): one text pane in his
+# picker's own container (it fades and hides with the page), a copy of its title, under the grid's first row (Link's
+# cell; the rows under it stay empty without his characters), centred on the grid, two lines.
+lay = layout.Layout(page_layout)
+ed = uiedit.Editor(lay)
+ed.validate()
+assert "N_Sandbox_00" in ed.names() and "T_Note_00" not in ed.names()
+note = ed.clone("T_Title_00", "T_Note_00")
+note.node.set("<2f", 0x1C, (ui.GRID_LEFT + ui.GRID_RIGHT) / 2, ui.PICK_TOP - ui.PICK_PITCH_Y - 110.0)
+note.node.set("<2f", 0x2C, ui.GRID_RIGHT - ui.GRID_LEFT, 130.0)
+uiedit.set_text(note, ref="*", font_size=40.0, h_align=1)
+ed.insert("N_Sandbox_00", [note])
+page_layout = layout.build(lay)
+uiedit.Editor(layout.Layout(page_layout)).validate()
 page_new, page_msgs = C.add_page_anims(page_layout)
+page_msgs["T_Note_00"] = ("This Characters tab is from OoT Character Select by Snail.\n"
+                          "Get his mod for the other playable characters.")
 ours, msgs = C.make_layout()
 C.check_layout(ours, msgs, known)
 C.write_files(page_new, ours, msgs, page_msgs)

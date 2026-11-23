@@ -129,6 +129,7 @@
 #include "coop_sites.h"
 #include "coop_svc.h"
 #include "coop_map_refresh.h"
+#include "coop_life_gauge.h"
 #include "coop_time.h"
 #include "coop_testinput.h"
 #include "coop_boundary.h"
@@ -682,6 +683,7 @@ public:
             c.x[1] = *kind;
             return c;
         });
+        AddLifeGaugeCaller();  // row 238: the HUD's hearts and magic show what co-op wrote (coop_life_gauge.h)
         if (live_events_) {
             {
                 // G1: the events this requester asks for (a held live event, a shared scene joined)
@@ -1135,6 +1137,7 @@ public:
         }
         const auto report = session_->frame(reading, hold ? &*hold : nullptr);
         CoopMapRefresh::TheRefresher().SetInPlay(reading.has_value());  // rows 63/76: no refresh off play (session)
+        CoopLifeGauge::TheRefresher().SetInPlay(reading.has_value());  // row 238: nor of the HUD gauges
         if (memory) {  // minimap-b: the current dungeon's map or compass going 1 -> 0, logged with its context
             WatchMapDrops(*memory, reading.has_value(),
                           reading ? reading->scene : coop::host::PlayerReader(*memory).read_scene(),
@@ -1646,6 +1649,12 @@ public:
         }
         if (game_store) {  // issue 88: what the session left in MaxLife (docs/items.md)
             const auto max_life = game_store->read(coop::protocol::FlagKey{0xfbe01da1u, 0});
+            {  // row 238: the HUD gauges' refresh waits (a little) until MaxLife and our Link's own max agree
+                const auto link = CoopObjects::OurLife();
+                CoopLifeGauge::TheRefresher().SetSettled(
+                    !max_life || max_life->kind != coop::protocol::FlagKind::int32 || !link ||
+                    static_cast<std::int32_t>(max_life->value) == link->max);
+            }
             // Row 218: our Link's hearts follow the group's maximum as we know it, not only the flag: when our game
             // wrote its own lower max back before the object walk raised Link (a container another player took),
             // the drop is ours alone and the flag stays low, and that container was lost to this player for good.
@@ -1674,6 +1683,9 @@ public:
             // higher max back.
             CoopObjects::SetMaxLifeLowerTo(session_ ? session_->held_lower(coop::protocol::FlagKey{0xfbe01da1u, 0})
                                                     : std::nullopt);
+            if (const auto seen = CoopObjects::TakeMaxLifeLowerDone(); seen && session_) {
+                session_->lowered_done(coop::protocol::FlagKey{0xfbe01da1u, 0}, *seen);  // row 238
+            }
             if (const auto to = CoopBoss::TakeMaxLifeWrite(); to && known) {
                 auto set = *max_life;
                 set.value = static_cast<std::uint32_t>(*to);
@@ -2155,6 +2167,90 @@ public:
     }
 
 private:
+    // Row 238 (coop_life_gauge.h): after co-op wrote life, max life or magic (any Int write of the flag setter, the
+    // object walk's writes to our Link), the game's own refresh action's work, in its order: the HUD found by its
+    // hash, then the heart gauge's refresh and the magic gauge's. Logs the heart gauge's own max before and after.
+    // LICHII_COOP_LIFE_GAUGE=0 turns it off.
+    void AddLifeGaugeCaller() {
+        if (EnvString("LICHII_COOP_LIFE_GAUGE") == "0") {
+            LOG_INFO(Core, "coop: life gauge refresh off (LICHII_COOP_LIFE_GAUGE=0)");
+            return;
+        }
+        coop::host::GameFlags::on_int_written([](std::uint32_t hash, std::int32_t) {
+            if (CoopLifeGauge::Shown(hash)) CoopLifeGauge::TheRefresher().Want(SteadyMs());
+        });
+        struct Step {
+            int at = 0;             // 0: nothing asked; 1: the HUD asked; 2: hearts refreshed; 3: magic refreshed
+            std::uint64_t hud = 0;  // the HUD object (this frame only)
+            std::int32_t max_before = -1;
+        };
+        CoopSvc::AddCaller(CoopCallerOrders::kLifeGauge, [this, s = Step{}](CoopPuppet::Guest& guest, bool after_call,
+                                                                              std::uint64_t result, std::uint64_t) mutable
+                                                             -> std::optional<CoopPuppet::Call> {
+            namespace lg = CoopLifeGauge::addr;
+            const auto u64_at = [&guest](std::uint64_t at) {
+                std::uint64_t v = 0;
+                return at != 0 && guest.Read(at, &v, sizeof v) ? v : 0;
+            };
+            const auto s32_at = [&guest](std::uint64_t at) {
+                std::int32_t v = -1;
+                return guest.Read(at, &v, sizeof v) ? v : -1;
+            };
+            CoopPuppet::Call c;
+            if (!after_call) {
+                // The last frame's calls ran out before this chain ended (CoopSvc::kCallsPerFrame): asked again.
+                if (s.at != 0) CoopLifeGauge::TheRefresher().Want(SteadyMs());
+                s = {};
+                if (base_ == 0 || !CoopLifeGauge::TheRefresher().Due(SteadyMs())) return std::nullopt;
+                const std::uint64_t registry = u64_at(u64_at(base_ + lg::kHudRegistry));
+                if (registry == 0) {
+                    LOG_INFO(Core, "coop: life gauge: no HUD registry now: not refreshed");
+                    return std::nullopt;
+                }
+                s.at = 1;
+                c.function = base_ + lg::kFindByHash;
+                c.x[0] = registry;
+                c.x[1] = lg::kHudHash;
+                return c;
+            }
+            if (s.at == 1) {
+                s.hud = result;
+                const std::uint64_t hearts = u64_at(s.hud + lg::kHudHearts);
+                if (s.hud == 0 || hearts == 0) {
+                    LOG_INFO(Core, "coop: life gauge: the HUD has no heart gauge now: not refreshed");
+                    s = {};
+                    return std::nullopt;
+                }
+                s.max_before = s32_at(hearts + lg::kGaugeMax);
+                s.at = 2;
+                c.function = base_ + lg::kHeartsRefresh;
+                c.x[0] = hearts;
+                return c;
+            }
+            if (s.at == 2) {
+                s.at = 3;
+                if (const std::uint64_t magic = u64_at(s.hud + lg::kHudMagic)) {
+                    c.function = base_ + lg::kMagicRefresh;
+                    c.x[0] = magic;
+                    return c;
+                }
+            }
+            if (s.at == 3) {
+                const std::uint64_t hearts = u64_at(s.hud + lg::kHudHearts);
+                float shown = 0.0f;
+                if (hearts == 0 || !guest.Read(hearts + lg::kGaugeShownMax, &shown, sizeof shown)) shown = -1.0f;
+                const auto link = CoopObjects::OurLife();
+                LOG_INFO(Core,
+                         "coop: life gauge: the game's refresh ran: HUD max {} -> {} (shown {}), life {}; our Link's "
+                         "life {} of {} (quarter hearts)",
+                         s.max_before, hearts ? s32_at(hearts + lg::kGaugeMax) : -1, shown,
+                         hearts ? s32_at(hearts + lg::kGaugeLife) : -1, link ? link->life : -1, link ? link->max : -1);
+            }
+            s = {};
+            return std::nullopt;
+        });
+    }
+
     std::optional<std::optional<std::uint32_t>> TakeColor() {
         std::lock_guard lock(color_mutex_);
         return std::exchange(color_change_, std::nullopt);
@@ -3658,6 +3754,8 @@ void LocalFrameOff(Core::System& system, bool writes) {
         WatchMapDrops(memory, facts.position.has_value(), scene, facts.position);
         KeepMapsAlone(memory, facts.position.has_value(), scene);
         CoopMapRefresh::TheRefresher().SetInPlay(facts.position.has_value());  // rows 63/76: no refresh off play (alone)
+        CoopLifeGauge::TheRefresher().SetInPlay(facts.position.has_value());  // row 238: nor of the HUD gauges
+        CoopLifeGauge::TheRefresher().SetSettled(true);  // (the flag is not read alone)
         static MendClocks mend_since_us{};
         if (facts.position.has_value()) {
             MendStory(memory, mend_since_us, solo_running_known.has_value() && !*solo_running_known);  // issue 84,

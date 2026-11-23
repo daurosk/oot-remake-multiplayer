@@ -47,6 +47,11 @@ void SetMaxLife(std::optional<std::int32_t> quarters);
 // life to that max), so the game stops writing the higher max back. Nothing: no hold (the usual case, and always
 // with co-op idle).
 void SetMaxLifeLowerTo(std::optional<std::int32_t> quarters);
+// Row 238: our Link's own max the walk saw at or under the lower-to value (by lowering it or because it was), once;
+// the flag watcher's hold waits for this, and only a value at or under ITS value counts, before it ends by its quiet
+// time, so a join's or a host's save's lower MaxLife reaches Link even when his component never wrote the higher max
+// back, and an answer for an earlier, higher hold does not end a later one's wait.
+std::optional<std::int32_t> TakeMaxLifeLowerDone();
 // Our Link's hearts filled to his maximum once, on his next read (another player took the boss's heart
 // container, whose pickup fills them: CoopBossScenes::Actions::refill). Any thread.
 void AskRefill();

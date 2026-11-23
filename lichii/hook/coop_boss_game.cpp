@@ -508,7 +508,11 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
     std::vector<std::string> dying;
     if (local.scene) {
         for (const auto& room : CoopBoss::Rooms()) {
-            if (room.scene == *local.scene && scenes.phase(room.index) >= CoopBossScenes::Director::Phase::outro) {
+            // enemies-dying-01111: also where the director's own area is not the room's dungeon scene (the boss
+            // rush's DodongoStage: King Dodongo's copy there was never named dying, and B replayed A's killing
+            // blow on it ~50 times, run 20261122-092813).
+            if (scenes.phase(room.index) >= CoopBossScenes::Director::Phase::outro &&
+                (room.scene == *local.scene || scenes.DeathBegunHere(room.index, here))) {
                 for (const auto body : CoopBoss::Bodies(room)) dying.emplace_back(body);
             }
         }

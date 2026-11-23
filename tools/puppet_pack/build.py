@@ -337,7 +337,8 @@ def charsel_native_wanted(mod_dir):
 def mod_list_off(mods_root, name):
     """The Mods tab's list (mods/coop-mods.list, "coop-mods 1") names `name` (its path under mods with '/') off: the
     first row for it, letters without case (as Longshot reads it). No list or no row: on (C #58: a mod switched off
-    loads no models, so its characters get no puppets)."""
+    loads no models, so its characters get no puppets), unless the list has the "default off" line (Original game,
+    hos_coop_mods.h): then a mod with no row is off too."""
     fold = lambda t: "".join(chr(ord(c) + 32) if "A" <= c <= "Z" else c for c in t.replace("\\", "/"))
     try:
         with open(os.path.join(mods_root, "coop-mods.list"), "rb") as f:
@@ -346,12 +347,14 @@ def mod_list_off(mods_root, name):
         return False
     if lines[0].rstrip("\r") != "coop-mods 1":
         return False
+    default_off = False
     for line in lines[1:]:
         line = line.rstrip("\r")
+        default_off = default_off or line == "default off"
         for state in ("on ", "off "):
             if line.startswith(state) and fold(line[len(state):]) == fold(name):
                 return state == "off "
-    return False
+    return default_off
 
 
 def find_characters(mod_dir, log=print):
@@ -2404,6 +2407,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "pause_menu": pause_files,
         "coop_screen": coop_screen,   # (co-op's own - menu screen CoopMenu_00 made: coop_menu.py)
         "charsel_native": charsel_files,   # (co-op's own Characters tab: its files; [] with Character Select's own)
+        "menu_keys": list(ui_pack.MENU_KEYS),   # (the lists above kept aside together: merge_tables, the kit's start)
         "source_sha256": {rel(romfs, p): hashlib.sha256(read(p)).hexdigest()
                           for p in (ai_path, gai_path, rs_path)},
     }

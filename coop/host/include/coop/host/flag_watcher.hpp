@@ -362,6 +362,16 @@ class FlagWatcher {
     return it == cap_holds_.end() ? std::nullopt : std::optional<std::int32_t>(it->second.low);
   }
   static constexpr int kResetQuietFrames = 60;
+  static constexpr int kLowerWaitFrames = 30 * 60;  // row 238: how long a hold waits for the object walk
+  // Row 238: the object walk saw our Link's own max at or under the hold's value (it lowered it, or it was):
+  // the hold may end by its quiet time now. Emulator thread.
+  // `seen` is Link's own max the walk saw (or lowered it to): only a value at or under THIS hold's counts, so an
+  // answer for an earlier, higher hold (replaced since) does not end the wait of the new one.
+  void lowered_done(FlagKey key, std::int32_t seen) {
+    if (const auto it = reset_holds_.find(key); it != reset_holds_.end() && seen <= it->second.low) {
+      it->second.awaiting_walk = false;
+    }
+  }
   static constexpr std::uint64_t kDoubledGainFrames = 5 * 60;
   static constexpr std::int32_t kMaxDoubledGains = 4;
 
@@ -625,6 +635,7 @@ class FlagWatcher {
     int tries = 0;             // put-backs in this hold (refused or undone by the game)
     int quiet = 0;             // frames the game has kept `low`
     std::uint64_t put_at = 0;  // the frame of the last put-back
+    std::uint64_t made_at = 0;  // row 238: the frame the hold began (a load window's end only clears older ones)
   };
   std::map<FlagKey, CapHold> cap_holds_;  // cap_max, held_lower (row 181)
   struct ResetHold {
@@ -633,7 +644,22 @@ class FlagWatcher {
     int quiet = 0;           // frames the game has kept `low`
     int tries = 0;           // put-backs the game refused or undid
     std::uint64_t put_at = 0;  // the frame of the last put-back
+    // Row 238: a join or a host's save lowered MaxLife and Link's own Life component (the live copy the hearts are
+    // drawn from) has not been seen lowered yet: the hold outlives its quiet time until the object walk says it
+    // saw Link at or under `low` (lowered_done), at most kLowerWaitFrames. Else a game that never wrote its higher
+    // max back (so nothing refreshed the hold) lost it before the walk ran, and showed more hearts than the group.
+    bool awaiting_walk = false;
+    int waited = 0;
+    // Row 238: the frame the hold began. A load window's end clears the holds made BEFORE the window began (the game
+    // made Link again from the flags in it); one made inside it (a reconnect's snapshot, a host's reset arriving
+    // mid-window) came after Link was made, so Link still has the higher max: the hold must outlive the window.
+    std::uint64_t made_at = 0;
   };
+  // Row 238: a max-rule int the group's value was put back over in a load window (a guest's own save with more than the
+  // group has): the value our game had, made a ResetHold when the window has ended (a window's start clears holds).
+  std::map<FlagKey, std::int32_t> window_lowered_;
+  // The one place that arms the hold for a value lowered from `had` to `low` (join, host save, guest's own load).
+  void hold_lowered(const FlagKey& key, std::int32_t low, std::int32_t had);
   std::map<FlagKey, ResetHold> reset_holds_;  // reset_lowered
   // Rows 136/137: a rise of a held key (diff); true when handled (not sent).
   bool hold_reset(FlagStore& store, FlagKey key, const protocol::FlagEntry& before, const protocol::FlagEntry& now,

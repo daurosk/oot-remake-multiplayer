@@ -49,6 +49,7 @@
 // dropped, and an actor counts as gone only when two walks in a row miss it.
 
 #include "coop_objects.h"
+#include "coop_life_gauge.h"
 #include "coop_caller_orders.h"
 #include "coop_boss.h"
 #include "coop_hit_replay.h"
@@ -1693,6 +1694,12 @@ std::atomic<s32>& TheMaxLifeLowerTo() {
     return quarters;
 }
 
+// Row 238: the walk saw our Link's own max at or under the hold's value (TakeMaxLifeLowerDone).
+std::atomic<s32>& TheMaxLifeLowerDone() {   // Link's own max the walk saw at or under the lower-to value; -1: none
+    static std::atomic<s32> done{-1};
+    return done;
+}
+
 // Our Link's Life component as the walk last read it (OurLife): quarter
 // hearts, and when (CoopEvery::NowUs; 0: never).
 struct LifeSeen {
@@ -2360,7 +2367,7 @@ public:
                     CoopBossNative::Boss b{s.address, s.bsa_component,
                                            *owner == self ? CoopBossNative::Role::owner : CoopBossNative::Role::copy,
                                            s.name, *owner, s.life_component, owner_dead, plain,
-                                           plain && CoopBossNative::PlainDeath(life, owner_dead),
+                                           CoopBossNative::PlainDeath(life, owner_dead),  // (every body)
                                            s.animation ? s.animation->name : std::string{}, life,
                                            s.position, s.attacking};
                     list.push_back(std::move(b));
@@ -3376,6 +3383,7 @@ public:
     s32 link_life_logged_ = -1;
     s32 link_max_logged_ = -1;
     s32 flag_max_logged_ = -1;
+    s32 lower_logged_ = -1;   // row 238: the held value whose "already there" was logged (-1: none)
     bool hearts_to_link_ = true;  // LICHII_COOP_HEARTS_TO_LINK, on unless =0 (issue 88)
     // PvP hurts being given to our Link (GivePvp, CoopPvp::FollowLife).
     std::vector<CoopPvp::PendingGive> pvp_;
@@ -4169,6 +4177,7 @@ private:
             horde_.Bind(horde);
         }
         const u64 now_ms = SteadyNowMs();
+        std::vector<std::string> rally_balls;  // row 211: the boss balls a sword sends back, alive in this walk
         for (const u64 a : actors) {
             // Row 172 (run 053934): a scene change can put a new actor at an address an old one held without a
             // walk between (our adult Link where the last scene's TerrainScenePermanent was): the cached name
@@ -4207,6 +4216,9 @@ private:
                 known.second = *extra;  // difficulty: an extra enemy is shared by its own placement id
             }
             member_log(a, known.first);  // G1: the game's own event member test, for the log
+            if (CoopEnemyShots::IsRallyBall(known.first)) {
+                rally_balls.push_back(known.first);  // (no shared object: never in Seen)
+            }
             // Difficulty: a made actor that may be an extra the director has not bound yet waits for it.
             const bool extra_unbound = (known.second == 0 || known.second == ~u64{0}) &&
                                        extras_.Holds(known.first, now_ms);
@@ -4293,6 +4305,7 @@ private:
                         LOG_INFO(Core, "coop: objects: our Link's max life {} -> {} (from MaxLife)",
                                  max, *raised);
                         CoopBoss::NoteMaxLifeFromOthers(*raised);   // (not our pickup: no heart claim)
+                        CoopLifeGauge::TheRefresher().Want(SteadyNowMs());  // row 238: the HUD shows it
                     }
                     // Another player took the boss's heart container: our hearts full, as its pickup fills them.
                     if (TheRefillAsked().load() && memory_ != nullptr &&
@@ -4300,6 +4313,7 @@ private:
                         const s32 full = raised ? *raised : max;
                         if (full > 0 && TheRefillAsked().exchange(false)) {
                             memory_->Write32(value->first + 8, static_cast<u32>(full));
+                            CoopLifeGauge::TheRefresher().Want(SteadyNowMs());  // row 238: the HUD shows it
                             LOG_INFO(Core, "coop: objects: our Link's life {} -> {} (another player took the heart "
                                            "container: as its pickup)", life, full);
                         }
@@ -4307,6 +4321,15 @@ private:
                     // Rows 136/137: the host's older save lowered MaxLife; row 181: a second pickup of a boss's one
                     // container was put back. The component follows it (never in the frame it was raised).
                     const s32 lower = TheMaxLifeLowerTo().load();
+                    if (lower >= 4 && max > 0 && max <= lower) {
+                        TheMaxLifeLowerDone().store(max);  // row 238: already there
+                        if (lower != lower_logged_) {
+                            lower_logged_ = lower;
+                            LOG_INFO(Core, "coop: objects: our Link's max life {} is at or under the held {} (MaxLife is held "
+                                           "lower; the game made him from the group's value): nothing to lower", max, lower);
+                        }
+                    }
+                    if (lower < 0) lower_logged_ = -1;
                     const auto lowered =
                         raised ? std::nullopt
                                : LoweredMaxLife(max, life, lower >= 0 ? std::optional<std::int32_t>(lower) : std::nullopt);
@@ -4316,6 +4339,8 @@ private:
                             memory_->Write32(value->first + 8, static_cast<u32>(*lowered->life));
                         }
                         memory_->Write32(value->second + 8, static_cast<u32>(lowered->max));
+                        TheMaxLifeLowerDone().store(lowered->max);  // row 238: the hold may end by its quiet time now
+                        CoopLifeGauge::TheRefresher().Want(SteadyNowMs());  // row 238: the HUD shows it
                         LOG_INFO(Core, "coop: objects: our Link's max life {} -> {} (MaxLife is held lower: the host "
                                        "loaded a save with fewer hearts, or a boss's one container was taken twice){}",
                                  max, lowered->max,
@@ -4564,6 +4589,7 @@ private:
                 CoopScrubSale::TheBusy().See(t.hash, distance, now_us, t.in_event);
             }
         }
+        sync_.SetRallyMakers(RallyMakers(rally_balls));  // row 211: for this walk's Tick (AttackWithRally)
         if (debug_) {  // research: the field grass that is no actor (world.md)
             for (const std::string& line : foliage_.Look(
                      [&r](u64 address) { return r.Get<u64>(address); }, main_, player)) {
@@ -4882,6 +4908,7 @@ private:
         }
         memory_->Write32(life_at, static_cast<u32>(*want));
         TheLinkLife().store(*want);
+        CoopLifeGauge::TheRefresher().Want(SteadyNowMs());  // row 238: the HUD shows it
         LOG_INFO(Core, "coop: dbno: our Link's life {} -> {}", life, *want);
     }
 
@@ -4981,6 +5008,7 @@ private:
                              life);
                 } else if (memory_ != nullptr && memory_->IsValidVirtualAddressRange(life_at, 4)) {
                     memory_->Write32(life_at, static_cast<u32>(to));
+                    CoopLifeGauge::TheRefresher().Want(SteadyNowMs());  // row 238: the HUD shows it
                     LOG_INFO(Core, "coop: pvp: our Link's life {} -> {}{}", life, to,
                              it->replayed ? " (the game's hit was not taken)" : "");
                     life = to;
@@ -6416,6 +6444,11 @@ void SetMaxLife(std::optional<std::int32_t> quarters) {
 
 void AskRefill() {
     TheRefillAsked().store(true);
+}
+
+std::optional<std::int32_t> TakeMaxLifeLowerDone() {
+    const s32 seen = TheMaxLifeLowerDone().exchange(-1);
+    return seen >= 0 ? std::optional<std::int32_t>(seen) : std::nullopt;
 }
 
 void SetMaxLifeLowerTo(std::optional<std::int32_t> quarters) {

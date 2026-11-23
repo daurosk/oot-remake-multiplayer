@@ -14,7 +14,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from puppet_pack import byml, merge_tables as mt, rstb, sarc  # noqa: E402
+from puppet_pack import byml, merge_tables as mt, rstb, sarc, ui_pack  # noqa: E402
 
 try:
     import zstandard
@@ -368,6 +368,21 @@ class MergeTablesTest(unittest.TestCase):
         self.assertEqual(self.table("bbb-listed").by_crc, {1: 100, 2: 5, 3: 6, 4: 4})
         self.assertEqual([n for n, _ in mt.load_order(self.mods)][-1], "bbb-listed")
 
+    def test_a_default_off_list_leaves_out_every_mod_it_does_not_name(self):
+        # Original game (report 266, hos_coop_mods.h "default off"): a mod put in after the list was written is off,
+        # as the game leaves it out; the pack too when not named on.
+        self.put_table(PACK, {1: 100})
+        self.put_table("late-seed", {2: 5})
+        self.put_table("named-on", {3: 6})
+        with open(os.path.join(self.mods, mt.LIST_FILE), "w", encoding="utf-8", newline="\n") as f:
+            f.write("coop-mods 1\r\ndefault off\r\non named-on\r\n")
+        self.assertEqual([n for n, _ in mt.load_order(self.mods)], ["named-on"])
+        self.assertEqual(mt.read_list_default(self.mods), ([("named-on", False)], True))
+        self.assertEqual(mt.read_list(self.mods), [("named-on", False)])
+        with open(os.path.join(self.mods, mt.LIST_FILE), "w", encoding="utf-8", newline="\n") as f:
+            f.write("coop-mods 1\non named-on\n")   # without the line: the unnamed ones are on, as before
+        self.assertEqual(sorted(n for n, _ in mt.load_order(self.mods)), sorted([PACK, "late-seed", "named-on"]))
+
     def test_folders_with_a_leading_dash_or_underscore_are_no_mods(self):
         self.put_table(PACK, {1: 100})
         self.put_table("-old-site", {2: 5})
@@ -425,6 +440,7 @@ SEED = "randomizer-adzfteae2h83-s89dbd7a9"
 
 MALS = "Mals/USen.Product.110.sarc.zs"
 TITLE = "UI/Layout2Archive/Title.Product.100.Nin_Ounce_NVN2.blarc.zs"
+SCREENS = "RSDB/UIScreen.Product.111.rstbl.byml.zs"   # (one of co-op's Characters tab's files)
 
 
 class ParkMenusTest(unittest.TestCase):
@@ -564,6 +580,56 @@ class MenuGuardTest(unittest.TestCase):
         self.assertEqual(mt.menu_files(self.pack), [TITLE, MALS])
         os.remove(os.path.join(self.pack, "coop_puppet.json"))
         self.assertEqual(mt.menu_files(self.pack), [])
+
+    def charsel_pack(self, menu_keys=True):
+        """The pack with co-op's own Characters tab (charsel_native: one of its files, the screens table)."""
+        self.put(os.path.join(self.pack, "romfs", *SCREENS.split("/")), b"pack screens")
+        keys = b', "menu_keys": ["title_menu", "pause_menu", "charsel_native"]' if menu_keys else b""
+        self.put(os.path.join(self.pack, "coop_puppet.json"),
+                 b'{"title_menu": ["%s"], "pause_menu": ["%s"], "charsel_native": ["%s"]%s}'
+                 % (TITLE.encode(), MALS.encode(), SCREENS.encode(), keys))
+        self.put_table(PACK, {self.crc(MALS): self.grown, self.crc(TITLE): 230000, self.crc(SCREENS): 9000, 7: 70})
+
+    def test_the_menu_files_are_the_lists_the_pack_names_in_menu_keys(self):
+        # (charsel-native-0119: co-op's Characters tab's files go with the menus; one list, ui_pack.MENU_KEYS, written
+        # by build.py into the pack's json; a pack without "menu_keys" has the two old lists)
+        self.assertEqual(list(ui_pack.MENU_KEYS), ["title_menu", "pause_menu", "charsel_native"])
+        self.charsel_pack()
+        self.assertEqual(mt.menu_files(self.pack), [TITLE, MALS, SCREENS])
+        self.charsel_pack(menu_keys=False)
+        self.assertEqual(mt.menu_files(self.pack), [TITLE, MALS])
+
+    def test_a_table_holding_the_menus_but_not_the_characters_tab_keeps_them_all_aside(self):
+        # All or nothing: another mod's table wins with the menus' sizes but not the Characters tab's screens table
+        # (a seed's own table): every one of them aside, the game keeps its own menus and screens.
+        self.charsel_pack()
+        self.put_table("oot-remake-randomizer", {self.crc(MALS): self.grown, self.crc(TITLE): 230000, 7: 70})
+        self.guard()
+        self.assertFalse(self.in_play(MALS) or self.in_play(TITLE) or self.in_play(SCREENS))
+        self.assertTrue(self.kept(MALS) and self.kept(TITLE) and self.kept(SCREENS))
+
+    def test_the_characters_tab_is_parked_exactly_while_its_files_are_kept_aside(self):
+        # (MsgNotFound on slot 0: the kit's code-patch rule, kit-paths.ps1 Sync-KitCharselNativePatch and build.sh
+        # charsel_native_sync, leaves the tab's code out while this says parked, so code and files never split)
+        self.assertFalse(mt.charsel_native_parked(self.pack))   # (no charsel_native list)
+        self.charsel_pack()
+        self.assertFalse(mt.charsel_native_parked(self.pack))   # (in romfs: in play)
+        self.put_table("oot-remake-randomizer", {self.crc(MALS): self.grown, self.crc(TITLE): 230000, 7: 70})
+        self.guard()
+        self.assertTrue(self.kept(SCREENS))
+        self.assertTrue(mt.charsel_native_parked(self.pack))
+        shutil.rmtree(os.path.join(self.mods, "oot-remake-randomizer"))
+        self.guard()   # (put back: the code goes in again at the next need check)
+        self.assertTrue(self.in_play(SCREENS))
+        self.assertFalse(mt.charsel_native_parked(self.pack))
+        # A pack made since (its file in romfs again) beside an old kept copy: in play, not parked.
+        self.put(os.path.join(self.pack, mt.MENU_KEEP, *SCREENS.split("/")), b"old screens")
+        self.assertFalse(mt.charsel_native_parked(self.pack))
+        # The tab left out ("charsel_native": []) or an unreadable manifest: nothing parked.
+        self.put(os.path.join(self.pack, "coop_puppet.json"), b'{"title_menu": [], "charsel_native": []}')
+        self.assertFalse(mt.charsel_native_parked(self.pack))
+        self.put(os.path.join(self.pack, "coop_puppet.json"), b"{")
+        self.assertFalse(mt.charsel_native_parked(self.pack))
 
     def test_the_pack_reading_its_own_table_keeps_its_menus(self):
         self.assertEqual(self.guard(), 0)

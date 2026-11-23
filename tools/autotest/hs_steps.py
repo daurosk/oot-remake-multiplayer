@@ -11,6 +11,9 @@ run.ps1 -Runtime hookshot calls `run` when the scenario is a steps file. The ver
   load A [B]            title to the save in each (hookshot.py to_play); the `#! start` regex checked after it
   play A f [B f]        play scenarios/<f> in A (and B), both at once, and wait for both
   close B / kill B      B quits through its control bridge (it leaves the server) / B ends at once (a crash)
+  freeze B / thaw B     B's process is suspended / goes on (Windows): a frozen game sends and retries nothing, so
+                        after `server start` the other game gets back in (and hosts) first; every game is thawed
+                        before it is ended
   server stop|start     the server goes away / comes back on the same port (server-out[-n].txt)
   sleep S               seconds
   password B TEXT       the join password game B sends from its next start (LICHII_COOP_PASSWORD; - for none);
@@ -85,7 +88,7 @@ def parse_steps(text):
                 raise StepsError("line %d: play A file [B file]" % n)
             pairs = [(_game(n, rest[i]), rest[i + 1]) for i in range(0, len(rest), 2)]
             steps.append(Step(n, verb, pairs, line))
-        elif verb in ("close", "kill"):
+        elif verb in ("close", "kill", "freeze", "thaw"):
             if len(rest) != 1:
                 raise StepsError("line %d: %s B" % (n, verb))
             steps.append(Step(n, verb, [_game(n, rest[0])], line))
@@ -272,6 +275,12 @@ class Runner:
     def do_kill(self, s):
         self.g.kill(s.args[0])
 
+    def do_freeze(self, s):
+        self.g.freeze(s.args[0])
+
+    def do_thaw(self, s):
+        self.g.thaw(s.args[0])
+
     def do_server(self, s):
         (self.g.server_stop if s.args[0] == "stop" else self.g.server_start)()
 
@@ -371,6 +380,12 @@ class DryGames:
     def kill(self, x, keep_log=None):
         self.say("  would end %s at once" % x)
 
+    def freeze(self, x):
+        self.say("  would suspend %s's process" % x)
+
+    def thaw(self, x):
+        self.say("  would let %s's process go on" % x)
+
     def server_stop(self):
         self.say("  would stop the server")
 
@@ -400,6 +415,7 @@ class HookshotGames:
         self.hk, self.games, self.out, self.server_exe, self.port = hk, games, out, server, port
         self.pipe, self.env, self.timeout, self.head, self.restore, self.say = pipe, env, timeout, head, restore, say
         self.procs, self.bridges, self.runs, self.expected_exit = {}, {}, {"A": 0, "B": 0}, set()
+        self.frozen = set()  # games whose process is suspended (freeze)
         self.server, self.server_runs = None, 0
         self.server_delay = []   # hookshot.py test_delay_args: the TEST-ONLY delay (needs OOT_COOP_TEST=1)
         self.renderer = None     # (wait, stall, limit) for hookshot.wait_renderer; None: (timeout, its defaults)
@@ -429,10 +445,47 @@ class HookshotGames:
         p = self.procs.get(x)
         return p is not None and p.poll() is None
 
+    def _suspend(self, x, on):
+        """NtSuspendProcess / NtResumeProcess on game x (Windows only; a game that is not running: nothing)."""
+        p = self.procs.get(x)
+        if p is None or p.poll() is not None:
+            return False
+        import ctypes
+        k32, nt = ctypes.WinDLL("kernel32", use_last_error=True), ctypes.WinDLL("ntdll")
+        k32.OpenProcess.restype = ctypes.c_void_p
+        h = k32.OpenProcess(0x0800, False, p.pid)  # PROCESS_SUSPEND_RESUME
+        if not h:
+            raise OSError("cannot open game %s's process (error %d)" % (x, ctypes.get_last_error()))
+        try:
+            fn = nt.NtSuspendProcess if on else nt.NtResumeProcess
+            fn.argtypes = [ctypes.c_void_p]
+            status = fn(h) & 0xFFFFFFFF
+        finally:
+            k32.CloseHandle(ctypes.c_void_p(h))
+        if status != 0:
+            raise OSError("%s game %s: NTSTATUS %#x" % ("suspending" if on else "resuming", x, status))
+        return True
+
+    def freeze(self, x):
+        if self._suspend(x, True):
+            self.frozen.add(x)
+            self.say("%s: process suspended" % x)
+
+    def thaw(self, x):
+        if x in self.frozen:
+            self.frozen.discard(x)
+            self._suspend(x, False)
+            self.say("%s: process goes on" % x)
+
     def _end(self, x, how):
         p = self.procs.get(x)
         if p is None:
             return
+        if x in self.frozen:
+            try:
+                self.thaw(x)  # a frozen game cannot quit through its bridge
+            except OSError as e:
+                self.say("%s" % e)
         self.expected_exit.add(x)
         if p.poll() is None:
             if how == "quit" and x in self.bridges:
@@ -742,7 +795,7 @@ def _dry(steps):
             games.load(s.args)
         elif s.verb == "play":
             games.play(dict(s.args), "")
-        elif s.verb in ("close", "kill"):
+        elif s.verb in ("close", "kill", "freeze", "thaw"):
             getattr(games, s.verb)(s.args[0])
         elif s.verb == "server":
             (games.server_stop if s.args[0] == "stop" else games.server_start)()

@@ -4,6 +4,7 @@
 #include <cstring>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "coop/host/game_flag_events.hpp"
@@ -173,6 +174,21 @@ TEST_CASE("game flags: a set is queued as the game's setter does, and read back 
   CHECK(coop::host::read_u32(w.mem, kKeyQueue + 4) == 2u);  // the record index, not the key
   CHECK(f.get_key64(0x8c44828386468bfull) == true);
   CHECK(f.get_key64(9) == false);
+}
+
+TEST_CASE("game flags: each Int write that was queued is told to the hook (row 238, the HUD gauges' refresh)") {
+  static std::vector<std::pair<std::uint32_t, std::int32_t>> told;
+  told.clear();
+  GameFlags::on_int_written([](std::uint32_t hash, std::int32_t value) { told.emplace_back(hash, value); });
+  auto w = game();
+  REQUIRE(GameFlags::set_int(w, 0x22, 16));
+  CHECK_FALSE(GameFlags::set_int(w, 0x99, 1));  // an unknown flag: nothing queued, nothing told
+  REQUIRE(GameFlags::set_bool(w, 0x11, true));  // not an Int
+  GameFlags::on_int_written(nullptr);
+  REQUIRE(GameFlags::set_int(w, 0x22, 20));     // no hook: still written
+  REQUIRE(told.size() == 1);
+  CHECK(told[0].first == 0x22u);
+  CHECK(told[0].second == 16);
 }
 
 TEST_CASE("game flags: UInt flags are read and queued like Int, in their own table") {

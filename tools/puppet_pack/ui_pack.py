@@ -788,6 +788,13 @@ def add_labels(data, labels, replace=False):
 # those keep their English text.
 
 STRINGS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "strings")
+# The pack's file lists (coop_puppet.json keys) that replace UI files the game reads and size by its size table: kept
+# aside all together when the table the game reads cannot hold them (merge_tables.py guard_menus; the kit's start
+# without Python, kit-paths.ps1 Move-KitMenuFilesAside). ONE list: build.py writes it into coop_puppet.json as
+# "menu_keys" and both read it from there (a pack without the field: the two old keys). charsel_native: co-op's own
+# Characters tab (UIScreen, GameDataList, the - menu's sequences, the layout category), charsel-native-0119.
+MENU_KEYS = ("title_menu", "pause_menu", "charsel_native")
+OLD_MENU_KEYS = ("title_menu", "pause_menu")   # (packs made before "menu_keys")
 FALLBACK = "en"
 _SECTION = re.compile(r"\[([^\[\]\s]+\.msbt)\]")
 

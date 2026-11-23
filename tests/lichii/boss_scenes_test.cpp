@@ -823,3 +823,19 @@ TEST_CASE("boss scenes: DeathMayRun says while our own death of a boss may still
         CHECK_FALSE(b.DeathMayRun(kGohma));
     }
 }
+
+TEST_CASE("enemies-dying-01111: a boss's death has begun here in the boss rush's stage too (DeathBegunHere)") {
+    // Run 20261122-092813 (King Dodongo in the boss rush's DodongoStage): the dying list matched only the room's
+    // dungeon scene, so B's copy was never named dying. The director's own area (Here) is the starter's scene there.
+    const Vec starter{0.0f, 0.0f, 0.0f};
+    Local near = At(Vec{10.0f, 0.0f, 0.0f}, 2, false, "GohmaStage");
+    near.boss_ours = false;
+    Director b;
+    CHECK_FALSE(b.DeathBegunHere(kGohma, near));  // no death yet
+    b.Receive(Scene(1, kGohma, proto::BossSceneKind::outro_start, starter, "GohmaStage"));
+    b.Tick(near, {}, 1'000'000);
+    CHECK(b.DeathBegunHere(kGohma, near));
+    CHECK_FALSE(b.DeathBegunHere(kGohma, At(Vec{40.0f, 0.0f, 0.0f}, 2, false, "GohmaStage")));  // out of its area
+    CHECK_FALSE(b.DeathBegunHere(kGohma, At(Vec{10.0f, 0.0f, 0.0f}, 2, false, "KokiriForest")));  // another scene
+    CHECK_FALSE(b.DeathBegunHere(1, near));  // another boss
+}

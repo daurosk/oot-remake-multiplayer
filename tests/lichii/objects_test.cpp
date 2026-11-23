@@ -6978,6 +6978,66 @@ TEST_CASE("objects: a dying copy boss gets its remaining life once when its owne
     CHECK(ours.DyingFinished() == 0);
 }
 
+TEST_CASE("enemies-dying-01111: a mini-boss copy whose owner's is dead dies once, its killing blow is not replayed again") {
+    // Run 20261122-092813: after the owner's kill every owner sample at life 0 replayed the killing blow on our
+    // dying copy; each was refused and timed out ("did not take"), ~50 times. A boss no boss room names has no
+    // director to name it dying: its owner saying it is dead is enough, and its death is given once.
+    CHECK(CoopObjects::InBossRoomTable("Enemy_DungeonBoss_Dodongo"));
+    CHECK(CoopObjects::InBossRoomTable("Enemy_DungeonBoss_Gohma"));
+    CHECK_FALSE(CoopObjects::InBossRoomTable("Enemy_DeadHand"));
+    CHECK_FALSE(CoopObjects::InBossRoomTable("Enemy_MiddleBoss_Poe_Meg"));
+    CHECK_FALSE(CoopObjects::InBossRoomTable("Enemy_DungeonBoss_Ganondorf"));  // (no room: the director never names him)
+    for (const std::string boss : {"Enemy_DeadHand", "Enemy_MiddleBoss_Poe_Meg", "Enemy_DungeonBoss_Ganondorf"}) {
+        CAPTURE(boss);
+        const auto body = [&boss](std::int32_t life) { return Enemy(0x100, 0x11, life, 0.0f, boss); };
+        Sync copy;
+        copy.SetHurt(true);
+        Tick(copy, 0, {body(16)});
+        const proto::ObjectId id = *copy.IdOf(0x100);
+        Own(copy, id, 2, 1);  // player 2's; we are player 1
+        Tick(copy, 10 * kMs, {body(16)});
+        copy.Receive(LifeSample(id, 0, 16));  // the owner's kill
+        auto step = Tick(copy, 20 * kMs, {body(16)});
+        REQUIRE(step.writes.size() == 1);  // the replay
+        CHECK_FALSE(step.writes[0].direct);
+        step = Tick(copy, 500 * kMs, {body(16)});  // refused: the rest to its own Life step, once
+        REQUIRE(step.writes.size() == 1);
+        CHECK(step.writes[0].direct);
+        CHECK(step.writes[0].life == 0);
+        CHECK(step.writes[0].hurt == 16);
+        CHECK(copy.HurtsMissed() == 1);
+        // Its death runs in its own game (it still reads 16 for a while); the owner's samples at 0 keep coming.
+        for (std::uint64_t t = 600; t <= 3000; t += 400) {
+            copy.Receive(LifeSample(id, 0, 16));
+            CHECK(Tick(copy, t * kMs, {body(16)}).writes.empty());
+        }
+        CHECK(copy.HurtsMissed() == 1);
+    }
+}
+
+TEST_CASE("enemies-dying-01111: a boss room's copy waits for the director's dying, then dies once, no replay after") {
+    const std::string boss = "Enemy_DungeonBoss_Dodongo";
+    const auto body = [&boss](std::int32_t life) { return Enemy(0x100, 0x11, life, 0.0f, boss); };
+    Sync copy;
+    copy.SetHurt(true);
+    Tick(copy, 0, {body(24)});
+    const proto::ObjectId id = *copy.IdOf(0x100);
+    Own(copy, id, 2, 1);
+    Tick(copy, 10 * kMs, {body(24)});
+    copy.Receive(LifeSample(id, 0, 24));
+    REQUIRE(Tick(copy, 20 * kMs, {body(24)}).writes.size() == 1);  // the replay
+    CHECK(Tick(copy, 500 * kMs, {body(24)}).writes.empty());  // refused, not dying yet: never written (review-boss-0114)
+    copy.SetDying({boss});  // the director's outro here (DeathBegunHere in the boss rush's stage)
+    auto step = Tick(copy, 600 * kMs, {body(24)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].direct);
+    CHECK(step.writes[0].life == 0);
+    for (std::uint64_t t = 700; t <= 3000; t += 400) {
+        copy.Receive(LifeSample(id, 0, 24));
+        CHECK(Tick(copy, t * kMs, {body(24)}).writes.empty());  // no killing blow replayed again
+    }
+}
+
 TEST_CASE("objects: a boss is pre-battle while a body plays Sleep or Pre_Battle_* (boss-copy-b)") {
     constexpr std::array<std::string_view, 1> kGohma{"Enemy_DungeonBoss_Gohma"};
     CHECK(CoopObjects::IsPreBattleAnimation("Sleep"));
@@ -7982,29 +8042,51 @@ TEST_CASE("row 211: a boss's attack goes on while a rally ball of its own flies 
         s.attacking = attacking;
         return s;
     };
-    const Seen dorf = seen("Enemy_DungeonBoss_Ganondorf", false);
+    const std::string dorf_name = "Enemy_DungeonBoss_Ganondorf";
+    const Seen dorf = seen(dorf_name, false);
     const Seen phantom = seen("Enemy_DungeonBoss_PhantomGanon", false);
     const Seen twinrova = seen("Enemy_DungeonBoss_Twinrova", false);
     // No ball: as read.
-    CHECK(RallyMakers({dorf}).empty());
-    CHECK(AttackWithRally(dorf, RallyMakers({dorf})) == false);
+    CHECK(RallyMakers({dorf_name}).empty());
+    CHECK(AttackWithRally(dorf, RallyMakers({dorf_name})) == false);
     // His light ball, his charge ball, Phantom Ganon's ball: each holds its maker's attack.
     for (const char* ball : {"DungeonBossGanondrof_Bullet_LightBall", "DungeonBossGanondrof_Bullet_ChargeLightBall",
                              "DungeonBossPhantomGanon_Bullet_LightBall"}) {
         CAPTURE(ball);
-        const auto makers = RallyMakers({dorf, seen(ball, std::nullopt)});
+        const auto makers = RallyMakers({dorf_name, ball});
         CHECK(AttackWithRally(phantom, makers) == true);
         CHECK(AttackWithRally(twinrova, makers) == false);
-        CHECK(AttackWithRally(seen("Enemy_DungeonBoss_Ganondorf", true), makers) == true);
+        CHECK(AttackWithRally(seen(dorf_name, true), makers) == true);
         CHECK_FALSE(AttackWithRally(seen("Enemy_DungeonBoss_PhantomGanon", std::nullopt), makers).has_value());
     }
-    CHECK(AttackWithRally(dorf, RallyMakers({dorf, seen("DungeonBossGanondrof_Bullet_LightBall", std::nullopt)})) ==
-          true);
-    // Shots no one rallies hold nothing: his shockwave, Phantom Ganon's bolt, Twinrova's beams, Volvagia's rocks.
+    CHECK(AttackWithRally(dorf, RallyMakers({dorf_name, "DungeonBossGanondrof_Bullet_LightBall"})) == true);
+    // Shots no one rallies hold nothing: his shockwave, Phantom Ganon's bolt, Twinrova's beams, Octorok rocks.
     for (const char* shot : {"DungeonBossGanondrof_Bullet_ShockWave", "PhantomGanon_Bullet_Thunder",
                              "Twinrova_Bullet_FireBeam", "Ganondorf_Bullet_Thunder", "Octorok_Bullet"}) {
         CAPTURE(shot);
-        CHECK(RallyMakers({dorf, seen(shot, std::nullopt)}).empty());
+        CHECK(RallyMakers({dorf_name, shot}).empty());
+    }
+}
+
+TEST_CASE("row 211: the sync holds a boss's attack from the walk's rally balls (no shared object: never in Seen)") {
+    // Proof run 20261123-045939: the ball is no shared object, so RallyMakers over Seen never saw it and the hold
+    // never came on. The walk hands the makers in (SetRallyMakers) before each Tick.
+    for (const bool ball : {false, true}) {
+        CAPTURE(ball);
+        Sync sync;
+        Seen boss = Enemy(0x100, 0x11, 70, 0.0f, "Enemy_DungeonBoss_Ganondorf");
+        boss.attacking = true;
+        Tick(sync, 0, {boss});
+        (void)sync.TakeNotes();
+        boss.attacking = false;  // BasicAttack (verb 112) fell into 103 as the ball left
+        sync.SetRallyMakers(CoopObjects::RallyMakers(
+            ball ? std::vector<std::string>{"DungeonBossGanondrof_Bullet_LightBall"} : std::vector<std::string>{}));
+        Tick(sync, 100 * kMs, {boss});
+        bool said = false;
+        for (const std::string& line : sync.TakeNotes()) {
+            said = said || line.find("its own rally ball flies here") != std::string::npos;
+        }
+        CHECK(said == ball);
     }
 }
 

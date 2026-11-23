@@ -85,6 +85,7 @@ The start window says what is wrong and what to do. What it checks:
 - **"Windows refused to let PowerShell write in this kit's folder (access denied)"**: Controlled folder access or another antivirus. The message says where to allow `powershell.exe`.
 - **"Controlled folder access protects <folder>"**: Windows Security's ransomware protection guards that folder (Documents, Desktop and others) and stops the game build writing there, even with real-time protection off. Move the kit to `C:\OoT-Coop`.
 - Whatever Windows said, `logs\windows-checks.txt` in the kit has what the start found. It is in the log zip `scripts\collect-logs.cmd` makes; when that zip cannot be made, it makes `coop-logs-windows-checks.zip` instead.
+- What the start window and the update said is in `hookshot\logs\start-log.txt` (the start before: `start-log.1.txt`), also in that zip (with the user and PC names masked).
 - **"The co-op game this kit built is not in <folder> any more"**: the built game folder was moved or deleted. Moved it? Answer **n**, move it back to that folder and start again. Otherwise answer **Y** and it is built again.
 - **"The co-op module hookshot_coop.dll is missing"**: antivirus took it, as in the line above: restore it, add the exclusion, start again. Building again does not help.
 - **"Files of this kit are missing"**: the unzip did not finish. Unzip the kit again.

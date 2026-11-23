@@ -3,6 +3,7 @@
 #include "coop/protocol/animation_words.hpp"
 #include "coop_sensor_claim.h"
 #include "coop_bomb_share.h"
+#include "coop_boss.h"
 #include "coop_dungeon.h"
 #include "coop_enemy_shots.h"
 #include "coop_guard.h"
@@ -555,11 +556,11 @@ std::uint8_t AttackBits(std::optional<bool> attacking) {
                                      (*attacking ? proto::object_state::attacking : 0));
 }
 
-std::vector<std::string_view> RallyMakers(const std::vector<Seen>& seen) {
+std::vector<std::string_view> RallyMakers(const std::vector<std::string>& actor_names) {
     std::vector<std::string_view> makers;
-    for (const Seen& s : seen) {
-        if (CoopEnemyShots::IsRallyBall(s.name)) {
-            for (const std::string_view m : CoopEnemyShots::MakersOf(s.name)) {
+    for (const std::string& name : actor_names) {
+        if (CoopEnemyShots::IsRallyBall(name)) {
+            for (const std::string_view m : CoopEnemyShots::MakersOf(name)) {
                 if (std::find(makers.begin(), makers.end(), m) == makers.end()) {
                     makers.push_back(m);
                 }
@@ -774,6 +775,18 @@ bool IsSplitPart(std::string_view name) {
 
 bool IsBattleManager(std::string_view name) {
     return name == "Enemy_KotakeKoumeBattleManager";
+}
+
+bool InBossRoomTable(std::string_view name) {
+    for (const CoopBoss::Room& room : CoopBoss::Rooms()) {
+        if (std::find(room.parts.begin(), room.parts.end(), name) != room.parts.end()) return true;
+    }
+    return false;
+}
+
+bool Sync::CopyBossDying(const Object& o) const {
+    if (std::find(dying_.begin(), dying_.end(), o.name) != dying_.end()) return true;
+    return !InBossRoomTable(o.name) && (o.dead_at != 0 || o.owner_life_zero);
 }
 
 std::string_view GrabbingSummoner(std::string_view name) {
@@ -2020,7 +2033,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     // place; a drop of life on a copy we do not own is our hit.
     // A pickup taken elsewhere (taken_, from the last Apply) is hidden.
     std::map<std::uint64_t, const Seen*> now_seen;
-    const std::vector<std::string_view> rally_makers = RallyMakers(seen);  // row 211: its attack goes on
+    const std::vector<std::string_view>& rally_makers = rally_makers_;  // row 211: its attack goes on
     std::vector<const Seen*> fresh;
     std::set<std::uint64_t> hidden;
     {
@@ -3025,10 +3038,11 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     // "copy is never written" rule before the death began here, and bosses are never resent). Its whole remaining
     // life goes to its own Life step once (direct, never a write), which CoopBossNative lets end it
     // (review-boss-0114, at every boss; Gohma's own clamp may still hold her at 1).
+    // enemies-dying-01111: dying by CopyBossDying: a mini-boss (no boss room names it) was never named dying by the
+    // director, so its copy stood on alive after its owner's kill.
     for (auto& [address, o] : objects_) {
         if (o.quiet_gone || o.death_given || o.hurt_until != 0 || !o.life || *o.life <= 0 || !IsBossOrPart(o.name) ||
-            !(o.dead_at != 0 || o.owner_life_zero) ||
-            std::find(dying_.begin(), dying_.end(), o.name) == dying_.end()) {
+            !(o.dead_at != 0 || o.owner_life_zero) || !CopyBossDying(o)) {
             continue;
         }
         const auto own = owners_.find(o.id);
@@ -3052,7 +3066,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         if (o.hurt_until != 0 && now_us >= o.hurt_until) {
             const auto boss_owner = owners_.find(o.id);
             const bool boss_ours = boss_owner != owners_.end() && boss_owner->second.player == self;
-            const bool dying = std::find(dying_.begin(), dying_.end(), o.name) != dying_.end();
+            const bool dying = CopyBossDying(o);
             if (o.life && *o.life > o.hurt_target && IsBossOrPart(o.name) && boss_ours) {
                 // Our boss refused another player's replayed hit (boss-hits, tracker 104, issue 150): the
                 // replay is a template sword hit, and Gohma's damage rules judge it as no eye hit, so only her
@@ -4594,6 +4608,12 @@ void Sync::Lower(Object& o, std::int32_t life, std::uint64_t now_us,
     if (!hurt_ || !o.reacts) {
         writes.push_back({o.address, life, 0, {}});
         o.life = life;
+        return;
+    }
+    if (o.death_given && IsBossOrPart(o.name)) {
+        // enemies-dying-01111: its death went to its own Life step once already; the owner's life-0 samples that
+        // keep coming are that same death, never a new killing blow to replay (run 20261122-092813: King
+        // Dodongo's copy got A's killing blow ~50 times, each refused by the dying copy).
         return;
     }
     const std::int32_t from = o.hurt_until != 0 ? o.hurt_target : *o.life;

@@ -59,6 +59,12 @@ foreach ($wcLog in @((Join-Path $kit 'logs\windows-checks.txt'), $(if ($env:LOCA
 }
 $picked += @((Join-Path $kit 'VERSION.txt'), 'VERSION.txt')
 $picked += @((Join-Path $kit 'coop-options.ini'), 'coop-options.ini')
+# What Start Squadala's window and the update said, this start and the one before (kit-paths.ps1 Start-KitStartLog,
+# update.ps1 Start-KitUpdateLog; player report 266: a message on the start window was not in the zip).
+foreach ($startLog in 'start-log.txt', 'start-log.1.txt') {
+    $startPath = Join-Path $kit "hookshot\logs\$startLog"
+    if (Test-Path -LiteralPath $startPath) { $picked += @($startPath, $startLog) }
+}
 # What the puppet pack was built from (file names and hashes only, no game data).
 if ($hasEmulator) {
     $picked += @((Join-Path $user 'load\0400486024DEC000\coop-puppet\coop_puppet.json'), 'emulator\coop_puppet.json')

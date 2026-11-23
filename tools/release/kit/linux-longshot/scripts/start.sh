@@ -160,21 +160,42 @@ fi
 pack=$GAME/mods/contents/0400486024DEC000/coop-puppet
 py=$DATA/builder/image/usr/python/bin/python3
 [[ -x $py ]] || py=$(command -v python3 || true)
-if [[ -f $pack/coop_puppet.json && -n $py && -f $DATA/tools/puppet_pack/self_tunic.py ]]; then
-    own=$("$py" -I -B "$DATA/tools/puppet_pack/self_tunic.py" --pack "$pack" --options "$DATA/coop-options.ini" \
-        --coop-ini "$GAME/coop.ini" 2>/dev/null) || own=''
-    [[ $own == green ]] && say "Your Link: the green tunic files; your coop-options.ini color is painted on in the game."
-    [[ -n $own && $own != green ]] && say "Your Link: the $own tunic (coop-options.ini color)."
-fi
+self_tunic_step() {
+    if [[ -f $pack/coop_puppet.json && -n $py && -f $DATA/tools/puppet_pack/self_tunic.py ]]; then
+        own=$("$py" -I -B "$DATA/tools/puppet_pack/self_tunic.py" --pack "$pack" --options "$DATA/coop-options.ini" \
+            --coop-ini "$GAME/coop.ini" 2>/dev/null) || own=''
+        [[ $own == green ]] && say "Your Link: the green tunic files; your coop-options.ini color is painted on in the game."
+        [[ -n $own && $own != green ]] && say "Your Link: the $own tunic (coop-options.ini color)."
+    fi
+    return 0   # (set -e: the && test above is false for green, which must not end the start)
+}
+self_tunic_step
 # #48: one size table for the game (a seed from OOTRR's website has its own, without the puppet pack's entries):
 # tools/puppet_pack/merge_tables.py, as the Windows kit's Invoke-KitSizeTableMerge. Never stops the start.
-if [[ -f $DATA/tools/puppet_pack/merge_tables.py && -d $GAME/mods ]]; then
+start_merge() {
+    [[ -f $DATA/tools/puppet_pack/merge_tables.py && -d $GAME/mods ]] || return 0
     if [[ -n $py ]]; then
         "$py" -I -B "$DATA/tools/puppet_pack/merge_tables.py" --mods "$GAME/mods" --romfs "$GAME/romfs" 2>&1 | sed 's/^/  /' || true
     else
         say "  Size tables: not merged (no Python): with a mod that has its own size table, the other players can't be shown."
     fi
-fi
+}
+start_merge
+# Co-op's Characters tab's code goes with its files (build.sh charsel_native_sync, which merged first and kept what it
+# saw in data/charsel-parked.txt): when this merge, after the pack step, parked them or put them back otherwise (a pack
+# made in this build), the game is built again for the menus it will read (its code over the game's own menus said
+# MsgNotFound on slot 0, no Map tab, L dead). Twice at most.
+for _ in 1 2; do
+    [[ -n $py && -f $DATA/charsel-parked.txt ]] || break
+    now=$("$py" -I -B -c 'import sys; sys.path.insert(0, sys.argv[1])
+from puppet_pack.merge_tables import charsel_native_parked
+print(1 if charsel_native_parked(sys.argv[2]) else 0)' "$DATA/tools" "$pack" 2>/dev/null) || break
+    [[ $now == "$(cat "$DATA/charsel-parked.txt")" ]] && break
+    say "Co-op's Characters tab: its menu files were $( ((now)) && echo 'kept aside' || echo 'put back') just now, so the game is brought up to date with them."
+    bash "$KIT/scripts/build.sh" "${build_args[@]}"
+    self_tunic_step   # (a pack made again in that build: your tunic tile first, merge_self_models needs it: row 265)
+    start_merge
+done
 # "Playing Squadala!" on Discord: the Squadala! application and this kit's release in longshot_options.ini
 # (scripts/discord_status.py, as the Windows kit's Invoke-KitDiscordStatus). Never stops the start.
 if [[ -n $py && -f $KIT/scripts/discord_status.py ]]; then

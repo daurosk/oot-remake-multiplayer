@@ -352,6 +352,67 @@ elif cmd == "complete":
         "Its code is under the MIT licence (Copyright (c) 2026 snaildev99; LICENSE.txt here when it could be fetched).",
         "The Legend of Zelda: Ocarina of Time and its characters belong to Nintendo.",
         "Switch it off in the game'"'"'s Mods tab.", ""]).encode())
+elif cmd == "copies":
+    # black-cs-01112, as kit-paths.ps1 Resolve-KitCharacterSelectCopies: every Character Select copy the game loads (a
+    # mod folder, found as host/mods.c finds them, whose romfs has Sequence/CharacterMenu.module.ainb and that has exefs;
+    # never the pack coop-puppet) but the kit own (mods/<folder>) is set aside as _<name> when the kit copy is there and
+    # on: two copies put two code patches into one game. A row "off" in coop-mods.list: left alone.
+    mods, mine = sys.argv[2], sys.argv[3]
+    fold = lambda n: "".join(chr(ord(c) + 32) if "A" <= c <= "Z" else c for c in n.replace(chr(92), "/"))
+    off, seen, default_off = set(), set(), False   # (default_off: a "default off" line in the list, Original game)
+    try:
+        rows = open(os.path.join(mods, "coop-mods.list"), encoding="utf-8").read().split(chr(10))
+    except OSError:
+        rows = []
+    if rows and rows[0].rstrip(chr(13)) == "coop-mods 1":
+        for row in rows[1:]:
+            default_off = default_off or row.rstrip(chr(13)) == "default off"
+            m = re.match(r"^(on|off) (.+)$", row.rstrip(chr(13)))
+            if m and fold(m.group(2)) not in seen:
+                seen.add(fold(m.group(2)))
+                if m.group(1) == "off":
+                    off.add(fold(m.group(2)))
+    copies = []
+    def walk(d, name, depth):
+        try:
+            entries = sorted(os.listdir(d))
+        except OSError:
+            return
+        for e in entries:
+            p = os.path.join(d, e)
+            if e.startswith((".", "-", "_")) or not os.path.isdir(p):
+                continue
+            rel = name + "/" + e if name else e
+            if any(os.path.isdir(os.path.join(p, x)) for x in ("romfs", "exefs", "cheats")):
+                own_copy = fold(rel) == fold(mine)   # (the kit copy: by its folder, whatever part of his romfs it has)
+                if (e.lower() != "coop-puppet" and (own_copy or os.path.isfile(os.path.join(p, "romfs", "Sequence", "CharacterMenu.module.ainb")))
+                        and os.path.isdir(os.path.join(p, "exefs"))):
+                    copies.append((rel, p, fold(rel) in off or (default_off and fold(rel) not in seen)))
+                continue
+            if depth < 4:
+                walk(p, rel, depth + 1)
+    walk(mods, "", 1)
+    own = [c for c in copies if fold(c[0]) == fold(mine)]
+    others = [c for c in copies if fold(c[0]) != fold(mine) and not c[2]]
+    if others and (not own or own[0][2]):
+        if len(others) > 1:
+            print("Character Select: %d copies are on (%s): their code patches go into one game and can give a black screen "
+                  "or a crash. Switch all but one off in the Mods tab." % (len(others), ", ".join("mods/" + c[0] for c in others)))
+        others = []
+    for rel, p, _ in others:
+        to = os.path.join(os.path.dirname(p), "_" + os.path.basename(p))
+        i = 2
+        while os.path.exists(to):
+            to = os.path.join(os.path.dirname(p), "_%s.%d" % (os.path.basename(p), i))
+            i += 1
+        try:
+            os.rename(p, to)
+            print("Character Select: a second copy, mods/%s, was set aside as %s: two copies put two code patches into one "
+                  "game (a black screen or a crash). The kit copy, mods/%s, stays. To play with yours: switch the kit copy "
+                  "off in the Mods tab, close the game, rename yours back." % (rel, os.path.relpath(to, mods), mine))
+        except OSError as ex:
+            print("Character Select: a second copy, mods/%s, could not be set aside (%s): two code patches go into one game "
+                  "and can give a black screen or a crash. Close the game, then remove one of them." % (rel, ex.strerror or ex))
 elif cmd == "strip":
     data, dropped = strip(rd(sys.argv[2]))
     fresh(os.path.abspath(sys.argv[3]), data)
@@ -561,6 +622,10 @@ with zipfile.ZipFile(z) as f:
     return 0
 }
 ((check_only)) || charsel_step
+# black-cs-01112: one copy of his mod in the game (a hand copy beside the kit copy is set aside; kit-paths.ps1 Resolve-KitCharacterSelectCopies)
+if ! ((check_only)) && [[ -d $CS_HOME ]] && cs_folder=$(charsel_folder); then
+    while IFS= read -r l; do [[ -n $l ]] && warn "$l"; done < <(charsel_py copies "$CS_HOME" "$cs_folder" || true)
+fi
 
 game_stamp=$GAME/coop-built-from.txt
 # The mods' code patches the game is built with (patches 0034/0035: mods/.../exefs/*.ips and *.pchtxt, folders starting
@@ -580,12 +645,13 @@ exefs_stamp() {
     ((${#rows[@]})) || return 0
     # The list's rows for these mods only (its first row per name, in its order, as the game reads it): switching or
     # moving a mod without code patches builds nothing again (kit-paths.ps1 Get-KitCodeModsListHash).
-    local list=none line name fold kept=() first=1
+    local list=none line name fold kept=() first=1 default_off=0
     local -A seen=()
     if [[ -f $mods/coop-mods.list ]]; then
         while IFS= read -r line || [[ -n $line ]]; do
             line=${line%$'\r'}
             if ((first)); then first=0; [[ $line == 'coop-mods 1' ]] || break; continue; fi
+            [[ $line == 'default off' ]] && { default_off=1; continue; }
             case $line in 'on '?*) name=${line#on } ;; 'off '?*) name=${line#off } ;; *) continue ;; esac
             local sw=${line%% *}
             fold=$(mod_fold "$name")
@@ -593,6 +659,13 @@ exefs_stamp() {
             seen[$fold]=1
             [[ -n ${code[$fold]+x} ]] && kept+=("$sw $fold")
         done < "$mods/coop-mods.list"
+        # ("default off", Original game: a code mod the list does not name is off too, built out as the game leaves its
+        # files out, player report 266; kit-paths.ps1 Get-KitCodeModsListHash)
+        if ((default_off)); then
+            while IFS= read -r fold; do
+                [[ -n $fold && -z ${seen[$fold]+x} ]] && kept+=("off $fold")
+            done < <(printf '%s\n' "${!code[@]}" | LC_ALL=C sort)
+        fi
         # (rows that change nothing are no change, player report 210: the game puts the mods the list does not name under
         # the named ones, by folded name, on; rows all "on" in that same order, as Character Select switched off and on
         # again leaves, read as no list. kit-paths.ps1 Get-KitCodeModsListHash)
@@ -607,6 +680,65 @@ exefs_stamp() {
 }
 # A mod's name as patch 0011's host/mods.c compares them: ASCII letters without case, '\' as '/'.
 mod_fold() { local s=${1//\\//}; printf '%s' "$s" | LC_ALL=C tr 'A-Z' 'a-z'; }
+# Co-op's own Characters tab (charsel-native-0119; the owner: "our mod itself should natively include the character tab
+# even without downloading any of Snails mod"): its code patch (Snail's header, page and Customize hooks for Link, from
+# his MIT code: data/tools/puppet_pack/charsel/data/charsel-native.ips) goes into the pack folder's exefs before the
+# stamp, so the build takes it in; out when Character Select's own code is in the mods (his files and code are the
+# tab's then) or the pack said it left the tab out (coop_puppet.json "charsel_native": [], no build loop). The rule is
+# the pack tool's own (build.py charsel_native_wanted), as kit-paths.ps1 Sync-KitCharselNativePatch. Also after
+# charsel_undo below (Character Select put back as the game had it). Out too while the tab's files are parked
+# (merge_tables.py charsel_native_parked: kept in <pack>/_coop-menus because the size table the game reads cannot hold
+# them): the tab's code over the game's own menu files said MsgNotFound on slot 0, lost the Map tab and left L dead.
+# So menus_merge (start.sh's merge, parking or putting back) runs first, and data/charsel-parked.txt keeps what this
+# saw: start.sh builds again when its own merge after the pack step parks or puts back otherwise.
+menus_merge() {
+    [[ -n $(kit_game_exe) && -d $GAME/mods && -x $PY && -f $DATA/tools/puppet_pack/merge_tables.py ]] || return 0
+    "$PY" -I -B "$DATA/tools/puppet_pack/merge_tables.py" --mods "$GAME/mods" --romfs "$GAME/romfs" 2>&1 | sed 's/^/  /' || true
+}
+charsel_native_sync() {
+    menus_merge
+    local src=$DATA/tools/puppet_pack/charsel/data/charsel-native.ips
+    local pack=$GAME/mods/contents/0400486024DEC000/coop-puppet
+    local dst=$pack/exefs/E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips want=0
+    # (exit 10: ours wanted, 11: his code or the pack said no; anything else is Python failing (a broken pack tool):
+    # said plainly with its error, the code patch left as it is (no guess, no rebuild), the start goes on)
+    if [[ -f $src && -x $PY ]]; then
+        local rc=0
+        "$PY" -I -B -c '
+import json, os, sys
+sys.path.insert(0, sys.argv[1])
+from puppet_pack.build import charsel_native_wanted
+pack = sys.argv[2]
+want = charsel_native_wanted(pack)
+try:
+    with open(os.path.join(pack, "coop_puppet.json"), encoding="utf-8") as f:
+        doc = json.load(f)
+    if isinstance(doc, dict) and "charsel_native" in doc and not doc["charsel_native"]:
+        want = False
+except (OSError, ValueError):
+    pass
+from puppet_pack.merge_tables import charsel_native_parked
+parked = charsel_native_parked(pack)
+with open(sys.argv[3], "w", encoding="utf-8") as f:
+    f.write("1" if parked else "0")
+sys.exit(10 if want and not parked else 11)' "$DATA/tools" "$pack" "$DATA/charsel-parked.txt" || rc=$?
+        case $rc in
+            10) want=1 ;;
+            11) ;;
+            *) rm -f -- "$DATA/charsel-parked.txt"
+               warn "co-op's Characters tab: could not tell whether its code patch goes into the game (python exit $rc, its error above): left as it was."
+               return 0 ;;
+        esac
+    fi
+    if ((want)); then
+        [[ -f $dst ]] && cmp -s "$src" "$dst" && return 0
+        mkdir -p "${dst%/*}" && cp -- "$src" "$dst"
+    elif [[ -f $dst ]]; then
+        rm -f -- "$dst"
+    fi
+    return 0
+}
+((check_only)) || charsel_native_sync
 game_want="$src_stamp$(exefs_stamp)"
 ready=0
 [[ -n $(kit_game_exe) && $(cat "$game_stamp" 2>/dev/null) == "$game_want" ]] && ready=1
@@ -820,7 +952,7 @@ if ((ready && !rebuild && !check_only)); then
     charsel_confirm
 elif game_build; then
     charsel_confirm
-elif charsel_undo && game_want="$src_stamp$(exefs_stamp)" && [[ -n $(kit_game_exe) && $(cat "$game_stamp" 2>/dev/null) == "$game_want" ]]; then
+elif charsel_undo && charsel_native_sync && game_want="$src_stamp$(exefs_stamp)" && [[ -n $(kit_game_exe) && $(cat "$game_stamp" 2>/dev/null) == "$game_want" ]]; then
     warn "$game_why"
     warn 'Character Select: the game could not be built with it, so it is taken back out for now and the game starts as it was (the next start tries again; character_select = no in data/coop-options.ini stops it).'
 else
@@ -937,8 +1069,9 @@ for cs_json in "$GAME"/mods/*/characters.json; do
     [[ -f $cs_json && -d ${cs_json%/*}/romfs/Model ]] || continue
     cs_name=${cs_json#"$GAME"/mods/}; cs_name=${cs_name%/characters.json}
     [[ $cs_name == [-_.]* ]] && continue
-    cs_row=$(awk -v n="$cs_name" 'NR == 1 { sub(/\r$/, ""); if ($0 != "coop-mods 1") exit } NR > 1 { sub(/\r$/, ""); s = $1; r = substr($0, length(s) + 2)
-        if ((s == "on" || s == "off") && tolower(r) == tolower(n)) { print s; exit } }' "$GAME/mods/coop-mods.list" 2>/dev/null || true)
+    cs_row=$(awk -v n="$cs_name" 'NR == 1 { sub(/\r$/, ""); if ($0 != "coop-mods 1") { done = 1; exit } } NR > 1 { sub(/\r$/, ""); if ($0 == "default off") { d = 1; next }
+        s = $1; r = substr($0, length(s) + 2)
+        if ((s == "on" || s == "off") && tolower(r) == tolower(n)) { print s; done = 1; exit } } END { if (!done && d) print "off" }' "$GAME/mods/coop-mods.list" 2>/dev/null || true)
     cs_models=$(cd "${cs_json%/*}/romfs/Model" && LC_ALL=C ls -1 | { grep -E '^Player_(Child|Adult)_C[0-9]{3}\.Player_(Child|Adult)\.bfres\.zs$' || true; } | sha256sum | cut -d' ' -f1)
     pack_stamp+=" characters:$(sha256_of "$cs_json") models:$cs_models list:${cs_row:-on}"; break
 done

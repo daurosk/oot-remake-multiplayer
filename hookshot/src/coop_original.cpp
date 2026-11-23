@@ -94,6 +94,9 @@ std::string OffList(const std::vector<std::string>& mods) {
     out += "# Original game (co-op's Co-op settings): every mod left out. The list before is in ";
     out += kBackupFile;
     out += "; it comes back when the switch is turned off.\n";
+    // (a mod put into the folder after this list was written stays out too: the list never names it, report 266)
+    out += HOS_COOP_MODS_DEFAULT_OFF;
+    out += "\n";
     for (const auto& m : mods) out += "off " + m + "\n";
     return out;
 }

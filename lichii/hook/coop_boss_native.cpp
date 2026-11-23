@@ -979,6 +979,20 @@ std::vector<std::uint64_t> Table::CopiesRunningOwn() const {
     return out;
 }
 
+std::vector<std::uint64_t> Table::CopiesOnOwnerActions() const {
+    std::lock_guard lock(mutex_);
+    std::vector<std::uint64_t> out;
+    if (!actions_on_) {
+        return out;
+    }
+    for (const auto& [bsa, e] : by_bsa_) {
+        if (e.role == Role::copy && e.wanted.has_value() && !OwnTime(e)) {
+            out.push_back(e.actor);
+        }
+    }
+    return out;
+}
+
 std::optional<BossBsa> Table::OwnerState(std::uint64_t actor) const {
     std::lock_guard lock(mutex_);
     const Entry* e = FindActor(actor);

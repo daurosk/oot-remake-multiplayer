@@ -198,6 +198,18 @@ native table "runs their own". So the copy's own game asked its own steps while 
 tick drops the owner's poses and plays for them before the Mover (`coop_objects.cpp`). The owner's remove still comes.
 Log: `coop: objects: N boss copy(ies) run their own ...: their owner's place and animation wait`, then `... again`.
 
+**Probe: a copy's own animations on its owner's actions (row 222 follow-up, `LICHII_COOP_BOSS_COPY_OWN_ANIM=1`, off by
+default).** Outside those windows the objects layer still plays the owner's animation on a copy that runs the owner's
+action verbs through its own action graph. Twinrova's ranged attack (`DungeonBossTwinrova.action.rangedattack`) turns
+in `PreAttack` until that AS ends, plays `Attack_R`/`Attack_L` and fires on the AS trigger `ObjThrow`
+(`ExecuteShooterPrepareWithTarget` + `OneShotShooterShoot` of the reserve `FireBullet`/`IceBullet` from her
+ShooterParam); the bullet's own AI makes the fire or ice floor where it lands. In run 20261123-001227 copy B got the
+owner's `Attack_R` over its own `PreAttack` and never fired (no floor on B), while its ice shot, whose own move kept
+step, did. Suspected for every boss whose module waits on its own AS (shots, spawns, AS-timed hits). With the probe
+on, `Table::CopiesOnOwnerActions()` names those copies and the objects tick leaves the owner's plays out for them
+(their place still comes). Log: `coop: objects: probe: N boss copy(ies) on their owner's actions play their own
+animations (M owner plays left out ...)`. A proof run decides whether this becomes the default.
+
 **Every case with the same cause** (all four windows, every boss and mid-boss with native sync):
 - A copy's own intro / appear event (this report; also a late arrival's own `BossAppear` with a copy Gohma).
 - The reaction to our own hit (a seed stun on a copy: the owner's animation undid the stun, a likely part of "Gohma

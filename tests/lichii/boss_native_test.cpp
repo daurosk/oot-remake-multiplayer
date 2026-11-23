@@ -2410,3 +2410,26 @@ TEST_CASE("native boss: boss turns: every boss fights the Player only (puppets u
     CHECK_FALSE(t.PlayerOnlyBoss());
     CHECK_FALSE(t.KeepsLinkAsAttacker(kActor));
 }
+
+TEST_CASE("native boss: the copies on their owner's actions (row 222 probe)") {
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Gohma(Role::copy)});
+    CHECK(t.CopiesOnOwnerActions().empty());  // no owner's verbs yet: its own AI runs
+    t.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    CHECK(t.CopiesOnOwnerActions() == std::vector<std::uint64_t>{kActor});
+    // Its own time (our hit's reaction): its own changes run, so it is not on the owner's actions.
+    t.NoteOwnHit(kActor);
+    CHECK(t.CopiesOnOwnerActions().empty());
+    // The action path off: none.
+    Table off;
+    off.SetOn(true, false);
+    off.Publish({Gohma(Role::copy)});
+    off.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    CHECK(off.CopiesOnOwnerActions().empty());
+    // A boss we own: none.
+    Table ours;
+    ours.SetOn(true, true);
+    ours.Publish({Gohma(Role::owner)});
+    CHECK(ours.CopiesOnOwnerActions().empty());
+}

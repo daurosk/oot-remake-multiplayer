@@ -484,6 +484,13 @@ public:
     // reaction runs to its end. Empty while the native sync is off (the old path: the owner's motion alone).
     std::vector<std::uint64_t> CopiesRunningOwn() const;
 
+    // Row 222 follow-up probe (twinrova-fire-01112; off unless LICHII_COOP_BOSS_COPY_OWN_ANIM=1): the copies that
+    // take their owner's action verbs now (the owner's verbs came; each is put in here and run by the copy's own
+    // action graph), by actor. With the probe on, the objects layer plays none of the owner's animations over them:
+    // a move's own animation steps (an AS's end, its trigger events such as Twinrova's ObjThrow, which fires her
+    // bullet) then run as the copy's own module plays them. Empty while the action path is off.
+    std::vector<std::uint64_t> CopiesOnOwnerActions() const;
+
     // The owner's state to send for one of our bosses; nothing before its
     // first change was seen.
     std::optional<BossBsa> OwnerState(std::uint64_t actor) const;

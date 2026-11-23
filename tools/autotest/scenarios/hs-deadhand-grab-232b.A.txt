@@ -1,0 +1,53 @@
+# hs-deadhand-grab-232b (row 232, the OTHER direction: B grabbed while A owns him; a mirror of hs-deadhand-grab-232, enemies-01110 fd6092f1 + 043f6dcf): Dead Hand's hands grab ANY player (plain
+# MIRROR: A by the order-2 hand (likely his owner, the one he chases), B by the first hand. PASS here = rule 2 + 3
+# for B (B held by a hand while A owns him: B's grab line, the server's boss grab to B, Dead Hand up at B on both).
+# enemies, nearest Link), and Dead Hand himself goes to the game whose own hand holds its own Link (presence bit
+# grabbed_here, server Session::grab_owner) once his owner's attack is over, so he rises for that player too.
+# Boss rush DeadHandStage (Banc: Dead Hand -0.16 92.31 -105.06; hands (0,-108.43) first, (0,-98.43) order 2,
+# (+-5,-103.43) order 3). A stands by the first hand, B by the order-2 hand.
+# Run: hookshot.py run --lane 1 --name hs-deadhand-grab-232 --script-a <this> --script-b <.B.txt> --no-load
+# PASS (all):
+#  1. A held: A's own Dead Hand rises (A owner) or A logs "grab: our Enemy_DeadHand's piece holds our Link:
+#     Enemy_DeadHand wanted here"; shots a-grab / a-grab-3s, both windows: A held by a hand on both screens.
+#  2. B: "grab: our Enemy_DeadHand's piece holds our Link: Enemy_DeadHand wanted here"; the server log has
+#     "boss grab: Enemy_DeadHand of player <owner> ..." after the owner's attack ended.
+#  3. Shots b-grab-3s and b-grab-6s, both windows: B held, Dead Hand risen and at B on both screens (same place).
+# FAIL (232): B held but no "boss grab" and Dead Hand never rises by B on either screen while B is held; or the two
+#  screens show Dead Hand in different places.
+# Known gap (review-01111-b, accepted): A and B held at the SAME time -> he stays with his owner; judge B's grab only
+#  after A is free (A: "grab: no piece of Enemy_DeadHand holds our Link now").
+# VOID: no hand grabs B within its await (no "grab:" line in B).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 1500
+mark start
+nofairy                 # a bite while held is a hit: no bottled-fairy revive in the middle
+warp DeadHandStage DeadHandStage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-in
+event DreamBossStage_Rematch_Arrive   # the boot event the game's own rematch gives these stages (SubEvent_AllBossBattle / DreamBossStage flow): a bare warp has none and places no boss (run 1 VOID: 'share present 0 enemies')
+wait 600
+place 0.0 92.4 -99.6    # by the order-2 hand (pass 2 of 232: the one he chased, so likely his owner)
+wait 60
+mark a-placed
+wait 3600
+mark a-grab
+wait 180
+mark a-grab-3s
+wait 600
+mark a-free
+# (A stays)
+wait 2400
+mark a-late
+wait 1800
+mark end

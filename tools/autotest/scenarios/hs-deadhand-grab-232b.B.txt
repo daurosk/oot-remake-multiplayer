@@ -1,4 +1,4 @@
-# hs-deadhand-grab-232b, B: by the first hand, 2.4 m off it (so its grab comes after the await began; see the A file).
+# hs-deadhand-grab-232b, B: by the first hand, 1.2 m off it (as A in hs-deadhand-grab-232; its grab may come before the await: the logs and the 3 s shots count).
 mark start
 nofairy
 warp DeadHandStage DeadHandStage
@@ -15,7 +15,7 @@ wait 2400
 mark b-in
 event DreamBossStage_Rematch_Arrive   # the boot event the game's own rematch gives these stages (SubEvent_AllBossBattle / DreamBossStage flow): a bare warp has none and places no boss (run 1 VOID: 'share present 0 enemies')
 wait 600
-place 0.0 92.4 -106.0   # 2.4 m from the first hand (0, -108.43)
+place 0.0 92.4 -107.2   # 1.2 m from the first hand (0, -108.43): rerun 1 at 2.4 m was never grabbed
 wait 60
 mark b-placed
 await 7200 grab: our Enemy_DeadHand's piece holds our Link

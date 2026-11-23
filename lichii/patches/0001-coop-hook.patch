@@ -12,13 +12,12 @@ limiter. The main window starts co-op once the render window exists and
 stops it when it closes.
 ---
  CMakeLists.txt                                   | 16 ++++++++++++++++
- src/CMakeLists.txt                               |  6 ++++++
  src/core/CMakeLists.txt                          |  4 ++++
  .../hle/service/nvdrv/devices/nvdisp_disp0.cpp   |  6 ++++++
  src/core/hle/service/nx2_gsv.h                   |  6 ++++++
  src/yuzu/CMakeLists.txt                          |  5 +++++
  src/yuzu/main_window.cpp                         | 12 ++++++++++++
- 7 files changed, 55 insertions(+)
+ 6 files changed, 49 insertions(+)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index 9f3e53b35c..35acd4fc8b 100644
@@ -47,23 +46,6 @@ index 9f3e53b35c..35acd4fc8b 100644
  add_subdirectory(src)
  
  if (ENABLE_DEBUG_TOOLS)
-diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index 41e9862e39..af9cb11797 100644
---- a/src/CMakeLists.txt
-+++ b/src/CMakeLists.txt
-@@ -225,6 +225,12 @@ else()
-             $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-stringop-overread>
-             $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-stringop-overflow>)
-     endif()
-+    # OoT co-op: Fritchii's Linux release is built with clang; the co-op build uses GCC 13, whose
-+    # stringop-truncation (in -Wall, an error here) stops at common/fritchii_write_ring.h's NameThread
-+    # (a thread name cut to 16 bytes on purpose). After -Werror=all, so it stays off.
-+    if (LICHII_COOP AND CXX_GCC)
-+        add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:-Wno-stringop-truncation>)
-+    endif()
- 
-     # Set file offset size to 64 bits.
-     #
 diff --git a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
 index 0564dc003e..add6dae907 100644
 --- a/src/core/CMakeLists.txt

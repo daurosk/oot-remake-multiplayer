@@ -449,7 +449,7 @@ jobs:
       # run on main, integrate-*, tags and pull requests only. This step is the one that
       # compiles it on every other push, so a worker branch sees its own compile errors
       # before the integrator's build. COOP_HOOK_STRICT=ON gives the lichii/hook files the emulator's
-      # GCC flags (-O3, -Werror=all/extra: hookshot/CMakeLists.txt), so what fails linux-emulator fails here.
+      # GCC flags (-O3, -Werror=all/extra: hookshot/CMakeLists.txt) as errors, so the hook's own warnings fail here (linux-emulator builds with ENABLE_WERROR=OFF since Fritchii v6.5).
       # The compiler is g++-13, the one linux-emulator builds with (ubuntu-24.04): ubuntu-latest's default g++ (15.2) does not
       # raise the -Wstringop-truncation that 13.3 raises (0.11.8), so the default would pass what the emulator refuses.
       - name: Compile the hook code (the Hookshot module)

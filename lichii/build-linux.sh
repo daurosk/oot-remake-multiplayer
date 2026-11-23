@@ -70,8 +70,15 @@ fi
 # The flags of Fritchii's Linux release (.github/workflows/release-binaries.yml), with the
 # updater off (patch 0001 refuses it with LICHII_COOP) and the co-op hook on.
 # trim_paths.cmake keeps the build machine's folders out of the program.
+# ENABLE_WERROR=OFF: Fritchii's own -Werror set (all, extra, missing-declarations, shadow) is
+# kept clean only for the compilers its releases use (clang on Linux; MSVC and clang on
+# Windows). With GCC 13, v6.5 stops in its own code (common/fritchii_write_ring.h
+# stringop-truncation, video_core/dma_pusher.cpp missing-declarations); they stay warnings in
+# the log. Our own code is still -Werror in its own builds (build.yml linux gcc/clang,
+# COOP_HOOK_STRICT).
 cmake -S "$src" -B "$build" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
+    -DENABLE_WERROR=OFF \
     -DBUILD_TESTING=OFF \
     -DYUZU_TESTS=OFF \
     -DYUZU_CMD=OFF \

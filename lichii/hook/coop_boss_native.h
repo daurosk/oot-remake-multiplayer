@@ -350,7 +350,6 @@ struct Counts {
     std::uint64_t action_waiting = 0; // owner's actions waiting for the copy's own node
     std::uint64_t resyncs = 0;        // a copy started again from the owner's state now
     std::uint64_t drift_fixes = 0;    // a copy's brain verb put back after it differed for long
-    std::uint64_t busy = 0;           // a wrap that found the table busy (the game ran its own)
     std::uint64_t minions_stopped = 0; // a copy boss's own minion not made (the owner's comes)
     std::uint64_t copy_own_run = 0;   // a copy's own change run (our event, our hit)
     std::uint64_t copy_own_late = 0;  // a copy's own skipped change made late (event or hit seen after it)
@@ -409,9 +408,14 @@ public:
     void Publish(const std::vector<Boss>& bosses);
 
     // The wraps, phase 0 (any game thread). own: the call is our caller's.
-    // True: skip the game's function (a copy's own change). Never blocks:
-    // a busy table lets the game run its own. changed: the game's w2 (the
-    // verb changed), sent with the owner's action and given to the copies.
+    // True: skip the game's function (a copy's own change). changed: the game's w2 (the verb changed), sent with
+    // the owner's action and given to the copies.
+    // They wait for the table: while another thread holds it (the walk's Publish, Receive, our caller's Step),
+    // they once let the game run its own, so a copy's own AI moved its body against the owner's (probe 3 f-19:
+    // Twinrova's copy left the owner's fire attack 121 for its own Fly_Start 4, then the owner's next changed-0
+    // put-in started 121 over from PreAttack, again and again: no shot), and an owner's change went unsent. No
+    // holder calls the game (Step only returns its call, made after the lock is let go; the others read and
+    // write memory), so the wait is short and never on ourselves.
     bool OnBrainVerb(std::uint64_t bsa, std::int32_t verb, bool force, bool own);
     // Row 222 part 2: `plug_name`, the request's plug read as a name (VariantName; the wrap reads it for every
     // request with a plug): an owner's action keeps it as its variation (component 24), "" for a plain ask.
@@ -542,7 +546,7 @@ public:
 
     // A create request (any game thread): true when a boss named `maker` is a
     // copy here that takes its owner's verbs, so its own minion is not made
-    // (the owner's comes as a copy; CoopObjects::MinionMaker). Never blocks.
+    // (the owner's comes as a copy; CoopObjects::MinionMaker). Waits for the table, as the wraps.
     bool CopyMakes(std::string_view maker);
 
     // The copies that run their own changes now (our event and kAfterEventSteps after it, kReactSteps after our

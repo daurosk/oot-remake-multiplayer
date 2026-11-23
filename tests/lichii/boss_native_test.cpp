@@ -2,11 +2,13 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <limits>
 #include <map>
 #include <string>
+#include <thread>
 
 #include "coop_boss_native.h"
 
@@ -240,6 +242,42 @@ TEST_CASE("native boss: the request block is asked again for a new game, not for
     REQUIRE(c);
     CHECK(c->function == kMain + 0x100000 + addr::kMalloc);
     CHECK(addr::kActionTaken == 0);  // (a skipped request answers as a taken one: hookshot's wrap 5)
+}
+
+TEST_CASE("native boss (probe 3 f-19): the wraps wait for a busy table, never let a copy's own change run") {
+    // The walk's Publish, Receive and our caller's Step hold the table on other threads. A wrap that gave up on a
+    // busy table let the copy's own AI ask run (Twinrova's copy left the owner's fire attack for its own Fly_Start)
+    // and left an owner's change unsent.
+    Table copy;
+    copy.SetOn(true, true);
+    copy.Publish({Gohma(Role::copy)});
+    copy.Receive(kActor, BossBsa{1, 4, std::nullopt, {}});
+    Table owner;
+    owner.SetOn(true, true);
+    owner.Publish({Gohma(Role::owner)});
+    std::atomic<bool> done{false};
+    std::thread other([&] {
+        std::uint32_t seq = 2;
+        while (!done.load()) {
+            copy.Receive(kActor, BossBsa{seq++, 4, std::nullopt, {}});
+            (void)copy.Totals();
+            (void)owner.Totals();
+        }
+    });
+    constexpr int kAsks = 2000;
+    int copy_ran = 0, owner_skipped = 0;
+    for (int i = 0; i < kAsks; ++i) {
+        copy_ran += copy.OnActionVerb(kBsa, GameRequest(12, kNode), i == 0, false) ? 0 : 1;
+        copy_ran += copy.OnBrainVerb(kBsa, 2, false, false) ? 0 : 1;
+        copy_ran += copy.CopyMakes("Enemy_DungeonBoss_Gohma") ? 0 : 1;
+        owner_skipped += owner.OnActionVerb(kBsa, GameRequest(12, kNode), i == 0, false) ? 1 : 0;
+    }
+    done = true;
+    other.join();
+    CHECK(copy_ran == 0);  // every own change of the copy skipped, every own minion stopped
+    CHECK(owner_skipped == 0);
+    CHECK(copy.Totals().copy_skipped == 2u * kAsks);
+    CHECK(owner.Totals().owner_action == static_cast<std::uint64_t>(kAsks));  // every owner's ask kept to send
 }
 
 TEST_CASE("native boss: a copy boss's own minion is not made, the owner's own is") {

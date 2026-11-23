@@ -1,0 +1,55 @@
+# hs-meg-decoys-231 (row 231, enemies-01110 fd6092f1; also enemies-dying-01111 e8184823's mini-boss kill):
+# Meg (Enemy_MiddleBoss_Poe_Meg) splits into four; each game's Meg rolled its own seats, so the screens showed
+# different layouts. Now only her owner's decoys (Enemy_MiddleBoss_Poe_Meg_Dummy, MinionMaker) are kept and shared.
+# Boss rush MegStage (IsStartForceBattle: the fight starts at once). Both land together and watch three splits.
+# Then both kill her (test kill; a kill on a copy is held at 1, the owner's kills her): the mini-boss death check.
+# Run: hookshot.py run --lane 1 --name hs-meg-decoys-231 --script-a <this> --script-b <.B.txt> --no-load
+# PASS 231 (every split seen, >= 2 splits):
+#  1. Shots <x>-splitN and <x>-splitNb (~0.3 s later; taken when each game logs a new decoy), BOTH windows: the same
+#     number of Megs (4) at the same seats on both screens (count them; compare their places around the room).
+#  2. NO "minions: our copy of Enemy_MiddleBoss_Poe_Meg made N ... (a loop)" line in either game.
+# FAIL (231): different layouts or counts on the two screens at a split, or the loop line.
+# PASS enemies-dying (mini-boss kill, e8184823): after the kill the copy game logs its death begun ONCE ("its death
+#  has begun"), NO "did not take" line in either game after <x>-kill; shots <x>-death: Meg dying or gone on both.
+# VOID: no decoy line in either game (no split within the awaits), or the warp placed no Meg.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 1500
+mark start
+warp MegStage MegStage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-in
+wait 600
+mark a-fight
+await 2400 coop: objects: \+ Enemy_MiddleBoss_Poe_Meg_Dummy
+mark a-split1
+wait 20
+mark a-split1b
+wait 600
+await 2400 coop: objects: \+ Enemy_MiddleBoss_Poe_Meg_Dummy
+mark a-split2
+wait 20
+mark a-split2b
+wait 600
+await 2400 coop: objects: \+ Enemy_MiddleBoss_Poe_Meg_Dummy
+mark a-split3
+wait 20
+mark a-split3b
+wait 600
+kill Enemy_MiddleBoss_Poe_Meg
+wait 120
+mark a-kill
+wait 300
+mark a-death
+wait 1200
+mark end

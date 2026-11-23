@@ -284,10 +284,16 @@ enum class MadeOurs : std::uint8_t {
 // `turns`: the switch; `attacking`: the move its body runs is an attack in our game (nothing: not read);
 // `put_action`: the owner's move was put into it; `own_ask_same`: its own AI asked that same move itself (slot and
 // verb: its own brain is in the move its body runs); `own_node`: its own AI named a node for it.
+// Row 325: only an ATTACK starts over (row 178: Phantom Ganon's rush, else lost). A move that is no attack (a walk, a
+// turn, the tail of a reaction) is the AI's own placing between attacks: started over from where the copy stands it
+// leaves the boss's own cycle (King Dodongo's turn after a roll, started over, rolled him on in his old facing to the
+// far wall; his walk, started over, ended at once; his next roll, aimed at Link from there, went into the lava pit,
+// where no roll ever ends). Its own AI chooses again from what its body does instead (row 149), unless it asked that
+// same move itself (then it goes on).
 constexpr MadeOurs PlanMadeOurs(bool turns, std::optional<bool> attacking, bool put_action, bool own_ask_same,
                                 bool own_node) {
-    if (turns && attacking.has_value() && !*attacking && put_action && own_ask_same) {
-        return MadeOurs::resume;
+    if (turns && attacking.has_value() && !*attacking && put_action) {
+        return own_ask_same ? MadeOurs::resume : MadeOurs::rechoose;
     }
     return put_action && own_node ? MadeOurs::restart_move : MadeOurs::rechoose;
 }

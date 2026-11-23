@@ -229,6 +229,11 @@ void Table::Publish(const std::vector<Boss>& bosses) {
                         e.restart_action = again;
                         Note(b.name + ": made ours mid-move: its move (slot " + std::to_string(again.slot) +
                              " verb " + std::to_string(again.verb) + ") starts over as ours (row 178)");
+                    } else if (turns_ && e.put_action && b.attacking.has_value() && !*b.attacking) {
+                        // Row 325: mid-move, but no attack: its own cycle goes on from its body, nothing started over.
+                        e.rechoose = true;
+                        Note(b.name + ": made ours mid-move (verb " + std::to_string(e.put_action->verb) +
+                             ", no attack): its AI chooses again from its body, nothing started over (row 325)");
                     } else {
                         e.rechoose = true;
                         Note(b.name + ": its AI did not run its body as a copy: it chooses again");

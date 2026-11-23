@@ -2369,7 +2369,9 @@ TEST_CASE("native boss: boss turns: a copy made ours between moves resumes, mid-
     CHECK(PlanMadeOurs(true, false, true, true, false) == MadeOurs::resume);  // (its own ask is the same move)
     CHECK(PlanMadeOurs(true, true, true, true, true) == MadeOurs::restart_move);  // mid-attack: row 178
     CHECK(PlanMadeOurs(true, std::nullopt, true, true, true) == MadeOurs::restart_move);  // not read
-    CHECK(PlanMadeOurs(true, false, true, false, true) == MadeOurs::restart_move);  // its own AI is elsewhere
+    CHECK(PlanMadeOurs(true, false, true, false, false) == MadeOurs::rechoose);  // (row 325, no node either)
+    CHECK(PlanMadeOurs(true, true, true, false, true) == MadeOurs::restart_move);  // an attack still starts over
+    CHECK(PlanMadeOurs(true, false, true, false, true) == MadeOurs::rechoose);  // row 325: no attack, its own AI elsewhere
     CHECK(PlanMadeOurs(true, false, false, false, false) == MadeOurs::rechoose);   // row 149
     CHECK(PlanMadeOurs(false, false, true, true, true) == MadeOurs::restart_move);  // turns off: as before
     CHECK(PlanMadeOurs(false, false, false, false, true) == MadeOurs::rechoose);
@@ -2418,6 +2420,48 @@ TEST_CASE("native boss: boss turns: handed to us between moves, its own brain go
         REQUIRE(c);
         CHECK(c->function == kMain + addr::kRequestActionVerb);
         CHECK((g.Get<std::uint16_t>(kBlock + addr::kReqFlags) & addr::kReqStartOver) != 0);
+    }
+}
+
+TEST_CASE("native boss: row 325: made ours mid-move that is no attack: its AI chooses again, nothing started over") {
+    // Run 20261123-043946: King Dodongo's turn after a roll (verb 104) and his walk (verb 1), handed over while the
+    // copy's own AI had asked another move, were started over (row 178): the turn became a roll on in his old facing to
+    // the far wall, the walk ended at once, and his next roll, aimed at Link from there, went into the lava pit where
+    // no roll ends. With one game (kd-pit-solo-325) every roll ended. Same rule for every boss on the native table.
+    FakeGuest g;
+    const std::int32_t brain = 6;
+    g.Write(kBsa + addr::kBsaBrainVerb, &brain, 4);
+    auto turn = ActionFromRequest(GameRequest(104, 0));
+    REQUIRE(turn);
+    turn->flags = 0;
+    for (const bool attacking : {false, true}) {
+        CAPTURE(attacking);
+        Table t;
+        t.SetOn(true, true);
+        t.SetTurns(true);
+        t.Publish({Phantom(Role::copy)});
+        // Its own AI asked ANOTHER move (walk, skipped, its node kept); the owner's turn is put in.
+        CHECK_FALSE(t.OnActionVerb(kBsa, GameRequest(1, kNode), true, false));
+        t.Receive(kActor, BossBsa{3, 6, turn, {}});
+        REQUIRE(t.Step(g, false, 0, kMain));
+        REQUIRE(t.Step(g, true, kBlock, kMain));
+        CHECK_FALSE(t.Step(g, true, 0, kMain));
+        Boss ours = Phantom(Role::owner);
+        ours.attacking = attacking;
+        t.Publish({ours});
+        g.bytes.erase(kBlock + addr::kReqVerb);
+        const auto c = t.Step(g, false, 0, kMain);
+        REQUIRE(c);
+        if (attacking) {
+            CHECK(c->function == kMain + addr::kRequestActionVerb);  // an attack: row 178's start-over, unchanged
+            CHECK((g.Get<std::uint16_t>(kBlock + addr::kReqFlags) & addr::kReqStartOver) != 0);
+        } else {
+            CHECK(c->function == kMain + addr::kSetBrainVerb);  // its own brain chooses from what its body does
+            CHECK(c->x[0] == kBsa);
+            CHECK(c->x[1] == 6u);
+            CHECK(c->x[2] == 1u);
+            CHECK_FALSE(g.bytes.contains(kBlock + addr::kReqVerb));  // the turn is not asked again
+        }
     }
 }
 

@@ -5,8 +5,8 @@ setflag Sequence_IsChildhood 0
 warp Market_Adult Market_Entrance
 wait 1200
 mark b-in
-place -13.2 100.1 4.9   # 3.4 m in front, 22 deg to the side
-toward -16.44 3.59 8
+place -0.24 100.2 11.45  # 3.4 m in front, 20 deg to the side
+toward -3.17 13.13 8
 await 2400 scream: (our Enemy_ReDead froze our Link|the owner's Enemy_ReDead froze its Link)
 mark b-scream1
 wait 60
@@ -15,8 +15,8 @@ wait 300
 place -3.0 102.2 60.0
 wait 900
 mark b-away
-place -13.2 100.1 4.9   # round 2
-toward -16.44 3.59 8
+place -0.24 100.2 11.45  # round 2
+toward -3.17 13.13 8
 await 2400 scream: (our Enemy_ReDead froze our Link|the owner's Enemy_ReDead froze its Link)
 mark b-scream2
 wait 60

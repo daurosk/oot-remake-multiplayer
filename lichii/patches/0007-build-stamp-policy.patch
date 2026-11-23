@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: daurosk <354202035+daurosk@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 17:41:06 -0900
+Subject: [PATCH] build: the shader stamp script sets its CMake policies
+
+Nx2ShaderStamp.cmake runs as "cmake -P", which sets no policies. On
+CMake 3.x CMP0012 is then OLD, so while(TRUE) in hash_without_skip_blocks
+is false and the FRITCHII_STAMP_SKIP blocks are hashed in: the stamp is
+143af6f0d4195e81 (Linux, LF) instead of 3dc8b3ea00f9b392, and the build
+stops. CMake 4 sets CMP0012 NEW by itself. The script now takes the
+policies of the top-level cmake_minimum_required (3.31).
+---
+ CMakeModules/Nx2ShaderStamp.cmake | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/CMakeModules/Nx2ShaderStamp.cmake b/CMakeModules/Nx2ShaderStamp.cmake
+index 73e0627118..2acc1620cd 100644
+--- a/CMakeModules/Nx2ShaderStamp.cmake
++++ b/CMakeModules/Nx2ShaderStamp.cmake
+@@ -22,6 +22,12 @@
+ #   hashes: any later edit to these files leaves it, and the build stops again until someone
+ #   checks that edit too.
+ 
++# A cmake -P script starts with no policies set. On CMake 3.x that leaves CMP0012 OLD: while(TRUE)
++# below is then false, the FRITCHII_STAMP_SKIP blocks are hashed in and the build stops on a stamp
++# no release carries (Linux LF: 143af6f0d4195e81 instead of 3dc8b3ea00f9b392). CMake 4 sets it NEW
++# by itself. The same version as the top-level cmake_minimum_required.
++cmake_policy(VERSION 3.31)
++
+ set(SkipBlocksIn "vk_graphics_pipeline.h;vk_compute_pipeline.h")
+ # v6.1, kept by 6.2: Windows (CRLF checkout), Linux (LF checkout).
+ set(KnownStamps "143b6220486fb09b;3dc8b3ea00f9b392")

@@ -14,7 +14,7 @@
 # --no-fetch       use the source as it is (it must already be at the pin with the patches)
 # --cpm-cache DIR  keep the downloaded libraries (CPM) in DIR, outside the source (CI caches it)
 #
-# Needs: cmake 3.24+, ninja, a C++20 compiler (gcc 13+ or clang 17+), Qt 6 (6.8 as
+# Needs: cmake 3.31+, ninja, a C++20 compiler (gcc 13+ or clang 17+), Qt 6 (6.8 as
 # Fritchii's release; set QT_ROOT_DIR or CMAKE_PREFIX_PATH, or install qt6 dev packages)
 # and the packages lichii/README.md lists for Linux.
 set -euo pipefail

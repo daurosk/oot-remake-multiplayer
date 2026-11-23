@@ -12,6 +12,7 @@ Co-op inside Frizti's emulator (Lichii, now [Fritchii](https://github.com/Frizti
 | `patches/0004-coop-null-write-log.patch` | A debug log line: who writes to guest address 0 (issue 111). |
 | `patches/0005-coop-portable-switches.patch` | A portable kit's player switch file is its own `user\nx2_switches.txt`, never the one in `%APPDATA%\fritchii` or `eden` (v5.8; since v6.5 for Tools > Switches too). |
 | `patches/0006-coop-save-folder.patch` | A guest's game reads and writes the co-op save folder `<title>-coop` beside its own (issue 167); the hook (`hook/coop_save.cpp`) decides and is told the folder. |
+| `patches/0007-build-stamp-policy.patch` | Not co-op: Fritchii's shader stamp script (`CMakeModules/Nx2ShaderStamp.cmake`) sets its CMake policies, so a build with CMake 3.x makes the released stamp (v6.5; drop it once Fritchii has it). |
 | `hook/` | The co-op code the patch builds into the emulator (`core.cmake` and `qt.cmake` say what), so changing it needs no new patch. How it runs and its settings: [docs/lichii.md](../docs/lichii.md). |
 
 ## Fetch and patch
@@ -34,7 +35,7 @@ lichii/build-linux.sh --appimage ~/lichii.AppImage     # also a self-contained A
 lichii/build-linux.sh --hook-only                      # only compile the co-op hook (a quick check; CI does this on every push)
 ```
 
-It needs CMake 3.24+, Ninja, gcc 13+ or clang 17+, Qt 6 (6.8, as Fritchii's release; point `QT_ROOT_DIR` at it, or install the distribution's `qt6` development packages) and the packages Fritchii's Linux release installs (Ubuntu 24.04 names): `autoconf g++ glslang-tools libglu1-mesa-dev libpulse-dev libtool libudev-dev libxkbcommon-x11-0 mesa-common-dev nasm ninja-build pkg-config zlib1g-dev libva-dev libvdpau-dev libavfilter-dev libavcodec-dev libswscale-dev spirv-tools spirv-headers libusb-1.0-0-dev libboost-dev libboost-fiber-dev libboost-context-dev libopus-dev libasound2-dev`. The rest (SDL3, ENet, OpenSSL and so on) is downloaded into `.cache/cpm` on the first configure. The program is `build/coop-linux/bin/lichii`; the AppImage needs glibc 2.39 or newer to run (Ubuntu 24.04, Fedora 40, Debian 13, Arch).
+It needs CMake 3.31+ (Fritchii's minimum since v6.5), Ninja, gcc 13+ or clang 17+, Qt 6 (6.8, as Fritchii's release; point `QT_ROOT_DIR` at it, or install the distribution's `qt6` development packages) and the packages Fritchii's Linux release installs (Ubuntu 24.04 names): `autoconf g++ glslang-tools libglu1-mesa-dev libpulse-dev libtool libudev-dev libxkbcommon-x11-0 mesa-common-dev nasm ninja-build pkg-config zlib1g-dev libva-dev libvdpau-dev libavfilter-dev libavcodec-dev libswscale-dev spirv-tools spirv-headers libusb-1.0-0-dev libboost-dev libboost-fiber-dev libboost-context-dev libopus-dev libasound2-dev`. The rest (SDL3, ENet, OpenSSL and so on) is downloaded into `.cache/cpm` on the first configure. The program is `build/coop-linux/bin/lichii`; the AppImage needs glibc 2.39 or newer to run (Ubuntu 24.04, Fedora 40, Debian 13, Arch).
 
 On Linux the emulator's portable folder is `user/` in the **current directory** (not beside the program, as on Windows); without one it uses `~/.local/share/eden` and the other XDG folders. So start it from the folder that holds `user/` (the kit's start scripts do: `cd emulator`, then `./lichii.AppImage`).
 
@@ -45,7 +46,7 @@ CI (`.github/workflows/build.yml`, job `linux-emulator`) compiles the hook on ev
 Tools:
 
 - Visual Studio 2022 Build Tools with "Desktop development with C++" (MSVC 14.44 was used).
-- CMake 3.24 or newer and Ninja on `PATH`.
+- CMake 3.31 or newer (Fritchii's minimum since v6.5) and Ninja on `PATH`.
 - `glslangValidator`, for the emulator's shaders. The Vulkan SDK has it; without the SDK, unzip the [glslang release](https://github.com/KhronosGroup/glslang/releases) (`glslang-<version>-windows-x86_64-release.zip`), copy `bin\glslang.exe` to `bin\glslangValidator.exe` and put that `bin` on `PATH`.
 - Qt 6.8.3 for `msvc2022_64` with the `qtcharts` module, the same as Fritchii's own Windows CI. The Qt the emulator downloads by itself (6.11.1) is built with a newer MSVC and does not link with Visual Studio 2022 (`__std_rotate` and other STL symbols missing). Without the Qt installer: `uv tool run --from aqtinstall==3.3.0 aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -m qtcharts -O <folder>` (about 2 GB).
 - Everything else (SDL3, FFmpeg, OpenSSL, ENet and the rest) is downloaded by the emulator's CMake into `fritchii-src\.cache\cpm` on the first configure.
@@ -81,6 +82,7 @@ With `LICHII_COOP` off (the default) the patch changes nothing in the build.
 | `src/core/file_sys/patch_manager.cpp` | (0003) In `PatchNSO`, after the built-in patches, calls `CoopSvc::PatchMain`, which writes the puppet code cave into Ocarina's `main` (checked against the original words; only with `LICHII_COOP_PUPPET=1` or `LICHII_COOP_DEBUG_PUPPET=1`). |
 | `src/core/hle/kernel/svc.cpp` | (0003) `Kernel::Svc::Call` asks `CoopSvc::Call` first: it handles `svc 0xf4` from the cave and returns false for every other call, which goes on as before. |
 | `src/core/arm/dynarmic/arm_dynarmic_64.cpp` | (0004, only under `LICHII_COOP`) In `MemoryWrite`, a write to guest address 0 (an object built at a null pointer after a failed allocation) logs `Write to address 0 ... at pc ... lr ... sp ...; return addresses: ...` from the frame-pointer chain, the first 16 times in a run. The emulator's own `Unmapped Write64` line has no pc. The JIT syncs guest registers at block boundaries, so pc (and possibly lr and x29) can be the block's start or a little stale; the return addresses from the stack are the useful part. Only `MemoryWrite` is hooked: a 128-bit (q register) or exclusive store to address 0 is not logged. |
+| `CMakeModules/Nx2ShaderStamp.cmake` | (0007, every build) `cmake_policy(VERSION 3.31)` at the top. The script runs as `cmake -P`, which sets no policies; on CMake 3.x `CMP0012` is then OLD, `while(TRUE)` in `hash_without_skip_blocks` is false, the `FRITCHII_STAMP_SKIP` blocks of `vk_graphics_pipeline.h` / `vk_compute_pipeline.h` are hashed in and the build stops on a stamp no release has. CMake 4 sets `CMP0012` NEW by itself, which is why Fritchii's own builds pass. |
 | `src/yuzu/main.cpp` | (0005, only under `LICHII_COOP`) `Nx2UserSwitchFile`: in portable mode (`user\` beside the exe, `Common::FS::IsPortableMode`) the player's switch file is `user\nx2_switches.txt`, and `Nx2LegacyUserSwitchFile` is none. The start's reading, the 6.2 `EDEN_HYBRID_CORES` rewrite and Tools > Switches all go through it, so a kit never reads or writes `%APPDATA%`. |
 
 Our top-level `CMakeLists.txt` reuses the emulator's own `enet` target (the same ENet 1.3.18) when one exists, so there is one ENet in the program.
@@ -97,7 +99,7 @@ Our top-level `CMakeLists.txt` reuses the emulator's own `enet` target (the same
 2. Run `fetch.ps1`. If a patch no longer applies, apply it by hand on the new commit, commit, and replace that file with `git format-patch -1 --zero-commit --no-signature --stdout` of its commit.
 3. Build with `LICHII_COOP=ON` and check the log for `coop: loaded`.
 
-The patches stay at 11 files and about 110 lines; everything else is in `hook/`.
+The patches stay at 14 files and about 200 lines; everything else is in `hook/`.
 
 Moves so far: `fritchii-v5` to `fritchii-v5.5` (2026-11-09, 37 commits, mostly the Vulkan renderer, shaders and settings; all three patches applied as they were), then `fritchii-v5.6` (2026-11-10, 108 commits after v5.5), then `fritchii-v5.7` (2026-11-10, below).
 
@@ -135,6 +137,7 @@ Then `fritchii-v6.5` (2026-11-22, issue #311; 1419 commits after v5.8.4, past v6
 - **0001:** `MainWindow::closeEvent` now opens Fritchii's shutdown watch right after the line our call sat beside. `CoopHook::Shutdown` runs after it as its own step ("frontend close: co-op"), so a hang there is named. Both `OnFrame` calls sit at the same frame ends as before.
 - **0002:** `PrepareDraw` was rebuilt around v6's memory stage (`FRITCHII_MEMSTAGE_THREAD`) and one-follower split (`FRITCHII_ONEF`, draws recorded on a render thread). With either on, a draw can be recorded after the game wrote later values, so the camera block comes with the draw's packet (its tracker record). `CoopCamera::Track` now takes the bytes from the patch, which reads them as `TrackOcarinaCamera` does on every path, and the record is kept while co-op wants the camera, with DLSS off too. Both switches are off by default (not in `BuiltinSwitches`); the bound view is then read as before.
 - **0001, new:** with GCC, `src/CMakeLists.txt` keeps `stringop-truncation` off (CI 45092357434 and 45092934736: `fritchii_write_ring.h:66`, `-Werror=stringop-truncation`).
+- **0007, new:** the Preparing shaders stamp script runs with CMake 3.31's policies (CI 45098046239: CMake 3.x on the runners hashed the skip blocks in, stamp `143af6f0d4195e81` instead of the Linux release's `3dc8b3ea00f9b392`; the same sources hash to `6f72127d45416a88` with the blocks left out, which `SameAsReleased` maps to it). Players keep their prepared shaders; `FRITCHII_SHADER_STAMP_ANY` is never set.
 - **0004:** `<string>` is included upstream now (that hunk is gone); `MemoryWrite` moved.
 - **0005:** `LoadNx2Switches` was rewritten, and v6 added Tools > Switches, which writes the player's file. The port moves the player's file itself into the kit (`Nx2UserSwitchFile`) instead of returning early, which covers the reading, the 6.2 `EDEN_HYBRID_CORES` rewrite (it writes that file) and Tools > Switches.
 

@@ -1,0 +1,27 @@
+# hs-redead-scream-230, B: adult in the ruined Market, 3.4 m in front of the same Redead, beside A (see the A file).
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+mark start
+setflag Sequence_IsChildhood 0
+warp Market_Adult Market_Entrance
+wait 1200
+mark b-in
+place -13.2 100.1 4.9   # 3.4 m in front, 22 deg to the side
+toward -16.44 3.59 8
+await 2400 scream: (our Enemy_ReDead froze our Link|the owner's Enemy_ReDead froze its Link)
+mark b-scream1
+wait 60
+mark b-frozen1
+wait 300
+place -3.0 102.2 60.0
+wait 900
+mark b-away
+place -13.2 100.1 4.9   # round 2
+toward -16.44 3.59 8
+await 2400 scream: (our Enemy_ReDead froze our Link|the owner's Enemy_ReDead froze its Link)
+mark b-scream2
+wait 60
+mark b-frozen2
+wait 300
+place -3.0 102.2 60.0
+wait 300
+mark end

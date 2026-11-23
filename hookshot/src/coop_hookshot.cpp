@@ -439,6 +439,13 @@ void SetBossNative() {
         LOG_INFO(Core, "coop: bosses: probe2 {}: a copy's own asks of its owner's move {} (LICHII_COOP_BOSS_COPY_OWN_MOVE)",
                  own_move ? "on" : "off", own_move ? "run" : "are skipped");
     }
+    // Row 222 probe 3 (off unless set): owner's actions put into a copy without the owner's places (Table).
+    const bool own_places = Env("LICHII_COOP_BOSS_COPY_OWN_PLACES") == "1";
+    if (t.CopyOwnPlacesOn() != own_places) {
+        t.SetCopyOwnPlaces(own_places);
+        LOG_INFO(Core, "coop: bosses: probe3 {}: owner's actions put into copies {} (LICHII_COOP_BOSS_COPY_OWN_PLACES)",
+                 own_places ? "on" : "off", own_places ? "without the owner's places" : "with the owner's places");
+    }
     if (t.BrainOn() == brain && t.ActionsOn() == actions) {
         return;
     }
@@ -2187,7 +2194,7 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
         }
         // Row 222 probe 2 (LICHII_COOP_BOSS_COPY_OWN_MOVE): the request's plug as text, for the log.
         std::string plug_name;
-        if (!t_own_call && t.CopyOwnMoveOn() && r[CoopBossNative::addr::kReqHasPlug] == 1) {
+        if (!t_own_call && (t.CopyOwnMoveOn() || t.CopyOwnPlacesOn()) && r[CoopBossNative::addr::kReqHasPlug] == 1) {
             std::uint64_t plug = 0;
             std::memcpy(&plug, r.data() + CoopBossNative::addr::kReqPlug, sizeof plug);
             plug_name = CoopBossNative::PlugName(

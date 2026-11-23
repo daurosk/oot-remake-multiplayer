@@ -405,6 +405,11 @@ public:
     // new (slot, verb, node, plug) a copy's own AI names once ('probe2: ...').
     void SetCopyOwnMove(bool on);
     bool CopyOwnMoveOn() const;
+    // Row 222 probe 3 (off unless LICHII_COOP_BOSS_COPY_OWN_PLACES=1): the owner's actions are put into a copy without
+    // the owner's places (NaN, as for an ask by plug), so the copy's move takes its own (its AI's target). Run
+    // 20261123-055243: every copy put-in by plug (no places) fired its shot, every one with the owner's places did not.
+    void SetCopyOwnPlaces(bool on);
+    bool CopyOwnPlacesOn() const;
 
     // Our game runs an event now (the boss glue, every frame; the player
     // reader's event flag). Copies then run their own changes; the owner keeps
@@ -748,6 +753,7 @@ private:
     bool brain_on_ = false;
     bool actions_on_ = false;
     std::atomic<bool> copy_own_move_{false};  // row 222 probe 2 (SetCopyOwnMove)
+    std::atomic<bool> copy_own_places_{false};  // row 222 probe 3 (SetCopyOwnPlaces)
     bool turns_ = false;
     bool event_ = false;           // our game runs an event (SetEvent)
     std::vector<std::string> dying_;  // the bodies whose death has begun (SetDying)

@@ -2511,3 +2511,40 @@ TEST_CASE("native boss: row 222 probe 2, a plug's name: a C string, else a point
     const std::uint8_t unended[3] = {'a', 'b', 'c'};
     CHECK(PlugText(std::span<const std::uint8_t>(unended, 3)).empty());  // no end: not a name
 }
+
+TEST_CASE("native boss: row 222 probe 3, the owner's action put into a copy without the owner's places") {
+    constexpr std::uint64_t kPlug = 0x5000000;
+    Table t;
+    t.SetOn(true, true);
+    t.SetCopyOwnPlaces(true);
+    CHECK(t.CopyOwnPlacesOn());
+    t.Publish({Boss{kActor, kBsa, Role::copy, "Enemy_DungeonBoss_Twinrova", 2}});
+    Request own = GameRequest(121, kNode, false);  // its own ask of the move, by plug (its 'Ice')
+    std::memcpy(own.data() + addr::kReqPlug, &kPlug, 8);
+    own[addr::kReqHasPlug] = 1;
+    t.OnActionVerb(kBsa, own, true, false);
+    BossAction a = *ActionFromRequest(GameRequest(121, 0));  // the owner's, no plug: its places came
+    REQUIRE(a.places[0]);
+    a.changed = true;
+    t.Receive(kActor, BossBsa{1, 2, a, {}});
+    FakeGuest g;
+    const std::int32_t verb = 2;
+    g.Write(kBsa + addr::kBsaBrainVerb, &verb, 4);
+    REQUIRE(t.Step(g, false, 0, kMain));  // the block
+    REQUIRE(t.Step(g, true, kBlock, kMain));
+    CHECK(std::isnan(g.Get<float>(kBlock + addr::kReqPlaces)));  // no owner's place
+    CHECK(g.Get<std::uint8_t>(kBlock + addr::kReqHasPlug) == 0);  // and no plug: the owner asked none
+    CHECK(g.Get<std::uint64_t>(kBlock + addr::kReqNode) == kNode);
+    // Off (the default): the owner's place goes in.
+    Table off;
+    off.SetOn(true, true);
+    CHECK_FALSE(off.CopyOwnPlacesOn());
+    off.Publish({Boss{kActor, kBsa, Role::copy, "Enemy_DungeonBoss_Twinrova", 2}});
+    off.OnActionVerb(kBsa, own, true, false);
+    off.Receive(kActor, BossBsa{1, 2, a, {}});
+    FakeGuest h;
+    h.Write(kBsa + addr::kBsaBrainVerb, &verb, 4);
+    REQUIRE(off.Step(h, false, 0, kMain));
+    REQUIRE(off.Step(h, true, kBlock, kMain));
+    CHECK(h.Get<float>(kBlock + addr::kReqPlaces) == 10.0f);
+}

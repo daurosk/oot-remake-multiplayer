@@ -229,6 +229,27 @@ name is read as a C string, else as a pointer to one (`*name`), else its first w
 A proof run decides: the copy fires its own bullet and floor -> the fix runs a copy's own asks of its owner's move
 by default; else the module's arguments on the copy (`QueryBSAGetActionVerbArgs`) are read next. Either way the
 owner's variation (the plug: Ice, the feints) is not sent yet (a protocol change, asked of the owner first).
+Result (run 20261123-055243): PART. Ice synced 2 of 2: the owner asked by plug `Ice`, the copy's put-in named its
+own node and its own plug `Ice` and no place, and fired the ice shot and floor on its own. Fire synced 0 of 2. At
+the first, the copy's own AI had chosen `Ice` and probe 2 let that run: an ice shot for the owner's fire. At the
+second, the put-in (no plug, the owner's places, the node its AI names for `Ice`) played `PreAttack` and `Attack_R`
+for as long as the owner's did, with no shot.
+
+**The variation is the request's plug.** The plug (request +0x38) is a `const char*`: the game builds the move's
+command name from the verb's name and the plug (main+0xbe070: `RangedAttack` with no plug, `RangedAttack:Ice` with
+plug `Ice`) and compares it with the command the slot runs. So Fire is the plain ask, Ice and the feints are plug
+names (`DungeonBossTwinrova.action.root`'s commands `:Fire`, `:Ice`, `:1FeintFire`, ...). The owner's plug name is
+never sent: a copy names the plug its own AI last asked for that slot and verb (row 177's `AskFor`), so a copy can run
+another variation of the owner's move. Every boss whose `action.root` picks a variation by plug has the same gap
+(Twinrova's ranged attack and feints, her `StartBattle`, and every boss move asked by plug: the owner's 10 s line
+counts them, `N by plug`). Sending the name is a protocol change and waits for the owner's choice
+(`reports/twinrova-01112-3.md`).
+
+**Probe 3: no owner's places in a copy's put-in (`LICHII_COOP_BOSS_COPY_OWN_PLACES=1`, off by default).** Every copy
+put-in with a plug and no place fired its shot (3 of 3 over both runs); every one with the owner's places did not
+(none of 8). With probe 3 on, the owner's actions go into a copy with no place (NaN, as an ask by plug has); its plug
+is chosen as before (from whether the owner's action named a place). Log: `coop: bosses: probe3 on: ...`. A proof
+run (probe 2 off) decides whether the owner's places are what stops the copy's fire shot.
 
 **Every case with the same cause** (all four windows, every boss and mid-boss with native sync):
 - A copy's own intro / appear event (this report; also a late arrival's own `BossAppear` with a copy Gohma).

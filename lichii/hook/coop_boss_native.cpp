@@ -138,6 +138,14 @@ bool Table::CopyOwnMoveOn() const {
     return copy_own_move_.load(std::memory_order_relaxed);  // (no lock: the wraps ask it on any game thread)
 }
 
+void Table::SetCopyOwnPlaces(bool on) {
+    copy_own_places_.store(on, std::memory_order_relaxed);
+}
+
+bool Table::CopyOwnPlacesOn() const {
+    return copy_own_places_.load(std::memory_order_relaxed);
+}
+
 void Table::SetOn(bool brain, bool actions) {
     std::lock_guard lock(mutex_);
     brain_on_ = brain;
@@ -1247,12 +1255,19 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
             }
         }
         const OwnAsk ask = AskFor(e.own_asks, e.own_slot_asks, e.own_node, action).value_or(OwnAsk{e.own_node});
-        const Request r = RequestFromAction(action, ask);
+        Request r = RequestFromAction(action, ask);  // (its plug as before: the owner's places say whether it had one)
+        if (copy_own_places_) {
+            // Probe 3: no owner's place in the request (NaN, as an ask by plug has): the copy's move takes its own.
+            const float nan = std::numeric_limits<float>::quiet_NaN();
+            for (std::size_t i = 0; i < action.places.size(); ++i) {
+                Put<float>(r, addr::kReqPlaces + 12 * i, nan);
+            }
+        }
         if (!guest.Write(block_, r.data(), r.size())) {
             break;
         }
         std::string node_said;
-        if (copy_own_move_) {
+        if (copy_own_move_ || copy_own_places_) {
             node_said = " " + Hex(ask.node) + (r[addr::kReqHasPlug] == 1
                                                    ? " '" + PlugName([&guest](std::uint64_t a, void* out, std::size_t n) {
                                                          return guest.Read(a, out, n);

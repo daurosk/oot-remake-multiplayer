@@ -449,9 +449,9 @@ jobs:
       # run on main, integrate-*, tags and pull requests only. This step is the one that
       # compiles it on every other push, so a worker branch sees its own compile errors
       # before the integrator's build. COOP_HOOK_STRICT=ON gives the lichii/hook files the emulator's
-      # GCC flags (-O3, -Werror=all/extra: hookshot/CMakeLists.txt) as errors, so the hook's own warnings fail here (linux-emulator builds with ENABLE_WERROR=OFF since Fritchii v6.5).
-      # The compiler is g++-13, the one linux-emulator builds with (ubuntu-24.04): ubuntu-latest's default g++ (15.2) does not
-      # raise the -Wstringop-truncation that 13.3 raises (0.11.8), so the default would pass what the emulator refuses.
+      # GCC flags (-O3, -Werror=all/extra: hookshot/CMakeLists.txt), so what fails linux-emulator fails here.
+      # The compiler is g++-13 (ubuntu-24.04's), stricter than the emulator's clang 21 (since Fritchii v6.5): ubuntu-latest's
+      # default g++ (15.2) does not raise the -Wstringop-truncation that 13.3 raises (0.11.8), so it would pass more.
       - name: Compile the hook code (the Hookshot module)
         if: matrix.job == 'gcc'
         run: |
@@ -620,6 +620,21 @@ jobs:
             libopus-dev libasound2-dev xvfb \
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
             libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1
+      # clang 21, the compiler of Fritchii's own Linux release (v6.5: Ubuntu clang 21.1.8): GCC
+      # does not build Fritchii v6 (lichii/build-linux.sh says why), and ubuntu-24.04's own clang
+      # is 18. From the LLVM apt repo, as Fritchii's release-binaries.yml takes its clang;
+      # build-linux.sh picks clang-21 when it is there.
+      - name: Install clang 21
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key |
+            sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" |
+            sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-21
+          clang++-21 --version
       - name: Install Qt
         if: steps.gate.outputs.run == 'true'
         uses: jurplel/install-qt-action@d325aaf2a8baeeda41ad0b5d39f84a6af9bcf005  # v4.3.0

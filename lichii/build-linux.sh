@@ -14,9 +14,9 @@
 # --no-fetch       use the source as it is (it must already be at the pin with the patches)
 # --cpm-cache DIR  keep the downloaded libraries (CPM) in DIR, outside the source (CI caches it)
 #
-# Needs: cmake 3.31+, ninja, a C++20 compiler (gcc 13+ or clang 17+), Qt 6 (6.8 as
-# Fritchii's release; set QT_ROOT_DIR or CMAKE_PREFIX_PATH, or install qt6 dev packages)
-# and the packages lichii/README.md lists for Linux.
+# Needs: cmake 3.31+, ninja, clang (21, as Fritchii's own Linux release; CC/CXX pick another
+# clang, never GCC: see below), Qt 6 (6.8 as Fritchii's release; set QT_ROOT_DIR or
+# CMAKE_PREFIX_PATH, or install qt6 dev packages) and the packages lichii/README.md lists for Linux.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -67,18 +67,39 @@ if [ -n "${QT_ROOT_DIR:-}" ]; then
     prefix=("-DCMAKE_PREFIX_PATH=$QT_ROOT_DIR")
 fi
 
+# The compiler is clang, as Fritchii's own Linux release (v6.5: Ubuntu clang 21.1.8). Fritchii
+# builds with -fno-rtti, and since v6 its GPU split code uses dynamic_cast to its final engine
+# classes (video_core/fritchii_e_split.cpp, gpu_split.cpp, memstage_shadow.cpp): clang does such
+# a cast without RTTI (a vtable compare), GCC refuses it. Its -Werror set (ENABLE_WERROR, on by
+# default) is kept clean for clang only, too (GCC 13 stops at fritchii_write_ring.h and
+# dma_pusher.cpp). Default: clang-21, else clang; CC and CXX pick another clang.
+if [ -z "${CXX:-}" ]; then
+    if command -v clang++-21 >/dev/null; then
+        CC=clang-21; CXX=clang++-21
+    else
+        CC=clang; CXX=clang++
+    fi
+fi
+[ -n "${CC:-}" ] || CC="${CXX/clang++/clang}"
+command -v "$CXX" >/dev/null || fail "no $CXX: install clang (21, as Fritchii's release) or set CC and CXX"
+cxx_version="$("$CXX" --version | head -n1)"
+case "$cxx_version" in
+    *clang*) ;;
+    *) fail "$CXX is not clang ($cxx_version): Fritchii v6 does not build with GCC (dynamic_cast without RTTI)" ;;
+esac
+clang_major="$(printf '%s\n' "$cxx_version" | sed -n 's/.*clang version \([0-9][0-9]*\).*/\1/p')"
+if [ -n "$clang_major" ] && [ "$clang_major" -lt 21 ]; then
+    echo "build-linux.sh: warning: $cxx_version; Fritchii's own Linux release uses clang 21" >&2
+fi
+echo "build-linux.sh: compiler $cxx_version"
+
 # The flags of Fritchii's Linux release (.github/workflows/release-binaries.yml), with the
 # updater off (patch 0001 refuses it with LICHII_COOP) and the co-op hook on.
 # trim_paths.cmake keeps the build machine's folders out of the program.
-# ENABLE_WERROR=OFF: Fritchii's own -Werror set (all, extra, missing-declarations, shadow) is
-# kept clean only for the compilers its releases use (clang on Linux; MSVC and clang on
-# Windows). With GCC 13, v6.5 stops in its own code (common/fritchii_write_ring.h
-# stringop-truncation, video_core/dma_pusher.cpp missing-declarations); they stay warnings in
-# the log. Our own code is still -Werror in its own builds (build.yml linux gcc/clang,
-# COOP_HOOK_STRICT).
 cmake -S "$src" -B "$build" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
-    -DENABLE_WERROR=OFF \
+    "-DCMAKE_C_COMPILER=$CC" \
+    "-DCMAKE_CXX_COMPILER=$CXX" \
     -DBUILD_TESTING=OFF \
     -DYUZU_TESTS=OFF \
     -DYUZU_CMD=OFF \

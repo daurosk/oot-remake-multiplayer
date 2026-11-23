@@ -6182,7 +6182,7 @@ private:
         int n = 0;
         for (std::size_t i = 0; i < before.size() && i < now.size(); ++i) {
             if (before[i] != now[i]) {
-                if (n < 40) {
+                if (n < 200) {
                     line += fmt::format(" +{:#x}:{:08x}->{:08x}", i * 4, before[i], now[i]);
                 }
                 ++n;

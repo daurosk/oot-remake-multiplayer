@@ -1905,6 +1905,24 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         if (!CoopActorEvents::LifeStepSeen().exchange(true, std::memory_order_relaxed)) {
             LOG_INFO(Core, "coop: actors: the game's Life step calls the module (patch 0007): hits go in through it");
         }
+        if (a != 0 && a == CoopDbno::OurLifeComponent()) {  // row 230 diag (scream-diag-230, not for merge)
+            static std::uint32_t said_id = 0xffffffffu;
+            static int said_lines = 0;
+            std::uint32_t id = 0xffffffffu;
+            std::array<std::uint32_t, 0x98 / 4> rec{};
+            if (CoopRuntime::Read(a + 0x1b18, &id, sizeof id) && id != 0xffffffffu && id != said_id &&
+                said_lines < 80 && CoopRuntime::Read(a + 0x240, rec.data(), sizeof rec)) {
+                said_id = id;
+                ++said_lines;
+                std::string words;
+                for (std::size_t i = 0; i < rec.size(); ++i) {
+                    words += fmt::format("{}{:08x}", i ? " " : "", rec[i]);
+                }
+                LOG_INFO(Core, "coop: scream diag: step: our Link's Life {:#x} hit id {:#x}, sum {}, +0x240 attacker "
+                               "{:#x}, record [{}]",
+                         a, id, *sum, (static_cast<std::uint64_t>(rec[1]) << 32) | rec[0], words);
+            }
+        }
         // Difficulty (coop_difficulty.h): what the game takes of the frame's own damage. What another
         // game's hit gives (the life table) was scaled where that hit was dealt.
         const std::int32_t own = CoopDifficulty::TheKinds().Step(

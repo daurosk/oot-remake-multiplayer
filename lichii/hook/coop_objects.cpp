@@ -1113,7 +1113,7 @@ public:
         if (floor_due_) {
             floor_due_ = false;
             const FloorTurn f = *floor_;
-            const u64 now = SteadyMs();
+            const u64 now = SteadyNowMs();
             if (f.turn.Done(now)) {
                 floor_.reset();
             }
@@ -2276,6 +2276,9 @@ public:
                     list.push_back(std::move(b));
                 }
             }
+            if (debug_) {
+                RollDiag325(seen, self);
+            }
             TheBossMain().store(main_);
             bosses.Publish(list);
             for (const auto& [address, state] : sync_.BossVerbsIn()) {
@@ -2875,6 +2878,47 @@ public:
             return;
         }        sync_.Receive(m);
     }
+
+    // DIAG row 325 (crash-325-3, LICHII_COOP_DEBUG_OBJECTS only; removed with the fix): King Dodongo held in
+    // Rolling_Loop after a mid-roll hand-over, his roll centre at the lava pit's rim. Once a second while he fights
+    // (slot 0 not 'Wait'): his move, where he is, whose he is, each roll centre (place + owner), owner and copy.
+    void RollDiag325(const std::vector<Seen>& seen, u8 self) {
+        const u64 now = SteadyNowMs();
+        if (now - roll_diag_at_ < 1000 || roll_diag_lines_ >= 1200) {
+            return;
+        }
+        const auto place = [](const coop::protocol::Vec3& p) {
+            char text[64];
+            std::snprintf(text, sizeof text, "(%.2f %.2f %.2f)", p[0], p[1], p[2]);
+            return std::string(text);
+        };
+        const auto whose = [&](u64 address) {
+            const std::optional<u8> owner = sync_.OwnerOf(address);
+            return !owner || *owner == 0 ? std::string("nobody's")
+                   : *owner == self      ? std::string("ours")
+                                         : "player " + std::to_string(*owner) + "'s";
+        };
+        for (const Seen& s : seen) {
+            if (s.name != "Enemy_DungeonBoss_Dodongo" || !s.animation || s.animation->name == "Wait") {
+                continue;
+            }
+            std::string centres;
+            for (const Seen& c : seen) {
+                if (c.name == "Enemy_DungeonBoss_Dodongo_Attention_RollingCenter") {
+                    char hex[24];
+                    std::snprintf(hex, sizeof hex, "%llx", static_cast<unsigned long long>(c.address));
+                    centres += std::string(" centre ") + hex + " " + place(c.position) + " " + whose(c.address);
+                }
+            }
+            roll_diag_at_ = now;
+            ++roll_diag_lines_;
+            LOG_INFO(Core, "coop: diag 325: KD {} '{}' at {} life {}{}", whose(s.address), s.animation->name,
+                     place(s.position), s.life ? std::to_string(s.life->life) : std::string("?"),
+                     centres.empty() ? std::string(" (no roll centre)") : centres);
+        }
+    }
+    u64 roll_diag_at_ = 0;
+    std::size_t roll_diag_lines_ = 0;
 
     bool debug_ = false;
     bool aggro_ = false;   // LICHII_COOP_DEBUG_AGGRO (Aggro)

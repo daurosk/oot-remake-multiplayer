@@ -43,6 +43,7 @@ mark a-in
 event Get_StoneOfFire_AppearBoss   # his appear (the rematch's boot event): in DodongoStage he stays in 'Wait' without it
 wait 1800               # the intro, then the fight
 mark a-fight
+face 24.0 -63.0          # crash-325-3: look at the arena and the lava pit (KD in frame for every shot)
 wait 300
 mark a-f1
 wait 300
@@ -50,6 +51,7 @@ mark a-f2
 wait 11700               # round 1 is B's: its await (at most 3600) + 7500 of shots + 600 for its marks
 await 3600 anim Enemy_DungeonBoss_Dodongo \S+ 'Rolling_Loop'$   # our COPY of KD starts his roll (at most 60 s)
 stun Enemy_DungeonBoss_Dodongo   # made ours mid-roll: issue 150's hand-over
+face 24.0 -63.0          # (again after the hand-over)
 mark a-r2-stun
 wait 300
 mark a-r2-01

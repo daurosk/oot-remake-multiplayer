@@ -956,6 +956,8 @@ std::vector<std::string> PresetChoices(const CoopMods::Loader& loader) {
 }
 std::size_t Generates(const World& w, const char* preset) {
     std::size_t n = 0;
+    const char* own = OwnPresetString(preset);  // the kit's own presets are given to OOTRR as their settings string
+    if (*own) preset = own;
     const std::wstring want = L"generate " + std::wstring(preset, preset + std::strlen(preset)) + L" ";
     for (const auto& r : w.runs) n += r.find(want) != std::wstring::npos ? 1 : 0;
     return n;
@@ -1015,6 +1017,20 @@ TEST_CASE("rando: only the presets this OOTRR can make are offered, a bad one go
         rando.Wait();
         CHECK(w.runs.size() == before2 + std::size(kPresets) + 2);
     }
+}
+
+TEST_CASE("rando: the kit's own open presets are OOTRR1- strings given to generate (rows 250/255)") {
+    for (const char* p : {"open", "open_fast"}) {
+        const std::string s = OwnPresetString(p);
+        CHECK(IsSettingsString(s));
+        const auto args = GenerateArgs(p, "abc", "seed.ootrr", "");
+        REQUIRE(args.size() >= 2);
+        CHECK(args[1] == s);
+        CHECK(FolderFor("abc", p) == std::string("randomizer-abc-") + p);
+    }
+    CHECK(std::string(OwnPresetString("easy")).empty());
+    CHECK(GenerateArgs("easy", "abc", "seed.ootrr", "")[1] == "easy");
+    CHECK(ManifestText().find("\"value\": \"open\"") != std::string::npos);
 }
 
 TEST_CASE("rando: the preset cache's text") {

@@ -114,10 +114,10 @@ std::string Quote(const std::string& arg) {
 // coop_mod_library.cpp). A preset the installed OOTRR cannot build is not offered, so
 // its line is left out here and the table's line for it is simply unused.
 std::string PresetNames(const std::string& value) {
-    static constexpr const char* kValues[] = {"default", "easy", "open_world", "keysanity", "full_shuffle"};
-    static constexpr const char* kNames[] = {"Default", "Easy", "Open world", "Keysanity", "Full shuffle"};
-    static constexpr const char* kNamesHans[] = {"默认", "简单", "开放世界", "钥匙乱序", "完全乱序"};
-    static constexpr const char* kNamesHant[] = {"預設", "簡單", "開放世界", "鑰匙亂序", "完全亂序"};
+    static constexpr const char* kValues[] = {"default", "easy", "open_world", "keysanity", "full_shuffle", "open", "open_fast"};
+    static constexpr const char* kNames[] = {"Default", "Easy", "Open world", "Keysanity", "Full shuffle", "Open areas", "Open areas, fast fortress"};
+    static constexpr const char* kNamesHans[] = {"默认", "简单", "开放世界", "钥匙乱序", "完全乱序", "区域全开", "区域全开（速通要塞）"};
+    static constexpr const char* kNamesHant[] = {"預設", "簡單", "開放世界", "鑰匙亂序", "完全亂序", "區域全開", "區域全開（速通要塞）"};
     for (std::size_t i = 0; i < sizeof kValues / sizeof kValues[0]; ++i) {
         if (value == kValues[i]) {
             std::string out = "{\"value\": \"" + value + "\", \"name\": \"" + kNames[i];
@@ -380,7 +380,8 @@ Plan Decide(const Want& want, const std::vector<Built>& built, const std::vector
 
 std::vector<std::string> GenerateArgs(const std::string& preset, const std::string& seed, const fs::path& seed_file,
                                       const fs::path& spoiler) {
-    std::vector<std::string> args = {"generate", preset.empty() ? "default" : preset, SeedWord(seed),
+    const std::string own = OwnPresetString(preset);
+    std::vector<std::string> args = {"generate", !own.empty() ? own : preset.empty() ? "default" : preset, SeedWord(seed),
                                      CoopMods::ToUtf8(seed_file)};
     if (!spoiler.empty()) {
         args.push_back("--spoiler");

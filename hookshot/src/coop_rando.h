@@ -55,7 +55,17 @@ inline constexpr const char* kTablesFile = "coop-tables.txt";      // in a seed:
 // (the seed file's "settings"). Every build writes both, host and guest alike (each builds the same seed).
 inline constexpr const char* kSpoilerFile = "spoiler.txt";
 inline constexpr const char* kSettingsFile = "settings.txt";
-inline constexpr const char* kPresets[] = {"default", "easy", "open_world", "keysanity", "full_shuffle"};
+inline constexpr const char* kPresets[] = {"default", "easy", "open_world", "keysanity", "full_shuffle", "open", "open_fast"};
+// The kit's own presets (rows 250/255): OOTRR's easy and open_world presets ask for settings its build cannot apply
+// (small keys removed, adult start, open bridge: "This build cannot apply these settings yet"), so these two are
+// OOTRR1- settings strings made of only the openness settings it does apply (forest, Kakariko, Zora, Door of Time,
+// Gerudo Fortress open or fast, Ganon's trials skipped, boss keys removed). Each is given to `generate` in place of
+// its name; the folder and the Settings row use the name. Empty: not one of ours (OOTRR's own preset id).
+inline const char* OwnPresetString(std::string_view name) {
+    if (name == "open") return "OOTRR1-AMAQABABAADACAQHAEBA6AIACAAQCEQBAEPACAJGAEASOAIBGMAQCTABAFHACATJAEAG2AIDQ4AQCADGXY";
+    if (name == "open_fast") return "OOTRR1-AMAQABABAADACAQHAEAQ6AIACAAQCEQBAEPACAJGAEASOAIBGMAQCTABAFHACATJAEAIOAIBACCKS";
+    return "";
+}
 inline constexpr const char* kPresetsFile = "presets-ok.txt";   // in kFolder: which presets the installed OOTRR builds
 
 // The control mod's mod.json.

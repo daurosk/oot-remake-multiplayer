@@ -13,6 +13,8 @@ wait 300
 press A
 wait 2400
 mark b-in
+event DreamBossStage_Rematch_Barinade_Start   # the boot event the game's own rematch reserves with this stage (a warp has none:
+#   Barinade appears only through it; boss-route-01112)
 wait 1800
 press ZL 10
 mark b-1

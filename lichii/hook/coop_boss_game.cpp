@@ -654,8 +654,26 @@ std::optional<std::int32_t> MaxLifeCap() {
     return TheGlue().max_life_cap;
 }
 
+// The autotest's `event NAME` (WantEvent): the play-test bridge's PlayNow asks it from the calc thread, so it has
+// its own lock (the glue's `wanted` is the present thread's).
+namespace {
+std::mutex g_test_events_mutex;
+std::vector<std::string> g_test_events;
+} // namespace
+
 std::vector<std::string> TakeWantedEvents() {
-    return std::exchange(TheGlue().wanted, {});
+    auto out = std::exchange(TheGlue().wanted, {});
+    std::lock_guard lock(g_test_events_mutex);
+    for (auto& name : g_test_events) {
+        out.push_back(std::move(name));
+    }
+    g_test_events.clear();
+    return out;
+}
+
+void WantEvent(std::string name) {
+    std::lock_guard lock(g_test_events_mutex);
+    g_test_events.push_back(std::move(name));
 }
 
 bool DeathMayRun(std::uint8_t boss) {

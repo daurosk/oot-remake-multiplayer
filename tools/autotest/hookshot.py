@@ -62,7 +62,7 @@ STICK_KEYS = {  # full stick directions: (stick, x, y)
 }
 WEAR_SLOTS = ("weapon", "shield", "head", "armor", "boots", "hand")
 MODULE_ONLY = ("chat", "give", "wear", "dress", "assign", "place", "face", "aim", "kill", "hit", "stun", "drop", "hurt", "setflag", "setenum", "menu",
-               "dump")
+               "dump", "event")
 
 
 class ScriptError(Exception):
@@ -314,6 +314,13 @@ def parse(text):
             if len(w) != 2 or not re.fullmatch(r"[A-Za-z0-9_-]+", w[1]):
                 fail("want: dump TAG (letters, digits, - and _)")
             s.kind, s.name = "dump", w[1]
+        elif cmd == "EVENT":
+            # event NAME: our game asked to play that event setting by name (the module's live-event requester).
+            # boss-route-01112: a boss rush stage reached by `warp` misses its rematch boot event; Barinade and
+            # Ganondorf appear only through theirs (DreamBossStage_Rematch_Barinade_Start / _Ganondorf_Start).
+            if len(w) != 2 or not re.fullmatch(r"[A-Za-z0-9_]+", w[1]):
+                fail("want: event NAME (an event setting's name: letters, digits and _)")
+            s.kind, s.name = "event", w[1]
         elif cmd == "SETENUM":
             if len(w) != 3:
                 fail("want: setenum NAME VALUE (an Enum flag, or 0xHASH, and a value's name)")

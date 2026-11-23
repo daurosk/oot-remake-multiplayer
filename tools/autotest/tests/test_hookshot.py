@@ -303,7 +303,8 @@ class ParseTest(unittest.TestCase):
                            ("hit Enemy_DungeonBoss_Gohma 0", "want: hit ACTOR N"),
                            ("hit Enemy_DungeonBoss_Gohma 81", "want: hit ACTOR N"),
                            ("hit Enemy_DungeonBoss_Gohma 2x", "want: hit ACTOR N"), ("stun", "want: stun BOSS"),
-                           ("stun A B", "want: stun BOSS")):
+                           ("stun A B", "want: stun BOSS"), ("event", "want: event NAME"),
+                           ("event A B", "want: event NAME"), ("event Dm<x>", "want: event NAME")):
             with self.assertRaises(hs.ScriptError) as e:
                 hs.parse(text)
             self.assertIn(want, str(e.exception))
@@ -635,16 +636,18 @@ class PlayerTest(unittest.TestCase):
                 setenum 0x1234abcd Done
                 kill Enemy_Skulltula_Gold
                 hurt 4
+                event DreamBossStage_Rematch_Barinade_Start
                 mark m
             """, game, commands=path)
             self.assertEqual(len(taken), 3)   # the mark too: the module logs it in the game's log
             self.assertEqual(taken[0].splitlines()[1:], ["give bombs", "chat /teleport B", "place 1 2.5 -3"])
             self.assertEqual(taken[1].splitlines()[1:], [
                 "setflag PouchData.Item_Bomb.StockNum 20", "wear head Mask_Keaton", "assign Bow",
-                "setenum 0x1234abcd Done", "kill Enemy_Skulltula_Gold", "hurt 4"])
+                "setenum 0x1234abcd Done", "kill Enemy_Skulltula_Gold", "hurt 4",
+                "event DreamBossStage_Rematch_Barinade_Start"])
             self.assertEqual(taken[2].splitlines()[1:], ["mark m"])
             self.assertTrue(all(t.startswith("# ") for t in taken))
-            self.assertEqual(sum(" sent (line" in line for line in log.lines), 9)
+            self.assertEqual(sum(" sent (line" in line for line in log.lines), 10)
             self.assertFalse(any("skipped" in line for line in log.lines))
             self.assertEqual(len(game.cmds("press")), 1)
             self.assertEqual(log.lines[-2:], ["coop: test mark m", "coop: test script done"])

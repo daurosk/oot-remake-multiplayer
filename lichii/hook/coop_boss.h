@@ -397,6 +397,8 @@ std::optional<std::int32_t> TakeMaxLifeWrite();
 std::optional<std::int32_t> MaxLifeCap();
 // - boss events to ask our game for by name (the live-event requester);
 std::vector<std::string> TakeWantedEvents();
+// - test only (the autotest's `event NAME`, coop_testinput.cpp): one more event for that requester.
+void WantEvent(std::string name);
 // - lines for the chat box ("<name> entered the boss room of ...").
 std::vector<std::string> TakeLines();
 // - row 136: whether our game's own death of boss `boss` (BOSS_SCENE's index) may still run here

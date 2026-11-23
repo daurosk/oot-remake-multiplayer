@@ -761,3 +761,16 @@ TEST_CASE("testinput: AimPlace puts the arrow short of the target on its line, f
     CHECK_FALSE(AimPlace(eye, eye, 0.6f).has_value());
     CHECK_FALSE(AimPlace({std::nanf(""), 0.0f, 0.0f}, eye, 0.6f).has_value());
 }
+
+TEST_CASE("testinput: event hands the hook an event setting's name (boss-route-01112)") {
+    std::string error;
+    CHECK_FALSE(Parse("event\n", error));
+    CHECK_FALSE(Parse("event DreamBossStage_Rematch_Barinade_Start extra\n", error));
+    Runner r(Must("event DreamBossStage_Rematch_Barinade_Start\nmark after\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].kind == Kind::event);
+    CHECK(requests[0].name == "DreamBossStage_Rematch_Barinade_Start");
+}

@@ -156,6 +156,7 @@ enum class Kind {
     sync,    // sync NAME N: wait here, buttons let go, until N games reached NAME
     menu,    // test only: menu customize|close, the Multiplayer tab's Customize page opened or the menu closed (issue 74)
     dump,    // test only (play-test kit): this game's shared flags written to <commands file>.dump-TAG.json
+    event,   // test only (boss-route-01112): an event setting asked of our game by name (the live-event requester)
 };
 
 struct Step {

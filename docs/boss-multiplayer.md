@@ -124,7 +124,8 @@ except the split shots below.
   `ShortStun`). Phantom Ganon's ball knockdown is `Down_Fall*` / `DownTimeReaction*`, which was read already.
   Open: his volley (`Parry`, an action of his own AI) runs only in the owner's game, so in a copy game the first
   ball sent back stuns him.
-- Not tested yet (the boss rush stage did not place him from this save).
+- Not tested yet: the boss rush stage did not place him after a `warp` (no boot event; see "Boss rush stages reached by
+  a warp" below). The route now asks `DreamBossStage_Rematch_Ganondorf_Start` after the warp.
 
 ### Ganon (final battle)
 - **Stage 1:** he faces one player; the tail is the weak spot. With turns the player he faces is the bait and the
@@ -146,8 +147,43 @@ except the split shots below.
 - **Volvagia at 2 players is very hard standing still:** both test Links reached 0 life several times in her fire
   (her breath and floor fire are each game's own, so every player is attacked). Worth a look in the difficulty
   review.
-- **Not placed from the test saves:** Barinade (a save at Jabu-Jabu's boss is needed), Ganondorf (his stage did
-  not place him).
+- **Not placed from the test saves:** Barinade and Ganondorf. Not the saves: the warp (boss-route-01112, below).
+
+### Boss rush stages reached by a warp (boss-route-01112, 2026-11-23)
+
+The game's own rematch (`DreamBossStage`'s `Dream_Navi_03` / `NaviHint_Rematch_Sub`, through
+`SubEvent_AllBossBattle:BossStageEnterBase`) changes to a stage with three arguments: `NextBanc`, `NextStartPos`
+(`<Boss>Stage`, the start point the autotest's `warp` uses too) and `BootEventName`, the event played on arrival. The
+autotest's `warp` (and the module's own warp, `coop_testinput.cpp` Warp) writes only the scene and the start point, so
+no boot event plays. Writing `Sequence_ReservedBootEventName` into the request flags does not help: the game never
+played it on that path (docs/scenes.md, #197). Each boss's `DreamBossStage_Rematch_<Boss>_Start` turns
+`DreamWorld_BossAppear` on and calls `EventTriggerSetWasAppearInEvent` on the boss. The stage's root logic makes an
+event-appear boss (`IsIntendedForEventAppear`) from a player in its area AND `DreamWorld_BossAppear`.
+Most stages also have an asker of their own for the boss's appear event, so their boss comes without the boot event.
+Two have none, so a warp leaves them empty:
+
+| Stage (the autotest warps there) | The rematch's boot event | Appear asker in the stage | After a warp |
+| --- | --- | --- | --- |
+| GohmaStage | `InsideTheDekuTree_BossAppear` | (Gohma is not event-appear) | placed |
+| DodongoStage | `Get_StoneOfFire_AppearBoss` | `Get_StoneOfFire_AppearBoss` | placed, stays in `Wait` (above) |
+| BarinadeStage | `DreamBossStage_Rematch_Barinade_Start` | none | **no boss** |
+| PhantomGanonStage | `ForestTemple_SageOfForest_PhantomGanonAppearance` | the same | placed |
+| VolvagiaStage | `SageOfFire_BossAppear` | the same | placed |
+| MorphaStage | `Demo_SageOfWater_BossAppears` | the same | placed |
+| BongoBongoStage | `ShadowTemple_BossAppear` | the same | placed |
+| TwinrovaStage | `SageOfSpirit_BossStart` | the same (Twinrova herself is not event-appear) | placed |
+| GanondorfStage | `DreamBossStage_Rematch_Ganondorf_Start` | none | **no boss** |
+| GanonStage | `InsideGanonCastle_Dungeon_BossAppear_2` | the same | placed |
+
+The full boss rush (`BossRush_01..03`, `BossRushBossStageExitSuccess*`) boots every stage with
+`DreamBossStage_Rematch_TimeAppear` instead. So the routes `hs-barinade-native` and `hs-ganondorf-native` ask the
+rematch's boot event after the warp with the test step `event NAME` (docs/testing.md). Not a co-op bug: a player
+reaches these stages only through the game's own rematch, which plays the boot event. Open, not changed:
+`/teleport` into a boss rush stage arrives with the plain `Dm_SY_BancChangeArrive` (`CoopTeleport::ArrivalEvent`).
+The target refuses while it fights (`cannot_warp`) or plays an event (`busy`), and after the boss is beaten the
+plain arrival is right; the rematch's boot event there would make a beaten boss appear again. Only a player who
+teleports in after the target's arrival but before its fight starts would get a stage without Barinade or Ganondorf.
+That needs a game check before any change.
 
 ## Whole-game survey (2026-11-21): every enemy, room event and push puzzle
 

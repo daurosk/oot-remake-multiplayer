@@ -415,6 +415,18 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             }
             step.kind = Kind::give;
             step.mark = std::string(w[1]);
+        } else if (cmd == "EVENT") {
+            // event NAME: our game asked to play the event setting NAME (an RSDB EventSetting row) by name, through
+            // the hook's live-event requester (the path the shared boss intros take). Test only. boss-route-01112:
+            // a boss rush stage reached by `warp` misses the boot event the game's own rematch reserves with the
+            // scene change (DreamBossStage's BossStageEnterBase calls: BootEventName), and Barinade and Ganondorf
+            // appear only through theirs (DreamBossStage_Rematch_<Boss>_Start: DreamWorld_BossAppear on, the
+            // boss's EventTriggerSetWasAppearInEvent); their stages have no asker of their own.
+            if (w.size() != 2) {
+                return fail("want: event NAME");
+            }
+            step.kind = Kind::event;
+            step.mark = std::string(w[1]);
         } else if (cmd == "SETFLAG") {
             // setflag NAME VALUE: this game's Int or Bool flag NAME (a GameDataList
             // name) to VALUE, through the game's queue. Test only.
@@ -609,7 +621,8 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
         if (s.kind == Kind::warp || s.kind == Kind::give || s.kind == Kind::wear ||
             s.kind == Kind::assign || s.kind == Kind::dress || s.kind == Kind::chat || s.kind == Kind::kill || s.kind == Kind::drop || s.kind == Kind::hurt ||
             s.kind == Kind::hit || s.kind == Kind::stun ||
-            s.kind == Kind::setflag || s.kind == Kind::setenum || s.kind == Kind::menu || s.kind == Kind::dump) {
+            s.kind == Kind::setflag || s.kind == Kind::setenum || s.kind == Kind::menu || s.kind == Kind::dump ||
+            s.kind == Kind::event) {
             requests_.push_back(Request{s.kind, s.mark, s.start});
             ++index_;
             continue;
@@ -1284,6 +1297,7 @@ bool NowKind(Kind k) {
     case Kind::mark: case Kind::give: case Kind::wear: case Kind::assign: case Kind::dress: case Kind::chat:
     case Kind::place: case Kind::face: case Kind::aim: case Kind::kill: case Kind::hurt: case Kind::hit:
     case Kind::stun: case Kind::drop: case Kind::setflag: case Kind::setenum: case Kind::menu: case Kind::dump:
+    case Kind::event:
         return true;
     default:
         return false;
@@ -1319,6 +1333,11 @@ void Do(Core::System& system, const Runner::Request& request, double now,
         SetEnum(system, request.name, request.start);
     } else if (request.kind == Kind::dump) {
         Dump(system, request.name);
+    } else if (request.kind == Kind::event) {
+        // Asked when no event runs and our game is in a session with live events on (coop_hook.cpp); the
+        // requester's own lines say when it was asked and whether the game took it.
+        CoopBoss::WantEvent(request.name);
+        LOG_INFO(Core, "coop: test event {}: handed to the live-event requester", request.name);
     } else if (request.kind == Kind::place && !request.name.empty()) {
         const auto on = CoopObjects::TestPlatformPlace(request.name);
         const bool ok = on && CoopBoss::MoveLink(system, g_state.main,

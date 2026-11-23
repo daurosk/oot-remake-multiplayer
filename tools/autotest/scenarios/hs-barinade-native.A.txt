@@ -3,7 +3,8 @@
 # through the game's own functions. Same mechanism as hs-gohma-native; this run proves it for this boss.
 # NEEDS a hookshot.exe with patch 0013 (wraps 4 and 5); without them the log says "native sync off ... not
 # wrapped" and the run is INCONCLUSIVE.
-# Route: both warp into the boss rush's BarinadeStage (it places its own boss; no kit save is from before it).
+# Route: both warp into the boss rush's BarinadeStage (no kit save is from before it), then each
+# game asks DreamBossStage_Rematch_Barinade_Start, the boot event of the game's own rematch: the stage makes no boss without it.
 # Both stand, then lock on and swing the sword now and then: the run proves the sync, not a win.
 # PASS (proof lines):
 #  1. Both: "coop: bosses: native sync on (brain verbs wrapped, action verbs wrapped)".
@@ -31,6 +32,8 @@ wait 300
 press A                 # loads the save, then the warp
 wait 2400
 mark a-in
+event DreamBossStage_Rematch_Barinade_Start   # the boot event the game's own rematch reserves with this stage (a warp has none:
+#   Barinade appears only through it; boss-route-01112)
 wait 1800               # the intro, then the fight
 press ZL 10             # lock on
 mark a-1

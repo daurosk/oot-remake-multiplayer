@@ -16,7 +16,7 @@ event DreamBossStage_Rematch_Arrive   # the boot event the game's own rematch gi
 wait 600
 wait 600
 mark b-fight
-await 2400 coop: objects: \+ Enemy_MiddleBoss_Poe_Meg_Dummy
+await 3600 coop: objects: \+ Enemy_MiddleBoss_Poe_Meg_Dummy
 mark b-split1
 wait 20
 mark b-split1b

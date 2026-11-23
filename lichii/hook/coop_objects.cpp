@@ -2225,6 +2225,16 @@ public:
             // Row 230: another game's Redead or Gibdo froze its owner's Link with our Link in its reach: ours takes
             // that scream's hit, no life (its game's SleepParalysis reaction).
             CoopObjects::HurtOurLinkNative(0, k.at, k.from, k.kind);
+            scream_look_us_ = CoopEvery::NowUs() + kScreamLookUs;
+        }
+        if (scream_look_us_ != 0 && CoopEvery::NowUs() >= scream_look_us_) {
+            // Row 230: whether the game took the shared scream: our Link's own reaction (its AS node, 'Paralysis'
+            // when frozen, as the owner's Link plays it), once, 0.5 s after the hit was asked.
+            scream_look_us_ = 0;
+            const u64 link = TheLinkActor().load();
+            const auto anim = link != 0 ? Animation(r, link) : std::nullopt;
+            LOG_INFO(Core, "coop: objects: scream: our Link plays '{}' 0.5 s after the shared scream's hit",
+                     anim ? anim->name : std::string("?"));
         }
         if (main_ != 0) {
             // Row 233: a shared flag that gates dungeon pieces changed: which of them our game has now (the probe).
@@ -6260,6 +6270,9 @@ private:
     CoopPivot::Follower pivot_;
     u32 link_hit_said_ = 0xffffffffu;  // the scream probe: our Link's last hit id seen
     u32 link_hit_id_ = 0xffffffffu;    // row 230 (NoteOurLinkHit): the last hit id of our Link taken from its Life step
+    // Row 230: when to log our Link's reaction to a shared scream (0: none due).
+    static constexpr u64 kScreamLookUs = 500'000;
+    u64 scream_look_us_ = 0;
     CoopPresenceGates::Probe presence_;  // row 233
     std::string presence_scene_;
 

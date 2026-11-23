@@ -107,7 +107,7 @@ class BridgeError(Exception):
 
 class Step:
     def __init__(self, kind, line, ticks=0):
-        self.kind = kind          # timed, mark, goto, toward, warp, or one of MODULE_ONLY
+        self.kind = kind          # timed, mark, goto, toward, warp, await, or one of MODULE_ONLY
         self.line = line
         self.ticks = ticks
         self.buttons = []         # the bridge's names
@@ -341,6 +341,19 @@ def parse(text):
             if len(w) != 2 or w[1].lower() not in ("customize", "close"):
                 fail("want: menu customize|close")
             s.kind, s.name = "menu", w[1].lower()
+        elif cmd == "AWAIT":
+            # Row 325: "await TICKS REGEX": until a NEW line of this game's own log (written after the step began)
+            # matches REGEX (the rest of the line, spaces kept), at most TICKS. The runner reads the log itself: no
+            # module step, so it plays on any build. A timeout is logged and the script goes on.
+            pattern = line.strip()[len(w[0]):].strip()
+            pattern = pattern[len(w[1]):].strip() if len(w) >= 2 else ""
+            if len(w) < 3 or _ticks(w[1]) is None or not pattern:
+                fail("want: await TICKS REGEX (the rest of the line, matched in this game's log)")
+            try:
+                re.compile(pattern)
+            except re.error as e:
+                fail("await: bad REGEX: %s" % e)
+            s.kind, s.ticks, s.name = "await", _ticks(w[1]), pattern
         elif cmd == "MARK":
             if len(w) != 2:
                 fail("want: mark NAME (one word)")
@@ -515,8 +528,11 @@ class Player:
     """Plays steps into one game. clock and sleep are for the tests."""
 
     def __init__(self, bridge, log, shot=None, connect=None, clock=time.monotonic, sleep=time.sleep,
-                 main_base=MAIN_BASE, steer_every=0.1, warp_for=90.0, commands=None, take_for=5.0):
+                 main_base=MAIN_BASE, steer_every=0.1, warp_for=90.0, commands=None, take_for=5.0, read_log=None,
+                 await_every=0.25):
         self.b = bridge
+        self.read_log = read_log      # () -> this game's log text so far ('' if none yet), or None: await skipped
+        self.await_every = await_every
         self.commands = commands      # the game's LICHII_COOP_TEST_COMMANDS file, or None: module steps skipped
         self.take_for = take_for      # seconds the module has to take them (it checks 4 times a second)
         self.sent = 0
@@ -808,6 +824,35 @@ class Player:
         except OSError:
             return False
 
+    def _log_matches(self, rx):
+        try:
+            text = self.read_log() or ""
+        except OSError:
+            return 0, ""
+        found = [ln.rstrip("\r") for ln in text.split("\n") if rx.search(ln.rstrip("\r"))]
+        return len(found), (found[-1] if found else "")
+
+    def await_line(self, s, t0):
+        """await TICKS REGEX (row 325): from t0 until this game's log has more lines matching REGEX than it had at t0
+        (a line written since), at most s.ticks. Logs the line seen or the timeout; the script goes on either way."""
+        if self.read_log is None:
+            self.log("coop: test await skipped (line %d: this run reads no game log)" % s.line)
+            return t0
+        self._until(t0)
+        rx = re.compile(s.name)
+        before, _ = self._log_matches(rx)
+        end = t0 + s.ticks / TICKS
+        while True:
+            n, last = self._log_matches(rx)
+            now = self.clock()
+            if n > before:
+                self.log("coop: test await seen after %.1f s: %s" % (now - t0, last.strip()))
+                return now
+            if now >= end:
+                self.log("coop: test await timed out after %.1f s (line %d: %s)" % (now - t0, s.line, s.name))
+                return now
+            self._until(min(end, now + self.await_every))
+
     def play(self, steps):
         self.log("coop: test script %d steps" % len(steps))
         t = self.clock()
@@ -835,6 +880,8 @@ class Player:
                 t = max(t, self.clock())
             elif s.kind in ("goto", "toward"):
                 t = max(t, self.steer(s, max(t, self.clock())))
+            elif s.kind == "await":
+                t = max(t, self.await_line(s, max(t, self.clock())))
             elif s.kind == "warp":
                 self.warp(s)
         self.log("coop: test script done")
@@ -1267,9 +1314,13 @@ def run(a):
             bridges[x] = (sock, Bridge.connect(sock, timeout=120))
             if i == 0:
                 time.sleep(3)
-        for x in tags:   # both games drawing before anything is pressed (a cold shader cache: minutes)
+        def game_log(x):
+            # Each game's own log so far: the kit's start writes the game's file, ours game-out-<x>.txt.
             go = os.path.join(out, "game-out-%s.txt" % x)
-            log = (lambda: fresh_log(games[x], started[x])) if kits[x] else (lambda: read_text(go))
+            return (lambda: fresh_log(games[x], started[x])) if kits[x] else (lambda: read_text(go))
+
+        for x in tags:   # both games drawing before anything is pressed (a cold shader cache: minutes)
+            log = game_log(x)
             waited = wait_renderer(log, lambda: procs[x].poll() is None, a.renderer_wait, a.renderer_stall,
                                    a.renderer_limit)
             if a.renderer_wait > 0:
@@ -1318,7 +1369,8 @@ def run(a):
                 pb = Bridge.connect(bridges[x][0])
                 try:
                     p = Player(pb, Log(os.path.join(out, "player-%s.txt" % x)), shot=shooter(x, a.name),
-                               connect=lambda: Bridge.connect(bridges[x][0]), commands=commands[x])
+                               connect=lambda: Bridge.connect(bridges[x][0]), commands=commands[x],
+                               read_log=game_log(x))
                     players[x] = p
                     p.play(parsed[x])
                 finally:

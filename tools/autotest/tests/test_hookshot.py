@@ -992,6 +992,65 @@ class DropTest(unittest.TestCase):
                 hs.parse(bad)
 
 
+class AwaitTest(unittest.TestCase):
+    """Row 325: `await TICKS REGEX`, until a new line of the game's own log matches (the runner reads it, no module)."""
+
+    LINE = "[hos Presentation Thread] coop: objects: anim Enemy_DungeonBoss_Dodongo 0x1050 'Rolling_Loop'"
+    RX = r"anim Enemy_DungeonBoss_Dodongo \S+ 'Rolling_Loop'$"
+
+    def test_parses_the_rest_of_the_line_as_the_regex(self):
+        steps = hs.parse("await 600 %s   # a comment\n" % self.RX)
+        self.assertEqual((steps[0].kind, steps[0].ticks, steps[0].name), ("await", 600, self.RX))
+        self.assertNotIn("await", hs.MODULE_ONLY)   # the runner's own step: plays on any module
+        for bad in ("await\n", "await 600\n", "await x foo\n", "await -1 foo\n", "await 60 (\n"):
+            with self.assertRaises(hs.ScriptError):
+                hs.parse(bad)
+
+    def test_waits_for_a_new_matching_line_only(self):
+        game = FakeGame()
+        text = ["coop: hello", self.LINE + "\r"]   # an old match (and a CRLF log) does not count
+        polls = []
+
+        def read_log():
+            polls.append(game.clock())
+            if len(polls) == 6:
+                text.append("coop: objects: anim Enemy_DungeonBoss_Dodongo 0x1050 'Rolling_End' (ours)")
+            if len(polls) == 9:
+                text.append(self.LINE)
+            return "\n".join(text)
+
+        _, log, shots, _, end = play("mark a\nawait 600 %s\nmark b\n" % self.RX, game, read_log=read_log)
+        seen = [ln for ln in log.lines if ln.startswith("coop: test await seen")]
+        self.assertEqual(len(seen), 1, log.lines)
+        self.assertTrue(seen[0].endswith(self.LINE), seen)
+        self.assertEqual(shots, ["a", "b"])
+        self.assertLess(end - polls[0], 600 / hs.TICKS)   # went on at the line, not at the step's end
+
+    def test_times_out_and_goes_on(self):
+        game = FakeGame()
+        _, log, shots, _, end = play("await 120 %s\nmark after\n" % self.RX, game, read_log=lambda: self.LINE)
+        self.assertTrue(any(ln.startswith("coop: test await timed out") for ln in log.lines), log.lines)
+        self.assertEqual(shots, ["after"])
+
+    def test_skipped_without_a_log(self):
+        _, log, shots, _, _ = play("await 120 foo\nmark after\n")
+        self.assertTrue(any(ln.startswith("coop: test await skipped") for ln in log.lines), log.lines)
+        self.assertEqual(shots, ["after"])
+
+
+class ScenarioFilesTest(unittest.TestCase):
+    """Row 325's proof pair parses (await, stun, event steps)."""
+
+    def test_kd_roll_hold_325_parses(self):
+        here = os.path.join(HERE, "..", "scenarios")
+        for x in ("A", "B"):
+            steps = hs.parse(hs.read_script(os.path.join(here, "kd-roll-hold-325.%s.txt" % x)))
+            kinds = [s.kind for s in steps]
+            self.assertIn("await", kinds)
+            self.assertIn("stun", kinds)
+            self.assertIn("event", kinds)
+
+
 class PackStartTest(unittest.TestCase):
     """Row 265 (0.11.12): a game this file starts gets the kit's start of the pack (play.ps1 Use-KitPuppetPack, then
     Invoke-KitSizeTableMerge): your own tunic files first, then the merge, so another mod's Link model (Character

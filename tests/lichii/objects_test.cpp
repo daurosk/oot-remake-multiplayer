@@ -8435,6 +8435,85 @@ TEST_CASE("objects: a boss copy's refused killing hit is not given here, nor a p
     CHECK(copy.PartKillsStepped() == 0);
 }
 
+TEST_CASE("objects: a boss part's killing hit while its owner's lives is held, then replayed at the owner's death (boss-body-life)") {
+    // LANE1 run 20261123-104651 (Twinrova): our kill of the sisters' copies came while their owner's still lived
+    // here. Their own Life step held them at 1 (CoopBossNative::HeldLifeStep), so the rows 257/258 give was
+    // swallowed, and, marked given, it blocked every killing blow after the owner's death: life 1 for good, no fusion.
+    // Every boss part (Twinrova's sisters, Barinade's jellyfish, Bongo Bongo's hands, ...) takes the same path.
+    for (const std::string part : {"Enemy_DungeonBoss_Koume", "Enemy_DungeonBoss_Kotake",
+                                   "Enemy_DungeonBoss_Barinade_Jellyfish", "Enemy_DungeonBoss_BongoBongo_LeftHand"}) {
+        CAPTURE(part);
+        REQUIRE(CoopObjects::IsBossPart(part));
+        for (const bool by_remove : {true, false}) {
+            CAPTURE(by_remove);
+            Sync copy;
+            copy.SetHurt(true);
+            Tick(copy, 0, {Enemy(0x200, 0x12, 12, 0.0f, part)});
+            const proto::ObjectId id = *copy.IdOf(0x200);
+            Own(copy, id, 2, 1);
+            // Our kill, given straight to its Life step, held at 1 (the owner's lives).
+            copy.Written(0x200, 0, 50 * kMs);
+            auto step = Tick(copy, 100 * kMs, {Enemy(0x200, 0x12, 1, 0.0f, part)});
+            CHECK(step.writes.empty());
+            step = Tick(copy, 50 * kMs + Sync::kHurtWaitUs + 100 * kMs, {Enemy(0x200, 0x12, 1, 0.0f, part)});
+            CHECK(step.writes.empty());  // not given while held (its Life step would keep it at 1)
+            CHECK(copy.PartKillsHeld() == 1);
+            CHECK(copy.PartKillsStepped() == 0);
+            const auto notes = copy.TakeNotes();
+            CHECK(std::count_if(notes.begin(), notes.end(), [](const std::string& n) {
+                      return n.find("held until its owner's death") != std::string::npos;
+                  }) == 1);
+            // The owner's death (its dead remove, or its samples at life 0) releases it: the killing replay again.
+            std::uint64_t at = 50 * kMs + Sync::kHurtWaitUs + 200 * kMs;
+            if (by_remove) {
+                copy.Receive(proto::ObjectRemove{2, id, 1, proto::RemoveReason::dead, {}});
+            } else {
+                copy.Receive(LifeSample(id, 0, 12));
+            }
+            CHECK(copy.OwnerSaysDead(0x200));
+            step = Tick(copy, at, {Enemy(0x200, 0x12, 1, 0.0f, part)});
+            REQUIRE(step.writes.size() == 1);
+            CHECK(step.writes[0].address == 0x200);
+            CHECK(step.writes[0].life == 0);
+            CHECK_FALSE(step.writes[0].direct);  // the replay first: its game's own hit reaction where it takes it
+            // Refused again: now released, its whole life goes to its own Life step, once.
+            at += Sync::kHurtWaitUs + 100 * kMs;
+            step = Tick(copy, at, {Enemy(0x200, 0x12, 1, 0.0f, part)});
+            REQUIRE(step.writes.size() == 1);
+            CHECK(step.writes[0].direct);
+            CHECK(step.writes[0].hurt == 1);
+            CHECK(step.writes[0].life == 0);
+            CHECK(copy.PartKillsStepped() == 1);
+            // Given: no second killing blow from the owner's samples or remove.
+            copy.Receive(LifeSample(id, 0, 12));
+            at += 100 * kMs;
+            CHECK(Tick(copy, at, {Enemy(0x200, 0x12, 1, 0.0f, part)}).writes.empty());
+            at += Sync::kHurtWaitUs + 100 * kMs;
+            CHECK(Tick(copy, at, {Enemy(0x200, 0x12, 1, 0.0f, part)}).writes.empty());
+            CHECK(copy.PartKillsStepped() == 1);
+        }
+    }
+}
+
+TEST_CASE("objects: a boss part killed after its owner's death is heard is given at once, never held (boss-body-life)") {
+    const std::string kPart = "Enemy_DungeonBoss_Koume";
+    Sync copy;
+    copy.SetHurt(true);
+    Tick(copy, 0, {Enemy(0x200, 0x12, 12, 0.0f, kPart)});
+    const proto::ObjectId id = *copy.IdOf(0x200);
+    Own(copy, id, 2, 1);
+    copy.Receive(LifeSample(id, 0, 12));
+    auto step = Tick(copy, 100 * kMs, {Enemy(0x200, 0x12, 12, 0.0f, kPart)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK_FALSE(step.writes[0].direct);
+    step = Tick(copy, 100 * kMs + Sync::kHurtWaitUs + 100 * kMs, {Enemy(0x200, 0x12, 12, 0.0f, kPart)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].direct);
+    CHECK(step.writes[0].hurt == 12);
+    CHECK(copy.PartKillsHeld() == 0);
+    CHECK(copy.PartKillsStepped() == 1);
+}
+
 TEST_CASE("objects: a boss part its boss holds 10 s past the grace is said once, with the boss (rows 257/258)") {
     const std::string kBoss = "Enemy_DungeonBoss_Barinade";
     const std::string kJelly = "Enemy_DungeonBoss_Barinade_Jellyfish";

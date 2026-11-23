@@ -1312,6 +1312,9 @@ public:
     std::size_t BossHitsStepped() const { return boss_hits_stepped_; }
     // Rows 257/258: another game's kills of a boss part our copy's game refused, given to the part's own Life step.
     std::size_t PartKillsStepped() const { return part_kills_stepped_; }
+    // boss-body-life: such kills that came while the owner's part still lived here (its Life step held the copy at
+    // 1): not given then; the owner's death replays the killing hit again.
+    std::size_t PartKillsHeld() const { return part_kills_held_; }
     // Copies dead here whose owner still showed life after every resend (a lost kill: the games stay split).
     std::size_t SplitKills() const { return split_kills_; }
     std::size_t HurtsLate() const { return hurt_late_; }
@@ -1482,6 +1485,9 @@ private:
         std::int32_t boss_stand_in_life = 0;   // a boss copy: the owner's life its stand-in hit was replayed for (once each)
         std::optional<std::int32_t> owner_life;  // its owner's last life, from the owner's samples (KeepBossLives)
         bool death_given = false;      // a dying copy boss's remaining life went to its own Life step (once)
+        // boss-body-life: a boss part's killing hit its game refused while its owner's still lives here: its own
+        // Life step holds a copy at 1 until then (CoopBossNative::HeldLifeStep): not given (said once).
+        bool kill_held = false;
         bool held_said = false;        // rows 257/258: said once, held by its boss kHeldSayUs past the grace
         bool dead_now = false;  // a kill from before we came: deleted at once
         bool quiet_gone = false;  // report 200: its owner killed it away from our Link's fight: deleted, no death
@@ -1844,6 +1850,7 @@ private:
     std::size_t hurt_missed_ = 0;  // hurts not taken after the wait (given to the Life step, or lost: never written)
     std::size_t boss_hits_stepped_ = 0;  // of those, another player's hits on our boss given to its Life step
     std::size_t part_kills_stepped_ = 0;  // of those, another game's kills of a boss part copy (rows 257/258)
+    std::size_t part_kills_held_ = 0;     // boss-body-life: rows 257/258 kills waiting for the owner's death
     std::size_t split_kills_ = 0;  // copies dead here, owner alive after the resends
     BlastNear blast_near_;
     std::size_t blast_drops_ = 0;

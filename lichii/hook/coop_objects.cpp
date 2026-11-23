@@ -2026,6 +2026,12 @@ public:
                     // so the next hit does not kill it (Sync::KeepBossLives; no new network data).
                     std::vector<LifeWrite> keep;
                     sync_.KeepBossLives(self_, keep);
+                    // boss-body-life: the copies' Life steps released first (no copies any more), so an unsent hit
+                    // of ours that ends one (its death, given once) is never held at 1 by a hold that ends a moment
+                    // later. (Publish({}) again below is a no-op then.)
+                    if (CoopBossNative::Table& bosses = CoopBossNative::TheTable(); bosses.BrainOn()) {
+                        bosses.Publish({});
+                    }
                     if (!keep.empty()) {
                         Reader r(system.ApplicationMemory());
                         for (const LifeWrite& w : keep) {
@@ -5961,12 +5967,12 @@ private:
                          "coop: objects: share placed {} copies; off from where we put them "
                          "avg {:.3f} max {:.3f} over {}; game calls: {} moves, {} deletes, {} "
                          "plays, {} frame sets; hurts taken {} missed {} (boss hits to its Life step {}, boss part kills to "
-                         "its Life step {}, dying copies finished {}); own hits kept while a replay waited {}; boss "
-                         "copies kept in the room {}",
+                         "its Life step {} ({} held until the owner's death), dying copies finished {}); own hits "
+                         "kept while a replay waited {}; boss copies kept in the room {}",
                          placed_.size(), drift_count_ ? drift_sum_ / drift_count_ : 0.0f,
                          drift_max_, drift_count_, moved, deleted, played, framed, sync_.HurtsTaken(),
                          sync_.HurtsMissed(), sync_.BossHitsStepped(), sync_.PartKillsStepped(),
-                         sync_.DyingFinished(),
+                         sync_.PartKillsHeld(), sync_.DyingFinished(),
                          sync_.OwnHitsKept(), sync_.BossCopiesKept());
             }
             // Issue 101: which copy was furthest from where we put it, so

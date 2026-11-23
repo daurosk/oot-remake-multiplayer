@@ -3095,6 +3095,21 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 notes_.emplace_back("a hit the dying boss's game did not take: " +
                                     std::to_string(*o.life - o.hurt_target) +
                                     " given to its own Life step (its death has begun): " + o.name);
+            } else if (o.life && *o.life > 0 && o.hurt_target <= 0 && IsBossPart(o.name) && !o.death_given &&
+                       o.dead_at == 0 && !o.owner_life_zero && !dying) {
+                // boss-body-life (LANE1 run 20261123-104651, Twinrova): the killing hit came while its owner's
+                // still lives here (our own kill of the copy, or the owner's death not heard yet). The copy's own
+                // Life step holds it at 1 until then (CoopBossNative::HeldLifeStep: never dies of its own), so a
+                // give now is swallowed, and marked given it blocked every later killing blow: Koume and Kotake
+                // stood at life 1 for good and never fused. Not given now: its owner's death (a dead remove, or its
+                // samples at life 0) starts the killing replay again (Lower), and a refusal then lands here released.
+                ++hurt_missed_;
+                if (!std::exchange(o.kill_held, true)) {
+                    ++part_kills_held_;
+                    notes_.emplace_back("a killing hit the boss part's game did not take while its owner's lives: held "
+                                        "until its owner's death (its own Life step keeps it at 1 until then): " +
+                                        o.name);
+                }
             } else if (o.life && *o.life > 0 && o.hurt_target <= 0 && IsBossPart(o.name) && !o.death_given) {
                 // Rows 257/258 (Barinade, a co-op crash): another game killed a boss's part (a jellyfish), and our
                 // copy's game refused the replayed killing hit (the stand-in hit is no hit its rules take outside

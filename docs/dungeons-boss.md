@@ -198,6 +198,59 @@ native table "runs their own". So the copy's own game asked its own steps while 
 tick drops the owner's poses and plays for them before the Mover (`coop_objects.cpp`). The owner's remove still comes.
 Log: `coop: objects: N boss copy(ies) run their own ...: their owner's place and animation wait`, then `... again`.
 
+**Probe: a copy's own animations on its owner's actions (row 222 follow-up, `LICHII_COOP_BOSS_COPY_OWN_ANIM=1`, off by
+default).** Outside those windows the objects layer still plays the owner's animation on a copy that runs the owner's
+action verbs through its own action graph. Twinrova's ranged attack (`DungeonBossTwinrova.action.rangedattack`) turns
+in `PreAttack` until that AS ends, plays `Attack_R`/`Attack_L` and fires on the AS trigger `ObjThrow`
+(`ExecuteShooterPrepareWithTarget` + `OneShotShooterShoot` of the reserve `FireBullet`/`IceBullet` from her
+ShooterParam); the bullet's own AI makes the fire or ice floor where it lands. In run 20261123-001227 copy B got the
+owner's `Attack_R` over its own `PreAttack` and never fired (no floor on B), while its ice shot, whose own move kept
+step, did. Suspected for every boss whose module waits on its own AS (shots, spawns, AS-timed hits). With the probe
+on, `Table::CopiesOnOwnerActions()` names those copies and the objects tick leaves the owner's plays out for them
+(their place still comes). Log: `coop: objects: probe: N boss copy(ies) on their owner's actions play their own
+animations (M owner plays left out ...)`. A proof run decides whether this becomes the default.
+Result (run 20261123-041540): FAIL. With the owner's plays left out, copy A still fired nothing while B owned her
+(B: two ice and two fire shots, each with its floor), and fired at once when she became ours. The owner's plays are
+not the cause; the probe stays off.
+
+**Probe 2: a copy's own asks of its owner's move (row 222 follow-up, `LICHII_COOP_BOSS_COPY_OWN_MOVE=1`, off by
+default).** In that run the owner asked her ranged attack (slot 0, verb 121) every frame (267 asks, changed 0 after the
+first) from her own AI; the copy got the same asks put in, named with the node its AI named for that slot (another
+move's, until its own AI asked 121 itself, which was then skipped like all its own asks), and its `PreAttack` gave way
+to `Attack_R` within a few frames where the owner's lasted about a second, with no shot. Only one copy shot was ever
+seen: one whose put-in carried the copy's own plug for that move. With probe 2 on, a copy's own ask of the move its
+owner's last put-in named (same slot and verb) is not skipped: the game runs it with the node and plug its own AI
+names. While its own asks run that move (asked within `kOwnMoveSteps`, 3 frames) the owner's repeats of it (changed
+0) are left out; the owner's start of a move (changed 1) and every other move are put in as before. Logs: once per
+new ask `...: probe2: copy's own ask slot S verb V node 0x.. plug '<name>'|none (changed C, the owner's move: the game
+runs it|skipped)`; the action stream adds the node and the plug's name to each put-in and the owner's asks `by plug
+'<name>'`; the 10 s line ends `probe2: N own asks of the owner's move run, M owner's repeats left out`. The plug's
+name is read as a C string, else as a pointer to one (`*name`), else its first word (`?0x..`): the log tells which.
+A proof run decides: the copy fires its own bullet and floor -> the fix runs a copy's own asks of its owner's move
+by default; else the module's arguments on the copy (`QueryBSAGetActionVerbArgs`) are read next. Either way the
+owner's variation (the plug: Ice, the feints) is not sent yet (a protocol change, asked of the owner first).
+Result (run 20261123-055243): PART. Ice synced 2 of 2: the owner asked by plug `Ice`, the copy's put-in named its
+own node and its own plug `Ice` and no place, and fired the ice shot and floor on its own. Fire synced 0 of 2. At
+the first, the copy's own AI had chosen `Ice` and probe 2 let that run: an ice shot for the owner's fire. At the
+second, the put-in (no plug, the owner's places, the node its AI names for `Ice`) played `PreAttack` and `Attack_R`
+for as long as the owner's did, with no shot.
+
+**The variation is the request's plug.** The plug (request +0x38) is a `const char*`: the game builds the move's
+command name from the verb's name and the plug (main+0xbe070: `RangedAttack` with no plug, `RangedAttack:Ice` with
+plug `Ice`) and compares it with the command the slot runs. So Fire is the plain ask, Ice and the feints are plug
+names (`DungeonBossTwinrova.action.root`'s commands `:Fire`, `:Ice`, `:1FeintFire`, ...). The owner's plug name is
+never sent: a copy names the plug its own AI last asked for that slot and verb (row 177's `AskFor`), so a copy can run
+another variation of the owner's move. Every boss whose `action.root` picks a variation by plug has the same gap
+(Twinrova's ranged attack and feints, her `StartBattle`, and every boss move asked by plug: the owner's 10 s line
+counts them, `N by plug`). Sending the name is a protocol change and waits for the owner's choice
+(`reports/twinrova-01112-3.md`).
+
+**Probe 3: no owner's places in a copy's put-in (`LICHII_COOP_BOSS_COPY_OWN_PLACES=1`, off by default).** Every copy
+put-in with a plug and no place fired its shot (3 of 3 over both runs); every one with the owner's places did not
+(none of 8). With probe 3 on, the owner's actions go into a copy with no place (NaN, as an ask by plug has); its plug
+is chosen as before (from whether the owner's action named a place). Log: `coop: bosses: probe3 on: ...`. A proof
+run (probe 2 off) decides whether the owner's places are what stops the copy's fire shot.
+
 **Every case with the same cause** (all four windows, every boss and mid-boss with native sync):
 - A copy's own intro / appear event (this report; also a late arrival's own `BossAppear` with a copy Gohma).
 - The reaction to our own hit (a seed stun on a copy: the owner's animation undid the stun, a likely part of "Gohma

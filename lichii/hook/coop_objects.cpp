@@ -5869,6 +5869,30 @@ private:
                              : std::string("boss copies take their owner's place and animation again"));
             }
         }
+        // Row 222 follow-up probe (twinrova-fire-01112, off unless LICHII_COOP_BOSS_COPY_OWN_ANIM=1). A copy boss
+        // on its owner's action verbs runs each move through its own action graph, which plays the move's own
+        // animations and waits on them (an AS's end, its trigger events). The owner's animation put over it as it
+        // comes (later or sooner than the copy's own move, by the network) can take away the AS its module waits
+        // on: run 20261123-001227, copy B's Twinrova got 'Attack_R' over its own PreAttack and never threw her
+        // FireBullet (no fire floor on B). With the probe on, such copies keep their own animations (their owner's
+        // place still comes).
+        if (static const bool own_anim = EnvFlag("LICHII_COOP_BOSS_COPY_OWN_ANIM"); own_anim) {
+            const auto on = CoopBossNative::TheTable().CopiesOnOwnerActions();
+            const std::size_t before = plays.size();
+            std::erase_if(plays, [&on](const PlayWish& p) {
+                return std::find(on.begin(), on.end(), p.address) != on.end();
+            });
+            boss_own_anim_dropped_ += before - plays.size();
+            if (on.size() != boss_own_anim_copies_ ||
+                (boss_own_anim_dropped_ != 0 && now_us - boss_own_anim_log_us_ >= 10'000'000)) {
+                LOG_INFO(Core, "coop: objects: probe: {} boss copy(ies) on their owner's actions play their own "
+                               "animations ({} owner plays left out since the last line)",
+                         on.size(), boss_own_anim_dropped_);
+                boss_own_anim_copies_ = on.size();
+                boss_own_anim_dropped_ = 0;
+                boss_own_anim_log_us_ = now_us;
+            }
+        }
         NpcAnim(r, now_us, removes, wish, plays);
         Aggro(r, now_us);
         // Native puppets phase 3: another player's Link holds ours: our Link is placed first, as a copy is.
@@ -6212,6 +6236,9 @@ private:
     std::size_t drift_count_ = 0;
     u64 drift_at_ = 0;
     bool boss_own_said_ = false;  // row 130: the last 'boss copies run their own' line logged
+    std::size_t boss_own_anim_copies_ = 0;   // row 222 probe: copies on their owner's actions, last logged
+    std::size_t boss_own_anim_dropped_ = 0;  // row 222 probe: owner plays left out since the last line
+    u64 boss_own_anim_log_us_ = 0;
     CoopEvery::Every scan_{CoopEvery::kTwoFramesUs};
     CoopPivot::Follower pivot_;
     u32 link_hit_said_ = 0xffffffffu;  // the scream probe: our Link's last hit id seen

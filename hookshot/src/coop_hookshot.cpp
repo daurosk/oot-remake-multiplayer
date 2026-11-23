@@ -432,6 +432,13 @@ void SetBossNative() {
         t.SetTurns(turns);
         LOG_INFO(Core, "coop: bosses: turns {} (LICHII_COOP_BOSS_TURNS)", turns ? "on" : "off");
     }
+    // Row 222 probe 3 (off unless set): owner's actions put into a copy without the owner's places (Table).
+    const bool own_places = Env("LICHII_COOP_BOSS_COPY_OWN_PLACES") == "1";
+    if (t.CopyOwnPlacesOn() != own_places) {
+        t.SetCopyOwnPlaces(own_places);
+        LOG_INFO(Core, "coop: bosses: probe3 {}: owner's actions put into copies {} (LICHII_COOP_BOSS_COPY_OWN_PLACES)",
+                 own_places ? "on" : "off", own_places ? "without the owner's places" : "with the owner's places");
+    }
     if (t.BrainOn() == brain && t.ActionsOn() == actions) {
         return;
     }

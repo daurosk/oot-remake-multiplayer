@@ -415,6 +415,11 @@ public:
     bool OnBrainVerb(std::uint64_t bsa, std::int32_t verb, bool force, bool own);
     // Row 222 part 2: `plug_name`, the request's plug read as a name (VariantName; the wrap reads it for every
     // request with a plug): an owner's action keeps it as its variation (component 24), "" for a plain ask.
+    // Row 222 probe 3 (twinrova-run-01112 test branch; off unless LICHII_COOP_BOSS_COPY_OWN_PLACES=1): the owner's
+    // actions are put into a copy without the owner's places (NaN, as for an ask by plug), so the copy's move takes
+    // its own (its AI's target).
+    void SetCopyOwnPlaces(bool on);
+    bool CopyOwnPlacesOn() const;
     bool OnActionVerb(std::uint64_t bsa, const Request& request, bool changed, bool own,
                       std::optional<std::string> plug_name = std::nullopt);
 
@@ -545,6 +550,9 @@ public:
     // their owner's place, animation or frame on them meanwhile (CoopObjects), so their own game's event or
     // reaction runs to its end. Empty while the native sync is off (the old path: the owner's motion alone).
     std::vector<std::uint64_t> CopiesRunningOwn() const;
+    // Row 222 probe (off unless LICHII_COOP_BOSS_COPY_OWN_ANIM=1, coop_objects): the copies that take their owner's
+    // action verbs now, by actor. Empty while the action path is off.
+    std::vector<std::uint64_t> CopiesOnOwnerActions() const;
 
     // The owner's state to send for one of our bosses; nothing before its
     // first change was seen.
@@ -774,6 +782,7 @@ private:
     std::map<std::uint64_t, Entry> by_bsa_;
     bool brain_on_ = false;
     bool actions_on_ = false;
+    std::atomic<bool> copy_own_places_{false};  // row 222 probe 3 (SetCopyOwnPlaces)
     bool turns_ = false;
     bool event_ = false;           // our game runs an event (SetEvent)
     std::vector<std::string> dying_;  // the bodies whose death has begun (SetDying)

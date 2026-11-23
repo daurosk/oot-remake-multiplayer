@@ -162,6 +162,14 @@ std::optional<std::string> ActionVariantOf(const BossBsa& state, const std::opti
     return std::nullopt;
 }
 
+void Table::SetCopyOwnPlaces(bool on) {
+    copy_own_places_.store(on, std::memory_order_relaxed);
+}
+
+bool Table::CopyOwnPlacesOn() const {
+    return copy_own_places_.load(std::memory_order_relaxed);
+}
+
 void Table::SetOn(bool brain, bool actions) {
     std::lock_guard lock(mutex_);
     brain_on_ = brain;
@@ -1047,6 +1055,20 @@ bool Table::CopyMakes(std::string_view maker) {
     return false;
 }
 
+std::vector<std::uint64_t> Table::CopiesOnOwnerActions() const {
+    std::lock_guard lock(mutex_);
+    std::vector<std::uint64_t> out;
+    if (!actions_on_) {
+        return out;
+    }
+    for (const auto& [bsa, e] : by_bsa_) {
+        if (e.role == Role::copy && e.wanted.has_value() && !OwnTime(e)) {
+            out.push_back(e.actor);
+        }
+    }
+    return out;
+}
+
 std::vector<std::uint64_t> Table::CopiesRunningOwn() const {
     std::lock_guard lock(mutex_);
     std::vector<std::uint64_t> out;
@@ -1303,7 +1325,14 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
             call = PoolCall(main_base);  // (a new name pool first; this change is asked again after it)
             return true;
         }
-        const Request r = RequestFromAction(action, ask);
+        Request r = RequestFromAction(action, ask);
+        if (copy_own_places_) {
+            // Probe 3: no owner's place in the request (NaN, as an ask by plug has): the copy's move takes its own.
+            const float nan = std::numeric_limits<float>::quiet_NaN();
+            for (std::size_t i = 0; i < action.places.size(); ++i) {
+                Put<float>(r, addr::kReqPlaces + 12 * i, nan);
+            }
+        }
         if (!guest.Write(block_, r.data(), r.size())) {
             break;
         }

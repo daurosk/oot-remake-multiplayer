@@ -2726,3 +2726,62 @@ TEST_CASE("native boss: row 222 part 2, a resync's action takes the variation of
     CHECK_FALSE(VariantOf(BossVariants{{{5, "Ice"}}}, 6));
     CHECK_FALSE(VariantOf(BossVariants{{{5, "Ice"}}}, 0));
 }
+
+TEST_CASE("native boss: the copies on their owner's actions (row 222 probe)") {
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Gohma(Role::copy)});
+    CHECK(t.CopiesOnOwnerActions().empty());  // no owner's verbs yet: its own AI runs
+    t.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    CHECK(t.CopiesOnOwnerActions() == std::vector<std::uint64_t>{kActor});
+    // Its own time (our hit's reaction): its own changes run, so it is not on the owner's actions.
+    t.NoteOwnHit(kActor);
+    CHECK(t.CopiesOnOwnerActions().empty());
+    // The action path off: none.
+    Table off;
+    off.SetOn(true, false);
+    off.Publish({Gohma(Role::copy)});
+    off.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    CHECK(off.CopiesOnOwnerActions().empty());
+    // A boss we own: none.
+    Table ours;
+    ours.SetOn(true, true);
+    ours.Publish({Gohma(Role::owner)});
+    CHECK(ours.CopiesOnOwnerActions().empty());
+}
+
+TEST_CASE("native boss: row 222 probe 3, the owner's action put into a copy without the owner's places") {
+    constexpr std::uint64_t kPlug = 0x5000000;
+    Table t;
+    t.SetOn(true, true);
+    t.SetCopyOwnPlaces(true);
+    CHECK(t.CopyOwnPlacesOn());
+    t.Publish({Boss{kActor, kBsa, Role::copy, "Enemy_DungeonBoss_Twinrova", 2}});
+    Request own = GameRequest(121, kNode, false);  // its own ask of the move, by plug (its 'Ice')
+    std::memcpy(own.data() + addr::kReqPlug, &kPlug, 8);
+    own[addr::kReqHasPlug] = 1;
+    t.OnActionVerb(kBsa, own, true, false);
+    BossAction a = *ActionFromRequest(GameRequest(121, 0));  // the owner's, no plug: its places came
+    REQUIRE(a.places[0]);
+    a.changed = true;
+    t.Receive(kActor, BossBsa{1, 2, a, {}});
+    FakeGuest g;
+    const std::int32_t verb = 2;
+    g.Write(kBsa + addr::kBsaBrainVerb, &verb, 4);
+    REQUIRE(t.Step(g, false, 0, kMain));  // the block
+    REQUIRE(t.Step(g, true, kBlock, kMain));
+    CHECK(std::isnan(g.Get<float>(kBlock + addr::kReqPlaces)));  // no owner's place
+    CHECK(g.Get<std::uint64_t>(kBlock + addr::kReqNode) == kNode);
+    // Off (the default): the owner's place goes in.
+    Table off;
+    off.SetOn(true, true);
+    CHECK_FALSE(off.CopyOwnPlacesOn());
+    off.Publish({Boss{kActor, kBsa, Role::copy, "Enemy_DungeonBoss_Twinrova", 2}});
+    off.OnActionVerb(kBsa, own, true, false);
+    off.Receive(kActor, BossBsa{1, 2, a, {}});
+    FakeGuest h;
+    h.Write(kBsa + addr::kBsaBrainVerb, &verb, 4);
+    REQUIRE(off.Step(h, false, 0, kMain));
+    REQUIRE(off.Step(h, true, kBlock, kMain));
+    CHECK(h.Get<float>(kBlock + addr::kReqPlaces) == 10.0f);
+}

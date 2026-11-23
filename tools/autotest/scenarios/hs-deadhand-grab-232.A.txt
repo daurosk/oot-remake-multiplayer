@@ -33,6 +33,8 @@ wait 300
 press A                 # loads the save, then the warp
 wait 2400
 mark a-in
+event DreamBossStage_Rematch_Arrive   # the boot event the game's own rematch gives these stages (SubEvent_AllBossBattle / DreamBossStage flow): a bare warp has none and places no boss (run 1 VOID: 'share present 0 enemies')
+wait 600
 place 0.0 92.4 -107.2   # by the first hand (0, -108.43)
 wait 60
 mark a-placed

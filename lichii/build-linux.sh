@@ -67,6 +67,17 @@ if [ -n "${QT_ROOT_DIR:-}" ]; then
     prefix=("-DCMAKE_PREFIX_PATH=$QT_ROOT_DIR")
 fi
 
+# Fritchii's Linux release is built with clang; with GCC (13 here) its -Werror=all also stops at
+# GCC-only warnings in Fritchii's own code. v6.5: src/common/fritchii_write_ring.h's NameThread
+# copies a thread name with strncpy into a 16-byte buffer (stringop-truncation; the cut name is
+# meant). Kept as a warning, GCC only (clang would warn about the unknown option); no Fritchii
+# file changes.
+gcc_flags=()
+if ! "${CXX:-c++}" -dM -E -x c++ /dev/null 2>/dev/null | grep -q __clang__; then
+    gcc_flags=("-DCMAKE_C_FLAGS=${CFLAGS:-} -Wno-error=stringop-truncation"
+               "-DCMAKE_CXX_FLAGS=${CXXFLAGS:-} -Wno-error=stringop-truncation")
+fi
+
 # The flags of Fritchii's Linux release (.github/workflows/release-binaries.yml), with the
 # updater off (patch 0001 refuses it with LICHII_COOP) and the co-op hook on.
 # trim_paths.cmake keeps the build machine's folders out of the program.
@@ -85,7 +96,7 @@ cmake -S "$src" -B "$build" -G Ninja \
     -DLICHII_COOP=ON \
     "-DLICHII_COOP_DIR=$repo" \
     "-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=$repo/cmake/trim_paths.cmake" \
-    "${prefix[@]}"
+    "${prefix[@]}" "${gcc_flags[@]}"
 
 jobs="${JOBS:-$(nproc)}"
 if [ "$hook_only" = 1 ]; then

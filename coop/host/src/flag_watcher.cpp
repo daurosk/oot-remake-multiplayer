@@ -689,6 +689,7 @@ bool FlagWatcher::write_exact(FlagStore& store, const FlagEntry& entry) {
     note_write_failure(store, key, "write_exact", entry.value != 0);
     unwritten_[key] = entry;
     unwritten_exact_.insert(key);
+    if (store.busy(key) || (entry.value != 0 && store.holds(key))) note_waiting(store, entry);
     if (!written_for_others_.empty() && written_for_others_.back() == key) {
       written_for_others_.pop_back();
     }
@@ -700,6 +701,22 @@ bool FlagWatcher::write_exact(FlagStore& store, const FlagEntry& entry) {
   last_[key] = entry;
   if (before) note_received(key, *before, entry);
   return true;
+}
+
+void FlagWatcher::note_waiting(FlagStore& store, const FlagEntry& entry) {
+  // Row 275: a host's save (FLAG_RESET) or join snapshot value the store holds or has no room for yet (HoldFlagStore:
+  // the Deku Scrub talk hold, a shop's sale, a gift; issue 175's full queue). It waits in unwritten_ and lands when
+  // the hold ends. Two things must know it meanwhile, as the diff's own hold sites do (it->second = *now there):
+  // - group_: the group's value, so a later load of ours in this window puts this one back (not an older one);
+  // - last_: what our game has now. Left at the title screen's value, our save's own value (loaded before the host's
+  //   came) looked like our game's newer change: the retry dropped the waiting value, and end_window wrote the title's
+  //   0 back as 'the group's value from before the load' (six Deku Tree flags 1 on the host, 0 on the guest).
+  const FlagKey key = key_of(entry);
+  if (!store.is_count(key)) note_group(entry, nullptr);
+  std::optional<FlagEntry> now = store.read(key);
+  if (!now) return;
+  now->key = key;
+  last_[key] = *now;
 }
 
 void FlagWatcher::see_save_load() {
@@ -1001,6 +1018,9 @@ bool FlagWatcher::write(FlagStore& store, const FlagEntry& entry) {
     note_write_failure(store, key, "write");
     unwritten_[key] = entry;
     unwritten_exact_.erase(key);
+    // Row 275: the group's value is known while it waits (only last_ stays our game's: a change of ours since the
+    // last diff is still sent, and the retry's 'our game changed it' rule stays).
+    if ((store.busy(key) || store.holds(key)) && !is_delta(entry) && !store.is_count(key)) note_group(entry, nullptr);
     if (!written_for_others_.empty() && written_for_others_.back() == key) {
       written_for_others_.pop_back();  // not written: tried again later
     }

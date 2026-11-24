@@ -1817,6 +1817,105 @@ TEST_CASE("flag watcher: a guest's held load revert is written once the hold end
   CHECK(game_store.get(kDoor) == 1);
 }
 
+namespace {
+
+// Row 275's guest: joined at the title (no join snapshot), its own save loads, the host's save load (FLAG_RESET)
+// comes inside that load window while `hold` keeps kDoor (the Deku Scrub talk hold), then Link is back.
+struct HeldResetGuest {
+  FakeStore game_store = game();
+  bool hold = true;
+  HoldFlagStore store{game_store, [this](FlagKey key) { return hold && key == kDoor; }};
+  FlagWatcher w{shared(), FlagRole::player};
+
+  void load_own_save(std::uint32_t door, std::uint32_t chest) {
+    w.set_native_loads(true);
+    w.set_loading(true);
+    w.set_scene(false);
+    w.set_title(true);
+    w.frame(store);  // the title's defaults: all 0
+    w.note_save_load_start();
+    game_store.set(kDoor, door);  // our own save
+    game_store.set(kChest, chest);
+    w.frame(store);
+    w.note_save_loaded();
+    w.frame(store);
+  }
+};
+
+bool sends(const std::vector<Outgoing>& out, FlagKey key) {
+  for (const auto& m : decode(out)) {
+    if (const auto* set = std::get_if<proto::FlagSet>(&m)) {
+      for (const auto& e : set->flags) {
+        if (key_of(e) == key) return true;
+      }
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
+TEST_CASE("flag watcher: a host's save value held in a guest's load window is not put back to the title's (row 275)") {
+  // Geno's kit, lane 1: both games on the same save; the six Deku Scrub talk flags (1 in both saves) were held by
+  // the event hold when the host's FLAG_RESET came, and the window's end wrote the title screen's 0 back as 'the
+  // group's value from before the load': 1 on the host, 0 on the guest for the whole session.
+  HeldResetGuest g;
+  g.load_own_save(1, 1);
+  CHECK(g.w.receive(proto::Message{proto::FlagReset{1, {entry(kDoor, 1), entry(kChest, 1)}}}));
+  g.w.frame(g.store);
+  CHECK(g.w.stats().held_retries >= 1);  // kDoor waited
+  const auto sent = link_back(g.w, g.store);
+  CHECK(g.game_store.get(kDoor) == 1);  // our save's 1 stays: the host's value too
+  CHECK(g.game_store.get(kChest) == 1);
+  CHECK(g.w.stats().load_reverts == 0);
+  CHECK_FALSE(sends(sent, kDoor));
+  g.hold = false;
+  for (int i = 0; i < 3; ++i) CHECK_FALSE(sends(g.w.frame(g.store), kDoor));
+  CHECK(g.game_store.get(kDoor) == 1);
+}
+
+TEST_CASE("flag watcher: a host's save value our save lacks waits for the hold and then lands, not dropped (row 275)") {
+  HeldResetGuest g;
+  g.load_own_save(0, 0);
+  CHECK(g.w.receive(proto::Message{proto::FlagReset{1, {entry(kDoor, 1), entry(kChest, 1)}}}));
+  g.w.frame(g.store);
+  const auto sent = link_back(g.w, g.store);
+  CHECK(g.game_store.get(kChest) == 1);
+  CHECK(g.game_store.get(kDoor) == 0);  // held: not yet
+  CHECK_FALSE(sends(sent, kDoor));
+  for (int i = 0; i < 5; ++i) g.w.frame(g.store);  // the retry keeps it while the hold lasts
+  CHECK(g.game_store.get(kDoor) == 0);
+  g.hold = false;
+  CHECK_FALSE(sends(g.w.frame(g.store), kDoor));
+  CHECK(g.game_store.get(kDoor) == 1);  // the host's save value, once the hold ended
+  for (int i = 0; i < 3; ++i) CHECK(g.w.frame(g.store).empty());
+}
+
+TEST_CASE("flag watcher: a host's save value held before our own save loads is put back after it (row 275)") {
+  // The other order: the FLAG_RESET comes at the title, held; our own save then loads an older 0. The group's value
+  // is known while it waits, so the load window keeps it waiting instead of losing it.
+  HeldResetGuest g;
+  g.w.set_native_loads(true);
+  g.w.set_loading(true);
+  g.w.set_scene(false);
+  g.w.set_title(true);
+  g.w.frame(g.store);
+  CHECK(g.w.receive(proto::Message{proto::FlagReset{1, {entry(kDoor, 1), entry(kChest, 1)}}}));
+  g.w.frame(g.store);
+  CHECK(g.game_store.get(kChest) == 1);
+  CHECK(g.game_store.get(kDoor) == 0);  // held
+  g.w.note_save_load_start();
+  g.game_store.set(kChest, 0);  // our own, older save
+  g.w.frame(g.store);
+  g.w.note_save_loaded();
+  const auto sent = link_back(g.w, g.store);
+  CHECK(g.game_store.get(kChest) == 1);  // the group's value back
+  CHECK_FALSE(sends(sent, kDoor));
+  g.hold = false;
+  for (int i = 0; i < 2; ++i) CHECK_FALSE(sends(g.w.frame(g.store), kDoor));
+  CHECK(g.game_store.get(kDoor) == 1);
+}
+
 TEST_CASE("flag watcher: a save in with no load start (the title's New Game) is still the save load (patch 0024)") {
   // NormalTitle.module runs AfterLoadSaveData itself: the on-load node with no SeqExecuteLoadSaveData before it.
   FakeStore store = game();

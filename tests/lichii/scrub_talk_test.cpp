@@ -98,6 +98,20 @@ TEST_CASE("scrub talk: another player's destroy flag waits in the HoldFlagStore 
     CHECK(game.values[kDestroy001] == 1);
 }
 
+TEST_CASE("scrub talk: the event hold applies only in the Deku Tree, the scrubs' scene (row 275)") {
+    CoopScrubTalk::Hold h;
+    h.Frame(true, 1'000'000);  // an event of our Link's
+    REQUIRE(h.Holds(kDestroy001));
+    CHECK(CoopScrubTalk::HoldsIn(h, std::string_view("InsideTheDekuTree"), kDestroy001));
+    CHECK(CoopScrubTalk::HoldsIn(h, std::string_view("InsideTheDekuTree"), kRoomBCleared));
+    CHECK_FALSE(CoopScrubTalk::HoldsIn(h, std::string_view("InsideTheDekuTree"), kOther));
+    // Geno's kit: both games in Twinrova's room, its intro running: the host's save values go through at once.
+    CHECK_FALSE(CoopScrubTalk::HoldsIn(h, std::string_view("TwinrovaStage"), kDestroy001));
+    CHECK_FALSE(CoopScrubTalk::HoldsIn(h, std::nullopt, kRoomBCleared));  // no scene known: none of them loaded
+    CoopScrubTalk::Hold idle;
+    CHECK_FALSE(CoopScrubTalk::HoldsIn(idle, std::string_view("InsideTheDekuTree"), kDestroy001));
+}
+
 // Issue 144, second guard: our copy of the scrub near our Link (CoopScrubTalk::Near).
 
 TEST_CASE("scrub talk near: every held flag has its scrubs, and the brothers are the Deku Tree's") {

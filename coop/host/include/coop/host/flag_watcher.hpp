@@ -730,6 +730,8 @@ class FlagWatcher {
   // A refused write: held_retries when the store holds the key (and the hold refuses this write: hold_applies) or
   // is busy, else a write failure named by key and site.
   void note_write_failure(FlagStore& store, const FlagKey& key, const char* site, bool hold_applies = true);
+  // Row 275: an exact (host's save / join snapshot) value that waits for a hold: group_ and last_ (see the .cpp).
+  void note_waiting(FlagStore& store, const protocol::FlagEntry& entry);
   // use_events
   const std::vector<FlagKey>& diff_keys();
   bool events_ = false;

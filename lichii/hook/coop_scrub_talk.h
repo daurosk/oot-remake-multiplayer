@@ -87,6 +87,16 @@ private:
     bool holding_ = false;
 };
 
+// The scene of every scrub kTalkFlags deletes. Row 275: the event hold applies only there. Anywhere else no scrub of
+// these flags is loaded, so none can be deleted mid-talk; held there (a boss room's intro, a join's own events) the
+// host's save values waited behind an event that may not end for minutes.
+inline constexpr std::string_view kScene = "InsideTheDekuTree";
+
+// The event hold for this flag in our Link's scene (none known: a load, nothing of these scrubs is loaded).
+inline bool HoldsIn(const Hold& hold, std::optional<std::string_view> scene, std::uint32_t hash) {
+    return scene && *scene == kScene && hold.Holds(hash);
+}
+
 // Issue 144, second guard: our copy of the scrub a flag deletes is near our
 // Link. The hold above trusts the game's event flag (event_running), which
 // has never been seen during a scrub's talk. So the flags of a scrub also

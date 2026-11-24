@@ -1112,7 +1112,10 @@ public:
                 if (CoopStory::On() && CoopStory::GiftHolds(key.hash, gifts_held)) {
                     return true;  // rows 195/204: a gift scene played elsewhere lands once its item is ours
                 }
-                if (talk.Holds(key.hash) || CoopScrubTalk::NearHolds(near, key.hash)) {
+                // Row 275: the event hold only in the scrubs' own scene; the near guard is about a scrub loaded here.
+                if (CoopScrubTalk::HoldsIn(talk, scene ? std::optional<std::string_view>(*scene) : std::nullopt,
+                                           key.hash) ||
+                    CoopScrubTalk::NearHolds(near, key.hash)) {
                     return true;
                 }
                 if (shop_on && CoopShopSale::Waits(key.hash, sale_here.in_event)) {

@@ -101,6 +101,7 @@ def make_key_layout(side="L", icon_x=213.3, font=b"External_00"):
         struct.pack_into("<I", d, rec + 0x34, end[i])
         struct.pack_into("<I", d, rec + 0x38, 0x02555003)
     struct.pack_into("<QQQII", d, 0x118, keys, vals, ids, len(panes), 8)
+    struct.pack_into("<QQQII", d, 0x1b8, 0x2c0, 0x2e0, 0x2e0, 0, 8)   # (no parts: an empty part dictionary, stride 8)
     d += strings
     while len(d) % 8:
         d.append(0)

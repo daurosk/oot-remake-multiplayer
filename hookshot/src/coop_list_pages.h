@@ -12,8 +12,9 @@
 //   picture's PaControllerKeyL_00 / R_00, PaGuideKey_00, MenuOverlay_00's T_BtnL_00); no text of the game's has such a
 //   letter inside its words, and a words pane's font (Normal) has none: the letters drew as empty boxes there (row 264,
 //   proof-01112-d). So the - menu's list shows the page's own controller picture's ZL and ZR keys beside its heading
-//   (coop_pause_tab_module.cpp, MinusPageKeys), and a screen with no icon pane of the game's (the title: its archive has
-//   none, and a part from another archive crashes its load, title-toggle-0119) names them in words: "Page 2/3 (ZL/ZR)".
+//   (coop_pause_tab_module.cpp, MinusPageKeys); the title shows the same keys from copies the pack puts in its own
+//   archive (title_menu.py add_keys, coop_title.cpp StepKeys: a part from another archive crashes its load,
+//   title-toggle-0119), and a screen with no icon pane of the game's (an older pack) names them in words: "Page 2/3 (ZL/ZR)".
 // Logic only: tests/hookshot/list_pages_test.cpp.
 #pragma once
 

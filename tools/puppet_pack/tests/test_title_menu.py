@@ -68,6 +68,48 @@ def make_layout():
     return bytes(d)
 
 
+def make_key_layout(side="L", icon_x=213.3, font=b"External_00"):
+    """A controller key as Common's PaControllerKeyL_00 / R_00: RootPane, N_IconGuide<side>_00 and its icon and label
+    text panes (the icon at icon_x), no parts, the font's name in the string pool."""
+    panes = ["RootPane", "N_IconGuide%s_00" % side, "T_Icon%s_00" % side, "T_Guide%s_00" % side]
+    parent = [0xFFFFFFFF, 0, 1, 1]
+    end = [4, 4, 3, 4]
+    d = bytearray(0x500)
+    d[0:4] = b"BFFH"
+    d[0x28:0x28 + 35] = b"Nintendo.Ui.ResModels.LayoutResData"
+    d[0xa8:0xac] = b"BFSI"
+    d[0xc0:0xc7] = b"Default"
+    d[0xd0:0xd4] = b"BFSI"
+    d[0xe8:0xf2] = b"StringPool"
+    d[0xf8:0xfb] = b"UIL"
+    struct.pack_into("<Q", d, 0x100, 0xce)
+    recs, pool = 0x300, len(d)
+    strings, names = bytearray(), []
+    for n in panes:
+        names.append(pool + len(strings))
+        strings += n.encode() + b"\0"
+    strings += font + b"\0"
+    keys, vals, ids = 0x200, 0x240, 0x280
+    for i, _ in enumerate(panes):
+        rec = recs + 0x44 * i
+        struct.pack_into("<Q", d, keys + 8 * i, names[i])
+        struct.pack_into("<Q", d, vals + 8 * i, rec)
+        struct.pack_into("<Q", d, ids + 8 * i, 0x2222 * (i + 1))
+        struct.pack_into("<ff", d, rec + 0x10, 1.0, 1.0)
+        struct.pack_into("<f", d, rec + 0x1c, icon_x if i == 2 else 0.0)
+        struct.pack_into("<I", d, rec + 0x28, parent[i])
+        struct.pack_into("<I", d, rec + 0x34, end[i])
+        struct.pack_into("<I", d, rec + 0x38, 0x02555003)
+    struct.pack_into("<QQQII", d, 0x118, keys, vals, ids, len(panes), 8)
+    d += strings
+    while len(d) % 8:
+        d.append(0)
+    struct.pack_into("<II", d, 0xac, 0xf8, pool - 0xf8)
+    struct.pack_into("<II", d, 0xd4, pool, len(d) - pool)
+    struct.pack_into("<I", d, 0x08, len(d))
+    return bytes(d)
+
+
 def make_msbt(labels, texts):
     header = bytearray(b"MsgStdBn\xff\xfe\0\0\0\x03\x02\0" + b"\0" * 0x10)
     nb = 2
@@ -310,6 +352,94 @@ class BuildTest(unittest.TestCase):
         self.assertIsNotNone(err)
         self.assertEqual(written, {})
         self.assertEqual(sizes, before)
+
+
+class KeysTest(unittest.TestCase):
+    """The list's ZL and ZR as the game's own button icons on the title (menu-title-01113)."""
+
+    def test_two_hidden_parts_of_our_key_copies_beside_the_first_row(self):
+        d = tm.add_keys(tm.add_menu(make_layout()))
+        panes, _ = tm.read_layout(d)
+        by = {p[0]: p[1] for p in panes}
+        layouts = dict(tm.ui_pack.part_layouts(d))
+        x = tm.KEY_ICON_X + tm.KEY_ICON_IN
+        for name, (_, ours), sign in zip(tm.KEYS, tm.KEY_LAYOUTS, (-1, 1)):
+            self.assertEqual(layouts[name], ours)
+            tx, ty = struct.unpack_from("<ff", d, by[name] + 0x1c)
+            self.assertAlmostEqual(tx, sign * x, places=3)
+            self.assertAlmostEqual(ty, -65.0, places=3)   # (level with Pa_Button_00)
+            kind, = struct.unpack_from("<I", d, by[name] + 0x38)
+            self.assertEqual(kind & 1, 0)                 # (stored hidden: the module shows them)
+        with self.assertRaises(tm.TitleMenuError):
+            tm.add_keys(d)                                # (once)
+        with self.assertRaises(tm.TitleMenuError):
+            tm.add_keys(make_layout())                    # (after the list only)
+
+    def test_the_key_layouts_copied_under_our_names_or_refused(self):
+        common = [("PaControllerKeyL_00.buil", make_key_layout("L", 213.3)),
+                  ("PaControllerKeyR_00.buil", make_key_layout("R", -213.3))]
+        got = tm.key_layouts(common)
+        self.assertEqual([n for n, _ in got], ["PaCoopKeyTitleL_00.buil", "PaCoopKeyTitleR_00.buil"])
+        from puppet_pack import coop_menu
+        self.assertEqual(coop_menu.layout_name(got[0][1]), "PaCoopKeyTitleL_00")
+        self.assertEqual([p[0] for p in tm.read_layout(got[1][1])[0]],
+                         ["RootPane", "N_IconGuideR_00", "T_IconR_00", "T_GuideR_00"])
+        with self.assertRaises(tm.TitleMenuError):
+            tm.key_layouts(common[:1])                                        # (no R key)
+        with self.assertRaises(tm.TitleMenuError):
+            tm.key_layouts([common[0], ("PaControllerKeyR_00.buil", make_key_layout("R", -100.0))])   # (moved icon)
+        with self.assertRaises(tm.TitleMenuError):
+            tm.key_layouts([common[0], ("PaControllerKeyR_00.buil", make_key_layout("R", -213.3, b"Normal"))])
+
+    def test_the_category_lists_them_under_title_in_name_order(self):
+        cat = {"Title": ["PaCommonBtnTitle_00", "Title_00", "TitleMenuBG_00"], "Common": ["X"]}
+        tm.add_category(cat)
+        tm.add_category(cat)   # (twice: once each)
+        self.assertEqual(cat["Title"], ["PaCommonBtnTitle_00", "PaCoopKeyTitleL_00", "PaCoopKeyTitleR_00", "Title_00",
+                                        "TitleMenuBG_00"])
+        with self.assertRaises(tm.TitleMenuError):
+            tm.add_category({"Common": ["Title_00"]})
+
+    def test_the_labels_are_the_games_zl_and_zr_letters_in_every_language(self):
+        for rel in ("Mals/USen.Product.110.sarc.zs", "Mals/CNzh.Product.110.sarc.zs"):
+            rows = dict(tm.rows_for(rel))
+            self.assertEqual(rows["Coop_Key_ZL"], "")
+            self.assertEqual(rows["Coop_Key_ZR"], "")
+
+    def test_a_build_with_the_common_keys_adds_them_and_one_without_keeps_the_title_as_before(self):
+        with tempfile.TemporaryDirectory() as root:
+            src = os.path.join(root, "romfs")
+            BuildTest().romfs(src)
+            common = [("PaControllerKeyL_00.buil", make_key_layout("L", 213.3)),
+                      ("PaControllerKeyR_00.buil", make_key_layout("R", -213.3))]
+            extra = {tm.COMMON_ARCHIVE: sarc.write(common, data_align=16),
+                     tm.CATEGORY: byml.dumps({"Title": ["PaCommonBtnTitle_00", "Title_00", "TitleMenuBG_00"]})}
+            for rel, data in extra.items():
+                path = os.path.join(src, *rel.split("/"))
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "wb") as f:
+                    f.write(data)
+            table = _Table({tm.TITLE_ARCHIVE[:-3]: 1000, tm.TITLE_LAYOUT: 500, tm.CATEGORY[:-3]: 300})
+            for lang in ("EUen", "JPja", "USen"):
+                table.set("Mals/%s.Product.110.sarc" % lang, 2000)
+            written = {}
+            made = tm.build(src, "out", _Plain(), table, lambda out, rel, data: written.__setitem__(rel, data),
+                            lambda d, raw, data: data, log=lambda s: None)
+            self.assertIn(tm.CATEGORY, made)
+            entries = sarc.read_entries(written[tm.TITLE_ARCHIVE])
+            names = [n for n, _ in entries]
+            self.assertEqual(names.count("PaCoopKeyTitleL_00.buil"), tm.COPIES)
+            self.assertEqual(names.count("PaCoopKeyTitleR_00.buil"), tm.COPIES)
+            tm.ui_pack.check_own_parts(entries, entries, tm.TITLE_ARCHIVE)   # (every part's layout in the archive)
+            layout = dict(entries)[tm.TITLE_LAYOUT]
+            self.assertTrue(set(tm.KEYS) <= {p[0] for p in tm.read_layout(layout)[0]})
+            self.assertIn("PaCoopKeyTitleL_00", byml.loads(written[tm.CATEGORY])["Title"])
+        # (no Common archive: the title as before, no keys, no category written)
+        made, written, sizes, before, err = BuildTest().run_build()
+        self.assertIsNone(err)
+        self.assertNotIn(tm.CATEGORY, written)
+        layout = [d for n, d in sarc.read_entries(written[tm.TITLE_ARCHIVE]) if n == tm.TITLE_LAYOUT][0]
+        self.assertFalse(set(tm.KEYS) & {p[0] for p in tm.read_layout(layout)[0]})
 
 
 class LanguageTest(unittest.TestCase):

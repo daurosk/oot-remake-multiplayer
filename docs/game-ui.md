@@ -380,7 +380,11 @@ records, and how new parts go after the string pool so nothing moves).
   264, proof-01112-d). Longshot points these letters at the player's own controls (`host/prompts.c`). Co-op's - menu
   list shows its pages' ZL and ZR as its page's own controller picture's keys beside the heading
   (`coop_pause_tab_module.cpp` `MinusKeys`); the Title archive has no `External_00` pane (and a part from Common crashes
-  the title's load, title-toggle-0119), so the title's hint names them in words. (checked: the USen message archive and
+  the title's load, title-toggle-0119), so the pack copies Common's `PaControllerKeyL_00` / `R_00` (text panes only)
+  into the Title archive as `PaCoopKeyTitleL_00` / `R_00` and adds two hidden parts of them beside the list's first row,
+  their icons set from `LayoutMsg/Title_00`'s `Coop_Key_ZL` / `Coop_Key_ZR` (menu-title-01113, `title_menu.py`
+  `add_keys`; NOT YET PROVEN: a LANE1 boot probe, Character Select on and off, must show the title loads); without them
+  the title's hint names the buttons in words. (checked: the USen message archive and
   every layout of Common and Title, 1.1.0)
 - Labels the game uses: `Title_00` 0000 to 0002 (co-op adds 0100 to 0102); `SystemWindow_00` the dialog's text as
   `%04d` and its buttons as `10%02d`; `SystemOption_00` `<Key>_Title`, `<Key>_Caption`, `<Key>_00...`; the banner's

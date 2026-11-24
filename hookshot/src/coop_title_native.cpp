@@ -128,7 +128,7 @@ std::vector<int> Shown(const CoopPauseMenu::View& v, int* at) {
 
 }  // namespace
 
-Look LookFor(const CoopPauseMenu::View& v, int top, int buttons) {
+Look LookFor(const CoopPauseMenu::View& v, int top, int buttons, bool key_icons) {
     Look l;
     buttons = std::clamp(buttons, kButtons, kMaxButtons);
     const int per_page = buttons - 1;   // (the last button: Back)
@@ -166,7 +166,7 @@ Look LookFor(const CoopPauseMenu::View& v, int top, int buttons) {
     // before the cut: the page is the table's shape, the row's help its line. The buttons in words: the title's
     // archive has no icon pane of the game's (coop_list_pages.h), and the game's letters in this words pane drew as
     // empty boxes, row 264)
-    const std::string paged = CoopListPages::Line(l.page, l.pages, true);
+    const std::string paged = CoopListPages::Line(l.page, l.pages, !key_icons);
     l.hint = Fit(paged.empty()   ? CoopI18n::Tr(v.help)
                  : v.help.empty() ? paged
                                   : paged + "   " + CoopI18n::Tr(v.help),

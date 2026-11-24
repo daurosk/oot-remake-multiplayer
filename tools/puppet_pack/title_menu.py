@@ -23,6 +23,8 @@ button, so the copy is the last pane of the alignment pane's subtree, in pre-ord
 offset or index moves.
 """
 
+import struct
+
 from . import ui_pack
 from .ui_pack import read_layout, read_msbt, write_msbt  # noqa: F401  (the title's tests use them here)
 
@@ -66,6 +68,29 @@ TOGGLE_MOVE = (150.0, 0.0)        # its name (x -840) and cells (to x +920) abou
 TOGGLE_LIVE = tuple(("Coop_Live_Toggle%d" % i, "." * 64) for i in range(3))   # its name, the left cell, the right
 LIVE = (tuple(("Coop_Live_T%d" % i, "." * 64) for i in range(FIRST_NEW + LIST_BUTTONS)) + (("Coop_Live_Hint", "." * 160),)
         + TOGGLE_LIVE)
+# The list's ZL and ZR as the game's own button icons (menu-title-01113; row 264 did it for the - menu): the game draws a
+# button only as a letter of its icon font External_00 (StaticMsg/GuideKeyIcon: ZL U+E046, ZR U+E047) in a text pane of
+# that font, and the Title archive has none (its words panes are Normal: the letters drew as empty boxes, row 264). A
+# part of another archive's layout crashed the title's load (title-toggle-0119), so the Common archive's controller keys
+# PaControllerKeyL_00 / R_00 (text panes only: the icon T_IconL_00 / T_IconR_00 in External_00 beside a label, no
+# picture, no part, no texture) are COPIED into the Title archive under names of ours (KEY_LAYOUTS; four copies as every
+# layout there, and listed under Title in the layout category table as its own layouts are), and Title_00 gets two
+# hidden parts of them (KEYS) level with the first row, their icons KEY_ICON_X outside the column's middle: past the
+# title button's ornaments (PaCommonBtnTitle_00's N_Deco_L_00 / R_00 at -+464). The icons' letters are messages of
+# Title_00.msbt (KEY_LABELS), set by the co-op module (coop_title.cpp, TitleKeys), which shows them only on a page of
+# more than one; without them (an older pack, or a merge with another mod's title: merge_tables keeps add_menu) the hint
+# names the buttons in words. The parts' place: the key layout's icon sits KEY_ICON_IN inward of its root (the layout's
+# T_IconL_00 at x +213.3, T_IconR_00 at -213.3, 8 up).
+KEY_LAYOUTS = (("PaControllerKeyL_00", "PaCoopKeyTitleL_00"), ("PaControllerKeyR_00", "PaCoopKeyTitleR_00"))
+KEYS = ("Pa_CoopKeyZL_00", "Pa_CoopKeyZR_00")
+KEY_ICON_X = 660.0
+KEY_ICON_IN = 213.3
+KEY_SIZE = (60.0, 80.0)          # (the key layout's own N_IconGuideL_00 / R_00)
+KEY_LABELS = (("Coop_Key_ZL", "\ue046"), ("Coop_Key_ZR", "\ue047"))
+COMMON_ARCHIVE = "UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc.zs"
+CATEGORY = "UI/LayoutArchiveCategory.Product.100.byml.zs"
+CATEGORY_ARCHIVE = "Title"
+COPIES = 4                       # (every layout is stored four times in its archive)
 # The same rows for the languages whose game text is Chinese (the kit's Chinese layer keeps the
 # game's own tables, as its menus and messages do): the pack carries these words in that
 # language's Title_00.msbt, since the module only names the label (CoopTitleMenu::kMenuLabels)
@@ -82,7 +107,7 @@ def rows_for(rel):
     """The menu's rows for a language's message file ("Mals/CNzh.Product.110.sarc.zs"): that
     language's words when it has them, the English above otherwise, and the live texts' placeholders."""
     name = rel.replace("\\", "/").rsplit("/", 1)[-1]
-    return ROWS_BY_LANGUAGE.get(name.split(".", 1)[0], ROWS) + LIVE
+    return ROWS_BY_LANGUAGE.get(name.split(".", 1)[0], ROWS) + LIVE + KEY_LABELS
 
 
 TitleMenuError = ui_pack.UiPackError   # one error for the rows and the library they use
@@ -146,6 +171,61 @@ def add_menu(d):
     return add_list(add_marker(d))
 
 
+def add_keys(d):
+    """Title_00.buil (with the list) with KEYS after it: parts of KEY_LAYOUTS' copies (the Title archive's own, as
+    make adds them), in Pa_Button_00's place moved out to either side so their icons stand KEY_ICON_X from the column's
+    middle, under the same alignment pane, stored hidden. No title button (not a Pa_Button_NN)."""
+    panes, _ = read_layout(d)
+    names = [p[0] for p in panes]
+    if HINT not in names:
+        raise TitleMenuError("the layout has no %s (add_list first)" % HINT)
+    if any(k in names for k in KEYS):
+        raise TitleMenuError("the layout has the keys already")
+    x = KEY_ICON_X + KEY_ICON_IN
+    copies = [ui_pack.Copy(BUTTON % 0, KEYS[i], (-x if i == 0 else x, 0.0), hidden=True,
+                           part_layout=KEY_LAYOUTS[i][1], size=KEY_SIZE) for i in range(2)]
+    return ui_pack.clone_parts(d, copies, new_id=_new_id)
+
+
+def add_menu_keys(d):
+    """add_menu, then the list's ZL and ZR keys (add_keys): for the Title archive make writes with the keys' layouts."""
+    return add_keys(add_menu(d))
+
+
+def key_layouts(common_entries):
+    """[(name.buil, bytes)]: the Common archive's PaControllerKeyL_00 / R_00 under KEY_LAYOUTS' names, checked to be
+    what add_keys expects (text panes only, no part, the icon pane there); raises TitleMenuError otherwise."""
+    from .coop_menu import rename
+    have = dict(common_entries)
+    out = []
+    for source, ours in KEY_LAYOUTS:
+        data = have.get(source + ".buil")
+        if data is None:
+            raise TitleMenuError("%s has no %s" % (COMMON_ARCHIVE, source + ".buil"))
+        panes, parts = read_layout(data)
+        icon = "T_Icon%s_00" % source[-4]
+        if parts or icon not in [p[0] for p in panes] or b"External_00" not in data:
+            raise TitleMenuError("%s is not the controller key it was made against" % source)
+        rec = dict((p[0], p[1]) for p in panes)[icon]
+        tx, = struct.unpack_from("<f", data, rec + 0x1c)
+        if abs(abs(tx) - KEY_ICON_IN) > 1.0:
+            raise TitleMenuError("%s's icon is at x %.1f, not %.1f" % (source, tx, KEY_ICON_IN))
+        out.append((ours + ".buil", rename(data, ours)))
+    return out
+
+
+def add_category(cat):
+    """The layout category table with KEY_LAYOUTS' names under Title (in name order, as the game's list)."""
+    names = cat.get(CATEGORY_ARCHIVE) if isinstance(cat, dict) else None
+    if not isinstance(names, list) or SCREEN not in names:
+        raise TitleMenuError("the layout category table has no %s list with %s" % (CATEGORY_ARCHIVE, SCREEN))
+    for _, ours in KEY_LAYOUTS:
+        if ours not in names:
+            at = next((i for i, n in enumerate(names) if str(n).lower() > ours.lower()), len(names))
+            names.insert(at, ours)
+    return cat
+
+
 # ---------------------------------------------------------------------------------------- MSBT
 
 def add_rows(msbt, rows=ROWS + LIVE):
@@ -200,12 +280,27 @@ def make(reader, dicts, recompress):
     olds = [data for name, data in entries if name == TITLE_LAYOUT]
     if not olds:
         raise TitleMenuError("%s has no %s" % (TITLE_ARCHIVE, TITLE_LAYOUT))
-    read, (entries, new) = entries, ui_pack.edit_entries(entries, TITLE_LAYOUT, add_menu)   # (every copy of the layout)
+    # (the list's ZL / ZR keys when the Common archive has the controller keys as made against: their layouts copied
+    # in, the category told; else the title as before, its hint naming them in words)
+    from . import byml
+    try:
+        keys = key_layouts(sarc.read_entries(dicts.decompress(reader.read(COMMON_ARCHIVE))))
+        cat_raw = reader.read(CATEGORY)
+        cat_plain = dicts.decompress(cat_raw)
+        cat_made = byml.dumps(add_category(byml.loads(cat_plain)))
+    except (TitleMenuError, OSError, KeyError, ValueError, struct.error):
+        keys = []
+    read, (entries, new) = entries, ui_pack.edit_entries(entries, TITLE_LAYOUT, add_menu_keys if keys else add_menu)
+    for name, data in keys:
+        entries = entries + [(name, data)] * COPIES
     ui_pack.check_own_parts(read, entries, TITLE_ARCHIVE)
     archive = sarc.write(entries, data_align=16)   # (as the game's own: 16)
     growth.append((TITLE_ARCHIVE, len(dicts.decompress(raw)), len(archive), True))
     growth.append((TITLE_LAYOUT, len(olds[0]), len(new[olds[0]]), False))
     files[TITLE_ARCHIVE] = recompress(dicts, raw, archive)
+    if keys:
+        growth.append((CATEGORY, len(cat_plain), len(cat_made), True))
+        files[CATEGORY] = recompress(dicts, cat_raw, cat_made)
     for rel in sorted(reader.glob(MALS_GLOB)):
         raw = reader.read(rel)
         plain = dicts.decompress(raw)

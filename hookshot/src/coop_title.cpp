@@ -811,6 +811,25 @@ bool ToggleAnim(void* ctx, const char* name, bool last) {
     return g_api->call(ctx, &k, &x0);
 }
 
+// A pane inside one of the title's parts by its path ("Pa_CoopToggle_00/T_Option_00"), as the game finds one
+// (kPathFind: the last name and the part layout it is in, then that layout's pane table by name); `part` (optional)
+// gets that part layout. Nothing when any step finds nothing.
+std::optional<std::uint64_t> PaneAtPath(void* ctx, std::uint64_t layout, const std::string& path, std::uint64_t* part) {
+    std::array<std::uint8_t, 0x70> b{};   // [0x00] the path lookup's layout, [0x10] the path
+    if (path.size() + 1 > b.size() - 0x10) return std::nullopt;
+    std::memcpy(b.data() + 0x10, path.c_str(), path.size() + 1);
+    const std::uint64_t base = g_api->scratch(ctx, b.data(), b.size());
+    if (base == 0) return std::nullopt;
+    const auto name = GameCall3(ctx, Main(kPathFind), base + 0x10, layout, base);
+    const std::uint64_t in = Read64(base);
+    if (!name || *name == 0 || in == 0) return std::nullopt;
+    const auto table = GameCall3(ctx, Main(kPaneTable), in + 0x40, 0);
+    const auto pane = table && *table != 0 ? GameCall3(ctx, Main(kPaneByName), *table, *name) : std::nullopt;
+    if (!pane || *pane == 0) return std::nullopt;
+    if (part != nullptr) *part = in;
+    return pane;
+}
+
 // The placeholder `i` of the toggle (Coop_Live_Toggle<i>) in the loaded message file: its text's address, or 0.
 std::uint64_t ToggleSlot(void* ctx, int i) {
     std::array<std::uint8_t, 0x90> b{};   // [0x00] the ref, [0x20] &path, [0x28] &label, [0x30] path, [0x50] label
@@ -850,19 +869,14 @@ bool ToggleText(void* ctx, std::uint64_t layout, int i, std::string utf8) {
     }
     if (utf8.empty()) utf8 = " ";
     if (g_toggle.shown[k] == utf8) return true;
-    const std::string path = fmt::format("{}/{}", kTogglePart, kTogglePanes[k]);
-    std::array<std::uint8_t, 0x80> b{};   // [0x00] the path lookup's layout, [0x10] the path, [0x60] the reference
-    std::memcpy(b.data() + 0x10, path.c_str(), path.size() + 1);
-    const std::uint64_t base = g_api->scratch(ctx, b.data(), b.size());
-    if (base == 0) return false;
-    const auto name = GameCall3(ctx, Main(kPathFind), base + 0x10, layout, base);
-    const std::uint64_t part = Read64(base);
-    if (!name || *name == 0 || part == 0) return false;
-    const auto table = GameCall3(ctx, Main(kPaneTable), part + 0x40, 0);
-    const auto pane = table && *table != 0 ? GameCall3(ctx, Main(kPaneByName), *table, *name) : std::nullopt;
-    if (!pane || *pane == 0) return false;
-    if (((static_cast<std::uint32_t>(Read64(*pane + 0xa8)) >> 22) & 0xf) != CoopPauseTab::kTextPaneKind) return false;
+    std::uint64_t part = 0;
+    const std::optional<std::uint64_t> pane =
+        PaneAtPath(ctx, layout, fmt::format("{}/{}", kTogglePart, kTogglePanes[k]), &part);
+    if (!pane || ((static_cast<std::uint32_t>(Read64(*pane + 0xa8)) >> 22) & 0xf) != CoopPauseTab::kTextPaneKind) return false;
     if (i == 0) g_toggle.part = part;   // (the part's layout: its animations)
+    std::array<std::uint8_t, 0x18> blank{};   // (the reference written here)
+    const std::uint64_t base = g_api->scratch(ctx, blank.data(), blank.size());
+    if (base == 0) return false;
     std::string bytes = utf8;
     bytes.push_back('\0');
     if (!CoopRuntime::Write(g_toggle.text[k], bytes.data(), bytes.size())) return false;
@@ -872,8 +886,8 @@ bool ToggleText(void* ctx, std::uint64_t layout, int i, std::string utf8) {
     std::memcpy(ref.data() + 0x00, &g_toggle.text[k], 8);
     std::memcpy(ref.data() + 0x08, &length, 4);
     std::memcpy(ref.data() + 0x10, &attrs, 8);
-    if (!CoopRuntime::Write(base + 0x60, ref.data(), ref.size())) return false;
-    if (!GameCall3(ctx, Main(kPaneSetMsg), *pane, base + 0x60, 0)) return false;
+    if (!CoopRuntime::Write(base, ref.data(), ref.size())) return false;
+    if (!GameCall3(ctx, Main(kPaneSetMsg), *pane, base, 0)) return false;
     g_toggle.shown[k] = utf8;
     return true;
 }
@@ -890,6 +904,95 @@ void HideToggle(void* ctx) {
     if (g_toggle.pane != 0) GameCall3(ctx, Main(kSetVisible), g_toggle.pane, 0);
     ToggleButtonAlpha(ctx, g_toggle.button, false);
     g_toggle.button = -1, g_toggle.focused = -1, g_toggle.cell = -1;
+}
+
+// --- The list's ZL and ZR: the game's own button icons beside the first row ---
+// The pack's Pa_CoopKeyZL_00 / Pa_CoopKeyZR_00 (tools/puppet_pack/title_menu.py: parts of the Common archive's
+// controller keys copied into the Title archive, stored hidden): each key's icon pane (T_IconL_00 / T_IconR_00, in the
+// game's button-icon font External_00) gets the pack's message Coop_Key_ZL / Coop_Key_ZR of LayoutMsg/Title_00 (the
+// letters U+E046 / U+E047, which Longshot points at the player's own controls), its label pane (T_GuideL_00 /
+// T_GuideR_00) hidden; both shown only on a page of a list with more than one page. Where any of it cannot be had (an
+// older pack, a title merged with another mod's), they stay hidden and the hint names the buttons in words
+// (CoopTitleNative::LookFor's key_icons).
+constexpr std::array<const char*, 2> kKeyParts{"Pa_CoopKeyZL_00", "Pa_CoopKeyZR_00"};
+constexpr std::array<const char*, 2> kKeyIcons{"T_IconL_00", "T_IconR_00"};
+constexpr std::array<const char*, 2> kKeyGuides{"T_GuideL_00", "T_GuideR_00"};
+constexpr std::array<const char*, 2> kKeyLabels{"Coop_Key_ZL", "Coop_Key_ZR"};
+struct Keys {
+    std::uint64_t layout = 0;                // the title layout they were looked for on
+    std::array<std::uint64_t, 2> parts{};    // the parts' own panes
+    bool usable = false, logged = false;
+    int shown = -1;                          // shown (1) or not (0) as last set; -1 not set
+};
+Keys g_keys;   // (the title's step only)
+std::atomic<bool> g_keys_usable{false};   // (read where the look is made: the hint without "(ZL/ZR)")
+
+// The message `label` of LayoutMsg/Title_00 on the text pane `pane`, as the game sets one (kMsgRefInit, kMsgRefSet,
+// kPaneSetMsg). False when the label is not in the loaded file or the set fails.
+bool TitleMessageOn(void* ctx, std::uint64_t pane, const char* label) {
+    std::array<std::uint8_t, 0x90> b{};   // [0x00] the ref, [0x20] &path, [0x28] &label, [0x30] path, [0x50] label
+    const std::string path = "LayoutMsg/Title_00";
+    if (std::strlen(label) + 1 > b.size() - 0x50) return false;
+    const std::uint64_t base = g_api->scratch(ctx, b.data(), b.size());
+    if (base == 0) return false;
+    const std::uint64_t at_path = base + 0x30, at_label = base + 0x50;
+    std::memcpy(b.data() + 0x20, &at_path, 8);
+    std::memcpy(b.data() + 0x28, &at_label, 8);
+    std::memcpy(b.data() + 0x30, path.c_str(), path.size() + 1);
+    std::memcpy(b.data() + 0x50, label, std::strlen(label) + 1);
+    if (g_api->scratch(ctx, b.data(), b.size()) != base) return false;
+    if (!GameCall3(ctx, Main(kMsgRefInit), base, 0)) return false;
+    HosCoopCall k{};
+    k.function = Main(kMsgRefSet);
+    k.x[0] = base, k.x[1] = base + 0x20, k.x[2] = base + 0x28, k.x[3] = 1;
+    std::uint64_t x0 = 0;
+    if (!g_api->call(ctx, &k, &x0) || Read64(base) == 0) return false;
+    return GameCall3(ctx, Main(kPaneSetMsg), pane, base, 0).has_value();
+}
+
+void HideKeys(void* ctx) {
+    if (g_keys.shown == 0) return;
+    for (const std::uint64_t part : g_keys.parts) {
+        if (part != 0) GameCall3(ctx, Main(kSetVisible), part, 0);
+    }
+    g_keys.shown = 0;
+}
+
+// The keys on the title layout `layout`: looked for (and their icons set) once a layout, then shown while `paged`.
+void StepKeys(void* ctx, std::uint64_t layout, bool paged) {
+    if (g_keys.layout != layout) {
+        g_keys = Keys{};
+        g_keys.layout = layout;
+        bool ok = true;
+        std::string why;
+        for (std::size_t i = 0; i < 2 && ok; ++i) {
+            g_keys.parts[i] = TitlePane(ctx, layout, kKeyParts[i]);
+            const auto icon = g_keys.parts[i] != 0
+                                  ? PaneAtPath(ctx, layout, fmt::format("{}/{}", kKeyParts[i], kKeyIcons[i]), nullptr)
+                                  : std::nullopt;
+            const auto guide =
+                icon ? PaneAtPath(ctx, layout, fmt::format("{}/{}", kKeyParts[i], kKeyGuides[i]), nullptr) : std::nullopt;
+            if (!icon || !guide) {
+                ok = false, why = fmt::format("{} not in the pack's title", g_keys.parts[i] != 0 ? kKeyIcons[i] : kKeyParts[i]);
+            } else if (!TitleMessageOn(ctx, *icon, kKeyLabels[i])) {
+                ok = false, why = fmt::format("{} not set", kKeyLabels[i]);
+            } else {
+                GameCall3(ctx, Main(kSetVisible), *guide, 0);
+            }
+        }
+        g_keys.usable = ok;
+        g_keys_usable = ok;
+        LOG_INFO(Core, "coop: title: the list's ZL / ZR icons: {}", ok ? "set" : "none (" + why + "): the hint says them");
+    }
+    if (!g_keys.usable) return;
+    if (!paged) {
+        HideKeys(ctx);
+        return;
+    }
+    if (g_keys.shown != 1) {
+        for (const std::uint64_t part : g_keys.parts) GameCall3(ctx, Main(kSetVisible), part, 1);
+        g_keys.shown = 1;
+    }
 }
 
 // The toggle for the page's look (after ShowColumn): shown over its button with its words and look, or hidden. False
@@ -969,7 +1072,7 @@ void StepNative(void* ctx, std::uint64_t screen) {
             const std::string& letters = CoopTitleNative::Letters();
             look = CoopTitleNative::TypingLook(v, letters[g_native_letter % letters.size()], g_native_key);
         } else {
-            look = CoopTitleNative::LookFor(v, g_native_top, g_page_buttons.load());
+            look = CoopTitleNative::LookFor(v, g_native_top, g_page_buttons.load(), g_keys_usable.load());
             g_native_top = look.top;
         }
         refocus = std::exchange(g_native_refocus, false);
@@ -1001,6 +1104,7 @@ void StepNative(void* ctx, std::uint64_t screen) {
     if (g_column.layout != layout) FindColumn(ctx, screen, layout);
     const bool hint = !look.hint.empty() && g_column.hint != 0 && SetLiveText(ctx, layout, kHintSlot, look.hint);
     ShowColumn(ctx, screen, look.buttons, hint, look.dim, true);
+    StepKeys(ctx, layout, look.pages > 1 && !v.typing);
     if (ok) StepToggle(ctx, screen, layout, look);
     else HideToggle(ctx);
     if (!ok) {   // (an older pack: the page in the overlay, as before)
@@ -1102,6 +1206,7 @@ void StepAsk(void* ctx, std::uint64_t screen) {
     if (apply) StopBtnNum(ctx, layout, static_cast<float>(CoopTitleNative::kButtons));
     ShowColumn(ctx, screen, CoopTitleNative::kButtons, false, {});
     HideToggle(ctx);
+    HideKeys(ctx);
     KeepFocusShown(ctx, screen, CoopTitleNative::kButtons);
     bool ok = true;
     for (int i = 0; i < CoopTitleNative::kButtons; ++i) {
@@ -1198,6 +1303,7 @@ void StepMenu(void* ctx, std::uint64_t screen) {
         g_wait_on_hint.store(hint && !wait_line.empty());
         ShowColumn(ctx, screen, CoopTitleNative::kButtons, hint, {});
         HideToggle(ctx);
+        HideKeys(ctx);
         KeepFocusShown(ctx, screen, CoopTitleNative::kButtons);
     }
     if (apply && layout != 0) {

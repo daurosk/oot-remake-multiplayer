@@ -57,7 +57,9 @@ struct Look {
 // the rows a page at a time (`buttons` - 1 of them) with Back right under the page's last, on the page that holds the
 // selected row (`top`: the last look's, kept while nothing is selected). Headings are left out; notes show (the menu
 // never selects them). The hint: "ZL Page 2/3 ZR" (the game's button letters) with more than one page, else the selected row's help.
-Look LookFor(const CoopPauseMenu::View& v, int top, int buttons = kButtons);
+// `key_icons`: the title shows the list's ZL and ZR as the game's own button icons beside its first row (the pack's
+// Pa_CoopKeyZL_00 / ZR_00, coop_title.cpp TitleKeys): the hint then says only "Page 2/3"; without them, "(ZL/ZR)" in words.
+Look LookFor(const CoopPauseMenu::View& v, int top, int buttons = kButtons, bool key_icons = false);
 // The most buttons a page uses by default (the rows and Back): a rejoin row, eight games, Enter a code or address and
 // Back. With the hint line under them the column still fits the title's screen once raised (ColumnRaise).
 inline constexpr int kListButtons = 11;

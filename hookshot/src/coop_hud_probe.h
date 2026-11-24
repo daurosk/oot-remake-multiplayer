@@ -8,12 +8,14 @@
 // GlowState, GlowGauge, ControlType, Pinch: read from the romfs, not known to be animations. The title's BtnNum is a
 // layout state that is an animation, its frame the look, set with the game's animation finder (main+0x43d870) and its
 // stop-at-frame (main+0x2d2d90), as co-op has done since 0.11.6. The probe asks the same of the heart:
-//   1. each path below: an animation or not, and its last frame;
-//   2. where the screen keeps the heart's pane and any other panes of its class (the run-time hearts: Link shows up to
-//      20 with one part in the file), one level deep;
-//   3. then holds the first found animation of each kind at its frames in turn (HeartGauge at 0, 1/4, 1/2, 3/4, the
-//      last; HeartState at each frame), kHoldMs each, set again every frame, logging each change: the scenario's
-//      screenshots every few seconds show what each frame looks like and whether the game's own update undoes it.
+//   1. each path below: an animation or not, and its last frame; copies of the heart by name (Pa_HeartGauge_01...);
+//   2. then holds each found kHoldPaths animation at its frames in turn (HeartGauge at 0, 1/4, 1/2, 3/4, the last; a
+//      state at each frame), kHoldMs each, set again every frame, logging each change: the scenario's screenshots every
+//      few seconds show what each frame looks like and whether the game's own update undoes it.
+// Run 1 (2026-11-24, reports/menu-chat-01113.md) proved the animations (HeartGauge 0..100, HeartState 0..1, ...) but
+// Link had whole hearts, which Pa_NoGauge_00 draws, so the part heart's frames showed nothing; the scenario now hurts
+// Link to half a heart first, and the NoGauge heart's state is held too. (Run 1's walk of the screen object for panes
+// was noise, a pane's first word is no vtable here: gone.)
 // Every line starts "coop: hud probe: ". Split for tests (tests/hookshot/hud_probe_test.cpp): it goes through Game.
 #pragma once
 
@@ -36,27 +38,26 @@ inline constexpr std::uint64_t kAnimFind = 0x43d870;       // (layout, "name or 
 inline constexpr std::uint64_t kAnimPlayer = 0x20;         // animation+: its player
 inline constexpr std::uint64_t kAnimLastFrame = 0x2d1340;  // (player) -> s32 its last frame
 inline constexpr std::uint64_t kAnimStopAt = 0x2d2d90;     // (animation, s0 frame): stopped at that frame
-inline constexpr std::uint64_t kPaneByName = 0x76e2b0;     // (layout, "name") -> pane, 0 none
-inline constexpr std::uint64_t kScanBytes = 0x2000;        // how much of the screen object is walked
-inline constexpr std::size_t kDeepWords = 64;              // words read behind each pointer of it
 }  // namespace addr
 
 // What the probe asks; paths from PlayerStatus_00's layout.
 inline constexpr std::array<const char*, 16> kPaths = {
     "Pa_HeartGauge_00/Pa_Gauge_00/HeartGauge",   "Pa_HeartGauge_00/Pa_Gauge_00/HeartState",
     "Pa_HeartGauge_00/Pa_Gauge_00/BaseState",    "Pa_HeartGauge_00/Pa_Gauge_00/GlowState",
-    "Pa_HeartGauge_00/Pa_Gauge_00/GlowGauge",    "Pa_HeartGauge_00/Pa_Gauge_00/ControlType",
     "Pa_HeartGauge_00/Pa_Gauge_00/Pinch",        "Pa_HeartGauge_00/Pa_NoGauge_00/HeartState",
     "Pa_HeartGauge_00/Pa_NoGauge_00/BaseState",  "Pa_HeartGauge_00/Pa_NoGauge_00/Pinch",
-    "Pa_HeartGauge_00/Pa_Born_00/Born",          "Pa_HeartGauge_00/ControlType",
-    "HeartGauge",                                "HeartPos",
+    "Pa_HeartGauge_01/Pa_Gauge_00/HeartGauge",   "Pa_HeartGauge_02/Pa_Gauge_00/HeartGauge",
+    "Pa_HeartGauge_03/Pa_Gauge_00/HeartGauge",   "Pa_HeartGauge_19/Pa_Gauge_00/HeartGauge",
+    "Pa_HeartGauge_01/Pa_NoGauge_00/HeartState", "HeartPos",
     "InGauge",                                   "IsMpGauge",
 };
-inline constexpr std::array<const char*, 2> kPanes = {"Pa_HeartGauge_00", "N_HeartPos_00"};
+// Held in this order when found.
+inline constexpr std::array<const char*, 3> kHoldPaths = {
+    "Pa_HeartGauge_00/Pa_Gauge_00/HeartGauge", "Pa_HeartGauge_00/Pa_NoGauge_00/HeartState",
+    "Pa_HeartGauge_00/Pa_Gauge_00/HeartState"};
 
-inline constexpr std::uint64_t kStartMs = 15000;   // after the HUD is open: the scenario's "before" shot first
+inline constexpr std::uint64_t kStartMs = 30000;   // after the HUD is open: the scenario's hurt and "before" shot first
 inline constexpr std::uint64_t kHoldMs = 6000;
-inline constexpr std::size_t kMaxScanLines = 40;
 
 // The module's game, with what the probe needs beyond the chat's: a call with a float in s0, and a guest C string.
 class Game : public CoopNativeUi::Game {
@@ -83,7 +84,7 @@ public:
 
 private:
     enum class Phase { kFind, kHold, kDone };
-    void Look(Game& game, std::uint64_t screen, std::uint64_t layout, std::vector<std::string>& out);
+    void Look(Game& game, std::uint64_t layout, std::vector<std::string>& out);
     Phase phase_ = Phase::kFind;
     bool said_wait_ = false;
     std::uint64_t found_ms_ = 0;

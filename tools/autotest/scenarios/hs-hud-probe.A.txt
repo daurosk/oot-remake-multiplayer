@@ -2,14 +2,18 @@
 # hs-hud-probe (menu-chat-01113, item 18 research): the game's own HUD heart (PlayerStatus_00 > Pa_HeartGauge_00) as
 # the other players' hearts. The module's probe (hookshot/src/coop_hud_probe.h, COOP_TEST_HUD_PROBE=1) logs which
 # heart animations exist and their frames, where the screen keeps its heart panes, then holds HeartGauge at 0, 1/4,
-# 1/2, 3/4, last and HeartState at each frame, 6 s each from 15 s after the HUD opens. One game is enough (A); B idles.
+# 1/2, 3/4, last and the NoGauge and Gauge HeartState at each frame, 6 s each from 30 s after the HUD opens, with Link
+# hurt to 1/2 heart first (run 1 had whole hearts: the part heart's frames showed nothing). One game is enough (A).
 # Run: offline/hud-probe-menu-chat-run.ps1 (module-only build of menu-chat-01113, lane 1).
 # Read: A's "coop: hud probe:" lines (paths found, last frames, screen+0x.. panes, each "hold N/M ... frame F" with
 # its time) against the shots hold-NN (every 3 s): which frame looks like which fill, and whether the game's own
 # update undoes the held frame (the heart flickers back). PASS (for the plan): HeartGauge found, its frames show
 # 0..4 quarters on Link's first heart in the shots. No PASS from the log alone.
+nofairy                 # every bottle emptied before the hurt (a bottled fairy would revive)
+hurt 14                 # Link from 4 hearts to 1/2: heart 1 a part heart (Pa_Gauge_00), hearts 2-4 empty (Pa_NoGauge_00)
+wait 120
 mark start
-wait 600                # the save loads, the HUD opens (the probe waits for it)
+wait 600                # the probe's holds begin 30 s after the HUD opened
 mark hold-01
 wait 180
 mark hold-02

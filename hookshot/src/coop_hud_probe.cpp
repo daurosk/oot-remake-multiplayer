@@ -41,9 +41,8 @@ std::vector<Hold> HoldsFor(const std::string& path, std::uint64_t anim, std::int
     return out;
 }
 
-void Probe::Look(Game& game, std::uint64_t screen, std::uint64_t layout, std::vector<std::string>& out) {
-    // 1. The animations.
-    bool have_gauge = false, have_state = false;
+void Probe::Look(Game& game, std::uint64_t layout, std::vector<std::string>& out) {
+    std::vector<std::pair<std::string, std::vector<Hold>>> found;
     for (const char* path : kPaths) {
         const std::uint64_t name = game.String(path);
         const auto anim = name == 0 ? std::nullopt : game.Call(game.At(addr::kAnimFind), {layout, name, 0, 0, 0});
@@ -56,52 +55,12 @@ void Probe::Look(Game& game, std::uint64_t screen, std::uint64_t layout, std::ve
         const auto frames = last ? static_cast<std::int32_t>(static_cast<std::uint32_t>(*last)) : -1;
         out.push_back(std::string(kSay) + "anim " + path + ": found " + Hex(*anim) + " last frame " +
                       std::to_string(frames));
-        const std::string p = path;
-        const bool gauge = IsGauge(p), state = p.find("HeartState") != std::string::npos;
-        if ((gauge && !have_gauge) || (state && !have_state)) {
-            auto h = HoldsFor(p, *anim, frames);
-            holds_.insert(holds_.end(), h.begin(), h.end());
-            (gauge ? have_gauge : have_state) = !h.empty();
-        }
+        found.emplace_back(path, HoldsFor(path, *anim, frames));
     }
-    // 2. The heart's pane and its kind in the screen object, one level deep.
-    std::size_t lines = 0;
-    for (const char* pane_name : kPanes) {
-        const std::uint64_t name = game.String(pane_name);
-        const auto pane = name == 0 ? std::nullopt : game.Call(game.At(addr::kPaneByName), {layout, name, 0, 0, 0});
-        if (!pane || *pane == 0) {
-            out.push_back(std::string(kSay) + "pane " + pane_name + ": not found");
-            continue;
+    for (const char* hold : kHoldPaths) {
+        for (const auto& [path, holds] : found) {
+            if (path == hold) holds_.insert(holds_.end(), holds.begin(), holds.end());
         }
-        const std::uint64_t kind = Word(game, *pane);
-        out.push_back(std::string(kSay) + "pane " + pane_name + ": " + Hex(*pane) + " vtable " + Hex(kind));
-        if (kind == 0) continue;
-        std::size_t like = 0;
-        for (std::uint64_t off = 0; off < addr::kScanBytes; off += 8) {
-            const std::uint64_t w = Word(game, screen + off);
-            if (w == 0) continue;
-            const bool same = w == *pane;
-            const bool kin = !same && Word(game, w) == kind;
-            if ((same || kin) && lines < kMaxScanLines) {
-                out.push_back(std::string(kSay) + "screen+" + Hex(off) + (same ? " = " : " -> a pane like ") + pane_name);
-                ++lines;
-            }
-            like += kin ? 1 : 0;
-            std::size_t deep = 0, deep_same = 0;
-            for (std::size_t k = 0; k < addr::kDeepWords; ++k) {
-                const std::uint64_t v = Word(game, w + 8 * k);
-                if (v == 0) continue;
-                deep_same += v == *pane ? 1 : 0;
-                deep += v != *pane && Word(game, v) == kind ? 1 : 0;
-            }
-            if ((deep > 0 || deep_same > 0) && lines < kMaxScanLines) {
-                out.push_back(std::string(kSay) + "screen+" + Hex(off) + " -> " + Hex(w) + ": " + std::to_string(deep) +
-                              " panes like " + pane_name + (deep_same > 0 ? " and the pane itself" : ""));
-                ++lines;
-            }
-        }
-        out.push_back(std::string(kSay) + "pane " + pane_name + ": " + std::to_string(like) +
-                      " panes of its kind straight in the screen");
     }
     out.push_back(std::string(kSay) + std::to_string(holds_.size()) + " holds of " + std::to_string(kHoldMs) +
                   " ms from " + std::to_string(kStartMs) + " ms after the HUD opened");
@@ -120,7 +79,7 @@ std::vector<std::string> Probe::Step(Game& game, std::uint64_t now_ms) {
         }
         const std::uint64_t layout = Word(game, screen + CoopNativeUi::addr::kScreenLayout);
         out.push_back(std::string(kSay) + "PlayerStatus_00 " + Hex(screen) + " layout " + Hex(layout));
-        if (layout != 0) Look(game, screen, layout, out);
+        if (layout != 0) Look(game, layout, out);
         found_ms_ = now_ms;
         phase_ = holds_.empty() ? Phase::kDone : Phase::kHold;
         if (holds_.empty()) out.push_back(std::string(kSay) + "done (nothing to hold)");

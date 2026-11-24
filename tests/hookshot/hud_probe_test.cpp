@@ -19,7 +19,6 @@ namespace {
 
 constexpr std::uint64_t kMain = 0x80020000;
 constexpr std::uint64_t kManager = 0x96000000, kScreens = 0x97000000, kStatus = 0x93000000, kLayout = 0x94000000;
-constexpr std::uint64_t kPane = 0x98000000, kKin = 0x98100000, kArray = 0x98200000, kPaneVtable = 0x84d00000;
 constexpr std::uint64_t kGauge = 0x99000000, kState = 0x99100000, kStrings = 0x9a000000;
 
 std::uint64_t At(std::uint64_t main_offset) { return kMain + main_offset; }
@@ -27,7 +26,7 @@ std::uint64_t At(std::uint64_t main_offset) { return kMain + main_offset; }
 struct FakeGame final : probe::Game {
     std::map<std::uint64_t, std::uint8_t> mem;
     std::map<std::uint64_t, std::string> strings;
-    std::map<std::string, std::uint64_t> anims, panes;
+    std::map<std::string, std::uint64_t> anims;
     std::map<std::uint64_t, std::int32_t> last;   // player -> last frame
     std::vector<std::pair<std::uint64_t, float>> stops;
     std::uint64_t next = kStrings;
@@ -53,11 +52,7 @@ struct FakeGame final : probe::Game {
             const auto it = anims.find(name());
             return it == anims.end() ? 0 : it->second;
         }
-        if (f == At(probe::addr::kPaneByName)) {
-            const auto it = panes.find(name());
-            return it == panes.end() ? 0 : it->second;
-        }
-        if (f == At(probe::addr::kAnimLastFrame)) {
+                if (f == At(probe::addr::kAnimLastFrame)) {
             const auto it = last.find(x[0]);
             return it == last.end() ? 0 : static_cast<std::uint64_t>(static_cast<std::uint32_t>(it->second));
         }
@@ -78,7 +73,7 @@ struct FakeGame final : probe::Game {
     void Put(std::uint64_t a, std::uint64_t v) { Write(a, &v, sizeof v); }
 };
 
-// The HUD in the UI manager's list, its heart pane in the screen, a pane of its kind, and an array of three.
+// The HUD in the UI manager's list, open or not.
 struct World {
     FakeGame g;
     World() {
@@ -91,16 +86,6 @@ struct World {
         g.Put(kStatus, At(probe::addr::kStatusVtable));
         g.Put(kStatus + ui::addr::kScreenLayout, kLayout);
         Open(false);
-        g.Put(kPane, kPaneVtable);
-        g.Put(kKin, kPaneVtable);
-        for (std::uint64_t k = 0; k < 3; ++k) {
-            g.Put(kArray + 8 * k, 0x98300000 + 0x100 * k);
-            g.Put(0x98300000 + 0x100 * k, kPaneVtable);
-        }
-        g.Put(kStatus + 0x100, kPane);
-        g.Put(kStatus + 0x200, kKin);
-        g.Put(kStatus + 0x300, kArray);
-        g.panes["Pa_HeartGauge_00"] = kPane;
         g.anims["Pa_HeartGauge_00/Pa_Gauge_00/HeartGauge"] = kGauge;
         g.anims["Pa_HeartGauge_00/Pa_NoGauge_00/HeartState"] = kState;
         g.Put(kGauge + probe::addr::kAnimPlayer, kGauge + 0x1000);
@@ -134,7 +119,7 @@ TEST_CASE("hud probe: the holds: a gauge at its quarters, a state at each frame"
     CHECK(probe::HoldsFor("x/HeartState", 1, -1).empty());
 }
 
-TEST_CASE("hud probe: waits for the HUD, asks every path, finds the heart's panes, then holds each frame in turn") {
+TEST_CASE("hud probe: waits for the HUD, asks every path, then holds each found kHoldPaths frame in turn") {
     World w;
     probe::Probe p;
     auto lines = p.Step(w.g, 1000);
@@ -145,12 +130,7 @@ TEST_CASE("hud probe: waits for the HUD, asks every path, finds the heart's pane
     CHECK(Has(lines, "anim Pa_HeartGauge_00/Pa_Gauge_00/HeartGauge: found 0x99000000 last frame 40"));
     CHECK(Has(lines, "anim Pa_HeartGauge_00/Pa_NoGauge_00/HeartState: found 0x99100000 last frame 2"));
     CHECK(Has(lines, "anim Pa_HeartGauge_00/Pa_Gauge_00/Pinch: not found"));
-    CHECK(Has(lines, "pane Pa_HeartGauge_00: 0x98000000 vtable 0x84d00000"));
-    CHECK(Has(lines, "pane N_HeartPos_00: not found"));
-    CHECK(Has(lines, "screen+0x100 = Pa_HeartGauge_00"));
-    CHECK(Has(lines, "screen+0x200 -> a pane like Pa_HeartGauge_00"));
-    CHECK(Has(lines, "screen+0x300 -> 0x98200000: 3 panes like Pa_HeartGauge_00"));
-    CHECK(Has(lines, "pane Pa_HeartGauge_00: 1 panes of its kind straight in the screen"));
+    CHECK(Has(lines, "anim Pa_HeartGauge_01/Pa_Gauge_00/HeartGauge: not found"));   // (a copy by name: asked)
     CHECK(Has(lines, "8 holds"));
     CHECK(w.g.stops.empty());
     // Nothing held before kStartMs.

@@ -733,7 +733,7 @@ private:
             bool counted = false; // (a brain verb: counted in brain_came once, also when asked again)
             std::optional<std::string> variant = std::nullopt;  // row 222 part 2: an action's, the owner's (nothing: not known)
             std::array<std::optional<coop::protocol::Vec3>, 3> variant_places{};  // row 222: a named ask's places
-            std::optional<std::uint32_t> variant_kind;  // row 222: the owner's places' kind (nothing: not known)
+            std::optional<std::uint32_t> variant_kind = std::nullopt;  // row 222: the owner's places' kind (nothing: not known)
         };
         std::deque<Due> due;
         std::uint32_t queued_seq = 0;  // the owner's newest change queued (or made)
@@ -805,7 +805,7 @@ private:
         OwnAsk restart_ask;
         std::optional<std::string> restart_variant;  // row 222 part 2: put_variant's, named in its restart
         std::array<std::optional<coop::protocol::Vec3>, 3> restart_variant_places{};  // row 222: put_variant_places'
-        std::optional<std::uint32_t> restart_variant_kind;  // row 222: put_variant_kind
+        std::optional<std::uint32_t> restart_variant_kind = std::nullopt;  // row 222: put_variant_kind
         // Row 178's fall guard: its first seen height, and its falls rechosen while below.
         std::optional<float> start_y;
         std::optional<coop::protocol::Vec3> start;  // (its first seen place, for the put back)
@@ -819,7 +819,7 @@ private:
         std::optional<std::string> put_variant;  // row 222 part 2: the variation it was put in with
         // Row 222 (review-01112-h): that named ask's places (bsa's action has none for it), for its restart (row 178).
         std::array<std::optional<coop::protocol::Vec3>, 3> put_variant_places{};
-        std::optional<std::uint32_t> put_variant_kind;  // row 222: the owner's places' kind it was put in with
+        std::optional<std::uint32_t> put_variant_kind = std::nullopt;  // row 222: the owner's places' kind it was put in with
         bool own_action_ran = false;
     };
     void Hold(Entry& e, const Boss& b);   // the owner's stall check (Publish)

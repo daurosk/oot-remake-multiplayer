@@ -1006,6 +1006,10 @@ struct BossVariant {
   // A named ask's places (row 222, diag run 20261123-160338: Twinrova's 'Ice' aims at the Link these name): bsa's
   // action leaves them out for an ask by plug, as older copies expect. Finite; none for a plain ask (bsa has them).
   std::array<std::optional<Vec3>, 3> places{};
+  // The ask's place kind (its request's word at 0x34; the game's default 0x10), plain or named. Row 222 (run
+  // 20261124-011531): the game keeps it with the move's places and each asking node sets its own (Twinrova's 121
+  // node 0, another of her nodes 0x10); the owner's places put in under another kind gave the copy no shot.
+  std::uint32_t kind = 0x10;
   bool operator==(const BossVariant&) const = default;
 };
 struct BossVariants {

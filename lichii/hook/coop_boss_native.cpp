@@ -98,15 +98,25 @@ Request RequestFromAction(const BossAction& a, std::uint64_t node) {
     return r;
 }
 
-Request RequestFromAction(const BossAction& a, const OwnAsk& ask) {
+Request RequestFromAction(const BossAction& a, const OwnAsk& ask, std::uint32_t kind) {
     using namespace addr;
     Request r = RequestFromAction(a, ask.node);
+    Put<std::uint32_t>(r, kReqKind3, kind);
     const bool placed = std::any_of(a.places.begin(), a.places.end(), [](const auto& p) { return p.has_value(); });
     if (ask.has_plug && ask.plug != 0 && (ask.named || !placed)) {
         Put<std::uint64_t>(r, kReqPlug, ask.plug);
         r[kReqHasPlug] = 1;
     }
     return r;
+}
+
+std::uint32_t KindFor(const std::optional<std::uint32_t>& owner,
+                      const std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk>& by_move, const BossAction& a) {
+    if (owner) {
+        return *owner;
+    }
+    const auto it = by_move.find({a.slot, a.verb});
+    return it != by_move.end() ? it->second.kind : addr::kKind3;
 }
 
 std::optional<OwnAsk> AskFor(const std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk>& by_move,
@@ -399,6 +409,7 @@ void Table::Publish(const std::vector<Boss>& bosses) {
                         e.restart_action = again;
                         e.restart_variant = e.put_variant;  // (row 222 part 2: the variation it was put in with)
                         e.restart_variant_places = e.put_variant_places;  // (row 222: a named ask's places)
+                        e.restart_variant_kind = e.put_variant_kind;      // (row 222: and the places' kind)
                         Note(b.name + ": made ours mid-move: its move (slot " + std::to_string(again.slot) +
                              " verb " + std::to_string(again.verb) + ") starts over as ours (row 178)");
                     } else if (turns_ && e.put_action && b.attacking.has_value() && !*b.attacking) {
@@ -750,6 +761,7 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed
                 if (!entry.name.empty()) {
                     entry.places = PlacesOf(request);  // row 222: its places (bsa's action has none for a plug ask)
                 }
+                entry.kind = Get<std::uint32_t>(request, addr::kReqKind3);  // row 222: its places' kind (KindFor)
                 e->mine_variants.push_back(entry);
                 e->mine_action_variant = std::move(entry);
                 ++counts_.owner_variants;
@@ -776,7 +788,8 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed
         // Row 177: the node (and plug) its own AI names for this move, for the owner's same move (AskFor).
         const std::int32_t slot = Get<std::int32_t>(request, addr::kReqSlot);
         const std::int32_t verb = Get<std::int32_t>(request, addr::kReqVerb);
-        const OwnAsk ask{node, Get<std::uint64_t>(request, addr::kReqPlug), request[addr::kReqHasPlug] == 1};
+        const OwnAsk ask{node, Get<std::uint64_t>(request, addr::kReqPlug), request[addr::kReqHasPlug] == 1, false,
+                         Get<std::uint32_t>(request, addr::kReqKind3)};
         if (e->own_asks.size() < kMaxOwnAsks || e->own_asks.contains({slot, verb})) {
             e->own_asks[{slot, verb}] = ask;
         }
@@ -1185,6 +1198,9 @@ void Table::Resync(Entry& e, const BossBsa& state) {
             if (entry != nullptr && d.variant && *d.variant == entry->name) {
                 d.variant_places = entry->places;
             }
+            if (entry != nullptr) {
+                d.variant_kind = entry->kind;  // (row 222: the owner's places' kind)
+            }
             e.due.push_back(std::move(d));
         }
     }
@@ -1315,6 +1331,7 @@ void Table::Receive(std::uint64_t actor, const BossBsa& state, const std::option
                     for (const BossVariant& x : variants->recent) {
                         if (x.seq == it->seq) {
                             d.variant_places = x.places;  // row 222: a named ask's places (it aims as the owner's)
+                            d.variant_kind = x.kind;      // row 222: and its places' kind (KindFor)
                         }
                     }
                 }
@@ -1372,7 +1389,8 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
                     std::none_of(again.places.begin(), again.places.end(), [](const auto& p) { return p.has_value(); })) {
                     again.places = e.restart_variant_places;
                 }
-                const Request r = RequestFromAction(again, ask);
+                const Request r =
+                    RequestFromAction(again, ask, KindFor(e.restart_variant_kind, e.own_asks, again));
                 if (guest.Write(block_, r.data(), r.size())) {
                     CoopPuppet::Call c;
                     c.function = main_base + addr::kRequestActionVerb;
@@ -1502,7 +1520,7 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
         if (ask.named && std::none_of(put.places.begin(), put.places.end(), [](const auto& p) { return p.has_value(); })) {
             put.places = d.variant_places;
         }
-        Request r = RequestFromAction(put, ask);
+        Request r = RequestFromAction(put, ask, KindFor(d.variant_kind, e.own_asks, action));
         if (copy_own_places_) {
             // Probe 3: no owner's place in the request (NaN, as an ask by plug has): the copy's move takes its own.
             const float nan = std::numeric_limits<float>::quiet_NaN();
@@ -1725,6 +1743,7 @@ void Table::Made(bool made) {
             e->put_action = *action;  // (the move our copy's body runs now: Resync)
             e->put_variant = e->due.front().variant;  // (row 222 part 2: with its variation)
             e->put_variant_places = e->due.front().variant_places;  // (row 222: and a named ask's places)
+            e->put_variant_kind = e->due.front().variant_kind;      // (row 222: and the places' kind)
             e->own_action_ran = false;
         }
         e->due.pop_front();
@@ -1827,7 +1846,8 @@ std::optional<CoopPuppet::Call> Table::Ask(CoopPuppet::Guest& guest, Entry& e, s
         return c;
     }
     const Request r =
-        RequestFromAction(action, AskFor(e.own_asks, e.own_slot_asks, e.own_node, action).value_or(OwnAsk{e.own_node}));
+        RequestFromAction(action, AskFor(e.own_asks, e.own_slot_asks, e.own_node, action).value_or(OwnAsk{e.own_node}),
+                          KindFor(std::nullopt, e.own_asks, action));  // (row 222: its own AI's places' kind)
     *made = true;  // (a block it cannot write: dropped)
     if (!guest.Write(block_, r.data(), r.size())) {
         return std::nullopt;

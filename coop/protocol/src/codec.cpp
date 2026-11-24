@@ -841,6 +841,7 @@ void write_object_state(const ObjectState& s, Writer& w) {
             for (float f : *p) w.f32(f);
           }
         }
+        w.u32(v.kind);  // (row 222: the ask's place kind)
       }
     });
   }
@@ -1608,6 +1609,7 @@ Error decode_component(ObjectComponent id, Reader& c, ObjectState& s, bool& know
             if (!all_finite(*v.places[k])) return Error::bad_value;
           }
         }
+        COOP_READ(c.u32(v.kind));
         before = v.seq;
       }
       return Error::none;

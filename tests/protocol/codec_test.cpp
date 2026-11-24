@@ -1286,11 +1286,16 @@ TEST_CASE("component 24 carries a named ask's places (row 222: Twinrova's 'Ice' 
   BossVariant ice{9, "Ice"};
   ice.places[0] = Vec3{-0.79f, 142.16f, -158.71f};
   ice.places[1] = Vec3{-0.60f, 142.47f, -158.53f};
-  s.state.variants = BossVariants{{BossVariant{7, ""}, ice}};
+  ice.kind = 0;  // (run 20261124-011531: Twinrova's 121 node asks with place kind 0)
+  BossVariant other_kind{7, ""};
+  other_kind.kind = 0x10;
+  s.state.variants = BossVariants{{other_kind, ice}};
   const Bytes bytes = must_encode(s);
   Message back;
   REQUIRE(decode(bytes, back) == Error::none);
   CHECK(std::get<ObjectSample>(back) == s);
+  CHECK(std::get<ObjectSample>(back).state.variants->recent[1].kind == 0);
+  CHECK(std::get<ObjectSample>(back).state.variants->recent[0].kind == 0x10);
   // Refused: places on a plain ask (bsa's action has them), a place not finite.
   Bytes out;
   BossVariant plain{7, ""};

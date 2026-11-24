@@ -3202,3 +3202,126 @@ TEST_CASE("native boss: row 222, a node that chose Fire and then asked another m
         return n.find("another node of its own") != n.npos || n.find("its slot's last node") != n.npos;
     }));
 }
+
+namespace {
+Request WithKind(Request r, std::uint32_t kind) {
+    std::memcpy(r.data() + addr::kReqKind3, &kind, 4);
+    return r;
+}
+} // namespace
+
+TEST_CASE("native boss: row 222, the owner's places go in with the owner's place kind (run 20261124-011531)") {
+    // The game's request function keeps the request's word at 0x34 with the move's places. Twinrova's 121 node asks
+    // with 0; a put-in with the owner's places under the default 0x10 gave the copy no FireBullet and no IceBullet.
+    BossAction a;
+    a.slot = 0;
+    a.verb = 121;
+    const std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk> none;
+    const std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk> by_move{{{0, 121}, OwnAsk{kNode, 0, false, false, 0}}};
+    CHECK(KindFor(0x10u, by_move, a) == 0x10);         // the owner's kind first
+    CHECK(KindFor(std::nullopt, by_move, a) == 0);     // else the copy's own AI's for this move
+    CHECK(KindFor(std::nullopt, none, a) == addr::kKind3);  // else the game's default
+    a.places[0] = coop::protocol::Vec3{1.0f, 2.0f, 3.0f};
+    CHECK(ReqAt<std::uint32_t>(RequestFromAction(a, OwnAsk{kNode}, 0), addr::kReqKind3) == 0);
+    CHECK(ReqAt<std::uint32_t>(RequestFromAction(a, OwnAsk{kNode}), addr::kReqKind3) == addr::kKind3);
+
+    // The owner records each ask's kind with its variation (plain and named).
+    {
+        Table t;
+        t.SetOn(true, true);
+        t.Publish({Twinrova(Role::owner, 1)});
+        Request ice = WithKind(GameRequest(121, kNode, true), 0x10);
+        ice[addr::kReqHasPlug] = 1;
+        t.OnActionVerb(kBsa, ice, true, false, std::string("Ice"));
+        t.OnActionVerb(kBsa, WithKind(GameRequest(121, kNode, true), 0), true, false, std::string{});
+        std::optional<BossVariants> v;
+        REQUIRE(t.OwnerState(kActor, &v));
+        REQUIRE(v);
+        REQUIRE(v->recent.size() == 2);
+        CHECK(v->recent[0].kind == 0x10);
+        CHECK(v->recent[1].kind == 0);
+    }
+
+    // A copy: its own shot node asked plain with kind 0; the owner's plain shot (kind 0, places) and the owner's
+    // 'Ice' from another node (kind 0x10) each go in with the owner's own kind.
+    constexpr std::uint64_t kShotNode = 0x4000100;
+    constexpr std::uint64_t kStartNode = 0x4000200;
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Twinrova(Role::copy)});
+    FakeGuest g;
+    const std::int32_t brain = 2;
+    g.Write(kBsa + addr::kBsaBrainVerb, &brain, 4);
+    t.OnActionVerb(kBsa, WithKind(PlugRequest(65, kStartNode, 0x77), 0), true, false, std::string("StartBattle"));
+    t.OnActionVerb(kBsa, WithKind(GameRequest(121, kShotNode), 0), true, false, std::string{});
+    const Request owner_plain = WithKind(GameRequest(121, 0, true), 0);
+    BossAction b = *ActionFromRequest(owner_plain);
+    b.changed = true;
+    BossVariant plain{1, ""};
+    plain.kind = 0;
+    t.Receive(kActor, BossBsa{1, 2, b, {BossChange{1, b}}}, BossVariants{{plain}});
+    REQUIRE(t.Step(g, false, 0, kMain));  // the block
+    REQUIRE(t.Step(g, true, kBlock, kMain));
+    CHECK(g.Get<std::uint64_t>(kBlock + addr::kReqNode) == kShotNode);
+    CHECK(g.Get<float>(kBlock + addr::kReqPlaces) == 10.0f);
+    CHECK(g.Get<std::uint32_t>(kBlock + addr::kReqKind3) == 0);  // was 0x10: no shot
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    Request owner_ice = WithKind(GameRequest(121, 0, true), 0x10);
+    owner_ice[addr::kReqHasPlug] = 1;
+    BossAction c = *ActionFromRequest(owner_ice);
+    c.changed = true;
+    BossVariant ice{2, "Ice", PlacesOf(owner_ice)};
+    ice.kind = 0x10;
+    t.Receive(kActor, BossBsa{2, 2, c, {BossChange{1, b}, BossChange{2, c}}}, BossVariants{{plain, ice}});
+    REQUIRE(t.Step(g, false, 0, kMain));
+    CHECK(g.Get<std::uint8_t>(kBlock + addr::kReqHasPlug) == 1);
+    CHECK(g.Get<float>(kBlock + addr::kReqPlaces) == 10.0f);
+    CHECK(g.Get<std::uint32_t>(kBlock + addr::kReqKind3) == 0x10);
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+}
+
+TEST_CASE("native boss: row 222, with no owner's kind a put-in takes its own AI's kind of the move") {
+    // An owner whose variation is not known (a plug not read as a name: no component 24 entry).
+    constexpr std::uint64_t kShotNode = 0x4000100;
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Twinrova(Role::copy)});
+    FakeGuest g;
+    const std::int32_t brain = 2;
+    g.Write(kBsa + addr::kBsaBrainVerb, &brain, 4);
+    t.OnActionVerb(kBsa, WithKind(GameRequest(121, kShotNode), 0), true, false, std::string{});
+    BossAction b = *ActionFromRequest(GameRequest(121, 0, true));
+    b.changed = true;
+    t.Receive(kActor, BossBsa{1, 2, b, {BossChange{1, b}}}, std::nullopt);
+    REQUIRE(t.Step(g, false, 0, kMain));
+    REQUIRE(t.Step(g, true, kBlock, kMain));
+    CHECK(g.Get<std::uint32_t>(kBlock + addr::kReqKind3) == 0);
+}
+
+TEST_CASE("native boss: row 222, a move made ours mid-move starts over with the owner's place kind") {
+    FakeGuest g;
+    const std::int32_t brain = 6;
+    g.Write(kBsa + addr::kBsaBrainVerb, &brain, 4);
+    Request owner = WithKind(GameRequest(9, 0, true), 0);
+    owner[addr::kReqHasPlug] = 1;
+    auto rush = ActionFromRequest(owner);
+    REQUIRE(rush);
+    rush->flags = 0;
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Phantom(Role::copy)});
+    CHECK_FALSE(t.OnActionVerb(kBsa, GameRequest(9, kNode), true, false));  // its own AI: kind 0x10
+    BossVariant charge{3, "Charge", PlacesOf(owner)};
+    charge.kind = 0;
+    t.Receive(kActor, BossBsa{3, 6, rush, {BossChange{3, *rush}}}, BossVariants{{charge}});
+    REQUIRE(t.Step(g, false, 0, kMain));
+    REQUIRE(t.Step(g, true, kBlock, kMain));
+    CHECK(g.Get<std::uint32_t>(kBlock + addr::kReqKind3) == 0);
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    t.Publish({Phantom(Role::owner)});
+    g.bytes.erase(kBlock + addr::kReqVerb);
+    auto c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK((g.Get<std::uint16_t>(kBlock + addr::kReqFlags) & addr::kReqStartOver) != 0);
+    CHECK(g.Get<std::uint32_t>(kBlock + addr::kReqKind3) == 0);
+}

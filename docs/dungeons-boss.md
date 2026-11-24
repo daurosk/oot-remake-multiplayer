@@ -840,6 +840,20 @@ name the copy still lost ice shots and aimed its floors at neither Link:
 - Tests: boss_native_test (a plug ask's places go with its variation; AskFor never picks a node that chose another
   variation; a copy puts `Ice` in through a node that did not choose Fire, with the owner's place; then plain through
   its shot node), codec_test (component 24 places: round trip, none on a plain name, finite only).
+- The places' kind (run 20261124-011531, LANE1 FAIL: as a copy, A got all three of B's 121 put-ins with the right
+  variation and node, with the owner's places, and shot nothing until it became the owner). The game's request
+  function (main+0xc09f0) takes the request's word at 0x34 (the game's default 0x10, kept when the request says 0x10)
+  and keeps it in the move's slot with the places. Each asking node sets its own: Twinrova's 121 node asks with 0
+  (places: Link and a point off him), another of her nodes with 0x10 (Link and a point 0.8 above him); verbs 28 and 80
+  ask with 0x10. Our put-in always wrote 0x10, so the owner's places went in under the wrong kind and the move spawned
+  no FireBullet or IceBullet; with no place (probe 3) the kind was not read and the node aimed by itself. The owner now
+  sends each ask's kind in component 24 (plain and named), and the copy puts the owner's action in, and starts a move
+  over as ours (row 178), with that kind; with no kind from the owner, the kind its own AI asked that same move with,
+  else 0x10 (KindFor). The other words of the request (0x44, the bytes after the flags) are not read by the function.
+  Related cases, same code: every boss move put in with places (plain or named, every boss on the native sync), the
+  restart, and the copy's own late asks (Table::Ask). Tests: boss_native_test (KindFor's order; the owner records the
+  kind; plain 0 and `Ice` 0x10 put in with the owner's kind; no owner's kind: its own AI's; the restart keeps it),
+  codec_test (the kind's round trip).
 
 ## A boss part another game killed dies in our game too (rows 257/258, Barinade crash, 0.11.12)
 

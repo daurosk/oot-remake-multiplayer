@@ -155,7 +155,7 @@ inline constexpr std::size_t kReqPlaces = 0x00;   // 3 x Vec3; the first float N
 inline constexpr std::size_t kReqKind = 0x24;     // u32 4 (checked by the game)
 inline constexpr std::size_t kReqKind2 = 0x28;    // u32 0x11a (checked)
 inline constexpr std::size_t kReqExtra = 0x2c;    // 2 x f32, NaN: none
-inline constexpr std::size_t kReqKind3 = 0x34;    // u32, 0x10 as the AI nodes make it
+inline constexpr std::size_t kReqKind3 = 0x34;    // u32 the places' kind: default 0x10, each asking node its own (row 222)
 inline constexpr std::size_t kReqPlug = 0x38;     // a plug pointer, used when the byte at 0x40 is 1
 inline constexpr std::size_t kReqHasPlug = 0x40;
 inline constexpr std::size_t kReqSlot = 0x48;     // s32
@@ -202,12 +202,21 @@ struct OwnAsk {
     std::uint64_t plug = 0;
     bool has_plug = false;
     bool named = false;  // row 222: `plug` is the owner's variation by name (Table::WithVariant), not our AI's own
+    std::uint32_t kind = addr::kKind3;  // row 222: the places' kind its own AI asked this move with (kReqKind3)
     bool operator==(const OwnAsk&) const = default;
 };
 // The request for the owner's action as the copy's own AI would ask it: `ask`'s node, and its plug when it is the
 // owner's variation by name (`named`, with the owner's places: an ask by plug names its places too, Twinrova's
 // 'Ice' the Link it aims at), or our own AI's plug when the owner's action names no place (an older owner).
-Request RequestFromAction(const BossAction& a, const OwnAsk& ask);
+Request RequestFromAction(const BossAction& a, const OwnAsk& ask, std::uint32_t kind = addr::kKind3);
+// Row 222 (run 20261124-011531): the places' kind (kReqKind3) to put the owner's action in with. The game's request
+// function (main+0xc09f0) keeps the request's kind with the move's places, and each asking node sets its own:
+// Twinrova's 121 node 0 (Link and a point off him), another of her nodes 0x10 (Link and a point 0.8 above him). The
+// owner's places put in with the default 0x10 where the owner's node asked 0 gave the copy no FireBullet and no
+// IceBullet (with no place at all, the node aimed by itself and shot). So: the owner's kind (component 24), else the
+// kind the copy's own AI asked this same move with, else the game's default.
+std::uint32_t KindFor(const std::optional<std::uint32_t>& owner,
+                      const std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk>& by_move, const BossAction& a);
 // A request's places (a place whose first float is NaN, or any not finite: none). Row 222 (diag run
 // 20261123-160338): an ask by plug names them too (Twinrova's 'Ice': the Link it aims at and a second point); bsa's
 // action leaves them out for such an ask (an older copy puts its own plug in only for an action with no place), so
@@ -724,6 +733,7 @@ private:
             bool counted = false; // (a brain verb: counted in brain_came once, also when asked again)
             std::optional<std::string> variant = std::nullopt;  // row 222 part 2: an action's, the owner's (nothing: not known)
             std::array<std::optional<coop::protocol::Vec3>, 3> variant_places{};  // row 222: a named ask's places
+            std::optional<std::uint32_t> variant_kind;  // row 222: the owner's places' kind (nothing: not known)
         };
         std::deque<Due> due;
         std::uint32_t queued_seq = 0;  // the owner's newest change queued (or made)
@@ -795,6 +805,7 @@ private:
         OwnAsk restart_ask;
         std::optional<std::string> restart_variant;  // row 222 part 2: put_variant's, named in its restart
         std::array<std::optional<coop::protocol::Vec3>, 3> restart_variant_places{};  // row 222: put_variant_places'
+        std::optional<std::uint32_t> restart_variant_kind;  // row 222: put_variant_kind
         // Row 178's fall guard: its first seen height, and its falls rechosen while below.
         std::optional<float> start_y;
         std::optional<coop::protocol::Vec3> start;  // (its first seen place, for the put back)
@@ -808,6 +819,7 @@ private:
         std::optional<std::string> put_variant;  // row 222 part 2: the variation it was put in with
         // Row 222 (review-01112-h): that named ask's places (bsa's action has none for it), for its restart (row 178).
         std::array<std::optional<coop::protocol::Vec3>, 3> put_variant_places{};
+        std::optional<std::uint32_t> put_variant_kind;  // row 222: the owner's places' kind it was put in with
         bool own_action_ran = false;
     };
     void Hold(Entry& e, const Boss& b);   // the owner's stall check (Publish)

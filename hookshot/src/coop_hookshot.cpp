@@ -509,7 +509,9 @@ void LogBossNative() {
         c.copy_hits_to_owner == said.copy_hits_to_owner && c.copy_own_stuns == said.copy_own_stuns &&
         c.plain_wakes == said.plain_wakes && c.plain_deaths == said.plain_deaths &&
         c.action_slot_busy == said.action_slot_busy && c.action_busy_again == said.action_busy_again &&
-        c.body_deaths == said.body_deaths) {
+        c.body_deaths == said.body_deaths &&
+        c.variant_named == said.variant_named && c.variant_plain == said.variant_plain &&
+        c.variant_node_moved == said.variant_node_moved && c.variant_node_conflict == said.variant_node_conflict) {
         return;
     }
     said_ms = now;
@@ -519,11 +521,14 @@ void LogBossNative() {
                    "{} hits that took life left to the owner), "
                    "{} own minions not made; {} own Life steps held at 1, {} let die after the owner's, {} ended in their death; "
                    "plain enemies: {} own other phases told, {} own wakes run, {} deaths begun; {} boss bodies dead before the outro; "
-                   "owner's brain verbs given to copies {} ({} the copy was in already)",
+                   "owner's brain verbs given to copies {} ({} the copy was in already); variations put in: {} named, {} "
+                   "plain, {} not known, {} past the name pools; {} through another node (the move's chose another "
+                   "variation), {} with no such node left (row 222)",
              c.owner_brain, c.owner_action, c.plug_actions, c.copy_skipped, c.brain_applied, c.action_applied,
              c.action_waiting, c.action_slot_busy, c.action_busy_again, c.copy_own_run, c.copy_own_late, c.copy_shot_hits, c.copy_own_stuns, c.copy_hits_to_owner, c.minions_stopped, c.copy_life_held,
              c.copy_killed, c.copy_finished, c.plain_wants, c.plain_wakes, c.plain_deaths, c.body_deaths, c.brain_came,
-             c.brain_already);
+             c.brain_already, c.variant_named, c.variant_plain, c.variant_unknown, c.variant_pool_full,
+             c.variant_node_moved, c.variant_node_conflict);
 }
 
 // ---- Name tags on the game's own balloons (coop_native_tags.h, B3 of reports/ui-audit-01112.md), at the frame hook.

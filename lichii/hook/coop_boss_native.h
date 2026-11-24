@@ -220,16 +220,24 @@ std::optional<OwnAsk> AskFor(const std::map<std::pair<std::int32_t, std::int32_t
 // Row 222 (diag run 20261123-160338): an AI node keeps its own choice of a move's variation. The copy's own 121
 // node, whose own AI had just asked the plain (Fire) shot, played the owner's 'Ice' put in through it (Attack_L)
 // but shot nothing; the same 'Ice' put in through another node (its StartBattle node) shot ice. Each node's own
-// last ask: its move and variation ("" plain, the plug's name, "?" a plug not read as a name).
+// last choice of each move it asked (node, slot, verb): its variation ("" plain, the plug's name, "?" a plug not
+// read as a name). Kept per move, not only a node's last ask (review-01112-h): a node that chose Fire and then
+// asked another move still holds its Fire.
 struct OwnVariants {
-    std::map<std::uint64_t, std::tuple<std::int32_t, std::int32_t, std::string>> by_node;  // at most kMaxOwnAsks
+    std::map<std::tuple<std::uint64_t, std::int32_t, std::int32_t>, std::string> choices;  // at most kMaxOwnAsks
 };
+// Which node AskFor named (the put-in log, the LANE1 proof): its own node of the move, the slot's last, its last
+// node, another node of its own, or the move's own though it chose another variation (every node conflicts).
+enum class AskRule { own, slot, last, other, all_conflict };
+std::string_view AskRuleName(AskRule rule);
 // AskFor for the owner's move in its variation `variant` (nothing: not known, plain AskFor): never a node whose own
-// last ask was this same move in ANOTHER variation (its own choice would undo ours); the slot's last node, the last
+// choice of this same move is ANOTHER variation (its own choice would undo ours); the slot's last node, the last
 // node, or another node of its own then, in that order; only when every node it has conflicts, the move's own.
+// `rule` (when given) says which.
 std::optional<OwnAsk> AskFor(const std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk>& by_move,
                              const std::map<std::int32_t, OwnAsk>& by_slot, std::uint64_t last, const BossAction& a,
-                             const OwnVariants& own, const std::optional<std::string>& variant);
+                             const OwnVariants& own, const std::optional<std::string>& variant,
+                             AskRule* rule = nullptr);
 // The variation of a copy's own ask (OwnVariants): "" plain, the plug's name, "?" a plug not read as a name.
 std::string OwnAskVariant(const Request& r, const std::optional<std::string>& plug_name);
 
@@ -417,6 +425,10 @@ struct Counts {
     std::uint64_t variant_named = 0;
     std::uint64_t variant_unknown = 0;
     std::uint64_t variant_pool_full = 0;
+    // Row 222 (review-01112-h): owner's moves put in through another node than the move's own (that node chose another
+    // variation of it), and those with no node left that did not (the move's own then: the bug still possible).
+    std::uint64_t variant_node_moved = 0;
+    std::uint64_t variant_node_conflict = 0;
 };
 
 class Table {
@@ -782,6 +794,7 @@ private:
         std::optional<BossAction> restart_action;
         OwnAsk restart_ask;
         std::optional<std::string> restart_variant;  // row 222 part 2: put_variant's, named in its restart
+        std::array<std::optional<coop::protocol::Vec3>, 3> restart_variant_places{};  // row 222: put_variant_places'
         // Row 178's fall guard: its first seen height, and its falls rechosen while below.
         std::optional<float> start_y;
         std::optional<coop::protocol::Vec3> start;  // (its first seen place, for the put back)
@@ -793,6 +806,8 @@ private:
         // over after every sword hit, on every hitter's screen).
         std::optional<BossAction> put_action;
         std::optional<std::string> put_variant;  // row 222 part 2: the variation it was put in with
+        // Row 222 (review-01112-h): that named ask's places (bsa's action has none for it), for its restart (row 178).
+        std::array<std::optional<coop::protocol::Vec3>, 3> put_variant_places{};
         bool own_action_ran = false;
     };
     void Hold(Entry& e, const Boss& b);   // the owner's stall check (Publish)

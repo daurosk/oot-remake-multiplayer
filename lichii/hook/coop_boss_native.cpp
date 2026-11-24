@@ -123,33 +123,62 @@ std::optional<OwnAsk> AskFor(const std::map<std::pair<std::int32_t, std::int32_t
     return std::nullopt;
 }
 
+std::string_view AskRuleName(AskRule rule) {
+    switch (rule) {
+    case AskRule::own:
+        return "its node of this move";
+    case AskRule::slot:
+        return "its slot's last node";
+    case AskRule::last:
+        return "its last node";
+    case AskRule::other:
+        return "another node of its own";
+    case AskRule::all_conflict:
+        return "its node of this move, though it chose another variation (every node did)";
+    }
+    return "?";
+}
+
 std::optional<OwnAsk> AskFor(const std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk>& by_move,
                              const std::map<std::int32_t, OwnAsk>& by_slot, std::uint64_t last, const BossAction& a,
-                             const OwnVariants& own, const std::optional<std::string>& variant) {
+                             const OwnVariants& own, const std::optional<std::string>& variant, AskRule* rule) {
+    const auto say = [&](AskRule r) {
+        if (rule != nullptr) {
+            *rule = r;
+        }
+    };
     const std::optional<OwnAsk> plain = AskFor(by_move, by_slot, last, a);
+    const AskRule plain_rule = by_move.contains({a.slot, a.verb}) ? AskRule::own
+                               : by_slot.contains(a.slot)         ? AskRule::slot
+                                                                  : AskRule::last;
+    say(plain_rule);
     if (!variant || !plain) {
         return plain;
     }
     const auto conflicts = [&](std::uint64_t node) {
-        const auto it = own.by_node.find(node);
-        return it != own.by_node.end() && std::get<0>(it->second) == a.slot && std::get<1>(it->second) == a.verb &&
-               std::get<2>(it->second) != *variant;
+        const auto it = own.choices.find({node, a.slot, a.verb});
+        return it != own.choices.end() && it->second != *variant;
     };
     if (!conflicts(plain->node)) {
         return plain;
     }
     if (const auto it = by_slot.find(a.slot);
         it != by_slot.end() && it->second.node != 0 && !conflicts(it->second.node)) {
+        say(AskRule::slot);
         return OwnAsk{it->second.node};
     }
     if (last != 0 && !conflicts(last)) {
+        say(AskRule::last);
         return OwnAsk{last};
     }
-    for (const auto& [node, asked] : own.by_node) {
+    for (const auto& [key, chose] : own.choices) {
+        const std::uint64_t node = std::get<0>(key);
         if (node != 0 && !conflicts(node)) {
+            say(AskRule::other);
             return OwnAsk{node};
         }
     }
+    say(AskRule::all_conflict);
     return plain;  // (every node it has chose another variation of this move: the move's own, as before)
 }
 
@@ -297,7 +326,7 @@ const Table::Entry* Table::FindActor(std::uint64_t actor) const {
 void Table::ForgetOwnAsks(Entry& e) {
     e.own_asks.clear();
     e.own_slot_asks.clear();
-    e.own_variants.by_node.clear();
+    e.own_variants.choices.clear();
 }
 
 void Table::Note(std::string line) {
@@ -369,6 +398,7 @@ void Table::Publish(const std::vector<Boss>& bosses) {
                                             .value_or(OwnAsk{e.own_node});
                         e.restart_action = again;
                         e.restart_variant = e.put_variant;  // (row 222 part 2: the variation it was put in with)
+                        e.restart_variant_places = e.put_variant_places;  // (row 222: a named ask's places)
                         Note(b.name + ": made ours mid-move: its move (slot " + std::to_string(again.slot) +
                              " verb " + std::to_string(again.verb) + ") starts over as ours (row 178)");
                     } else if (turns_ && e.put_action && b.attacking.has_value() && !*b.attacking) {
@@ -753,8 +783,8 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed
         if (e->own_slot_asks.size() < kMaxOwnAsks || e->own_slot_asks.contains(slot)) {
             e->own_slot_asks[slot] = ask;
         }
-        if (e->own_variants.by_node.size() < kMaxOwnAsks || e->own_variants.by_node.contains(node)) {
-            e->own_variants.by_node[node] = {slot, verb, OwnAskVariant(request, plug_name)};
+        if (e->own_variants.choices.size() < kMaxOwnAsks || e->own_variants.choices.contains({node, slot, verb})) {
+            e->own_variants.choices[{node, slot, verb}] = OwnAskVariant(request, plug_name);
         }
     }
     if (!e->wanted) {
@@ -1336,7 +1366,13 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
                     call = PoolCall(main_base);  // (a new name pool first; asked again after it)
                     return true;
                 }
-                const Request r = RequestFromAction(*e.restart_action, ask);
+                // Row 222 (review-01112-h): a named ask restarts with its places, as it was put in (StepOne).
+                BossAction again = *e.restart_action;
+                if (ask.named &&
+                    std::none_of(again.places.begin(), again.places.end(), [](const auto& p) { return p.has_value(); })) {
+                    again.places = e.restart_variant_places;
+                }
+                const Request r = RequestFromAction(again, ask);
                 if (guest.Write(block_, r.data(), r.size())) {
                     CoopPuppet::Call c;
                     c.function = main_base + addr::kRequestActionVerb;
@@ -1450,8 +1486,12 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
             return true;
         }
         // Row 222: through a node whose own choice is not another variation of this move (OwnVariants).
-        OwnAsk ask = AskFor(e.own_asks, e.own_slot_asks, e.own_node, action, e.own_variants, d.variant)
-                         .value_or(OwnAsk{e.own_node});
+        AskRule rule = AskRule::last;
+        const std::optional<OwnAsk> asked =
+            AskFor(e.own_asks, e.own_slot_asks, e.own_node, action, e.own_variants, d.variant, &rule);
+        OwnAsk ask = asked.value_or(OwnAsk{e.own_node});
+        const bool moved = d.variant && asked && e.own_asks.contains({action.slot, action.verb}) &&
+                           rule != AskRule::own && rule != AskRule::all_conflict;
         // Row 222 part 2: the owner's variation of this move (its plug name, or plain), not our own AI's last.
         if (WithVariant(guest, d.variant, ask)) {
             call = PoolCall(main_base);  // (a new name pool first; this change is asked again after it)
@@ -1473,6 +1513,12 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
         if (!guest.Write(block_, r.data(), r.size())) {
             break;
         }
+        if (action.changed && moved) {
+            ++counts_.variant_node_moved;
+        }
+        if (action.changed && rule == AskRule::all_conflict) {
+            ++counts_.variant_node_conflict;
+        }
         if (diag_222_.load(std::memory_order_relaxed)) {
             if (action.changed && e.diag_puts > 0 && diag_said_ < kDiagMax) {
                 ++diag_said_;
@@ -1482,10 +1528,8 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
             Diag(e, "put in", r, action.changed, d.variant);
         }
         Stream(e, "owner's put in: slot " + std::to_string(action.slot) + " verb " + std::to_string(action.verb) +
-                      " (changed " + std::to_string(action.changed ? 1 : 0) + ", our node " +
-                      (e.own_asks.contains({action.slot, action.verb}) ? "of this move"
-                       : e.own_slot_asks.contains(action.slot)        ? "of this slot"
-                                                                       : "last asked") +
+                      " (changed " + std::to_string(action.changed ? 1 : 0) + ", node " + Hex(ask.node) + ": " +
+                      std::string(AskRuleName(rule)) +
                       (!d.variant           ? std::string(r[addr::kReqHasPlug] == 1 ? ", our plug)" : ")")
                        : d.variant->empty() ? std::string(", the owner's: plain)")
                                             : ", the owner's: '" + *d.variant + "')"));
@@ -1680,6 +1724,7 @@ void Table::Made(bool made) {
         if (const auto* action = std::get_if<BossAction>(&e->due.front().change.what)) {
             e->put_action = *action;  // (the move our copy's body runs now: Resync)
             e->put_variant = e->due.front().variant;  // (row 222 part 2: with its variation)
+            e->put_variant_places = e->due.front().variant_places;  // (row 222: and a named ask's places)
             e->own_action_ran = false;
         }
         e->due.pop_front();

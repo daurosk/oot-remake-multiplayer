@@ -821,14 +821,18 @@ name the copy still lost ice shots and aimed its floors at neither Link:
 - An AI node keeps its own choice of a move's variation. The copy's two `Ice` put-ins were the same bytes but for the
   node: through its StartBattle node the IceBullet came; through its own 121 node, whose own AI had just asked the
   plain (Fire) shot, `Attack_L` played and nothing was shot (both failed put-ins of run 115945 used that node too).
-  Fix: the table keeps each node's own last ask (move and variation, `OwnVariants`), and a named or plain owner's move
+  Fix: the table keeps each node's own last choice of each move it asked (node, slot, verb -> variation, `OwnVariants`;
+  a node that chose Fire and then asked another move still holds its Fire), and a named or plain owner's move
   never goes in through a node that chose ANOTHER variation of the same move: the slot's last node, the last node, or
   another node of its own instead (only when every node conflicts, the move's own, as before).
 - An ask by plug names its places too (the owner's `Ice`: the Link it aims at and a second point), but component 20
   leaves them out for an ask by plug, so the copy's move aimed at nothing (probe 3 showed the same: a place whose first
   float is NaN is none, and the shot dropped straight from the hand). Component 20 stays as it was (an older copy puts
   its own plug in only for an action with no place); the named ask's places go with its name in component 24, and the
-  copy puts them in with the named plug.
+  copy puts them in with the named plug, also when the move starts over as ours (row 178 restart).
+- The put-in line names the node it used and why (`node 0x...: its node of this move / its slot's last node / its
+  last node / another node of its own / ... though it chose another variation`), and the boss summary counts the
+  put-ins moved to another node and those with no such node left (the case still open).
 - Related cases, all by the same code (every boss and mini-boss on the native sync, no name list): Koume's and Kotake's
   own shots before the fusion, the fused Twinrova's fire, ice and feints, every move a boss asks by plug name in more
   than one variation (StartBattle and other named moves keep working: a node whose last ask was another move never

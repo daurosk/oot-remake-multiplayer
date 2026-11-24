@@ -3064,26 +3064,39 @@ TEST_CASE("native boss: row 222, the owner's move never goes through a node that
                                                                          {{0, 4}, OwnAsk{kFlyNode}}};
     const std::map<std::int32_t, OwnAsk> by_slot{{0, OwnAsk{kFlyNode}}};
     OwnVariants own;
-    own.by_node[kShotNode] = {0, 121, ""};
-    own.by_node[kStartNode] = {0, 65, "StartBattle"};
-    own.by_node[kFlyNode] = {0, 4, ""};
+    own.choices[{kShotNode, 0, 121}] = "";
+    own.choices[{kStartNode, 0, 65}] = "StartBattle";
+    own.choices[{kFlyNode, 0, 4}] = "";
     // 'Ice' while its shot node chose plain: the slot's last node (no choice of this move), not the shot node.
-    CHECK(AskFor(by_move, by_slot, kFlyNode, a, own, std::string("Ice"))->node == kFlyNode);
+    AskRule rule = AskRule::own;
+    CHECK(AskFor(by_move, by_slot, kFlyNode, a, own, std::string("Ice"), &rule)->node == kFlyNode);
+    CHECK(rule == AskRule::slot);
     // Plain while it chose plain: the shot node and its own ask, as before.
-    CHECK(*AskFor(by_move, by_slot, kFlyNode, a, own, std::string{}) == OwnAsk{kShotNode});
+    CHECK(*AskFor(by_move, by_slot, kFlyNode, a, own, std::string{}, &rule) == OwnAsk{kShotNode});
+    CHECK(rule == AskRule::own);
     // Not known (an older owner): as before.
     CHECK(*AskFor(by_move, by_slot, kFlyNode, a, own, std::nullopt) == OwnAsk{kShotNode});
     // Its shot node chose Ice: 'Ice' goes there, plain goes elsewhere (Koume's fire after Kotake's ice, either way).
-    own.by_node[kShotNode] = {0, 121, "Ice"};
+    own.choices[{kShotNode, 0, 121}] = "Ice";
     CHECK(AskFor(by_move, by_slot, kFlyNode, a, own, std::string("Ice"))->node == kShotNode);
     CHECK(AskFor(by_move, by_slot, kFlyNode, a, own, std::string{})->node == kFlyNode);
     // The slot's last and the last node are the shot node too: another node of its own.
     const std::map<std::int32_t, OwnAsk> shot_slot{{0, OwnAsk{kShotNode}}};
-    CHECK(AskFor(by_move, shot_slot, kShotNode, a, own, std::string{})->node != kShotNode);
-    // Only the shot node: the move's own (nothing better).
+    CHECK(AskFor(by_move, shot_slot, kShotNode, a, own, std::string{}, &rule)->node != kShotNode);
+    CHECK(rule == AskRule::other);
+    // Only the shot node: the move's own (nothing better), said as such.
     OwnVariants only;
-    only.by_node[kShotNode] = {0, 121, "Ice"};
-    CHECK(AskFor(by_move, shot_slot, kShotNode, a, only, std::string{})->node == kShotNode);
+    only.choices[{kShotNode, 0, 121}] = "Ice";
+    CHECK(AskFor(by_move, shot_slot, kShotNode, a, only, std::string{}, &rule)->node == kShotNode);
+    CHECK(rule == AskRule::all_conflict);
+    // Review-01112-h: a node keeps its choice of each move. The shot node chose Fire (plain) for 121, then asked
+    // another move (Fly, verb 4): its 121 choice still stands, so 'Ice' does not go through it.
+    OwnVariants kept;
+    kept.choices[{kShotNode, 0, 121}] = "";
+    kept.choices[{kShotNode, 0, 4}] = "";
+    kept.choices[{kStartNode, 0, 65}] = "StartBattle";
+    CHECK(AskFor(by_move, shot_slot, kShotNode, a, kept, std::string("Ice"), &rule)->node == kStartNode);
+    CHECK(rule == AskRule::other);
     // A plug not read as a name differs from every name.
     CHECK(OwnAskVariant(GameRequest(121, kNode), "Ice").empty());
     CHECK(OwnAskVariant(PlugRequest(121, kNode, 0x77), std::nullopt) == "?");
@@ -3127,4 +3140,65 @@ TEST_CASE("native boss: row 222, a copy puts the owner's 'Ice' in through a node
     CHECK(g.Get<std::uint64_t>(kBlock + addr::kReqNode) == kShotNode);
     CHECK(g.Get<std::uint8_t>(kBlock + addr::kReqHasPlug) == 0);
     CHECK_FALSE(t.Step(g, true, 0, kMain));
+}
+
+TEST_CASE("native boss: row 222, a named move made ours mid-move starts over with its places (row 178 restart)") {
+    // Review-01112-h: put_action has no places for a named ask (bsa leaves them out), so the restart dropped them.
+    FakeGuest g;
+    const std::int32_t brain = 6;
+    g.Write(kBsa + addr::kBsaBrainVerb, &brain, 4);
+    Request owner = GameRequest(9, 0, true);
+    owner[addr::kReqHasPlug] = 1;
+    auto rush = ActionFromRequest(owner);  // the owner's ask by plug: bsa's action has no place
+    REQUIRE(rush);
+    CHECK_FALSE(rush->places[0]);
+    rush->flags = 0;
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Phantom(Role::copy)});
+    CHECK_FALSE(t.OnActionVerb(kBsa, GameRequest(9, kNode), true, false));
+    t.Receive(kActor, BossBsa{3, 6, rush, {BossChange{3, *rush}}}, BossVariants{{BossVariant{3, "Charge", PlacesOf(owner)}}});
+    REQUIRE(t.Step(g, false, 0, kMain));  // the block
+    REQUIRE(t.Step(g, true, kBlock, kMain));
+    CHECK(g.Get<float>(kBlock + addr::kReqPlaces) == 10.0f);  // put in with the owner's place
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    // Made ours mid-move: it starts over with the same variation AND its places.
+    t.Publish({Phantom(Role::owner)});
+    g.bytes.erase(kBlock + addr::kReqVerb);
+    auto c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kRequestActionVerb);
+    CHECK((g.Get<std::uint16_t>(kBlock + addr::kReqFlags) & addr::kReqStartOver) != 0);
+    CHECK(g.Get<std::uint8_t>(kBlock + addr::kReqHasPlug) == 1);
+    CHECK(CString(g, g.Get<std::uint64_t>(kBlock + addr::kReqPlug)) == "Charge");
+    CHECK(g.Get<float>(kBlock + addr::kReqPlaces) == 10.0f);
+}
+
+TEST_CASE("native boss: row 222, a node that chose Fire and then asked another move still holds its Fire") {
+    // Review-01112-h: the choice is kept per (node, slot, verb), not only the node's last ask.
+    constexpr std::uint64_t kShotNode = 0x4000100;
+    constexpr std::uint64_t kStartNode = 0x4000200;
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Twinrova(Role::copy)});
+    FakeGuest g;
+    const std::int32_t brain = 2;
+    g.Write(kBsa + addr::kBsaBrainVerb, &brain, 4);
+    t.OnActionVerb(kBsa, PlugRequest(65, kStartNode, 0x77), true, false, std::string("StartBattle"));
+    t.OnActionVerb(kBsa, GameRequest(121, kShotNode), true, false, std::string{});  // its shot node: plain (Fire)
+    t.OnActionVerb(kBsa, GameRequest(4, kShotNode), true, false, std::string{});    // then Fly from the same node
+    Request owner = GameRequest(121, 0, true);
+    owner[addr::kReqHasPlug] = 1;
+    BossAction a = *ActionFromRequest(owner);
+    a.changed = true;
+    t.Receive(kActor, BossBsa{1, 2, a, {BossChange{1, a}}}, BossVariants{{BossVariant{1, "Ice", PlacesOf(owner)}}});
+    REQUIRE(t.Step(g, false, 0, kMain));
+    REQUIRE(t.Step(g, true, kBlock, kMain));
+    CHECK(g.Get<std::uint64_t>(kBlock + addr::kReqNode) == kStartNode);  // never the node that chose Fire
+    CHECK(t.Totals().variant_node_moved == 1);
+    CHECK(t.Totals().variant_node_conflict == 0);
+    const auto notes = t.TakeNotes();
+    CHECK(std::any_of(notes.begin(), notes.end(), [](const std::string& n) {
+        return n.find("another node of its own") != n.npos || n.find("its slot's last node") != n.npos;
+    }));
 }

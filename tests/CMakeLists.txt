@@ -201,6 +201,7 @@ target_sources(coop_tests PRIVATE hookshot/module_test.cpp hookshot/draw_test.cp
   hookshot/cheats_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_cheats_panel.cpp
   hookshot/png_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_png.cpp
   hookshot/native_ui_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_native_ui.cpp
+  hookshot/hud_probe_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_hud_probe.cpp
   hookshot/window_brand_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_window_brand.cpp
   hookshot/title_menu_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_title_menu.cpp
   hookshot/pause_menu_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_pause_menu.cpp

@@ -53,6 +53,7 @@
 #include "coop_flags.h"
 #include "coop_game_build.h"
 #include "coop_i18n.h"
+#include "coop_hud_probe.h"
 #include "coop_native_ui.h"
 #include "coop_save.h"
 #include "coop_hold.h"
@@ -1081,9 +1082,41 @@ struct Native {
 Native g_native;                             // the game's thread only
 std::atomic<bool> g_native_chat{false};      // the game's windows carry the chat: nothing of it drawn (DrawScene)
 
+// The HUD research probe (coop_hud_probe.h): test builds only, COOP_TEST_HUD_PROBE=1. The chat's game and text ring
+// with a float call and a guest string (in the ring: a slot's text follows its Ref).
+class HudProbeGame final : public CoopHudProbe::Game {
+public:
+    HudProbeGame(NativeGame& game, void* ctx) : game_(game), ctx_(ctx) {}
+    bool Read(std::uint64_t a, void* out, std::size_t n) override { return game_.Read(a, out, n); }
+    bool Write(std::uint64_t a, const void* in, std::size_t n) override { return game_.Write(a, in, n); }
+    std::optional<std::uint64_t> Call(std::uint64_t f, const std::array<std::uint64_t, 5>& x) override {
+        return game_.Call(f, x);
+    }
+    std::uint64_t Main() const override { return game_.Main(); }
+    std::optional<std::uint64_t> CallFloat(std::uint64_t f, std::uint64_t x0, float s0) override {
+        HosCoopCall k{};
+        k.function = f;
+        k.x[0] = x0;
+        k.s0 = s0;
+        std::uint64_t r = 0;
+        if (g_api == nullptr || g_api->call(ctx_, &k, &r) == 0) return std::nullopt;
+        return r;
+    }
+    std::uint64_t String(std::string_view text) override;
+
+private:
+    NativeGame& game_;
+    void* ctx_;
+};
+
 bool NativeOn() {
     static const bool on = Env("LICHII_COOP_NATIVE_UI") != "0";
     return on;
+}
+
+std::uint64_t HudProbeGame::String(std::string_view text) {
+    const std::uint64_t ref = g_native.ring.Put(game_, text);
+    return ref == 0 ? 0 : ref + sizeof(CoopNativeUi::Ref);
 }
 
 using Colours = std::map<std::string, std::uint32_t, std::less<>>;
@@ -1185,6 +1218,12 @@ void NativeStep(void* ctx) {
         in.push_back(std::move(c));
     }
     g_native.feed.Update(in, now);
+    static const bool hud_probe = EnvOn("COOP_TEST_HUD_PROBE");
+    if (hud_probe) {
+        static CoopHudProbe::Probe probe;
+        HudProbeGame pg(game, ctx);
+        for (const auto& line : probe.Step(pg, now)) LOG_INFO(Core, "{}", line);
+    }
     // The held line (down but not out) keeps the banner; a page of ours whose time is over closes. Pages wait
     // meanwhile.
     if (g_native.banner.Step(game, g_native.ring, CoopNativeUi::HeldBanner(), now)) return;

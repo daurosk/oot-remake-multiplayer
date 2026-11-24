@@ -44,7 +44,7 @@ if(COOP_HOOK_STRICT AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     -Wno-error=range-loop-construct -Wno-error=maybe-uninitialized)
 endif()
 
-add_library(hookshot_coop MODULE src/coop_hookshot.cpp src/coop_draw.cpp src/coop_map_page.cpp src/coop_dbno_draw.cpp src/coop_png.cpp src/coop_window_brand.cpp src/coop_chatbox.cpp src/coop_players_open.cpp src/coop_native_ui.cpp src/coop_cheats_panel.cpp
+add_library(hookshot_coop MODULE src/coop_hookshot.cpp src/coop_draw.cpp src/coop_map_page.cpp src/coop_dbno_draw.cpp src/coop_png.cpp src/coop_window_brand.cpp src/coop_chatbox.cpp src/coop_players_open.cpp src/coop_native_ui.cpp src/coop_hud_probe.cpp src/coop_cheats_panel.cpp
   src/coop_host_menu.cpp src/coop_title.cpp src/coop_title_menu.cpp src/coop_input.cpp src/coop_pause.cpp
   src/coop_pause_menu.cpp src/coop_original.cpp src/coop_pause_files.cpp src/coop_i18n.cpp src/coop_null_page.cpp
   src/coop_mod_json.cpp src/coop_mod_library.cpp src/coop_mods.cpp src/coop_mod_plugins.cpp src/coop_mod_guard.cpp

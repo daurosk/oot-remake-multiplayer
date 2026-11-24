@@ -1,0 +1,113 @@
+#! switches COOP_TEST_HUD_PROBE=1
+# hs-hud-probe (menu-chat-01113, item 18 research): the game's own HUD heart (PlayerStatus_00 > Pa_HeartGauge_00) as
+# the other players' hearts. The module's probe (hookshot/src/coop_hud_probe.h, COOP_TEST_HUD_PROBE=1) logs which
+# heart animations exist and their frames, where the screen keeps its heart panes, then holds HeartGauge at 0, 1/4,
+# 1/2, 3/4, last and HeartState at each frame, 6 s each from 15 s after the HUD opens. One game is enough (A); B idles.
+# Run: offline/hud-probe-menu-chat-run.ps1 (module-only build of menu-chat-01113, lane 1).
+# Read: A's "coop: hud probe:" lines (paths found, last frames, screen+0x.. panes, each "hold N/M ... frame F" with
+# its time) against the shots hold-NN (every 3 s): which frame looks like which fill, and whether the game's own
+# update undoes the held frame (the heart flickers back). PASS (for the plan): HeartGauge found, its frames show
+# 0..4 quarters on Link's first heart in the shots. No PASS from the log alone.
+mark start
+wait 600                # the save loads, the HUD opens (the probe waits for it)
+mark hold-01
+wait 180
+mark hold-02
+wait 180
+mark hold-03
+wait 180
+mark hold-04
+wait 180
+mark hold-05
+wait 180
+mark hold-06
+wait 180
+mark hold-07
+wait 180
+mark hold-08
+wait 180
+mark hold-09
+wait 180
+mark hold-10
+wait 180
+mark hold-11
+wait 180
+mark hold-12
+wait 180
+mark hold-13
+wait 180
+mark hold-14
+wait 180
+mark hold-15
+wait 180
+mark hold-16
+wait 180
+mark hold-17
+wait 180
+mark hold-18
+wait 180
+mark hold-19
+wait 180
+mark hold-20
+wait 180
+mark hold-21
+wait 180
+mark hold-22
+wait 180
+mark hold-23
+wait 180
+mark hold-24
+wait 180
+mark hold-25
+wait 180
+mark hold-26
+wait 180
+mark hold-27
+wait 180
+mark hold-28
+wait 180
+mark hold-29
+wait 180
+mark hold-30
+wait 180
+mark hold-31
+wait 180
+mark hold-32
+wait 180
+mark hold-33
+wait 180
+mark hold-34
+wait 180
+mark hold-35
+wait 180
+mark hold-36
+wait 180
+mark hold-37
+wait 180
+mark hold-38
+wait 180
+mark hold-39
+wait 180
+mark hold-40
+wait 180
+mark hold-41
+wait 180
+mark hold-42
+wait 180
+mark hold-43
+wait 180
+mark hold-44
+wait 180
+mark hold-45
+wait 180
+mark hold-46
+wait 180
+mark hold-47
+wait 180
+mark hold-48
+wait 180
+mark hold-49
+wait 180
+mark hold-50
+wait 180
+mark end

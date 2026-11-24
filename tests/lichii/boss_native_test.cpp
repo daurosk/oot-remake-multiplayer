@@ -3002,3 +3002,129 @@ TEST_CASE("native boss: row 222 diag says the owner's asks, the copy's own asks 
         return n.find("diag222") != n.npos && n.find("put in") != n.npos;
     }));
 }
+
+namespace {
+template <class T>
+T ReqAt(const Request& r, std::size_t at) {
+    T v{};
+    std::memcpy(&v, r.data() + at, sizeof v);
+    return v;
+}
+}  // namespace
+
+TEST_CASE("native boss: row 222, an ask by plug names its places, they go with its variation, not in bsa's action") {
+    constexpr std::uint64_t kPlug = 0x5000000;
+    Request ice = GameRequest(121, kNode, true);  // the owner's 'Ice' (diag run 20261123-160338): placed AND by plug
+    std::memcpy(ice.data() + addr::kReqPlug, &kPlug, 8);
+    ice[addr::kReqHasPlug] = 1;
+    const auto places = PlacesOf(ice);
+    REQUIRE(places[0]);
+    CHECK((*places[0])[0] == 10.0f);
+    CHECK_FALSE(places[1]);  // (first float NaN: no place, the game's rule)
+    bool plug = false;
+    auto a = ActionFromRequest(ice, &plug);
+    REQUIRE(a);
+    CHECK(plug);
+    CHECK_FALSE(a->places[0]);  // (bsa's action: none for a plug ask, as older copies expect)
+    // The owner's named ask records its places with its variation (component 24).
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Twinrova(Role::owner, 1)});
+    t.OnActionVerb(kBsa, ice, true, false, std::string("Ice"));
+    t.OnActionVerb(kBsa, GameRequest(121, kNode, true), true, false, std::string{});  // plain: bsa has its places
+    std::optional<BossVariants> v;
+    REQUIRE(t.OwnerState(kActor, &v));
+    REQUIRE(v);
+    REQUIRE(v->recent.size() == 2);
+    CHECK(v->recent[0].name == "Ice");
+    REQUIRE(v->recent[0].places[0]);
+    CHECK((*v->recent[0].places[0])[0] == 10.0f);
+    CHECK_FALSE(v->recent[1].places[0]);
+    // Put in with the owner's variation by name: its places AND the named plug.
+    a->places = places;
+    const Request named = RequestFromAction(*a, OwnAsk{kNode, 0x6000000, true, true});
+    CHECK(named[addr::kReqHasPlug] == 1);
+    CHECK(ReqAt<std::uint64_t>(named, addr::kReqPlug) == 0x6000000);
+    CHECK(ReqAt<float>(named, addr::kReqPlaces) == 10.0f);
+    // Our own AI's plug (an older owner, no variation sent) with the owner's places: no plug, as before.
+    const Request own = RequestFromAction(*a, OwnAsk{kNode, 0x6000000, true});
+    CHECK(own[addr::kReqHasPlug] == 0);
+    CHECK(ReqAt<float>(own, addr::kReqPlaces) == 10.0f);
+}
+
+TEST_CASE("native boss: row 222, the owner's move never goes through a node that chose another variation of it") {
+    constexpr std::uint64_t kShotNode = 0x4000100;   // asks the ranged attack (121): its own last plain (Fire)
+    constexpr std::uint64_t kStartNode = 0x4000200;  // asked StartBattle (65)
+    constexpr std::uint64_t kFlyNode = 0x4000300;    // asked Fly (4), the slot's last
+    BossAction a;
+    a.slot = 0;
+    a.verb = 121;
+    const std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk> by_move{{{0, 121}, OwnAsk{kShotNode}},
+                                                                         {{0, 65}, OwnAsk{kStartNode, 0x77, true}},
+                                                                         {{0, 4}, OwnAsk{kFlyNode}}};
+    const std::map<std::int32_t, OwnAsk> by_slot{{0, OwnAsk{kFlyNode}}};
+    OwnVariants own;
+    own.by_node[kShotNode] = {0, 121, ""};
+    own.by_node[kStartNode] = {0, 65, "StartBattle"};
+    own.by_node[kFlyNode] = {0, 4, ""};
+    // 'Ice' while its shot node chose plain: the slot's last node (no choice of this move), not the shot node.
+    CHECK(AskFor(by_move, by_slot, kFlyNode, a, own, std::string("Ice"))->node == kFlyNode);
+    // Plain while it chose plain: the shot node and its own ask, as before.
+    CHECK(*AskFor(by_move, by_slot, kFlyNode, a, own, std::string{}) == OwnAsk{kShotNode});
+    // Not known (an older owner): as before.
+    CHECK(*AskFor(by_move, by_slot, kFlyNode, a, own, std::nullopt) == OwnAsk{kShotNode});
+    // Its shot node chose Ice: 'Ice' goes there, plain goes elsewhere (Koume's fire after Kotake's ice, either way).
+    own.by_node[kShotNode] = {0, 121, "Ice"};
+    CHECK(AskFor(by_move, by_slot, kFlyNode, a, own, std::string("Ice"))->node == kShotNode);
+    CHECK(AskFor(by_move, by_slot, kFlyNode, a, own, std::string{})->node == kFlyNode);
+    // The slot's last and the last node are the shot node too: another node of its own.
+    const std::map<std::int32_t, OwnAsk> shot_slot{{0, OwnAsk{kShotNode}}};
+    CHECK(AskFor(by_move, shot_slot, kShotNode, a, own, std::string{})->node != kShotNode);
+    // Only the shot node: the move's own (nothing better).
+    OwnVariants only;
+    only.by_node[kShotNode] = {0, 121, "Ice"};
+    CHECK(AskFor(by_move, shot_slot, kShotNode, a, only, std::string{})->node == kShotNode);
+    // A plug not read as a name differs from every name.
+    CHECK(OwnAskVariant(GameRequest(121, kNode), "Ice").empty());
+    CHECK(OwnAskVariant(PlugRequest(121, kNode, 0x77), std::nullopt) == "?");
+    CHECK(OwnAskVariant(PlugRequest(121, kNode, 0x77), std::string("Ice")) == "Ice");
+}
+
+TEST_CASE("native boss: row 222, a copy puts the owner's 'Ice' in through a node that did not choose Fire, with its places") {
+    constexpr std::uint64_t kShotNode = 0x4000100;
+    constexpr std::uint64_t kStartNode = 0x4000200;
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Twinrova(Role::copy)});
+    FakeGuest g;
+    const std::int32_t brain = 2;
+    g.Write(kBsa + addr::kBsaBrainVerb, &brain, 4);
+    constexpr std::uint64_t kOwnStart = 0x5000000;
+    g.Write(kOwnStart, "StartBattle", 12);
+    t.OnActionVerb(kBsa, PlugRequest(65, kStartNode, kOwnStart), true, false, "StartBattle");
+    t.OnActionVerb(kBsa, GameRequest(121, kShotNode), true, false, std::string{});  // its own AI: the plain shot
+    // The owner's 'Ice', asked by plug with its places (Link's).
+    Request owner = GameRequest(121, 0, true);
+    owner[addr::kReqHasPlug] = 1;
+    BossAction a = *ActionFromRequest(owner);
+    CHECK_FALSE(a.places[0]);  // (bsa's action: none; they come with the variation)
+    a.changed = true;
+    t.Receive(kActor, BossBsa{1, 2, a, {BossChange{1, a}}}, BossVariants{{BossVariant{1, "Ice", PlacesOf(owner)}}});
+    REQUIRE(t.Step(g, false, 0, kMain));  // the block
+    auto c = t.Step(g, true, kBlock, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kRequestActionVerb);
+    CHECK(g.Get<std::uint64_t>(kBlock + addr::kReqNode) == kStartNode);  // (its shot node chose Fire)
+    CHECK(g.Get<std::uint8_t>(kBlock + addr::kReqHasPlug) == 1);
+    CHECK(CString(g, g.Get<std::uint64_t>(kBlock + addr::kReqPlug)) == "Ice");
+    CHECK(g.Get<float>(kBlock + addr::kReqPlaces) == 10.0f);  // the owner's place: it aims as the owner's did
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    // The owner's plain shot next: through its shot node, which chose plain.
+    BossAction b = *ActionFromRequest(GameRequest(121, 0, true));
+    b.changed = true;
+    t.Receive(kActor, BossBsa{2, 2, b, {BossChange{1, a}, BossChange{2, b}}}, BossVariants{{{1, "Ice"}, {2, ""}}});
+    REQUIRE(t.Step(g, false, 0, kMain));
+    CHECK(g.Get<std::uint64_t>(kBlock + addr::kReqNode) == kShotNode);
+    CHECK(g.Get<std::uint8_t>(kBlock + addr::kReqHasPlug) == 0);
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+}

@@ -1003,6 +1003,9 @@ inline constexpr std::size_t kMaxBossVariantChars = 32;
 struct BossVariant {
   std::uint32_t seq = 0;  // the action change's seq (bsa's recent)
   std::string name;       // its plug name; empty: asked with no plug
+  // A named ask's places (row 222, diag run 20261123-160338: Twinrova's 'Ice' aims at the Link these name): bsa's
+  // action leaves them out for an ask by plug, as older copies expect. Finite; none for a plain ask (bsa has them).
+  std::array<std::optional<Vec3>, 3> places{};
   bool operator==(const BossVariant&) const = default;
 };
 struct BossVariants {

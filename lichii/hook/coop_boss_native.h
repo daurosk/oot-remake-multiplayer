@@ -40,6 +40,7 @@
 #include <cstdint>
 #include <deque>
 #include <map>
+#include <tuple>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -200,15 +201,37 @@ struct OwnAsk {
     std::uint64_t node = 0;
     std::uint64_t plug = 0;
     bool has_plug = false;
+    bool named = false;  // row 222: `plug` is the owner's variation by name (Table::WithVariant), not our AI's own
     bool operator==(const OwnAsk&) const = default;
 };
-// The request for the owner's action as the copy's own AI would ask it: `ask`'s node, and its plug when the
-// owner's action names no place (the owner's own was asked through a plug: its places were not sent).
+// The request for the owner's action as the copy's own AI would ask it: `ask`'s node, and its plug when it is the
+// owner's variation by name (`named`, with the owner's places: an ask by plug names its places too, Twinrova's
+// 'Ice' the Link it aims at), or our own AI's plug when the owner's action names no place (an older owner).
 Request RequestFromAction(const BossAction& a, const OwnAsk& ask);
+// A request's places (a place whose first float is NaN, or any not finite: none). Row 222 (diag run
+// 20261123-160338): an ask by plug names them too (Twinrova's 'Ice': the Link it aims at and a second point); bsa's
+// action leaves them out for such an ask (an older copy puts its own plug in only for an action with no place), so
+// an owner sends them with the ask's variation (BossVariant::places, component 24).
+std::array<std::optional<coop::protocol::Vec3>, 3> PlacesOf(const Request& r);
 // The copy's own ask to name for `a` from what its own AI asked: the same slot and verb, else the slot's last,
 // else its last ask of all (`last`). Nothing when it never asked (no node yet).
 std::optional<OwnAsk> AskFor(const std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk>& by_move,
                              const std::map<std::int32_t, OwnAsk>& by_slot, std::uint64_t last, const BossAction& a);
+// Row 222 (diag run 20261123-160338): an AI node keeps its own choice of a move's variation. The copy's own 121
+// node, whose own AI had just asked the plain (Fire) shot, played the owner's 'Ice' put in through it (Attack_L)
+// but shot nothing; the same 'Ice' put in through another node (its StartBattle node) shot ice. Each node's own
+// last ask: its move and variation ("" plain, the plug's name, "?" a plug not read as a name).
+struct OwnVariants {
+    std::map<std::uint64_t, std::tuple<std::int32_t, std::int32_t, std::string>> by_node;  // at most kMaxOwnAsks
+};
+// AskFor for the owner's move in its variation `variant` (nothing: not known, plain AskFor): never a node whose own
+// last ask was this same move in ANOTHER variation (its own choice would undo ours); the slot's last node, the last
+// node, or another node of its own then, in that order; only when every node it has conflicts, the move's own.
+std::optional<OwnAsk> AskFor(const std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk>& by_move,
+                             const std::map<std::int32_t, OwnAsk>& by_slot, std::uint64_t last, const BossAction& a,
+                             const OwnVariants& own, const std::optional<std::string>& variant);
+// The variation of a copy's own ask (OwnVariants): "" plain, the plug's name, "?" a plug not read as a name.
+std::string OwnAskVariant(const Request& r, const std::optional<std::string>& plug_name);
 
 // Row 222 part 2 (component 24): a boss move's variation is its request's plug name. The game runs the command
 // '<verb's name>:<plug>' (no plug: the plain command; main+0xbe070): Twinrova's ranged attack is plain for Fire and
@@ -688,6 +711,7 @@ private:
             bool resync = false;  // the state now, not a call the owner made: skipped when already so
             bool counted = false; // (a brain verb: counted in brain_came once, also when asked again)
             std::optional<std::string> variant = std::nullopt;  // row 222 part 2: an action's, the owner's (nothing: not known)
+            std::array<std::optional<coop::protocol::Vec3>, 3> variant_places{};  // row 222: a named ask's places
         };
         std::deque<Due> due;
         std::uint32_t queued_seq = 0;  // the owner's newest change queued (or made)
@@ -697,6 +721,7 @@ private:
         // Row 177: the copy's own asks by move (slot, verb) and by slot (AskFor), at most kMaxOwnAsks moves.
         std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk> own_asks;
         std::map<std::int32_t, OwnAsk> own_slot_asks;
+        OwnVariants own_variants;  // row 222: each node's own last ask and its variation (AskFor)
         // Row 177's log: the action stream's last kind (who, slot, verb, changed, plug or node source) and its run.
         std::string stream_last;
         std::uint64_t stream_run = 0;

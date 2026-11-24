@@ -814,6 +814,29 @@ fire (probe 2, run 20261123-055243). Every boss move with variants had the same 
 Not proven in a game yet: hs-twinrova-fire must show fire for fire and ice for ice on the copy, the floor on both
 screens. Merges only after the owner's OK on component 24.
 
+**The node and the places (row 222, LANE1 runs 20261123-115945 and the diag run 20261123-160338).** With the right
+name the copy still lost ice shots and aimed its floors at neither Link:
+- Twinrova's bullets and floors are made once when the room loads and reused (12 creates on each game, none stopped):
+  a missing shot is never a create we stopped.
+- An AI node keeps its own choice of a move's variation. The copy's two `Ice` put-ins were the same bytes but for the
+  node: through its StartBattle node the IceBullet came; through its own 121 node, whose own AI had just asked the
+  plain (Fire) shot, `Attack_L` played and nothing was shot (both failed put-ins of run 115945 used that node too).
+  Fix: the table keeps each node's own last ask (move and variation, `OwnVariants`), and a named or plain owner's move
+  never goes in through a node that chose ANOTHER variation of the same move: the slot's last node, the last node, or
+  another node of its own instead (only when every node conflicts, the move's own, as before).
+- An ask by plug names its places too (the owner's `Ice`: the Link it aims at and a second point), but component 20
+  leaves them out for an ask by plug, so the copy's move aimed at nothing (probe 3 showed the same: a place whose first
+  float is NaN is none, and the shot dropped straight from the hand). Component 20 stays as it was (an older copy puts
+  its own plug in only for an action with no place); the named ask's places go with its name in component 24, and the
+  copy puts them in with the named plug.
+- Related cases, all by the same code (every boss and mini-boss on the native sync, no name list): Koume's and Kotake's
+  own shots before the fusion, the fused Twinrova's fire, ice and feints, every move a boss asks by plug name in more
+  than one variation (StartBattle and other named moves keep working: a node whose last ask was another move never
+  conflicts), the resync and the restart of a move (same AskFor with the variation). Plain enemies are not on this path.
+- Tests: boss_native_test (a plug ask's places go with its variation; AskFor never picks a node that chose another
+  variation; a copy puts `Ice` in through a node that did not choose Fire, with the owner's place; then plain through
+  its shot node), codec_test (component 24 places: round trip, none on a plain name, finite only).
+
 ## A boss part another game killed dies in our game too (rows 257/258, Barinade crash, 0.11.12)
 
 **Seen.** #258 (host log, kit 0.11.11; P2 owned Barinade): each of P2's five jellyfish kills was replayed twice on

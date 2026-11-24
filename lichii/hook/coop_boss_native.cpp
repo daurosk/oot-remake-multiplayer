@@ -37,6 +37,19 @@ std::string Hex(std::uint64_t v) {
 
 } // namespace
 
+std::array<std::optional<coop::protocol::Vec3>, 3> PlacesOf(const Request& r) {
+    using namespace addr;
+    std::array<std::optional<coop::protocol::Vec3>, 3> places{};
+    for (std::size_t i = 0; i < places.size(); ++i) {
+        const coop::protocol::Vec3 p{Get<float>(r, kReqPlaces + 12 * i), Get<float>(r, kReqPlaces + 12 * i + 4),
+                                     Get<float>(r, kReqPlaces + 12 * i + 8)};
+        if (std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2])) {
+            places[i] = p;  // (a place whose first float is NaN is none: the game's rule)
+        }
+    }
+    return places;
+}
+
 std::optional<BossAction> ActionFromRequest(const Request& r, bool* plug) {
     using namespace addr;
     if (Get<std::uint32_t>(r, kReqKind) != kKind || Get<std::uint32_t>(r, kReqKind2) != kKind2) {
@@ -51,13 +64,7 @@ std::optional<BossAction> ActionFromRequest(const Request& r, bool* plug) {
         *plug = has_plug;
     }
     if (!has_plug) {
-        for (std::size_t i = 0; i < a.places.size(); ++i) {
-            const coop::protocol::Vec3 p{Get<float>(r, kReqPlaces + 12 * i), Get<float>(r, kReqPlaces + 12 * i + 4),
-                                         Get<float>(r, kReqPlaces + 12 * i + 8)};
-            if (std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2])) {
-                a.places[i] = p;
-            }
-        }
+        a.places = PlacesOf(r);
     }
     const std::array<float, 2> extra{Get<float>(r, kReqExtra), Get<float>(r, kReqExtra + 4)};
     if (std::isfinite(extra[0]) && std::isfinite(extra[1])) {
@@ -95,7 +102,7 @@ Request RequestFromAction(const BossAction& a, const OwnAsk& ask) {
     using namespace addr;
     Request r = RequestFromAction(a, ask.node);
     const bool placed = std::any_of(a.places.begin(), a.places.end(), [](const auto& p) { return p.has_value(); });
-    if (ask.has_plug && ask.plug != 0 && !placed) {
+    if (ask.has_plug && ask.plug != 0 && (ask.named || !placed)) {
         Put<std::uint64_t>(r, kReqPlug, ask.plug);
         r[kReqHasPlug] = 1;
     }
@@ -114,6 +121,43 @@ std::optional<OwnAsk> AskFor(const std::map<std::pair<std::int32_t, std::int32_t
         return OwnAsk{last};
     }
     return std::nullopt;
+}
+
+std::optional<OwnAsk> AskFor(const std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk>& by_move,
+                             const std::map<std::int32_t, OwnAsk>& by_slot, std::uint64_t last, const BossAction& a,
+                             const OwnVariants& own, const std::optional<std::string>& variant) {
+    const std::optional<OwnAsk> plain = AskFor(by_move, by_slot, last, a);
+    if (!variant || !plain) {
+        return plain;
+    }
+    const auto conflicts = [&](std::uint64_t node) {
+        const auto it = own.by_node.find(node);
+        return it != own.by_node.end() && std::get<0>(it->second) == a.slot && std::get<1>(it->second) == a.verb &&
+               std::get<2>(it->second) != *variant;
+    };
+    if (!conflicts(plain->node)) {
+        return plain;
+    }
+    if (const auto it = by_slot.find(a.slot);
+        it != by_slot.end() && it->second.node != 0 && !conflicts(it->second.node)) {
+        return OwnAsk{it->second.node};
+    }
+    if (last != 0 && !conflicts(last)) {
+        return OwnAsk{last};
+    }
+    for (const auto& [node, asked] : own.by_node) {
+        if (node != 0 && !conflicts(node)) {
+            return OwnAsk{node};
+        }
+    }
+    return plain;  // (every node it has chose another variation of this move: the move's own, as before)
+}
+
+std::string OwnAskVariant(const Request& r, const std::optional<std::string>& plug_name) {
+    if (r[addr::kReqHasPlug] != 1) {
+        return {};
+    }
+    return plug_name && !plug_name->empty() ? *plug_name : std::string("?");
 }
 
 std::optional<std::string> VariantOf(const std::optional<BossVariants>& v, std::uint32_t seq) {
@@ -253,6 +297,7 @@ const Table::Entry* Table::FindActor(std::uint64_t actor) const {
 void Table::ForgetOwnAsks(Entry& e) {
     e.own_asks.clear();
     e.own_slot_asks.clear();
+    e.own_variants.by_node.clear();
 }
 
 void Table::Note(std::string line) {
@@ -319,8 +364,9 @@ void Table::Publish(const std::vector<Boss>& bosses) {
                         BossAction again = *e.put_action;
                         again.flags = static_cast<std::uint16_t>(again.flags | addr::kReqStartOver);
                         again.changed = true;
-                        e.restart_ask =
-                            AskFor(e.own_asks, e.own_slot_asks, e.own_node, again).value_or(OwnAsk{e.own_node});
+                        e.restart_ask = AskFor(e.own_asks, e.own_slot_asks, e.own_node, again, e.own_variants,
+                                               e.put_variant)
+                                            .value_or(OwnAsk{e.own_node});
                         e.restart_action = again;
                         e.restart_variant = e.put_variant;  // (row 222 part 2: the variation it was put in with)
                         Note(b.name + ": made ours mid-move: its move (slot " + std::to_string(again.slot) +
@@ -670,8 +716,12 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed
                 return e->mine.recent.empty() || v.seq < e->mine.recent.front().seq;  // (gone from recent)
             });
             if (variant) {
-                e->mine_variants.push_back(BossVariant{e->mine.seq, *variant});
-                e->mine_action_variant = BossVariant{e->mine.seq, std::move(*variant)};
+                BossVariant entry{e->mine.seq, std::move(*variant)};
+                if (!entry.name.empty()) {
+                    entry.places = PlacesOf(request);  // row 222: its places (bsa's action has none for a plug ask)
+                }
+                e->mine_variants.push_back(entry);
+                e->mine_action_variant = std::move(entry);
                 ++counts_.owner_variants;
             } else {
                 e->mine_action_variant.reset();
@@ -702,6 +752,9 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed
         }
         if (e->own_slot_asks.size() < kMaxOwnAsks || e->own_slot_asks.contains(slot)) {
             e->own_slot_asks[slot] = ask;
+        }
+        if (e->own_variants.by_node.size() < kMaxOwnAsks || e->own_variants.by_node.contains(node)) {
+            e->own_variants.by_node[node] = {slot, verb, OwnAskVariant(request, plug_name)};
         }
     }
     if (!e->wanted) {
@@ -1093,11 +1146,15 @@ void Table::Resync(Entry& e, const BossBsa& state) {
         // Row 222 part 2: the same action in another variation (Twinrova's feint after an Ice: both by plug, no
         // places) is another move, asked again.
         std::optional<std::string> variant = ActionVariantOf(state, e.wanted_variants);
+        const BossVariant* entry = ActionVariantEntry(state, e.wanted_variants);
         if (e.put_action && *e.put_action == *state.action && e.put_variant == variant && !e.own_action_ran) {
             ++counts_.moves_kept;
         } else {
             Entry::Due d{BossChange{state.seq, *state.action}, true};
             d.variant = std::move(variant);
+            if (entry != nullptr && d.variant && *d.variant == entry->name) {
+                d.variant_places = entry->places;
+            }
             e.due.push_back(std::move(d));
         }
     }
@@ -1224,6 +1281,13 @@ void Table::Receive(std::uint64_t actor, const BossBsa& state, const std::option
             Entry::Due d{*it, false};
             if (std::holds_alternative<BossAction>(it->what)) {
                 d.variant = VariantOf(variants, it->seq);  // row 222 part 2: the owner's variation of this move
+                if (variants) {
+                    for (const BossVariant& x : variants->recent) {
+                        if (x.seq == it->seq) {
+                            d.variant_places = x.places;  // row 222: a named ask's places (it aims as the owner's)
+                        }
+                    }
+                }
             }
             e->due.push_back(std::move(d));
         }
@@ -1385,17 +1449,24 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
             call = std::move(c);
             return true;
         }
-        OwnAsk ask = AskFor(e.own_asks, e.own_slot_asks, e.own_node, action).value_or(OwnAsk{e.own_node});
+        // Row 222: through a node whose own choice is not another variation of this move (OwnVariants).
+        OwnAsk ask = AskFor(e.own_asks, e.own_slot_asks, e.own_node, action, e.own_variants, d.variant)
+                         .value_or(OwnAsk{e.own_node});
         // Row 222 part 2: the owner's variation of this move (its plug name, or plain), not our own AI's last.
         if (WithVariant(guest, d.variant, ask)) {
             call = PoolCall(main_base);  // (a new name pool first; this change is asked again after it)
             return true;
         }
-        Request r = RequestFromAction(action, ask);
+        // Row 222: a named ask goes in with the owner's places (Twinrova's 'Ice' aims at the Link the owner's did).
+        BossAction put = action;
+        if (ask.named && std::none_of(put.places.begin(), put.places.end(), [](const auto& p) { return p.has_value(); })) {
+            put.places = d.variant_places;
+        }
+        Request r = RequestFromAction(put, ask);
         if (copy_own_places_) {
             // Probe 3: no owner's place in the request (NaN, as an ask by plug has): the copy's move takes its own.
             const float nan = std::numeric_limits<float>::quiet_NaN();
-            for (std::size_t i = 0; i < action.places.size(); ++i) {
+            for (std::size_t i = 0; i < put.places.size(); ++i) {
                 Put<float>(r, addr::kReqPlaces + 12 * i, nan);
             }
         }
@@ -1657,7 +1728,7 @@ bool Table::WithVariant(CoopPuppet::Guest& guest, const std::optional<std::strin
         }
         pool_.push_back(*variant);
     }
-    ask = OwnAsk{ask.node, SlotAt(slot), true};
+    ask = OwnAsk{ask.node, SlotAt(slot), true, true};
     ++counts_.variant_named;
     return false;
 }

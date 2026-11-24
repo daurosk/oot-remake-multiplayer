@@ -1280,6 +1280,28 @@ TEST_CASE("object samples carry the owner's boss action variations, component 24
   CHECK_FALSE(ValidVariantName("a	b"));
 }
 
+TEST_CASE("component 24 carries a named ask's places (row 222: Twinrova's 'Ice' aims at the Link they name)") {
+  ObjectSample s{0, test::kPlacedId, 3, {}};
+  s.state.time = {100, 1};
+  BossVariant ice{9, "Ice"};
+  ice.places[0] = Vec3{-0.79f, 142.16f, -158.71f};
+  ice.places[1] = Vec3{-0.60f, 142.47f, -158.53f};
+  s.state.variants = BossVariants{{BossVariant{7, ""}, ice}};
+  const Bytes bytes = must_encode(s);
+  Message back;
+  REQUIRE(decode(bytes, back) == Error::none);
+  CHECK(std::get<ObjectSample>(back) == s);
+  // Refused: places on a plain ask (bsa's action has them), a place not finite.
+  Bytes out;
+  BossVariant plain{7, ""};
+  plain.places[0] = Vec3{1.0f, 2.0f, 3.0f};
+  s.state.variants = BossVariants{{plain}};
+  CHECK(encode(s, out) == Error::bad_value);
+  ice.places[2] = Vec3{std::numeric_limits<float>::infinity(), 0.0f, 0.0f};
+  s.state.variants = BossVariants{{ice}};
+  CHECK(encode(s, out) == Error::bad_value);
+}
+
 TEST_CASE("object id layout on the wire") {
   const Bytes b = must_encode(ObjectOwner{test::kMadeId, 2, 0x0102, 0x0a0b0c0d});
   REQUIRE(b.size() == kHeaderSize + 10 + 1 + 2 + 4);

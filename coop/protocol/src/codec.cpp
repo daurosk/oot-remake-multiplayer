@@ -683,6 +683,9 @@ Error check_object_state(const ObjectState& s) {
     std::uint32_t before = 0;
     for (const BossVariant& v : s.variants->recent) {
       if (v.seq == 0 || v.seq <= before || !ValidVariantName(v.name)) return Error::bad_value;
+      for (const auto& p : v.places) {
+        if (p && (v.name.empty() || !all_finite(*p))) return Error::bad_value;
+      }
       before = v.seq;
     }
   }
@@ -828,6 +831,16 @@ void write_object_state(const ObjectState& s, Writer& w) {
       for (const BossVariant& v : s.variants->recent) {
         w.u32(v.seq);
         w.str(v.name);
+        std::uint8_t mask = 0;  // (row 222: a named ask's places, BossVariant::places)
+        for (std::size_t i = 0; i < v.places.size(); ++i) {
+          if (v.places[i]) mask |= static_cast<std::uint8_t>(1u << i);
+        }
+        w.u8(mask);
+        for (const auto& p : v.places) {
+          if (p) {
+            for (float f : *p) w.f32(f);
+          }
+        }
       }
     });
   }
@@ -1586,6 +1599,15 @@ Error decode_component(ObjectComponent id, Reader& c, ObjectState& s, bool& know
         COOP_READ(c.u32(v.seq));
         COOP_TRY(c.str(v.name, kMaxBossVariantChars));
         if (v.seq == 0 || v.seq <= before || !ValidVariantName(v.name)) return Error::bad_value;
+        std::uint8_t mask = 0;
+        COOP_READ(c.u8(mask));
+        if (mask > 0x7 || (mask != 0 && v.name.empty())) return Error::bad_value;
+        for (std::size_t k = 0; k < v.places.size(); ++k) {
+          if (mask & (1u << k)) {
+            COOP_TRY(read_floats(c, v.places[k].emplace()));
+            if (!all_finite(*v.places[k])) return Error::bad_value;
+          }
+        }
         before = v.seq;
       }
       return Error::none;

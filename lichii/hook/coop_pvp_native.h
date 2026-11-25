@@ -145,7 +145,10 @@ public:
     }
     bool Empty() const { return places_.empty(); }
     // The point of the ring's path nearest `point`, among its places from `from_us` on and the straight
-    // lines between two neighbours no more than kJoinUs apart (a warp or a gap is not a path). Nothing when
+    // lines between two neighbours that are joined: no more than kJoinUs apart in time AND no farther apart
+    // than kJoinMps covers in that time plus kJoinSlackM (a gap is not a path, and a warp is not one either,
+    // however close its two samples are in time: at a sample each 33-50 ms the time alone would join a warp
+    // of any length, and every point of that line would pass as the attacker's place). Nothing when
     // the ring has no place from then on. The attacker's place is checked with it: the strike's `from` is
     // where the attacker stood when it HIT, which is later than `seen_us` by the copy's display delay and one
     // trip, so a running attacker is not where it was at `seen_us` (at 7 m/s and 200 ms: 1.4 m).
@@ -169,6 +172,8 @@ public:
             const float ex = q[0] - p.at[0], ey = q[1] - p.at[1], ez = q[2] - p.at[2];
             const float len2 = ex * ex + ey * ey + ez * ez;
             if (!(len2 > 1e-8f)) continue;
+            const float far = kJoinMps * static_cast<float>(places_[i + 1].t_us - p.t_us) * 1e-6f + kJoinSlackM;
+            if (!(len2 <= far * far)) continue;  // a warp: two places, no path between them
             const float u = std::clamp(
                 ((point[0] - p.at[0]) * ex + (point[1] - p.at[1]) * ey + (point[2] - p.at[2]) * ez) / len2, 0.0f,
                 1.0f);
@@ -177,6 +182,11 @@ public:
         return best;
     }
     static constexpr std::uint64_t kJoinUs = 250'000;
+    // The fastest move followed as a path. A bound we chose, not a value read from the game (Link's top speed
+    // on foot, on a horse or falling is UNKNOWN here): a faster honest move is only checked at its samples, so
+    // the cost of a bound too low is a refused strike (`out of reach`), never a hit from a place nobody was.
+    static constexpr float kJoinMps = 30.0f;
+    static constexpr float kJoinSlackM = 0.5f;  // the jitter of two samples (kJitterM)
 
 private:
     struct Place {
@@ -237,21 +247,63 @@ struct StrikeView {
     // A shot or blast: the last place our game has for the strike's object;
     // nothing when our game does not have that object.
     std::optional<Vec3> object_at;
-    // The server time at which we first saw the attacker's status say it is away (paused, loading, a cutscene,
-    // a menu, dead); 0: it is not away, or since when is not known.
-    std::uint64_t attacker_away_us = 0;
+    // The server time at which we saw the attacker FALL (FallWatch::Since: its status went from here to dead);
+    // 0: it did not fall, or since when is not known.
+    std::uint64_t attacker_fell_us = 0;
 };
 
 // Both hit at once (5.6): two players swing in the same moment and one of the two strikes downs its victim. The
 // downed game's own strike was swung before it fell and is on its way; it counts (a trade, as two of the game's
 // enemies trade), also when the news of the fall (channel 0) overtakes the strike (channel 2, sent again after a
-// lost packet). So an attacker whose status went away no longer than this ago is not kept off for it.
+// lost packet). So an attacker that FELL no longer than this ago is not kept off for it. Only a fall has the
+// grace: a pause, a load, a cutscene or a menu keeps a strike off at once, as before.
 inline constexpr std::uint64_t kTradeGraceUs = 200'000;
+// A fall no sooner than this after the last one is a new fall. A status flapping dead / not dead faster does not
+// open the grace again and again: it stays measured from the first fall.
+inline constexpr std::uint64_t kFallAgainUs = 1'000'000;
+
+// Since when one player is fallen, from its status as we see it each frame. A fall is the status going from
+// "here" (no away bit) to dead: a player that was already away (in a menu, paused, loading, in a cutscene) and
+// then says dead swung nothing just before, so that is no fall with a grace.
+class FallWatch {
+public:
+    void See(std::uint8_t status, std::uint64_t now_us) {
+        const bool dead = (status & proto::status::dead) != 0;
+        if (dead && !dead_ && !was_away_ &&
+            (fell_us_ == 0 || now_us < fell_us_ || now_us - fell_us_ > kFallAgainUs)) {
+            fell_us_ = now_us == 0 ? 1 : now_us;
+            graced_ = true;
+        } else if (dead && !dead_) {
+            graced_ = false;  // dead again too soon, or from away: no grace for this one
+        }
+        dead_ = dead;
+        was_away_ = CoopPvp::Guarded(status);
+    }
+    // The time of the fall while the player is dead and that fall has the grace, else 0.
+    std::uint64_t Since() const { return dead_ && graced_ ? fell_us_ : 0; }
+
+private:
+    std::uint64_t fell_us_ = 0;
+    bool dead_ = false;
+    bool was_away_ = false;
+    bool graced_ = false;
+};
 
 inline bool AttackerAway(const StrikeView& v, std::uint64_t now_us) {
     if (!CoopPvp::Guarded(v.attacker.status)) return false;
-    return !(v.attacker_away_us != 0 && now_us >= v.attacker_away_us &&
-             now_us - v.attacker_away_us <= kTradeGraceUs);
+    // Away. Without the dead bit it is no fall: kept off at once. With it: the fall's grace.
+    if ((v.attacker.status & proto::status::dead) == 0) return true;
+    return !(v.attacker_fell_us != 0 && now_us >= v.attacker_fell_us &&
+             now_us - v.attacker_fell_us <= kTradeGraceUs);
+}
+
+// The attacker's ring takes only samples of the scene it is the ring of (5.6, "rings are one scene's"). A sample
+// carries no scene of its own; presence keeps the sequence of the sample that last set the player's scene. When
+// we see the scene change we keep that sequence, and a sample before it (the old scene's samples that came in
+// the same tick, still in presence's queue) is not taken. `from_seq` nothing: no scene seen yet, every sample.
+// Sequences wrap (as presence's sequence_after).
+inline bool SampleOfScene(std::uint32_t sequence, const std::optional<std::uint32_t>& from_seq) {
+    return !from_seq || static_cast<std::int32_t>(sequence - *from_seq) >= 0;
 }
 
 inline float Distance(const Vec3& a, const Vec3& b) {

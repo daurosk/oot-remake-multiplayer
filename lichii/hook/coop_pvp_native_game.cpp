@@ -67,7 +67,9 @@ struct Glue {
     CoopPvpNative::GuardRing guard;     // our Link's guard toward a place, each frame (a shield raised just before)
     std::optional<std::string> own_scene;  // the rings are one scene's: a load starts them again
     std::array<std::optional<std::string>, proto::kMaxPlayers + 1> copy_scene;
-    std::array<std::uint64_t, proto::kMaxPlayers + 1> away_us{};  // since when a player's status is away (a trade)
+    // The sequence of the sample that set a copy's scene: older samples are the last scene's (SampleOfScene).
+    std::array<std::optional<std::uint32_t>, proto::kMaxPlayers + 1> copy_from_seq;
+    std::array<CoopPvpNative::FallWatch, proto::kMaxPlayers + 1> falls;  // since when a player is fallen (a trade)
     CoopPvpNative::SeqGate seq_gate;
     CoopPvpNative::Mercy mercy;
     CoopPvpNative::Tables tables = CoopPvpNative::FirstTables();
@@ -202,13 +204,19 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
         g.guard.Clear();
         for (auto& ring : g.copies) ring.Clear();
         g.copy_pushed_us.fill(0);
-        g.away_us.fill(0);
+        g.copy_scene.fill(std::nullopt);
+        g.copy_from_seq.fill(std::nullopt);
+        g.falls.fill({});
     }
     for (std::uint8_t n = 1; n <= proto::kMaxPlayers; ++n) {
         if ((forget & Bit(n)) != 0) {
             g.seq_gate.Forget(n);
             g.copies[n].Clear();
             g.copy_pushed_us[n] = 0;
+            // A new player on this number starts with nothing of the last one: no scene, no fall.
+            g.copy_scene[n].reset();
+            g.copy_from_seq[n].reset();
+            g.falls[n] = {};
         }
     }
 
@@ -249,21 +257,21 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
                 if (const auto* player = p.player(n)) {
                     s.scene = player->scene();
                     s.status = player->flags();
-                    if (!CoopPvp::Guarded(s.status)) {
-                        g.away_us[n] = 0;
-                    } else if (g.away_us[n] == 0) {
-                        g.away_us[n] = server_now_us;
-                    }
+                    g.falls[n].See(s.status, server_now_us);
                     // The attacker's ring: every sample we RECEIVED, also those not drawn yet (the copy is
                     // drawn a show delay late; a strike's `from` is the attacker's place when it hit, which
                     // on a short trip is newer than what our copy shows). A new scene starts the ring again:
-                    // a place of the last scene is no place of this one (a room change mid-swing).
+                    // a place of the last scene is no place of this one (a room change mid-swing). The
+                    // last scene's samples that came in this same tick are still in the queue and newer
+                    // than what we pushed: only samples from the one that set the scene on are taken.
                     if (s.scene != g.copy_scene[n]) {
                         g.copy_scene[n] = s.scene;
+                        g.copy_from_seq[n] = player->scene_sequence();
                         g.copies[n].Clear();
                     }
                     for (const auto& sample : player->samples()) {
                         const std::uint64_t t = sample.time.server_time_us;
+                        if (!CoopPvpNative::SampleOfScene(sample.time.sequence, g.copy_from_seq[n])) continue;
                         if (t != 0 && t > g.copy_pushed_us[n]) {
                             g.copies[n].Push(t, sample.position);
                             g.copy_pushed_us[n] = t;
@@ -351,7 +359,7 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
             view.downed = downed;
             view.own = &g.own;
             view.attacker_ring = a != 0 ? &g.copies[a] : nullptr;
-            view.attacker_away_us = g.away_us[a];
+            view.attacker_fell_us = g.falls[a].Since();
             // weapon_range: WeaponParam.Range is not read yet (the 1.3 m floor); object_at: shots are not sent yet.
             CoopPvpNative::PathBInput in;
             in.weapon = weapon_of(a);

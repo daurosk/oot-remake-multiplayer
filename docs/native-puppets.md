@@ -561,8 +561,10 @@ hit on a guarding copy, and the copy's owner's hit on our guarding Link.
   samples it received, also those its copy does not draw yet). The strike's `from` is the attacker's place when
   it HIT, which is later than `seen_us` by its display delay and a trip (a running attacker is 1.4 m on after
   200 ms), so it must be within 0.5 m of the **path** of that ring from `seen_us` - 100 ms on (its places and
-  the lines between neighbours at most 250 ms apart: a warp is no path; `PlaceRing::NearestSince`), and by
-  source:
+  the lines between neighbours at most 250 ms apart and no farther apart than 30 m/s covers in that time plus
+  0.5 m: a gap is no path and a warp is none, however close in time its two samples are;
+  `PlaceRing::NearestSince`. The 30 m/s is a bound we chose, Link's top speed is not read: a faster honest move
+  is checked at its samples only), and by source:
   - sword or body: the victim's ring place of the attacker within the weapon's reach of the hit place, the reach
     from the game's data (`WeaponParam.Range` of the weapon the attacker has equipped as `PLAYER_EQUIP` says: the
     Deku Stick's 1.8 m, ...; a weapon without one: today's 1.3 m) + 0.5 m; never less than 1.3 m;
@@ -575,10 +577,14 @@ hit on a guarding copy, and the copy's owner's hit on our guarding Link.
   game's quickest: a spin's several hits in one swing) and drops the rest (`stats.pvp_strikes_flood`).
 - Kept off as today: an event, a menu, a load, pause, another scene, life not read, downed or dead, the attacker in
   one of those, or the victim's copy of the attacker not known. Each still gets its answer (`kept off`) and
-  spends its seq. The rings are one scene's: a load clears them (a room change mid-swing).
+  spends its seq. The rings are one scene's: a load clears them (a room change mid-swing), and a copy's ring
+  takes only samples from the one that set its new scene on (`SampleOfScene`: the last scene's samples that came
+  in the same tick are still queued). A player number that left starts again with no scene and no fall.
 - **Both hit at once.** Each game judges the strike on its own Link, so two swings in one moment are a trade. An
-  attacker whose status went away (dead, a menu, ...) at most 200 ms ago (`kTradeGraceUs`) is not kept off for it:
-  its strike was swung before, and only the news overtook it.
+  attacker that FELL (its status went from here to dead) at most 200 ms ago (`kTradeGraceUs`) is not kept off for
+  it: its strike was swung before, and only the news overtook it. Only a fall has that grace: a pause, a load, a
+  cutscene or a menu keeps a strike off at once, and so does dead from one of those. One grace per fall
+  (`FallWatch`): a status flapping dead / not dead inside a second does not open it again.
 - **A shield raised just before (path B).** Guarded when our Link guards toward the attacker now, or did at
   `seen_us` (`GuardRing`, a second of frames): never a hit through a shield either screen shows raised. Lag is
   paid by the attacker.

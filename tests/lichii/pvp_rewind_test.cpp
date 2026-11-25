@@ -177,22 +177,32 @@ TEST_CASE("pvp rewind: a strike from where the attacker was not is out of reach"
         d.attacker.Push(d.Seen(), Vec3{-4, 0, 0});
         d.attacker.Push(d.Seen() + 300'000, Vec3{6, 0, 0});
         CHECK(Refusal(s, d.view, d.Now()) == proto::PvpOutcome::out_of_reach);
-        // The same two samples 100 ms apart are a path (a fast move), and (1, 0, 0) is on it.
+        // The same two samples 100 ms apart are a warp too (100 m/s): close in time does not make a path.
         d.attacker.Clear();
         d.attacker.Push(d.Seen(), Vec3{-4, 0, 0});
         d.attacker.Push(d.Seen() + 100'000, Vec3{6, 0, 0});
+        CHECK(Refusal(s, d.view, d.Now()) == proto::PvpOutcome::out_of_reach);
+        // Two samples 50 ms apart, as they come: still a warp of 10 m.
+        d.attacker.Clear();
+        d.attacker.Push(d.Seen(), Vec3{-4, 0, 0});
+        d.attacker.Push(d.Seen() + 50'000, Vec3{6, 0, 0});
+        CHECK(Refusal(s, d.view, d.Now()) == proto::PvpOutcome::out_of_reach);
+        // A fast move is a path: 4 m in 200 ms (20 m/s), and (1, 0, 0) is on it.
+        d.attacker.Clear();
+        d.attacker.Push(d.Seen(), Vec3{-1, 0, 0});
+        d.attacker.Push(d.Seen() + 200'000, Vec3{3, 0, 0});
         CHECK_FALSE(Refusal(s, d.view, d.Now()));
     }
     SUBCASE("the ring's path: the nearest point, on a line between two samples") {
         PlaceRing r;
         r.Push(1'000'000, Vec3{0, 0, 0});
-        r.Push(1'050'000, Vec3{2, 0, 0});
+        r.Push(1'100'000, Vec3{2, 0, 0});
         const auto near_path = r.NearestSince(900'000, Vec3{1, 0, 1});
         REQUIRE(near_path);
         CHECK((*near_path)[0] == doctest::Approx(1.0f));
         CHECK((*near_path)[2] == doctest::Approx(0.0f));
-        CHECK_FALSE(r.NearestSince(1'050'001, Vec3{1, 0, 1}));
-        const auto last = r.NearestSince(1'050'000, Vec3{0, 0, 0});  // only the newest place is left
+        CHECK_FALSE(r.NearestSince(1'100'001, Vec3{1, 0, 1}));
+        const auto last = r.NearestSince(1'100'000, Vec3{0, 0, 0});  // only the newest place is left
         REQUIRE(last);
         CHECK((*last)[0] == doctest::Approx(2.0f));
     }
@@ -284,15 +294,60 @@ TEST_CASE("pvp rewind: both hit at once") {
         Duel d;
         const auto s = d.Swing();
         d.view.attacker.status = proto::status::dead;
-        d.view.attacker_away_us = d.Now() - 30'000;  // the news of its fall overtook its strike
+        d.view.attacker_fell_us = d.Now() - 30'000;  // the news of its fall overtook its strike
         CHECK_FALSE(Refusal(s, d.view, d.Now()));
-        // Away for longer than the grace, or since an unknown time: kept off as before.
-        d.view.attacker_away_us = d.Now() - kTradeGraceUs - 1;
+        // The death's own cutscene or menu bit beside the dead bit does not end the grace.
+        d.view.attacker.status = proto::status::dead | proto::status::in_cutscene;
+        CHECK_FALSE(Refusal(s, d.view, d.Now()));
+        d.view.attacker.status = proto::status::dead;
+        // Fallen for longer than the grace, or since an unknown time: kept off as before.
+        d.view.attacker_fell_us = d.Now() - kTradeGraceUs - 1;
         CHECK(Refusal(s, d.view, d.Now()) == proto::PvpOutcome::kept_off);
-        d.view.attacker_away_us = 0;
+        d.view.attacker_fell_us = 0;
         CHECK(Refusal(s, d.view, d.Now()) == proto::PvpOutcome::kept_off);
-        d.view.attacker_away_us = d.Now() + 1;  // a time after now is no grace
+        d.view.attacker_fell_us = d.Now() + 1;  // a time after now is no grace
         CHECK(Refusal(s, d.view, d.Now()) == proto::PvpOutcome::kept_off);
+    }
+    SUBCASE("only a fall has the grace: a menu, a pause, a load or a cutscene keeps off at once") {
+        Duel d;
+        const auto s = d.Swing();
+        d.view.attacker_fell_us = d.Now() - 1;  // even with a fall time, a status without dead is no fall
+        for (const std::uint8_t away : {proto::status::in_menu, proto::status::paused, proto::status::loading,
+                                        proto::status::in_cutscene}) {
+            d.view.attacker.status = away;
+            CHECK(Refusal(s, d.view, d.Now()) == proto::PvpOutcome::kept_off);
+        }
+    }
+    SUBCASE("the fall watch: one grace per fall, a flapping status does not open it again") {
+        FallWatch w;
+        CHECK(w.Since() == 0);
+        w.See(0, 1'000'000);
+        w.See(proto::status::dead, 1'016'000);
+        CHECK(w.Since() == 1'016'000);
+        w.See(proto::status::dead, 1'032'000);
+        CHECK(w.Since() == 1'016'000);  // still the same fall
+        // dead, not dead, dead again inside a second: no new grace
+        w.See(0, 1'100'000);
+        CHECK(w.Since() == 0);
+        w.See(proto::status::dead, 1'150'000);
+        CHECK(w.Since() == 0);
+        w.See(0, 1'200'000);
+        w.See(proto::status::dead, 1'250'000);
+        CHECK(w.Since() == 0);
+        // back up, and more than a second after the first fall a real second one
+        w.See(0, 1'300'000);
+        w.See(proto::status::dead, 2'400'000);
+        CHECK(w.Since() == 2'400'000);
+        // from a menu (or any away status) to dead: nothing was swung just before, no grace
+        FallWatch menu;
+        menu.See(proto::status::in_menu, 5'000'000);
+        menu.See(proto::status::in_menu | proto::status::dead, 5'016'000);
+        CHECK(menu.Since() == 0);
+        menu.See(proto::status::dead, 5'032'000);
+        CHECK(menu.Since() == 0);
+        // a new player on the number starts clean
+        w = {};
+        CHECK(w.Since() == 0);
     }
     SUBCASE("two attackers in one frame: the first is taken, the second meets the invincible time") {
         Duel d;
@@ -364,7 +419,6 @@ TEST_CASE("pvp rewind: pause, cutscene, menu and load keep a strike off, with an
     SUBCASE("an event has our Link") { d.view.local.event = true; }
     SUBCASE("the attacker has been in a menu for a second") {
         d.view.attacker.status = proto::status::in_menu;
-        d.view.attacker_away_us = d.Now() - 1'000'000;
     }
     const auto kept = DecidePathB(s, true, d.view, Kokiri(), t, seq, mercy, d.Now());
     REQUIRE(kept);  // the attacker is told (kept off), the seq is spent
@@ -399,6 +453,14 @@ TEST_CASE("pvp rewind: a room change mid-swing") {
     SUBCASE("the attacker came in from another scene: its ring starts again, no place of it yet") {
         d.attacker.Clear();
         CHECK(Refusal(s, d.view, d.Now()) == proto::PvpOutcome::out_of_reach);
+    }
+    SUBCASE("the last scene's samples still in the queue are not this scene's") {
+        CHECK(SampleOfScene(7, std::nullopt));  // no scene seen yet: every sample
+        CHECK_FALSE(SampleOfScene(99, std::optional<std::uint32_t>{100}));
+        CHECK(SampleOfScene(100, std::optional<std::uint32_t>{100}));  // the one that set the scene
+        CHECK(SampleOfScene(101, std::optional<std::uint32_t>{100}));
+        CHECK(SampleOfScene(2, std::optional<std::uint32_t>{0xFFFF'FFFEu}));  // the sequence wrapped
+        CHECK_FALSE(SampleOfScene(0xFFFF'FFFDu, std::optional<std::uint32_t>{2}));
     }
 }
 

@@ -26,7 +26,7 @@ index 42d2b18dce..21a464ae50 100644
 -    const std::string hybrid_note = RetireHybridCoresOff(user_file);
 -    {
 +    // OoT co-op: a portable kit (user\ beside the exe) reads only its own switches, never the
-+    // player's normal install's (%APPDATA%ritchii or eden): the kit stays apart from it, and
++    // player's normal install's (%APPDATA%\fritchii or eden): the kit stays apart from it, and
 +    // its retire-hybrid-cores rewrite never touches that file.
 +    bool portable_kit = false;
 +    if (const auto exe_dir = GetSwitchExeDirectory(argv0); !exe_dir.empty()) {

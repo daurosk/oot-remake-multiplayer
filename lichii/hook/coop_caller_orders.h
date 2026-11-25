@@ -28,6 +28,7 @@ inline constexpr int kLiftRide = 47;      // jabu-lifts #65 (coop_lift_ride.h)
 inline constexpr int kDbnoBody = 48;      // down but not out: our downed Link (coop_dbno_body.h)
 inline constexpr int kSwitchShare = 49;   // room-objects: another player's timed switch held on ours
 inline constexpr int kBossRooms = 50;     // boss rooms (coop_boss_game.cpp)
+inline constexpr int kBossShots = 51;     // Twinrova hand-over: the owner's shots fired by our copies (coop_boss_shots.h)
 inline constexpr int kEventResult = 58;   // row 98(2): our asker's result of another player's gimmick event (coop_hook.cpp)
 inline constexpr int kEyeSwitch = 59;     // deku-switches: before the live events' requester (coop_hook.cpp)
 inline constexpr int kLiveEvents = 60;    // live events' requester (coop_hook.cpp)
@@ -43,7 +44,7 @@ inline constexpr int kLifeGauge = 70;     // row 238: HUD gauges refreshed after
 inline constexpr int kEmote = 71;         // our Link's gesture and the Navis' calls (coop_emote_body.h)
 
 inline constexpr std::array kAll{kSpawn,     kShotReflect, kFairy,       kMover,     kDrops,   kGrass,        kTime,
-                                 kSwitchStand, kBrainState, kBossTable, kBossOrders, kLiftRide,    kDbnoBody,  kSwitchShare, kBossRooms, kEventResult, kEyeSwitch,
+                                 kSwitchStand, kBrainState, kBossTable, kBossOrders, kLiftRide,    kDbnoBody,  kSwitchShare, kBossRooms, kBossShots, kEventResult, kEyeSwitch,
                                  kLiveEvents, kTeleportEvent, kScrubs, kCounters, kStory,      kOcarinaEquip, kPvpShield,
                                  kTestDress, kKeptShield, kLifeGauge, kEmote};
 

@@ -66,6 +66,7 @@
 #include "coop_boss_native.h"
 #include "coop_brain_state.h"
 #include "coop_boss_orders.h"
+#include "coop_boss_shots.h"
 #include "coop_difficulty.h"
 #include "coop_puppet.h"
 #include "coop_shot_reflect.h"
@@ -2147,6 +2148,7 @@ public:
                 }
                 CoopBossOrders::TheTable().Publish({});  // row 222: no owner or copy: our managers decide again
                 CoopBrainState::TheTable().Publish({});   // row 149: nothing to hand over
+                CoopBossShots::TheTable().Publish({});   // our bosses fire on their own again
                 sharing_ = false;
             }
             if (CoopWorldSnapshot::TheStore().Enabled() && scene && !scene->empty() && Ready(system)) {
@@ -2247,6 +2249,14 @@ public:
                                       std::uint64_t result, std::uint64_t) {
                                        return CoopBossOrders::TheTable().Step(guest, after_call, result,
                                                                               TheBossMain().load());
+                                   });
+                // Twinrova hand-over: our bullets' wakes, and the owner's shown by our copies (coop_boss_shots.h).
+                CoopSvc::AddCaller(CoopBossShots::Table::kCallerOrder,
+                                   [](CoopPuppet::Guest& guest, bool after_call,
+                                      std::uint64_t result, std::uint64_t) {
+                                       return CoopBossShots::TheTable().Step(guest, after_call, result,
+                                                                             TheBossMain().load(),
+                                                                             CoopEvery::NowUs());
                                    });
                 CoopSvc::AddCaller(kGrassCallerOrder,
                                    [](CoopPuppet::Guest& guest, bool after_call,
@@ -2582,6 +2592,25 @@ public:
                     orders.Receive(address, state);
                 }
                 for (const std::string& note : orders.TakeNotes()) {
+                    LOG_INFO(Core, "coop: bosses: {}", note);
+                }
+            }
+            // Twinrova hand-over (coop_boss_shots.h): the same bosses for their shots, then the owner's.
+            CoopBossShots::Table& shots = CoopBossShots::TheTable();
+            if (shots.On()) {
+                std::vector<CoopBossShots::Member> members;
+                members.reserve(list.size());
+                for (const CoopBossNative::Boss& b : list) {
+                    members.push_back({b.actor,
+                                       b.role == CoopBossNative::Role::owner ? CoopBossShots::Role::owner
+                                                                             : CoopBossShots::Role::copy,
+                                       b.owner, b.name});
+                }
+                shots.Publish(members);
+                for (const auto& [address, state] : sync_.BossShotsIn()) {
+                    shots.Receive(address, state);
+                }
+                for (const std::string& note : shots.TakeNotes()) {
                     LOG_INFO(Core, "coop: bosses: {}", note);
                 }
             }
@@ -3683,6 +3712,7 @@ private:
             CoopProjectiles::TheOwnShots().Reset();
             CoopBossOrders::TheTable().Reset();  // row 222: its block and nodes were the old game's
             CoopBrainState::TheTable().Reset();   // row 149: its block and blackboards too
+            CoopBossShots::TheTable().Reset();   // its block and bosses were the old game's
             extras_.Reset();  // difficulty: that run's extra enemies are gone with it
             horde_.Reset();
             {
@@ -4936,6 +4966,7 @@ private:
                     if (const auto brain = CoopBrainState::TheTable().OwnerBoard(a)) {
                         s.brain = CoopBrainState::ToKeyed(*brain);  // row 149: its blackboard move state
                     }
+                    s.shots = CoopBossShots::TheTable().OwnerShots(a, CoopEvery::NowUs());  // its shots, ours
                     if (own_hit_life) {
                         s.hit_at = NewOwnHitAt(r, a, *own_hit_life, s.position, own_hit_took_life);
                     } else if (CoopBossNative::TheTable().OwnShotNear(s.position)) {

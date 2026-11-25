@@ -65,6 +65,8 @@
 #include "coop_actor_events.h"
 #include "coop_boss_native.h"
 #include "coop_boss_orders.h"
+#include "coop_boss_shots.h"
+#include "coop_every.h"
 #include "coop_boss_scenes.h"
 #include "coop_hallway.h"
 #include "coop_dbno_body.h"
@@ -468,6 +470,36 @@ void SetBossOrders() {
 }
 
 // Every 10 s while orders move: the counts (the probe run's lines).
+// Twinrova hand-over (coop_boss_shots.h): a copy fires the owner's shots. The shoot hook is patch 0007's.
+void SetBossShots() {
+    const bool on = Env("LICHII_COOP_BOSS_SHOTS") != "0";
+    CoopBossShots::Table& t = CoopBossShots::TheTable();
+    if (t.On() == on) {
+        return;
+    }
+    t.SetOn(on);
+    LOG_INFO(Core, "coop: bosses: Twinrova's shots {}", on ? "fired on the owner's word" : "each game's own AI's");
+}
+
+void LogBossShots() {
+    static std::uint64_t said_ms = 0;
+    static CoopBossShots::Counts said{};
+    const std::uint64_t now = SteadyMs();
+    if (now - said_ms < 10'000) {
+        return;
+    }
+    const CoopBossShots::Counts c = CoopBossShots::TheTable().GetCounts();
+    if (c.owner_kept == said.owner_kept && c.copy_stopped == said.copy_stopped && c.fired == said.fired &&
+        c.dropped == said.dropped && c.restarts == said.restarts) {
+        return;
+    }
+    said_ms = now;
+    said = c;
+    LOG_INFO(Core, "coop: bosses: shots: ours sent {}; copies: {} owner's fired, {} own stopped, {} dropped, {} "
+                   "started again",
+             c.owner_kept, c.fired, c.copy_stopped, c.dropped, c.restarts);
+}
+
 void LogBossOrders() {
     static std::uint64_t said_ms = 0;
     static CoopBossOrders::Counts said{};
@@ -1997,6 +2029,7 @@ void Frame(void* ctx, int site) {
         NativeTags(ctx);            // the name tags on the game's balloons (coop_native_tags.h)
         LogBossNative();
         LogBossOrders();
+        LogBossShots();
         CoopMapPage::Frame(ctx, g_api);   // the Map page's panes, found once while the game plays
         if (const auto menu = CoopMapPage::MenuState()) {  // minimap-b: the drop log's menu state (patch 0018)
             coop::host::map_drop_log().set_menu(menu->menu_open, menu->map_page);
@@ -2030,6 +2063,7 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         g_world_wraps.store(level.wraps);
         SetBossNative();
         SetBossOrders();
+        SetBossShots();
         if (g_world_version.exchange(level.version) != level.version) {
             LOG_INFO(Core, "coop: world hooks: hookshot.exe has level {} (this module {}), wraps {:#x}{}", level.version,
                      HOS_COOP_WORLD_VERSION, level.wraps,
@@ -2127,6 +2161,11 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
                         (CoopEnemyShots::StopAtCreate(name, {place[0], place[1], place[2]}, shot ? shooter : 0) ||
                          // Native boss sync: a copy boss's own minion (the owner's comes as a copy).
                          CoopBossNative::TheTable().CopyMakes(CoopObjects::MinionMaker(name)));
+        // Twinrova hand-over: her bullets are made here once and woken later; their handles are kept
+        // (coop_boss_shots.h). b: where the game keeps the request.
+        if (!t_create_stop && CoopBossShots::IsBullet(name) && CoopBossShots::TheTable().On()) {
+            CoopBossShots::TheTable().KeepBullet(b, name);
+        }
         if (t_create_stop) {
             e.flags |= CoopActorEvents::kStopped;
         }

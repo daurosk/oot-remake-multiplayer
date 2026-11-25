@@ -89,6 +89,8 @@ struct Seen {
     // Row 149 (coop_brain_state.h): for one of ours, the move state in its AI blackboard (sent in its samples,
     // component 25).
     std::optional<coop::protocol::KeyedValues> brain;
+    // Twinrova hand-over (coop_boss_shots.h): for one of ours, the shots its game fired (component 29).
+    std::optional<coop::protocol::BossShots> shots;
     // Boss turns (0.11.8): an enemy's attack as its own game says (CoopBossNative::AttackFlagsAt: its BSA's current
     // action verb attribute Attack). nullopt: not read (no BSA, not an enemy).
     std::optional<bool> attacking;
@@ -1368,6 +1370,7 @@ public:
     // Row 149 (coop_brain_state.h): the last owner's blackboard move state (by address), for our copies and for one
     // just made ours (until our own values are sent).
     std::vector<std::pair<std::uint64_t, coop::protocol::KeyedValues>> BrainStateIn() const;
+    std::vector<std::pair<std::uint64_t, coop::protocol::BossShots>> BossShotsIn() const;
     // The actors of the enemies we own, with their names (for the test drive).
     std::vector<std::pair<std::uint64_t, std::string>> Owned() const;
     // Sync digest (coop_digest.h): every shared object we hold (owner known), once per id, by id: name, owner,
@@ -1450,6 +1453,8 @@ private:
         // Row 149: the last owner's blackboard move state, from its samples or the hand-over state. Kept across
         // the hand-over to us (it is what our game then takes); dropped once our own values are sent.
         std::optional<coop::protocol::KeyedValues> brain_in;
+        std::optional<coop::protocol::BossShots> shots;     // Twinrova hand-over: ours, as last read
+        std::optional<coop::protocol::BossShots> shots_in;  // Twinrova hand-over: a copy's, the owner's latest
         bool boss_native = false;  // a bsa came for it once: its AI runs (never held), across owners
         coop::protocol::Vec3 velocity{};
         std::uint64_t seen_at = 0;
@@ -1466,6 +1471,7 @@ private:
         std::string sent_animation;
         std::string sent_slots;  // issue 150: the slot names last sent
         std::optional<std::uint32_t> sent_bsa_seq;  // native boss sync: the boss verbs' seq last sent
+        std::optional<std::uint32_t> sent_shots_seq;  // Twinrova hand-over: the shots' seq last sent
         std::optional<std::uint32_t> sent_orders_seq;  // row 222: the battle orders' seq last sent
         std::uint32_t sequence = 0;
         // Protocol 14: the newest hit our game took on our own enemy (Seen::hit_record), in its samples until

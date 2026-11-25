@@ -3751,3 +3751,237 @@ TEST_CASE("native boss: Twinrova hand-over, a held start its AI left is no hold 
         CHECK(t.Totals().own_start_holds_capped == 0);
     }
 }
+
+// Twinrova hand-over (coop_boss_shots.h): her bullets are kept and woken; a copy wakes and moves its own for each of
+// the owner's, and puts back its own AI's.
+#include "coop_boss_shots.h"
+
+namespace {
+
+namespace bs = CoopBossShots;
+
+constexpr std::uint64_t kShotMain = 0x80020000;
+constexpr std::uint64_t kTwinrova = 0x1000000;
+
+template <typename T>
+void PutAt(FakeGuest& g, std::uint64_t at, T v) {
+    g.Write(at, &v, sizeof v);
+}
+
+// A kept bullet as the game makes it: its handle at `handle` names a request whose +8 is the actor, state 3.
+std::uint64_t PutBullet(FakeGuest& g, bs::Table& t, std::uint64_t handle, const char* name) {
+    const std::uint64_t request = handle + 0x1000, actor = handle + 0x2000;
+    PutAt(g, handle, request);
+    PutAt(g, request + bs::addr::kRequestActor, actor);
+    PutAt(g, actor + bs::addr::kActorState, bs::addr::kStateKept);
+    t.KeepBullet(handle, name);
+    return actor;
+}
+
+std::uint32_t StateOf(FakeGuest& g, std::uint64_t actor) { return g.Get<std::uint32_t>(actor + bs::addr::kActorState); }
+
+coop::protocol::Vec3 PlaceOf(FakeGuest& g, std::uint64_t actor) {
+    coop::protocol::Vec3 p{};
+    g.Read(actor + bs::addr::kActorPosition, p.data(), sizeof p);
+    return p;
+}
+
+void Frame(bs::Table& t, FakeGuest& g, std::uint64_t now_us) { CHECK_FALSE(t.Step(g, false, 0, kShotMain, now_us)); }
+
+bs::Member TwinMember(bs::Role role, std::uint8_t owner) {
+    return {kTwinrova, role, owner, "Enemy_DungeonBoss_Twinrova"};
+}
+
+}  // namespace
+
+TEST_CASE("boss shots: a woken bullet counts as a shot") {
+    bs::Table t;
+    t.SetOn(true);
+    FakeGuest g;
+    const std::uint64_t fire = PutBullet(g, t, 0x7000000, "Twinrova_Bullet_FireBullet");
+    PutBullet(g, t, 0x7100000, "Twinrova_Bullet_IceBullet");
+    const bs::Member m = TwinMember(bs::Role::owner, 1);
+    t.Publish({&m, 1});
+    Frame(t, g, 1000);
+    CHECK_FALSE(t.OwnerShots(kTwinrova, 1000));  // (kept bullets: no shot yet)
+    // Her AI wakes the kept fire bullet (state 3 to 4), with no create: one shot, sent with its place.
+    PutAt(g, fire + bs::addr::kActorState, bs::addr::kStateAwake);
+    const coop::protocol::Vec3 at{8.5f, 151.0f, -149.5f};
+    g.Write(fire + bs::addr::kActorPosition, at.data(), sizeof at);
+    Frame(t, g, 2000);
+    Frame(t, g, 3000);  // (still awake: the same shot)
+    auto shots = t.OwnerShots(kTwinrova, 3000);
+    REQUIRE(shots);
+    CHECK(shots->seq == 1);
+    REQUIRE(shots->recent.size() == 1);
+    CHECK(shots->recent[0] == bs::BossShot{1, "Twinrova_Bullet_FireBullet", at});
+    CHECK(t.GetCounts().owner_kept == 1);
+    // It ends (back to 3): an empty list for kKeepUs, then nothing; woken again, a second shot.
+    PutAt(g, fire + bs::addr::kActorState, bs::addr::kStateKept);
+    Frame(t, g, 4000);
+    shots = t.OwnerShots(kTwinrova, 4000 + bs::Table::kKeepUs);
+    REQUIRE(shots);
+    CHECK(shots->recent.empty());
+    CHECK_FALSE(t.OwnerShots(kTwinrova, 4001 + bs::Table::kKeepUs));
+    PutAt(g, fire + bs::addr::kActorState, bs::addr::kStateAwake);
+    Frame(t, g, 900000);
+    CHECK(t.OwnerShots(kTwinrova, 900000)->recent.at(0).seq == 2);
+    CHECK(t.GetCounts().owner_kept == 2);
+}
+
+TEST_CASE("boss shots: the copy wakes and steers the matching kept bullet") {
+    bs::Table t;
+    t.SetOn(true);
+    FakeGuest g;
+    const std::uint64_t ice = PutBullet(g, t, 0x7000000, "Twinrova_Bullet_IceBullet");
+    const std::uint64_t fire = PutBullet(g, t, 0x7100000, "Twinrova_Bullet_FireBullet");
+    const std::uint64_t fire2 = PutBullet(g, t, 0x7200000, "Twinrova_Bullet_FireBullet");
+    const bs::Member m = TwinMember(bs::Role::copy, 2);
+    t.Publish({&m, 1});
+    // Before the owner's first sample our own AI's wake stands.
+    PutAt(g, ice + bs::addr::kActorState, bs::addr::kStateAwake);
+    Frame(t, g, 1000);
+    CHECK(StateOf(g, ice) == bs::addr::kStateAwake);
+    PutAt(g, ice + bs::addr::kActorState, bs::addr::kStateKept);
+    // The owner's fire bullet: one kept fire bullet of ours is woken on its place, once.
+    const coop::protocol::Vec3 a{8.5f, 151.0f, -149.5f}, b{9.5f, 150.0f, -140.0f};
+    t.Receive(kTwinrova, bs::BossShots{1, {{1, "Twinrova_Bullet_FireBullet", a}}});
+    Frame(t, g, 2000);
+    Frame(t, g, 3000);
+    CHECK(StateOf(g, fire2) == bs::addr::kStateAwake);  // (the newest of the name first)
+    CHECK(StateOf(g, fire) == bs::addr::kStateKept);
+    CHECK(PlaceOf(g, fire2) == a);
+    CHECK(t.GetCounts().fired == 1);
+    // It moves on the owner's places.
+    t.Receive(kTwinrova, bs::BossShots{1, {{1, "Twinrova_Bullet_FireBullet", b}}});
+    Frame(t, g, 4000);
+    CHECK(PlaceOf(g, fire2) == b);
+    // Our own AI wakes the ice bullet: put back (the owner's shots have come).
+    PutAt(g, ice + bs::addr::kActorState, bs::addr::kStateAwake);
+    Frame(t, g, 5000);
+    CHECK(StateOf(g, ice) == bs::addr::kStateKept);
+    CHECK(t.GetCounts().copy_stopped == 1);
+    // The owner's ends: ours is put back; nothing is woken again for the same seq.
+    t.Receive(kTwinrova, bs::BossShots{1, {}});
+    Frame(t, g, 6000);
+    Frame(t, g, 7000);
+    CHECK(StateOf(g, fire2) == bs::addr::kStateKept);
+    CHECK(StateOf(g, fire) == bs::addr::kStateKept);
+    CHECK(t.GetCounts().fired == 1);
+    CHECK(t.GetCounts().dropped == 0);
+}
+
+TEST_CASE("boss shots: a copy with no kept bullet of the name free drops the shot, and a hand-over starts again") {
+    bs::Table t;
+    t.SetOn(true);
+    FakeGuest g;
+    const std::uint64_t fire = PutBullet(g, t, 0x7000000, "Twinrova_Bullet_FireBullet");
+    bs::Member m = TwinMember(bs::Role::copy, 2);
+    t.Publish({&m, 1});
+    const coop::protocol::Vec3 a{1.0f, 2.0f, 3.0f};
+    t.Receive(kTwinrova, bs::BossShots{2, {{1, "Twinrova_Bullet_FireBullet", a}, {2, "Twinrova_Bullet_FireBullet", a}}});
+    Frame(t, g, 1000);
+    CHECK(StateOf(g, fire) == bs::addr::kStateAwake);
+    CHECK(t.GetCounts().fired == 1);
+    CHECK(t.GetCounts().dropped == 1);  // (one fire bullet: the second has none free)
+    // A bullet named something else, or a create with no handle, is not kept.
+    t.KeepBullet(0x7300000, "Enemy_Keese");
+    t.KeepBullet(0, "Twinrova_Bullet_IceBullet");
+    // Hand-over: ours now. The fire bullet in flight finishes on its own and is no shot; the next wake is.
+    m = TwinMember(bs::Role::owner, 1);
+    t.Publish({&m, 1});
+    CHECK(t.GetCounts().restarts == 1);
+    Frame(t, g, 2000);
+    CHECK(StateOf(g, fire) == bs::addr::kStateAwake);
+    CHECK_FALSE(t.OwnerShots(kTwinrova, 2000));
+    PutAt(g, fire + bs::addr::kActorState, bs::addr::kStateKept);
+    Frame(t, g, 3000);
+    PutAt(g, fire + bs::addr::kActorState, bs::addr::kStateAwake);
+    Frame(t, g, 4000);
+    CHECK(t.OwnerShots(kTwinrova, 4000)->recent.at(0).seq == 1);
+    // A new game process drops every bullet.
+    t.Reset();
+    t.Publish({&m, 1});
+    Frame(t, g, 5000);
+    CHECK(t.GetCounts().owner_kept == 1);
+}
+
+TEST_CASE("boss shots: a copy never writes through an old room's bullet") {
+    bs::Table t;
+    t.SetOn(true);
+    FakeGuest g;
+    const std::uint64_t old_fire = PutBullet(g, t, 0x7000000, "Twinrova_Bullet_FireBullet");
+    bs::Member m = TwinMember(bs::Role::copy, 2);
+    t.Publish({&m, 1});
+    Frame(t, g, 1000);
+    // Her room goes (no Twinrova), and a new one makes its own bullet; the old handle still reads a kept actor.
+    t.Publish({});
+    const std::uint64_t new_fire = PutBullet(g, t, 0x7400000, "Twinrova_Bullet_FireBullet");
+    t.Publish({&m, 1});
+    const coop::protocol::Vec3 a{1.0f, 2.0f, 3.0f};
+    t.Receive(kTwinrova, bs::BossShots{1, {{1, "Twinrova_Bullet_FireBullet", a}}});
+    Frame(t, g, 2000);
+    CHECK(StateOf(g, new_fire) == bs::addr::kStateAwake);
+    CHECK(StateOf(g, old_fire) == bs::addr::kStateKept);
+    // The slot used again for another create names another actor: only the actor first read is ever written.
+    const std::uint64_t other = 0x9900000;
+    PutAt(g, other + bs::addr::kActorState, bs::addr::kStateKept);
+    PutAt(g, 0x7400000 + 0x1000 + bs::addr::kRequestActor, other);
+    PutAt(g, new_fire + bs::addr::kActorState, bs::addr::kStateKept);  // (it ended)
+    t.Receive(kTwinrova, bs::BossShots{2, {{2, "Twinrova_Bullet_FireBullet", a}}});
+    Frame(t, g, 3000);
+    CHECK(StateOf(g, other) == bs::addr::kStateKept);
+    CHECK(StateOf(g, new_fire) == bs::addr::kStateAwake);
+}
+
+TEST_CASE("boss shots: a bullet's actor is read before she is listed, while its slot still names it") {
+    // The game's take of a made actor clears the create's slot (docs/addresses.md, kRequestActor), and her
+    // bullets are made in the intro, before she is listed: the actor is read at once, the slot not again.
+    bs::Table t;
+    t.SetOn(true);
+    FakeGuest g;
+    const std::uint64_t fire = PutBullet(g, t, 0x7000000, "Twinrova_Bullet_FireBullet");
+    Frame(t, g, 1000);
+    PutAt(g, std::uint64_t{0x7000000}, std::uint64_t{0});  // (taken: the slot cleared)
+    bs::Member m = TwinMember(bs::Role::copy, 2);
+    t.Publish({&m, 1});
+    const coop::protocol::Vec3 a{1.0f, 2.0f, 3.0f};
+    t.Receive(kTwinrova, bs::BossShots{1, {{1, "Twinrova_Bullet_FireBullet", a}}});
+    Frame(t, g, 2000);
+    CHECK(StateOf(g, fire) == bs::addr::kStateAwake);
+    CHECK(t.GetCounts().fired == 1);
+    // The owner counts its wake the same way.
+    bs::Table o;
+    o.SetOn(true);
+    FakeGuest h;
+    const std::uint64_t ice = PutBullet(h, o, 0x7100000, "Twinrova_Bullet_IceBullet");
+    Frame(o, h, 1000);
+    PutAt(h, std::uint64_t{0x7100000}, std::uint64_t{0});
+    bs::Member own = TwinMember(bs::Role::owner, 1);
+    o.Publish({&own, 1});
+    Frame(o, h, 2000);
+    PutAt(h, ice + bs::addr::kActorState, bs::addr::kStateAwake);
+    Frame(o, h, 3000);
+    CHECK(o.GetCounts().owner_kept == 1);
+}
+
+TEST_CASE("boss shots: a copy puts back its own wake before it wakes the owner's shot of the same frame") {
+    bs::Table t;
+    t.SetOn(true);
+    FakeGuest g;
+    const std::uint64_t fire = PutBullet(g, t, 0x7000000, "Twinrova_Bullet_FireBullet");
+    const bs::Member m = TwinMember(bs::Role::copy, 2);
+    t.Publish({&m, 1});
+    t.Receive(kTwinrova, bs::BossShots{0, {}});  // (the owner's samples have come)
+    Frame(t, g, 1000);
+    // Our AI wakes the only fire bullet in the frame the owner's fire shot comes: it shows the owner's.
+    PutAt(g, fire + bs::addr::kActorState, bs::addr::kStateAwake);
+    const coop::protocol::Vec3 a{1.0f, 2.0f, 3.0f};
+    t.Receive(kTwinrova, bs::BossShots{1, {{1, "Twinrova_Bullet_FireBullet", a}}});
+    Frame(t, g, 2000);
+    CHECK(StateOf(g, fire) == bs::addr::kStateAwake);
+    CHECK(PlaceOf(g, fire) == a);
+    CHECK(t.GetCounts().fired == 1);
+    CHECK(t.GetCounts().dropped == 0);
+    CHECK(t.GetCounts().copy_stopped == 1);
+}

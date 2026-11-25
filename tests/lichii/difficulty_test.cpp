@@ -384,6 +384,9 @@ TEST_CASE("difficulty: an address the walk no longer marks gives its slot back (
       CHECK(kinds->Of(base - 0x10000) == Kind::none);  // the wave before: gone, its slots free
     }
   }
+  CHECK(kinds->Freed() > 0);  // (the in-game proof line says this count)
+  kinds->Clear();
+  CHECK(kinds->Freed() == 0);
 }
 
 TEST_CASE("difficulty: a slot is kept while its address is marked, and through a few walks that miss it") {

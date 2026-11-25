@@ -206,6 +206,15 @@ static void LogHits() {
                           "component): {} more are not scaled now",
                     TheKinds().Held(), Kinds::kSlots, unmarked);
     }
+    // The proof that gone actors give their slots back (row 270): said at most once a minute when it changed.
+    static CoopEvery::Every table_every{60'000'000};
+    static std::uint64_t freed_said = 0;
+    const std::uint64_t freed = TheKinds().Freed();
+    if (freed != freed_said && table_every.Due(CoopEvery::NowUs())) {
+        freed_said = freed;
+        LOG_INFO(Core, "coop: difficulty: kinds table: {} of {} slots held, {} freed in this scene", TheKinds().Held(),
+                 Kinds::kSlots, freed);
+    }
     const std::uint64_t enemy = TheKinds().EnemyHits();
     const std::uint64_t link = TheKinds().LinkHits();
     static std::uint64_t boss_said = 0;

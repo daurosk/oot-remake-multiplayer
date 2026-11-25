@@ -352,6 +352,7 @@ void Kinds::Sweep() noexcept {
             // can at most leave a carry of under one life point in it.)
             s.kind.store(0, std::memory_order_release);
             s.key.store(kFreed, std::memory_order_release);
+            freed_.fetch_add(1, std::memory_order_relaxed);
         } else {
             ++held;
         }
@@ -434,6 +435,7 @@ void Kinds::Clear() noexcept {
     unmarked_.store(0, std::memory_order_relaxed);
     unmarked_last_.store(0, std::memory_order_relaxed);
     held_.store(0, std::memory_order_relaxed);
+    freed_.store(0, std::memory_order_relaxed);
 }
 
 std::int32_t Kinds::Scaled(Slot& s, std::int32_t sum, std::uint16_t pct, Rule rule,

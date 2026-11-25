@@ -260,6 +260,8 @@ public:
     std::uint64_t Unmarked() const noexcept { return unmarked_last_.load(std::memory_order_relaxed); }
     // Slots that hold an address now, as of the last Sweep.
     std::uint64_t Held() const noexcept { return held_.load(std::memory_order_relaxed); }
+    // Slots Sweep gave back since the last Clear (a new scene): the in-game proof of row 270.
+    std::uint64_t Freed() const noexcept { return freed_.load(std::memory_order_relaxed); }
 
 private:
     struct Slot {
@@ -291,6 +293,7 @@ private:
     std::uint64_t walk_ = 1;
     std::atomic<std::uint64_t> unmarked_last_{0};
     std::atomic<std::uint64_t> held_{0};
+    std::atomic<std::uint64_t> freed_{0};
     std::atomic<std::uint64_t> enemy_hits_{0};
     std::atomic<std::uint64_t> link_hits_{0};
     std::atomic<std::uint64_t> boss_steps_{0};

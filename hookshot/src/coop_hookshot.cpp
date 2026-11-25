@@ -440,6 +440,12 @@ void SetBossNative() {
         t.SetTurns(turns);
         LOG_INFO(Core, "coop: bosses: turns {} (LICHII_COOP_BOSS_TURNS)", turns ? "on" : "off");
     }
+    // Row 222 diag (off unless set): every move request of a boss, whole, and every Twinrova create (Table::Diag).
+    const bool diag_222 = Env("LICHII_COOP_BOSS_DIAG_222") == "1";
+    if (t.Diag222On() != diag_222) {
+        t.SetDiag222(diag_222);
+        LOG_INFO(Core, "coop: bosses: diag222 {} (LICHII_COOP_BOSS_DIAG_222)", diag_222 ? "on" : "off");
+    }
     if (t.BrainOn() == brain && t.ActionsOn() == actions) {
         return;
     }
@@ -1921,6 +1927,15 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
                          CoopBossNative::TheTable().CopyMakes(CoopObjects::MinionMaker(name)));
         if (t_create_stop) {
             e.flags |= CoopActorEvents::kStopped;
+        }
+        if (static std::atomic<int> said{0}; CoopBossNative::TheTable().Diag222On() &&
+                                             std::string_view(name).starts_with("Twinrova") && said.fetch_add(1) < 200) {
+            // Row 222 diag: every Twinrova create the game asks (the bullets and fields), here and on the owner.
+            LOG_INFO(Core, "coop: bosses: diag222 create '{}' at {:.2f} {:.2f} {:.2f}: from main+{:#x}, shoot code {}, "
+                           "shooter {:#x}, ours {}, stopped {}",
+                     name, place[0], place[1], place[2],
+                     e.from > CoopRuntime::MainBase() ? e.from - CoopRuntime::MainBase() : e.from, shot ? 1 : 0,
+                     shooter, CoopActorEvents::Ours(t_own_call, t_copy_game) ? 1 : 0, t_create_stop ? 1 : 0);
         }
         CoopActorEvents::TheRing().Push(e);
         return 1;

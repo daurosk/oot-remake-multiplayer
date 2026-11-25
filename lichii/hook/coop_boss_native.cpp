@@ -284,17 +284,26 @@ const Table::Entry* Table::FindActor(std::uint64_t actor) const {
     return nullptr;
 }
 
-void Table::ForgetOwnAsks(Entry& e) {
+void Table::SwitchOwnAsks(Entry& e, std::int32_t to) {
+    if (e.own_brain == to) {
+        return;
+    }
+    if (e.own_brain && (e.own_by_brain.size() < kMaxOwnBrains || e.own_by_brain.contains(*e.own_brain))) {
+        Entry::OwnAskSet& away = e.own_by_brain[*e.own_brain];
+        away.asks = std::move(e.own_asks);
+        away.slot_asks = std::move(e.own_slot_asks);
+        away.variants.choices = std::move(e.own_variants.choices);
+    }
     e.own_asks.clear();
     e.own_slot_asks.clear();
     e.own_variants.choices.clear();
-}
-
-void Table::BrainRuns(Entry& e, std::int32_t verb) {
-    if (!e.asks_brain || *e.asks_brain != verb) {
-        ForgetOwnAsks(e);  // (not known which they were learnt in: forgotten too)
+    if (const auto it = e.own_by_brain.find(to); it != e.own_by_brain.end()) {
+        e.own_asks = std::move(it->second.asks);
+        e.own_slot_asks = std::move(it->second.slot_asks);
+        e.own_variants.choices = std::move(it->second.variants.choices);
+        e.own_by_brain.erase(it);
     }
-    e.asks_brain = verb;
+    e.own_brain = to;
 }
 
 void Table::LearnOwnAsk(Entry& e, const Request& request, const std::optional<std::string>& plug_name) {
@@ -306,14 +315,6 @@ void Table::LearnOwnAsk(Entry& e, const Request& request, const std::optional<st
         return;
     }
     e.own_node = node;
-    if (!e.asks_brain) {
-        // The brain verb it is in, as far as we know (BrainRuns): ours as the owner, the owner's as a copy.
-        if (e.role == Role::owner && e.have_mine) {
-            e.asks_brain = e.mine.brain_verb;
-        } else if (e.role == Role::copy && e.wanted) {
-            e.asks_brain = e.wanted->brain_verb;
-        }
-    }
     const std::int32_t slot = Get<std::int32_t>(request, addr::kReqSlot);
     const std::int32_t verb = Get<std::int32_t>(request, addr::kReqVerb);
     const OwnAsk ask{node, Get<std::uint64_t>(request, addr::kReqPlug), request[addr::kReqHasPlug] == 1, false,
@@ -398,9 +399,30 @@ void Table::Publish(const std::vector<Boss>& bosses) {
                 }
                 const bool own_ask_same =
                     e.put_action && e.own_asks.contains({e.put_action->slot, e.put_action->verb});
+                // Twinrova only (HoldsOwnStarts): its own AI's last ask as a copy in the put move's slot, a start held
+                // now included (answered busy, its AI waits there), named another move.
+                std::optional<std::int32_t> own_other_verb;
+                if (e.put_action && HoldsOwnStarts(b.name)) {
+                    const auto last = e.own_last_verb.find(e.put_action->slot);
+                    if (e.start_hold && !e.start_hold->capped && e.start_hold->slot == e.put_action->slot &&
+                        e.start_hold->verb != e.put_action->verb) {
+                        own_other_verb = e.start_hold->verb;
+                    } else if (last != e.own_last_verb.end() && last->second != e.put_action->verb) {
+                        own_other_verb = last->second;
+                    }
+                }
+                const bool own_ask_other = own_other_verb.has_value();
                 const MadeOurs plan = PlanMadeOurs(turns_, b.attacking, actions_on_ && e.put_action.has_value(),
-                                                   own_ask_same, e.own_node != 0);
+                                                   own_ask_same, e.own_node != 0, own_ask_other);
                 if (e.role == Role::copy && b.role == Role::owner && e.wanted && !b.plain && !OwnTime(e) &&
+                    plan == MadeOurs::resume && own_ask_other &&
+                    !(turns_ && b.attacking.has_value() && !*b.attacking)) {
+                    // Twinrova hand-over (NEXT49 A 9588): its own AI had left the owner's move: it goes on.
+                    ++counts_.made_ours_own_other;
+                    Note(b.name + ": made ours mid-move (verb " + std::to_string(e.put_action->verb) +
+                         "), its own AI already in verb " + std::to_string(*own_other_verb) +
+                         ": its AI goes on, nothing started over");
+                } else if (e.role == Role::copy && b.role == Role::owner && e.wanted && !b.plain && !OwnTime(e) &&
                     plan == MadeOurs::resume) {
                     // Boss turns, condition (1): handed to us between moves. Its body runs the owner's move (not an
                     // attack) and its own brain asked that same move, in the owner's brain verb: it goes on from here.
@@ -410,7 +432,7 @@ void Table::Publish(const std::vector<Boss>& bosses) {
                     if (plan == MadeOurs::restart_move) {
                         // Row 178: made ours in the middle of the owner's move (Phantom Ganon handed over mid
                         // RushAttack when his owner went down): that move starts over as ours through the game's
-                        // own request, named by the node its own AI names for it (before ForgetOwnAsks below).
+                        // own request, named by the node its own AI names for it (before a brain change puts them away).
                         BossAction again = *e.put_action;
                         again.flags = static_cast<std::uint16_t>(again.flags | addr::kReqStartOver);
                         again.changed = true;
@@ -433,11 +455,15 @@ void Table::Publish(const std::vector<Boss>& bosses) {
                         Note(b.name + ": its AI did not run its body as a copy: it chooses again");
                     }
                 }
+                EndStartHold(e, "role changed");
+                e.own_last_verb.clear();
                 e.hold_since = steps_;
                 e.hold_asks = 0;
                 e.hold_rechoices = 0;
                 e.stall_rechoices = 0;  // (another game's turn since: judged anew)
-                // (own asks kept: the same boss in the same game; a brain change forgets them, BrainRuns)
+                // (own asks kept across a role change: all learnt as a copy, the owner learns none; a brain
+                // change forgets them, as an owner too. NEXT29 and NEXT36b: a copy that had them forgotten put
+                // its attacks in through another move's node, no bullet.)
                 if (b.role == Role::copy) {
                     // Twinrova hand-over: the chain we held, so the new owner's changes after it are made in
                     // order (Receive), not collapsed into a resync of its last move.
@@ -716,18 +742,22 @@ bool Table::OnBrainVerb(std::uint64_t bsa, std::int32_t verb, bool force, bool o
         if (event_) {
             return false;  // our event's verb (its cutscene), not the fight's: sent when it is over
         }
-        BrainRuns(*e, verb);
+        if (e->have_mine && e->mine.brain_verb != verb) {
+            // Row 177 review: a brain change while we run it (its nodes may go with it): its own asks go away.
+            if (!e->own_brain) {
+                e->own_brain = e->mine.brain_verb;
+            }
+            SwitchOwnAsks(*e, verb);
+        }
         e->mine.brain_verb = verb;
         Record(*e, BossBrain{verb, force});
         ++counts_.owner_brain;
         return false;
     }
     if (own || !e->wanted) {
-        BrainRuns(*e, verb);
         return false;  // ours, or no owner's state yet: the copy runs as before
     }
     if (OwnTime(*e)) {
-        BrainRuns(*e, verb);
         ++counts_.copy_own_run;  // our event or our own hit: the game's own change runs
         return false;
     }
@@ -743,7 +773,11 @@ bool Table::OnBrainVerb(std::uint64_t bsa, std::int32_t verb, bool force, bool o
 }
 
 bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed, bool own,
-                         std::optional<std::string> plug_name, std::optional<Request>* renamed) {
+                         std::optional<std::string> plug_name, std::optional<Request>* renamed,
+                         std::uint64_t* answer) {
+    if (answer != nullptr) {
+        *answer = addr::kActionTaken;
+    }
     std::lock_guard lock(mutex_);  // (waits: see the header, "The wraps")
     if (!actions_on_) {
         return false;
@@ -755,9 +789,6 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed
     if (e->role == Role::owner) {
         if (event_) {
             return false;  // our event's move, not the fight's
-        }
-        if (!own) {
-            LearnOwnAsk(*e, request, plug_name);  // (Twinrova hand-over: known when it is handed over)
         }
         bool plug = false;
         if (auto a = ActionFromRequest(request, &plug)) {
@@ -839,9 +870,57 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed
         }
         if (runs) {
             e->own_moves[ask_slot] = {ask_verb, steps_};
+            e->own_last_verb[ask_slot] = ask_verb;
             ++counts_.copy_own_move;
             return false;
         }
+    }
+    if (changed && answer != nullptr && node != 0 && HoldsOwnStarts(e->name) && e->put_action &&
+        e->put_action->slot == ask_slot) {
+        // Twinrova hand-over (see the header, `answer`): its own start of another move than the owner's waits.
+        auto& h = e->start_hold;
+        if (e->put_action->verb == ask_verb) {
+            if (h && h->slot == ask_slot && h->verb == ask_verb) {
+                ++counts_.own_start_holds_met;
+                EndStartHold(*e, "the owner's move reached it, taken");
+            }
+        } else {
+            if (!h || h->slot != ask_slot || h->verb != ask_verb) {
+                EndStartHold(*e, "its AI asked another start");
+                h = Entry::StartHold{ask_slot, ask_verb, steps_, 0, false};
+                ++counts_.own_starts_held;
+                if (hold_notes_ < kMaxStreamNotes) {
+                    ++hold_notes_;
+                    Note(e->name + ": own start of verb " + std::to_string(ask_verb) + " held (the owner's move: verb " +
+                         std::to_string(e->put_action->verb) + "): answered busy");
+                }
+            } else if (!h->capped) {
+                ++h->asks;
+                ++counts_.own_start_reasks;
+                if (h->asks <= 3 && hold_notes_ < kMaxStreamNotes) {
+                    ++hold_notes_;
+                    Note(e->name + ": own start of verb " + std::to_string(ask_verb) + " asked again after busy (" +
+                         std::to_string(steps_ - h->since) + " frames held, ask " + std::to_string(h->asks) + ")");
+                }
+            }
+            if (!h->capped && steps_ - h->since >= kOwnStartHoldSteps) {
+                h->capped = true;
+                ++counts_.own_start_holds_capped;
+                if (hold_notes_ < kMaxStreamNotes) {
+                    ++hold_notes_;
+                    Note(e->name + ": own start of verb " + std::to_string(ask_verb) + " held " +
+                         std::to_string(kOwnStartHoldSteps) + " frames, asked again " + std::to_string(h->asks) +
+                         " times: answered taken (cap)");
+                }
+            }
+            if (!h->capped) {
+                *answer = addr::kActionSlotBusy;
+                return true;
+            }
+        }
+    }
+    if (node != 0) {
+        e->own_last_verb[ask_slot] = ask_verb;
     }
     if (auto a = ActionFromRequest(request)) {
         a->changed = changed;
@@ -849,6 +928,23 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed
     }
     ++counts_.copy_skipped;
     return true;
+}
+
+bool HoldsOwnStarts(std::string_view name) {
+    return name == "Enemy_DungeonBoss_Twinrova";
+}
+
+void Table::EndStartHold(Entry& e, const char* why) {
+    if (!e.start_hold) {
+        return;
+    }
+    const Entry::StartHold& h = *e.start_hold;
+    if (hold_notes_ < kMaxStreamNotes) {
+        ++hold_notes_;
+        Note(e.name + ": own start of verb " + std::to_string(h.verb) + " held " + std::to_string(steps_ - h.since) +
+             " frames, asked again " + std::to_string(h.asks) + " times: " + why);
+    }
+    e.start_hold.reset();
 }
 
 bool RunsOwnStart(std::string_view name) {
@@ -1388,6 +1484,9 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
         std::int32_t own = 0;
         if (!event_ && guest.Read(bsa + addr::kBsaBrainVerb, &own, sizeof own)) {
             e.mine.brain_verb = own;
+            if (!e.own_brain) {
+                e.own_brain = own;  // (SwitchOwnAsks)
+            }
             if (std::exchange(e.record_after_event, false)) {
                 Record(e, BossBrain{own, true});
                 ++counts_.owner_brain;
@@ -1488,6 +1587,9 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
     }
     std::int32_t now = 0;
     const bool read = guest.Read(bsa + addr::kBsaBrainVerb, &now, sizeof now);
+    if (read && !e.own_brain) {
+        e.own_brain = now;  // (the brain verb its own asks so far were learnt in: SwitchOwnAsks)
+    }
     while (!e.due.empty()) {
         Entry::Due& d = e.due.front();
         if (const auto* brain = std::get_if<BossBrain>(&d.change.what)) {
@@ -1759,14 +1861,12 @@ void Table::Made(bool made) {
                        (asking == Entry::Asking::late && !e->own_late.empty() &&
                         std::holds_alternative<BossBrain>(e->own_late.front()));
     if (brain) {
-        // Row 177 review: a new brain verb may change the copy's action sequence, whose AI nodes go with it; the
-        // nodes kept for its moves are learnt again from its next own asks (the game reads a named node's name).
-        ForgetOwnAsks(*e);
-        if (asking == Entry::Asking::due) {
-            e->asks_brain = std::get<BossBrain>(e->due.front().change.what).verb;  // (BrainRuns: learnt in it)
-        } else {
-            e->asks_brain.reset();
-        }
+        // Row 177 review: a new brain verb may change the copy's action sequence, whose AI nodes go with it: the
+        // nodes kept for its moves are put away with the old verb; the new verb's are named (or learnt again from
+        // its next own asks; the game reads a named node's name).
+        const BossBrain& to = asking == Entry::Asking::due ? std::get<BossBrain>(e->due.front().change.what)
+                                                           : std::get<BossBrain>(e->own_late.front());
+        SwitchOwnAsks(*e, to.verb);
     }
     if (asking == Entry::Asking::due && !e->due.empty()) {
         if (const auto* action = std::get_if<BossAction>(&e->due.front().change.what)) {

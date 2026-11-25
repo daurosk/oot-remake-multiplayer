@@ -880,6 +880,7 @@ enum class ObjectComponent : std::uint16_t {
   plugs = 26,   // a room's plugs: switches, torches, block seats, held floor switches (sync plan S4)
   clocks = 27,  // a room's platform clocks: mover words on the server clock (sync plan S4)
   events = 28,  // a room's running gimmick events, with their start time (sync plan S4/S6)
+  shots = 29,   // Twinrova hand-over: the owner's boss's bullets awake now (BossShots below)
 };
 
 struct ObjectLife {
@@ -1066,6 +1067,30 @@ struct KeyedValues {
 // and counted in dropped.
 KeyedValues MergeKeyed(const KeyedValues* kept, const KeyedValues& in, std::size_t& dropped);
 
+// Component 29 (Twinrova hand-over, no protocol bump: older builds skip it by its length): the owner's boss's
+// bullets in flight. Twinrova's bullets are made once at room load and kept (state 3); her AI fires one by waking it
+// (state 4, NEXT66), with no create. A copy's own AI wakes its bullets on its own time and after hand-overs in other
+// windows than the owner's (NEXT49: 4 of 11), so a copy wakes a kept bullet of the same name for each of the owner's
+// and moves it on the owner's places, and its own AI's wakes are put back (coop_boss_shots.h). Each: seq (the owner's
+// own wake count for this boss, from 1), the bullet's name (1 to kMaxBossShotChars printable ASCII) and its place now.
+// recent holds the bullets awake now, at most kMaxBossShots, oldest first; an empty list (sent for a while after the
+// last one ends) says none is.
+inline constexpr std::size_t kMaxBossShots = 8;
+inline constexpr std::size_t kMaxBossShotChars = 64;
+struct BossShot {
+  std::uint32_t seq = 0;
+  std::string name;
+  Vec3 position{};
+  bool operator==(const BossShot&) const = default;
+};
+struct BossShots {
+  std::uint32_t seq = 0;  // the newest shot's seq
+  std::vector<BossShot> recent;
+  bool operator==(const BossShots&) const = default;
+};
+// Whether a bullet name may go on the wire (1 to kMaxBossShotChars printable ASCII characters).
+bool ValidShotName(std::string_view name);
+
 // The components of OBJECT_SAMPLE, OBJECT_SPAWN and HANDOVER_STATE. time is
 // always sent; the others when the sender has them. Floats must be finite.
 struct ObjectState {
@@ -1087,6 +1112,7 @@ struct ObjectState {
   std::optional<KeyedValues> plugs;
   std::optional<KeyedValues> clocks;
   std::optional<KeyedValues> events;
+  std::optional<BossShots> shots;                   // Twinrova hand-over: its owner's shots (component 29, no bump)
   bool operator==(const ObjectState&) const = default;
 };
 // The server's keep rule for components 25-28: each of s's keyed lists merged onto kept's (MergeKeyed); a list s

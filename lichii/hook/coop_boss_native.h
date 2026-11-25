@@ -296,6 +296,9 @@ enum class Role : std::uint8_t { owner, copy };
 // by its own AI with no intro event to run it (a dungeon boss's intro is an
 // event: SetEvent covers it).
 bool RunsOwnStart(std::string_view name);
+// Twinrova hand-over (tw-handover-3): a boss whose copy holds its own AI's starts of a move other than the owner's
+// (Table::OnActionVerb, answered busy) so its AI asks the owner's move when the owner's put-in comes. Twinrova only.
+bool HoldsOwnStarts(std::string_view name);
 // #238: whether a mid-boss's AS slot 0 animation is its start (the Lizalfos's 'Appear': it jumps into the fight
 // and shows only once its own appear has played).
 bool PlaysOwnStart(std::string_view animation);
@@ -383,10 +386,17 @@ enum class MadeOurs : std::uint8_t {
 // far wall; his walk, started over, ended at once; his next roll, aimed at Link from there, went into the lava pit,
 // where no roll ever ends). Its own AI chooses again from what its body does instead (row 149), unless it asked that
 // same move itself (then it goes on).
+// Twinrova hand-over (tw-handover-3, NEXT49 A 9588): `own_ask_other` (Twinrova only, HoldsOwnStarts): its own AI's
+// last ask in that slot as a copy, or its own start held now, named another move (it had left the owner's move). Started over, the owner's move ran one frame here and went to
+// every copy, then our own AI's next ask took the boss on: the copies played an attack the owner never made (no
+// shot). Its own AI goes on instead (resume): its next ask is the move it is in.
 constexpr MadeOurs PlanMadeOurs(bool turns, std::optional<bool> attacking, bool put_action, bool own_ask_same,
-                                bool own_node) {
+                                bool own_node, bool own_ask_other = false) {
     if (turns && attacking.has_value() && !*attacking && put_action) {
         return own_ask_same ? MadeOurs::resume : MadeOurs::rechoose;
+    }
+    if (put_action && own_ask_other) {
+        return MadeOurs::resume;
     }
     return put_action && own_node ? MadeOurs::restart_move : MadeOurs::rechoose;
 }
@@ -447,6 +457,15 @@ struct Counts {
     // variation of it), and those with no node left that did not (the move's own then: the bug still possible).
     std::uint64_t variant_node_moved = 0;
     std::uint64_t variant_node_conflict = 0;
+    // Twinrova hand-over (tw-handover-3): a copy's own starts of a move other than the owner's, answered busy (held);
+    // its AI's asks of a held start again (the probe: does it ask again after a busy answer?); holds that reached
+    // kOwnStartHoldSteps and were answered taken after all; holds ended by the owner's move reaching the held one.
+    std::uint64_t own_starts_held = 0;
+    std::uint64_t own_start_reasks = 0;
+    std::uint64_t own_start_holds_capped = 0;
+    std::uint64_t own_start_holds_met = 0;
+    // Made ours mid-move whose own AI's last ask as a copy was another move: its AI goes on (PlanMadeOurs).
+    std::uint64_t made_ours_own_other = 0;
 };
 
 class Table {
@@ -454,6 +473,8 @@ public:
     // Row 222: the frames a copy's own ask of the owner's move keeps the owner's repeats of that move out.
     static constexpr std::uint64_t kOwnMoveSteps = 30;
     static constexpr int kBusyAsks = 3;  // row 211: an owner's move answered busy, asked again on this many frames
+    // Twinrova hand-over: the frames a copy's own start of a move other than the owner's is answered busy, at most.
+    static constexpr std::uint64_t kOwnStartHoldSteps = 60;
     // Switches (LICHII_COOP_BOSS_NATIVE, LICHII_COOP_BOSS_ACTIONS): off -> no
     // skip, no apply, nothing kept (the old gohma-sync path alone).
     void SetOn(bool brain, bool actions);
@@ -492,8 +513,17 @@ public:
     // (no plug for a plain ask, or its name in our pools) for the wrap to write before the game reads it; with no
     // `renamed`, or the name not in a pool yet, it is skipped as before. The owner's repeats (changed 0) of that
     // move are then left out for kOwnMoveSteps (StepOne).
+    // Twinrova hand-over (tw-handover-3): `answer`, when given, gets the game's result for a skipped request (true):
+    // kActionTaken, or kActionSlotBusy for a copy's own start held (HoldsOwnStarts). NEXT49: after hand-overs the
+    // copy's own AI ran its move cycle out of step with the owner's; its own asks of the owner's attack never came
+    // in the owner's window, so the attack ran on the owner's sparse put-ins alone and fired nothing (5 of 5 such
+    // windows). Its own start (changed 1) of a move other than the owner's current one in that slot is now answered
+    // busy, for kOwnStartHoldSteps at most, so its AI waits at that start and asks it again; when the owner's move
+    // reaches it the start is taken (skipped as before) and its own asks of the move run (row 222). Every hold and
+    // its first asks again are said (the probe: does its AI ask again after a busy answer?).
     bool OnActionVerb(std::uint64_t bsa, const Request& request, bool changed, bool own,
-                      std::optional<std::string> plug_name = std::nullopt, std::optional<Request>* renamed = nullptr);
+                      std::optional<std::string> plug_name = std::nullopt, std::optional<Request>* renamed = nullptr,
+                      std::uint64_t* answer = nullptr);
 
     // Our game runs an event now (the boss glue, every frame; the player
     // reader's event flag). Copies then run their own changes; the owner keeps
@@ -714,6 +744,7 @@ public:
     static constexpr std::size_t kMaxSkippedKept = 8;
     static constexpr std::size_t kMaxHeld = 8;  // copy bosses held at once (more: not held)
     static constexpr std::size_t kMaxOwnAsks = 64;     // moves kept per copy (AskFor)
+    static constexpr std::size_t kMaxOwnBrains = 16;   // brain verbs whose own asks are kept per copy
     static constexpr std::uint64_t kMaxStreamNotes = 240;  // row 177's action stream lines per game
 
 private:
@@ -748,7 +779,15 @@ private:
         std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk> own_asks;
         std::map<std::int32_t, OwnAsk> own_slot_asks;
         OwnVariants own_variants;  // row 222: each node's own last ask and its variation (AskFor)
-        std::optional<std::int32_t> asks_brain;  // the brain verb the own asks were learnt in (BrainRuns)
+        // Twinrova hand-over: the brain verb the own asks above were learnt in, and those learnt in its other
+        // brain verbs (at most kMaxOwnBrains), taken out again when the boss is back in that verb (SwitchOwnAsks).
+        struct OwnAskSet {
+            std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk> asks;
+            std::map<std::int32_t, OwnAsk> slot_asks;
+            OwnVariants variants;
+        };
+        std::optional<std::int32_t> own_brain;
+        std::map<std::int32_t, OwnAskSet> own_by_brain;
         // Twinrova hand-over: the chain we held when the owner changed (ContinuesChain), until its first state.
         std::optional<BossBsa> handover;
         // Row 177's log: the action stream's last kind (who, slot, verb, changed, plug or node source) and its run.
@@ -830,7 +869,19 @@ private:
         bool own_action_ran = false;
         // Row 222: per slot, the owner's move (verb) the copy's own AI last asked itself, and the step it did.
         std::map<std::int32_t, std::pair<std::int32_t, std::uint64_t>> own_moves;
+        // Twinrova hand-over: per slot, the move its own AI last asked as a copy and was not held (PlanMadeOurs's
+        // own_ask_other), and the own start held now (OnActionVerb's answer): its slot, verb, first step, asks again.
+        std::map<std::int32_t, std::int32_t> own_last_verb;
+        struct StartHold {
+            std::int32_t slot = 0;
+            std::int32_t verb = 0;
+            std::uint64_t since = 0;
+            std::uint64_t asks = 0;
+            bool capped = false;
+        };
+        std::optional<StartHold> start_hold;
     };
+    void EndStartHold(Entry& e, const char* why);  // (says the hold's asks again; clears it)
     void Hold(Entry& e, const Boss& b);   // the owner's stall check (Publish)
     void Fall(Entry& e, const Boss& b);   // row 178's fall guard (Publish; a boss, owner or copy: its start)
     bool OwnTime(const Entry& e) const;   // the copy's own changes run now
@@ -853,19 +904,19 @@ private:
     Entry* Find(std::uint64_t bsa);
     Entry* FindActor(std::uint64_t actor);
     const Entry* FindActor(std::uint64_t actor) const;
-    // Row 177 review: the kept own asks (their AI nodes) go on a brain change (its action sequence's nodes may
-    // go with it); its next own asks fill them again. Not on a role change (Twinrova hand-over, 0.11.13): the
-    // same boss in the same game keeps its nodes, and a copy put the first moves after a hand-over in through a
-    // node of another move (no bullet). The owner's own asks are learnt too (LearnOwnAsk), so a game that hands
-    // its boss over knows the nodes of the brain verb it is in.
-    static void ForgetOwnAsks(Entry& e);
-    // A brain verb that runs in our game (the owner's, or the copy's own or put in): a new one forgets the asks.
-    static void BrainRuns(Entry& e, std::int32_t verb);
+    // Row 177 review: a brain change may change the action sequence whose AI nodes the kept own asks name: the
+    // asks of one brain verb are never used in another. A brain change puts the asks away under the verb they were
+    // learnt in and takes out those of the new verb (none: the copy's next own asks fill them). Back in a verb, its
+    // asks are named again: the game keeps a brain verb's nodes (lane run NEXT48: the same Attack node before and
+    // after; forgetting them put the copy's next Attack_R in through another move's node, no bullet). A role change
+    // keeps them (all learnt as a copy: the owner learns none; NEXT29, NEXT36b).
+    static void SwitchOwnAsks(Entry& e, std::int32_t to);
     static void LearnOwnAsk(Entry& e, const Request& request, const std::optional<std::string>& plug_name);
     void Note(std::string line);
     // Row 177's log: one line when the stream's kind changes (the last kind's run length with it), capped.
     void Stream(Entry& e, std::string kind);
     std::uint64_t stream_notes_ = 0;
+    std::uint64_t hold_notes_ = 0;  // the start holds' lines (at most kMaxStreamNotes)
 
     mutable std::mutex mutex_;
     std::map<std::uint64_t, Entry> by_bsa_;

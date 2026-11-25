@@ -840,20 +840,22 @@ had its variation (0 not known), the copy's Attack_R fired its FireBullet, and e
 (Attack_L Ice, Attack_R Fire) through two hand-overs. Not this row: right at a hand-over a copy played an attack with
 no bullet twice, and one copy showed fewer attacks than its owner in the same stretch (next section).
 
-## Twinrova hand-over: a copy's attack with no bullet, and attacks lost (0.11.13)
+## Twinrova hand-over: attacks lost (0.11.13)
 
 Seen in the second row 222 run: right at a hand-over a copy played an attack with no bullet (one Attack_R, one
 Attack_L), and a copy logged 4 attacks while its owner logged 6. Two causes, both in `Table::Publish` at an owner
 change:
 
-1. The own asks (each move's node, plug and variation, `AskFor`) were forgotten at every role change (row 177's
-   review). A copy's first put-ins after the hand-over then went in through its last node, a node of another move
-   (Fly), whose own choice of the attack may be the other variation: the attack ran with no shot. Row 177's reason
-   holds only for a brain change (the action sequence's nodes may go with it). Now the asks are kept across a hand-over
-   and forgotten when a new brain verb runs in our game (`BrainRuns`: the owner's own, the copy's own or put in) or when
-   it is not known which verb they were learnt in. The owner learns its own asks too (`LearnOwnAsk`), so a game that
-   hands its boss over knows the nodes of the brain verb it is in (before, an old owner made a copy had no node at all
-   until its own AI asked again).
+1. Tried and taken back: keeping the own asks (each move's node, plug and variation, `AskFor`) across a hand-over,
+   and the owner learning its own asks. Lane run NEXT36: a former owner made a copy put the owner's Attack_R in
+   through a node its AI had named while it was the owner, and 0 of 3 fired a bullet. The node its own AI names as a
+   copy works (NEXT29). So the owner learns none, and a role change keeps the copy's own (forgetting them there put
+   the copy's attacks in through another move's node, no bullet: NEXT29 copy to copy, NEXT36b and NEXT48 owner to
+   copy). A brain change forgot them, as an owner too (row 177's review), and NEXT48 showed that this also lost the
+   attack's node (no bullet after a brain change); the same node came back after a forget. Now the own asks are kept
+   per brain verb: a brain change puts them away under the verb they were learnt in and takes out the new verb's.
+   A node learnt in one brain verb is never named in another (row 177 stays fixed); back in a verb, its nodes are named
+   again (unit test NEXT48; game check pending).
 2. The new copy started again from the new owner's first state (a resync: only the move it is in now). Every move the
    new owner made before that state reached us was lost. A new owner counts on from the last state it had of the old
    owner, so its changes up to our newest seq are ours when it had all of them. Now the chain we held is kept (our own
@@ -861,11 +863,65 @@ change:
    change unchanged (`ContinuesChain`), the changes after it are made in order; a copy that stays a copy also keeps the
    old owner's moves still queued. Any change both hold that differs (it had not had all of ours): a resync, as before.
    The log says `the new owner goes on from seq N`.
+3. NEXT49 (4 of 11 copy attacks fired). A copy's attack whose owner's window held none of its own AI's asks of
+   that move fired nothing, whatever node put it in (5 of 5 such windows in NEXT48 and NEXT49). The copy was not
+   cut short: those windows were as long as the ones that fired. After hand-overs the copy's own AI runs its move
+   cycle out of step with the owner's, and the shot needs the copy's own asks of the move (row 222). Now a
+   Twinrova copy's own start (changed 1) of a move other than the owner's current one in that slot is answered
+   busy (`kActionSlotBusy`), for 60 frames at most, so its AI waits at that start. When the owner's move reaches
+   it, the start is taken as before and its own asks of the attack run. The log says `own start of verb V held`,
+   `asked again after busy` and how each hold ended, and the summary line counts them. Not yet known: whether the
+   game's AI asks a start again after a busy answer (the next lane run shows it; if not, another lever).
+4. NEXT49 A 9588: made ours mid-attack while its own AI had already asked another move as a copy. Row 178 started
+   the attack over as ours, sent it to every copy, and then our own AI's next ask took the boss on: the copies
+   played an attack the owner never made, with no shot. Now, on Twinrova, when its own AI's last ask in that slot as
+   a copy (or its own start held now, item 3) was another move, its AI goes on and nothing is started over
+   (`PlanMadeOurs`, `own_ask_other`). Other bosses restart as before (row 178). Log: `its own AI
+   already in verb V: its AI goes on`.
 
-No protocol change. Solo play and owners are not touched (an owner only learns its asks). Not covered: a copy made
+No protocol change. Solo play and owners are not touched. Not covered: a copy made
 the owner drops the old owner's moves still queued (its own AI runs the boss from here). Tests: boss_native_test
-("Twinrova hand-over": the attack's node kept, a brain change still forgets it; both moves the new owner made are put
-in, in order; `ContinuesChain` refuses a chain that differs or lacks our newest change).
+("Twinrova hand-over": a former owner's nodes are not the copy's, a copy keeps its own across role changes; both moves the new owner made are put
+in, in order; `ContinuesChain` refuses a chain that differs or lacks our newest change; NEXT49: made ours with its
+own AI in another move goes on, and a copy's own start of another move than the owner's waits).
+
+### Shots on the owner's word (0.11.13)
+
+Item 3's hold did not bring the copy's bullets back in step: the copy's AI still fires on its own time. Twinrova's
+bullets are split shots (each game keeps its own copy boss's bullet), so a copy whose AI missed the window showed the
+attack with no bullet. Now the bullet follows the owner's shot, not the copy's AI (`coop_boss_shots.h`):
+
+Her bullets are not made when she fires. Each is made once at room load through a create request whose handle the
+game keeps, and stays kept (actor state 3, +0x2c). Her AI fires one by waking it (state 4); it goes back to 3 when it
+ends. In the fight there is no create and no call of the shoot code main+0xc16cf0 (NEXT65, NEXT66: the fight's
+bullets were the twelve made in the intro, by address). The game's own wake is a compare-and-swap of 3 to 4 in the
+actor manager (main+0x14acc).
+
+- Every game keeps the handles of its `Twinrova_Bullet_*` creates (CREATE_REQUEST) and reads each one's actor
+  (request +0x08) at the next frames. The game's take of a made actor clears the slot, and the bullets are made in
+  the intro, before she is listed: read later, none gave an actor (NEXT68). Each bullet is bound to the first
+  request its slot holds; if the slot then holds 0 or another request (taken, or used for another create) before
+  the actor was read, the bullet is given up and counted as missed in the 10 s shots line. A read actor is not read
+  through the slot again, and it is used only while its name (+0x260) is still the bullet's, so an actor freed with
+  a room she was never listed in is never written. The bullets are forgotten when her room goes.
+- The owner's game reads its bullets every frame. A wake (3 to 4) is one shot. The bullets awake now, each with its
+  seq, name and place, go out in the boss's samples (OBJECT_SAMPLE component 29 `shots`, no protocol bump); an empty
+  list is sent for 500 ms after the last one ends.
+- A copy wakes a kept bullet of the same name for each new owner shot: the same 3 to 4 write, with the owner's place.
+  Every frame after that it puts the bullet on the owner's newest place, so it moves where the owner's does, and its
+  own collision still hits the copy's Link. When the owner's bullet ends, the copy's is put back to 3. One that hits
+  the copy's Link first ends there by itself.
+- Once the owner's first sample has come, a wake by the copy's own AI is put back to 3 on the next frame (before
+  the owner's new shots are woken, so a bullet it took that frame is free for them), so each owner shot is one bullet
+  in every game. An owner sample with no `shots` counts as an empty list, so a copy that missed the empty tail does
+  not keep a bullet hanging. Before that (a new copy, an older owner) the copy's own wakes stand.
+- A hand-over starts it again: bullets in flight finish on their own and are no one's shot; the new owner counts from
+  its next wake, and a game made a copy waits for the new owner's first sample.
+
+The log says `shots: the owner's came` per copy and a summary line every 10 s (`ours sent`, `owner's fired`, `own
+stopped`, `dropped`). `LICHII_COOP_BOSS_SHOTS=0` turns it off. Not yet known: whether a bullet woken by our write
+(not the manager's) flies and hits as the game's own does; if not, the copy only shows it. Tests: boss_native_test
+("boss shots"), codec_test (component 29).
 
 ## A boss part another game killed dies in our game too (rows 257/258, Barinade crash, 0.11.12)
 

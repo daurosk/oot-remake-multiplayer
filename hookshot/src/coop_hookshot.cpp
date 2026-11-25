@@ -63,6 +63,8 @@
 #include "coop_actor_events.h"
 #include "coop_boss_native.h"
 #include "coop_boss_orders.h"
+#include "coop_boss_shots.h"
+#include "coop_every.h"
 #include "coop_boss_scenes.h"
 #include "coop_hallway.h"
 #include "coop_dbno_body.h"
@@ -465,6 +467,36 @@ void SetBossOrders() {
 }
 
 // Every 10 s while orders move: the counts (the probe run's lines).
+// Twinrova hand-over (coop_boss_shots.h): a copy fires the owner's shots. The shoot hook is patch 0007's.
+void SetBossShots() {
+    const bool on = Env("LICHII_COOP_BOSS_SHOTS") != "0";
+    CoopBossShots::Table& t = CoopBossShots::TheTable();
+    if (t.On() == on) {
+        return;
+    }
+    t.SetOn(on);
+    LOG_INFO(Core, "coop: bosses: Twinrova's shots {}", on ? "fired on the owner's word" : "each game's own AI's");
+}
+
+void LogBossShots() {
+    static std::uint64_t said_ms = 0;
+    static CoopBossShots::Counts said{};
+    const std::uint64_t now = SteadyMs();
+    if (now - said_ms < 10'000) {
+        return;
+    }
+    const CoopBossShots::Counts c = CoopBossShots::TheTable().GetCounts();
+    if (c.owner_kept == said.owner_kept && c.copy_stopped == said.copy_stopped && c.fired == said.fired &&
+        c.dropped == said.dropped && c.restarts == said.restarts && c.missed == said.missed) {
+        return;
+    }
+    said_ms = now;
+    said = c;
+    LOG_INFO(Core, "coop: bosses: shots: ours sent {}; copies: {} owner's fired, {} own stopped, {} dropped, {} "
+                   "started again; {} bullets missed (slot changed before their actor was read)",
+             c.owner_kept, c.fired, c.copy_stopped, c.dropped, c.restarts, c.missed);
+}
+
 void LogBossOrders() {
     static std::uint64_t said_ms = 0;
     static CoopBossOrders::Counts said{};
@@ -512,7 +544,8 @@ void LogBossNative() {
         c.variant_named == said.variant_named && c.variant_plain == said.variant_plain &&
         c.variant_node_moved == said.variant_node_moved && c.variant_node_conflict == said.variant_node_conflict &&
         c.copy_own_move == said.copy_own_move && c.owner_move_left == said.owner_move_left &&
-        c.owner_variants == said.owner_variants) {
+        c.owner_variants == said.owner_variants && c.own_starts_held == said.own_starts_held &&
+        c.own_start_reasks == said.own_start_reasks && c.made_ours_own_other == said.made_ours_own_other) {
         return;
     }
     said_ms = now;
@@ -525,13 +558,16 @@ void LogBossNative() {
                    "owner's brain verbs given to copies {} ({} the copy was in already); variations put in: {} named, {} "
                    "plain, {} not known, {} past the name pools; {} through another node (the move's chose another "
                    "variation), {} with no such node left (row 222); {} own asks of the owner's move run ({} renamed to its "
-                   "variation), {} owner's repeats left out; owner's variations kept {} (plug names read {}, not read {})",
+                   "variation), {} owner's repeats left out; owner's variations kept {} (plug names read {}, not read {}); "
+                   "own starts held {} (asked again {}, {} reached the cap, {} met the owner's move), {} made ours "
+                   "with its own AI in another move",
              c.owner_brain, c.owner_action, c.plug_actions, c.copy_skipped, c.brain_applied, c.action_applied,
              c.action_waiting, c.action_slot_busy, c.action_busy_again, c.copy_own_run, c.copy_own_late, c.copy_shot_hits, c.copy_own_stuns, c.copy_hits_to_owner, c.minions_stopped, c.copy_life_held,
              c.copy_killed, c.copy_finished, c.plain_wants, c.plain_wakes, c.plain_deaths, c.body_deaths, c.brain_came,
              c.brain_already, c.variant_named, c.variant_plain, c.variant_unknown, c.variant_pool_full,
              c.variant_node_moved, c.variant_node_conflict, c.copy_own_move, c.own_move_renamed, c.owner_move_left, c.owner_variants, g_plug_read.load(),
-             g_plug_unread.load());
+             g_plug_unread.load(), c.own_starts_held, c.own_start_reasks, c.own_start_holds_capped,
+             c.own_start_holds_met, c.made_ours_own_other);
 }
 
 // ---- Name tags on the game's own balloons (coop_native_tags.h, B3 of reports/ui-audit-01112.md), at the frame hook.
@@ -1817,6 +1853,7 @@ void Frame(void* ctx, int site) {
         NativeTags(ctx);            // the name tags on the game's balloons (coop_native_tags.h)
         LogBossNative();
         LogBossOrders();
+        LogBossShots();
         CoopMapPage::Frame(ctx, g_api);   // the Map page's panes, found once while the game plays
         if (const auto menu = CoopMapPage::MenuState()) {  // minimap-b: the drop log's menu state (patch 0018)
             coop::host::map_drop_log().set_menu(menu->menu_open, menu->map_page);
@@ -1850,6 +1887,7 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         g_world_wraps.store(level.wraps);
         SetBossNative();
         SetBossOrders();
+        SetBossShots();
         if (g_world_version.exchange(level.version) != level.version) {
             LOG_INFO(Core, "coop: world hooks: hookshot.exe has level {} (this module {}), wraps {:#x}{}", level.version,
                      HOS_COOP_WORLD_VERSION, level.wraps,
@@ -1947,6 +1985,11 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
                         (CoopEnemyShots::StopAtCreate(name, {place[0], place[1], place[2]}, shot ? shooter : 0) ||
                          // Native boss sync: a copy boss's own minion (the owner's comes as a copy).
                          CoopBossNative::TheTable().CopyMakes(CoopObjects::MinionMaker(name)));
+        // Twinrova hand-over: her bullets are made here once and woken later; their handles are kept
+        // (coop_boss_shots.h). b: where the game keeps the request.
+        if (!t_create_stop && CoopBossShots::IsBullet(name) && CoopBossShots::TheTable().On()) {
+            CoopBossShots::TheTable().KeepBullet(b, name);
+        }
         if (t_create_stop) {
             e.flags |= CoopActorEvents::kStopped;
         }
@@ -2308,7 +2351,8 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
             }
         }
         std::optional<CoopBossNative::Request> renamed;
-        if (!t.OnActionVerb(x[0], r, (x[2] & 1) != 0, t_own_call, std::move(plug_name), &renamed)) {
+        std::uint64_t answer = CoopBossNative::addr::kActionTaken;
+        if (!t.OnActionVerb(x[0], r, (x[2] & 1) != 0, t_own_call, std::move(plug_name), &renamed, &answer)) {
             if (renamed) {
                 // Row 222: a copy's own ask of the owner's move, run with the owner's variation: its plug and
                 // has-plug set before the game reads the request (0x38..0x40).
@@ -2319,8 +2363,9 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
             return 0;
         }
         // Skipped: the result its callers pass up is what the game gives for a request it took (0, its main path
-        // main+0xc10f4; 2 and 3 are its refusals), so the asking node goes on as after its own request.
-        x[0] = CoopBossNative::addr::kActionTaken;
+        // main+0xc10f4; 2 and 3 are its refusals), so the asking node goes on as after its own request. A copy's own
+        // start held (Twinrova hand-over) answers 3, the slot busy: its node asks again.
+        x[0] = answer;
         return 1;
     }
     if (id == HOS_COOP_WRAP_TIME_SET && phase == 0) {

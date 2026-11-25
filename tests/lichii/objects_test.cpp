@@ -8975,3 +8975,45 @@ TEST_CASE("objects: the sync digest lists shared objects only, by id, with the o
     CHECK(field(entries[1], "owner") == "2");
     CHECK(field(entries[1], "life") == "2");
 }
+
+TEST_CASE("objects: a boss sample with no shots clears the copy's owner shots (Twinrova hand-over)") {
+    const std::string twinrova = "Enemy_DungeonBoss_Twinrova";
+    Sync owner;
+    Seen e = Enemy(0x100, 0x11, 12, 0.0f, twinrova);
+    e.bsa = proto::BossBsa{1, 2, std::nullopt, {}};
+    e.shots = proto::BossShots{1, {{1, "Twinrova_Bullet_FireBullet", {1.0f, 2.0f, 3.0f}}}};
+    Tick(owner, 0, {e});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+    Own(owner, id, 1, 4);
+    auto samples = All<proto::ObjectSample>(Tick(owner, 10 * kMs, {e}));
+    REQUIRE(samples.size() == 1);
+    REQUIRE(samples[0].state.shots);
+    // The owner's empty tail goes out too.
+    e.shots = proto::BossShots{1, {}};
+    e.bsa = proto::BossBsa{2, 3, std::nullopt, {}};
+    auto tail = All<proto::ObjectSample>(Tick(owner, 200 * kMs, {e}));
+    REQUIRE(tail.size() == 1);
+    REQUIRE(tail[0].state.shots);
+    CHECK(tail[0].state.shots->recent.empty());
+
+    Sync copy;
+    Seen c = Enemy(0x200, 0x11, 12, 0.0f, twinrova);
+    Tick(copy, 0, {c}, 2);
+    Own(copy, id, 1, 4);
+    proto::ObjectSample s = samples[0];
+    s.player_number = 1;
+    s.state.time = {1000 * kMs, 1};
+    copy.Receive(s);
+    Tick(copy, 1010 * kMs, {c}, 2);
+    auto in = copy.BossShotsIn();
+    REQUIRE(in.size() == 1);
+    CHECK(in[0].second.recent.size() == 1);
+    // The tail was missed: the next sample has no shots at all. None is awake there now.
+    s.state.shots.reset();
+    s.state.time = {1100 * kMs, 1};
+    copy.Receive(s);
+    Tick(copy, 1110 * kMs, {c}, 2);
+    in = copy.BossShotsIn();
+    REQUIRE(in.size() == 1);
+    CHECK(in[0].second.recent.empty());
+}

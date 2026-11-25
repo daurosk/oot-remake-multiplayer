@@ -64,6 +64,10 @@ struct Glue {
     PlaceRing own;
     std::array<PlaceRing, proto::kMaxPlayers + 1> copies;
     std::array<std::uint64_t, proto::kMaxPlayers + 1> copy_pushed_us{};
+    CoopPvpNative::GuardRing guard;     // our Link's guard toward a place, each frame (a shield raised just before)
+    std::optional<std::string> own_scene;  // the rings are one scene's: a load starts them again
+    std::array<std::optional<std::string>, proto::kMaxPlayers + 1> copy_scene;
+    std::array<std::uint64_t, proto::kMaxPlayers + 1> away_us{};  // since when a player's status is away (a trade)
     CoopPvpNative::SeqGate seq_gate;
     CoopPvpNative::Mercy mercy;
     CoopPvpNative::Tables tables = CoopPvpNative::FirstTables();
@@ -195,8 +199,10 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
         g.seq = 0;  // the victims forget us when we leave or join again: we count from 1 again
         g.mercy.Reset();
         g.own.Clear();
+        g.guard.Clear();
         for (auto& ring : g.copies) ring.Clear();
         g.copy_pushed_us.fill(0);
+        g.away_us.fill(0);
     }
     for (std::uint8_t n = 1; n <= proto::kMaxPlayers; ++n) {
         if ((forget & Bit(n)) != 0) {
@@ -243,17 +249,38 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
                 if (const auto* player = p.player(n)) {
                     s.scene = player->scene();
                     s.status = player->flags();
+                    if (!CoopPvp::Guarded(s.status)) {
+                        g.away_us[n] = 0;
+                    } else if (g.away_us[n] == 0) {
+                        g.away_us[n] = server_now_us;
+                    }
+                    // The attacker's ring: every sample we RECEIVED, also those not drawn yet (the copy is
+                    // drawn a show delay late; a strike's `from` is the attacker's place when it hit, which
+                    // on a short trip is newer than what our copy shows). A new scene starts the ring again:
+                    // a place of the last scene is no place of this one (a room change mid-swing).
+                    if (s.scene != g.copy_scene[n]) {
+                        g.copy_scene[n] = s.scene;
+                        g.copies[n].Clear();
+                    }
+                    for (const auto& sample : player->samples()) {
+                        const std::uint64_t t = sample.time.server_time_us;
+                        if (t != 0 && t > g.copy_pushed_us[n]) {
+                            g.copies[n].Push(t, sample.position);
+                            g.copy_pushed_us[n] = t;
+                        }
+                    }
                 }
             }
         });
+        if (scene != g.own_scene) {
+            g.own_scene = scene;
+            g.own.Clear();
+            g.guard.Clear();
+        }
         if (reading) {
             g.own.Push(server_now_us, reading->position);
-        }
-        for (std::uint8_t n = 1; n <= proto::kMaxPlayers; ++n) {
-            if (shown[n].known && shown[n].at_us != 0 && shown[n].at_us != g.copy_pushed_us[n]) {
-                g.copies[n].Push(shown[n].at_us, shown[n].position);
-                g.copy_pushed_us[n] = shown[n].at_us;
-            }
+            g.guard.Push(server_now_us, reading->animation && CoopPvpNative::GuardAnim(reading->animation->name),
+                         reading->rotation, reading->position);
         }
     }
     // The attacker's weapon as PLAYER_EQUIP names it (path B's BaseAttack).
@@ -324,11 +351,14 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
             view.downed = downed;
             view.own = &g.own;
             view.attacker_ring = a != 0 ? &g.copies[a] : nullptr;
+            view.attacker_away_us = g.away_us[a];
             // weapon_range: WeaponParam.Range is not read yet (the 1.3 m floor); object_at: shots are not sent yet.
             CoopPvpNative::PathBInput in;
             in.weapon = weapon_of(a);
             const proto::Vec3 at_self = reading ? reading->position : proto::Vec3{};
-            in.guarding = reading && CoopPvpNative::Guarding(anim, reading->rotation, at_self, s.from);
+            // Now, or when the attacker's copy of us showed it (5.6: a shield raised or lowered just before).
+            in.guarding = CoopPvpNative::GuardsStrike(
+                reading && CoopPvpNative::Guarding(anim, reading->rotation, at_self, s.from), g.guard, s);
             if (anim && g.guard_names.size() < 64 && g.guard_names.insert(std::string(*anim)).second) {
                 LOG_INFO(Core, "coop: pvp native: U5: our Link's main AS at a strike: {} (guard {})", *anim,
                          CoopPvpNative::GuardAnim(*anim) ? "yes" : "no");

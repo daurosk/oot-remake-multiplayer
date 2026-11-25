@@ -546,15 +546,23 @@ hit on a guarding copy, and the copy's owner's hit on our guarding Link.
 - The victim decides. A strike names `seen_us`: the server-clock time of the victim's own sample the copy showed
   when it was hit (the director knows which sample it drew; samples carry server-clock times, protocol.md). No
   clock of the attacker's is trusted.
-- **Time.** Taken only if `0 <= now - seen_us <= 350 ms` (the copy's ~100 ms display delay + 250 ms, as
-  `kHitLateMs` 200 for enemy hits plus the delay). A `seen_us` after now is `late` too (never wrapped as u64).
+- **Time.** Taken only if `0 <= now - seen_us <= 550 ms` (`kStrikeLateUs`). Between the two lie one trip of the
+  victim's sample to the attacker (both games' way to the server), the attacker's display delay of that copy
+  (100 ms or more) and one trip of the strike back: with both games at a 200 ms ping that is 200 + 100 + 200,
+  plus 50 ms of jitter. (The first value, 350 ms, answered `late` to every strike between two games at 150 ms
+  pings: fable-puppet-pvp, 2026-11-25.) A `seen_us` after now is `late` too (never wrapped as u64). So the
+  victim is hit where the attacker saw it up to 0.55 s ago, also when it has moved on since: the known price of
+  judging what the attacker saw.
 - **The victim's place.** The victim keeps a 1 s ring of its own places (each frame). The hit's place must be
   within 0.5 m (sample interpolation and jitter) plus the body (1.0 m level, -0.4 to 2.2 m high: today's body
   numbers) of the ring's place at `seen_us` (review L1: no `speed x elapsed` term, which would widen it for a
   rolling victim, just when lag hurts the victim). Else `out of reach`.
 - **The attacker's place (review M1).** The victim also keeps a 1 s ring of its own copy of each player (the
-  samples it received). The strike's `from` must be within 0.5 m of that ring's place of the attacker at
-  `seen_us` (+-100 ms), and by source:
+  samples it received, also those its copy does not draw yet). The strike's `from` is the attacker's place when
+  it HIT, which is later than `seen_us` by its display delay and a trip (a running attacker is 1.4 m on after
+  200 ms), so it must be within 0.5 m of the **path** of that ring from `seen_us` - 100 ms on (its places and
+  the lines between neighbours at most 250 ms apart: a warp is no path; `PlaceRing::NearestSince`), and by
+  source:
   - sword or body: the victim's ring place of the attacker within the weapon's reach of the hit place, the reach
     from the game's data (`WeaponParam.Range` of the weapon the attacker has equipped as `PLAYER_EQUIP` says: the
     Deku Stick's 1.8 m, ...; a weapon without one: today's 1.3 m) + 0.5 m; never less than 1.3 m;
@@ -566,7 +574,14 @@ hit on a guarding copy, and the copy's owner's hit on our guarding Link.
   repeated one is dropped (no result). The server lets through at most 10 strikes a second per attacker (the
   game's quickest: a spin's several hits in one swing) and drops the rest (`stats.pvp_strikes_flood`).
 - Kept off as today: an event, a menu, a load, pause, another scene, life not read, downed or dead, the attacker in
-  one of those, or the victim's copy of the attacker not known.
+  one of those, or the victim's copy of the attacker not known. Each still gets its answer (`kept off`) and
+  spends its seq. The rings are one scene's: a load clears them (a room change mid-swing).
+- **Both hit at once.** Each game judges the strike on its own Link, so two swings in one moment are a trade. An
+  attacker whose status went away (dead, a menu, ...) at most 200 ms ago (`kTradeGraceUs`) is not kept off for it:
+  its strike was swung before, and only the news overtook it.
+- **A shield raised just before (path B).** Guarded when our Link guards toward the attacker now, or did at
+  `seen_us` (`GuardRing`, a second of frames): never a hit through a shield either screen shows raised. Lag is
+  paid by the attacker.
 - So what the attacker saw is what it hit (within the ring), a laggy attacker cannot hit someone who got away, and
   a game that makes strikes up can neither hit from across the room nor choose the damage.
 
@@ -610,8 +625,9 @@ Both kits: pack `--puppet-body --puppet-pvp`, `LICHII_COOP_PVP_NATIVE=1`, `/pvp 
    and result logged per kind.
 6. Guard break and burn: the Master Sword on a guarding Deku Shield; a fire arrow on a guarding Deku Shield
    [shot A+B], as the game does it.
-7. Lag: the lane's added delay (or a relay hop) on; B rolls away right after A's swing: `out of reach`, no hit
-   [shot B]; with more than 250 ms one way: `late` [shot B].
+7. Lag: the lane's added delay (or a relay hop) on, 100 ms each way per game (200 ms pings): A's slash on its
+   copy of B is `taken` though B rolled away right after the swing [shot A+B]; a strike A makes up from a place
+   it never stood is `out of reach` [shot B]; with 150 ms each way per game: `late`, no hit [shot B].
 8. PvP turned off mid-fight while A holds Z on B: the lock lets go, the copy is re-made plain, the next slash
    passes through [shot A+B]; nothing clangs on B's shield.
 9. No double damage: B swings at A's real Link; A loses exactly what A's own result says, once [shot A].

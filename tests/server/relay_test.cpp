@@ -1610,7 +1610,7 @@ TEST_CASE("relay: the direct way's wrong rooms count with the lookups', and its 
     REQUIRE(out.size() == 1);
     CHECK(decoded(out[0]).status == static_cast<std::uint8_t>(LookupResult::kUnknown));
   }
-  CHECK(f.lookup_room("wrong") == LookupResult::kUnknown);  // (the 10th wrong one)
+  CHECK(f.lookup_room("wrong", kGuest, 20) == LookupResult::kUnknown);  // (the 10th wrong one, same window)
   auto out = f.relay.received(kGuest, encode(direct_message("forest")), 30);
   REQUIRE(out.size() == 1);
   CHECK(out[0].to == kGuest);  // (even the right room waits: not passed to the host)

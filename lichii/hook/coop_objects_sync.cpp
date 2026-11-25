@@ -4370,12 +4370,15 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             if (own != owners_.end() && sample->epoch < own->second.epoch) {
                 continue;  // from an owner before the last change
             }
-            // A sample that comes after a newer one (the channel does not keep the order).
-            const std::pair<std::uint16_t, std::uint64_t> stamp{sample->epoch, sample->state.time.server_time_us};
-            const bool late = stamp < o->newest_sample;
-            if (!late) {
-                o->newest_sample = stamp;
+            // A sample that comes after a newer one (the channel does not keep the order) is as a lost one: all it
+            // says, the newer one said later (verbs, orders, shots, brain list, strike, hit, life). A time far behind
+            // is the owner's clock set back, not a late packet: taken.
+            const std::uint64_t sent = sample->state.time.server_time_us;
+            if (const auto& [epoch, time] = o->newest_sample;
+                sample->epoch <= epoch && sent < time && time - sent <= kLateSampleUs) {
+                continue;
             }
+            o->newest_sample = {sample->epoch, sent};
             if (sample->state.state && (*sample->state.state & proto::object_state::in_event) != 0) {
                 o->owner_event_until = now_us + kEventKeepUs;  // S2: its owner's event binds it
             }
@@ -4384,7 +4387,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 o->variants_in = sample->state.variants;  // row 222 part 2: with it (none from an older owner)
                 o->boss_native = true;
             }
-            if (sample->state.orders && !late) {  // (a late list's count would go back: every order again)
+            if (sample->state.orders) {
                 o->orders_in = sample->state.orders;  // row 222: the owner's battle manager orders
             }
             if (sample->state.brain) {
@@ -4392,9 +4395,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 std::size_t dropped = 0;
                 o->brain_in = proto::MergeKeyed(o->brain_in ? &*o->brain_in : nullptr, *sample->state.brain, dropped);
             }
-            if (late) {
-                // (the newer sample's shots stand, its empty list too)
-            } else if (sample->state.shots) {
+            if (sample->state.shots) {
                 o->shots_in = sample->state.shots;  // Twinrova hand-over: the owner's shots
             } else if (o->shots_in) {
                 o->shots_in->recent.clear();  // none awake there now (its empty tail missed)

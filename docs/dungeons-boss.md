@@ -925,7 +925,8 @@ calls comes after a run has shown what they are given.
   `paired`, `missing` (the owner's, no bullet here: row 286's fault), `extra` (ours, none of the owner's), `in no
   list` (it began and ended between two samples). An owner sample with no `shots` counts as an empty list.
 - OBJECT_SAMPLE may come out of order. A sample older than one taken (its ownership's epoch, then its owner's time)
-  does not change `shots` nor the battle manager's `orders` (whose count would go back: every order again).
+  is not taken at all, as a lost one, for every object: its verbs, orders, shots, brain list, strike, hit and life are
+  all older than what came. A time more than 2 s behind is the owner's clock set back and is taken.
 - A hand-over starts it again, also one back to the same player between two walks (the epoch): bullets in flight
   finish on their own and are no one's shot. The new owner counts from its next wake.
 

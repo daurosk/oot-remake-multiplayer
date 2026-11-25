@@ -9054,14 +9054,40 @@ TEST_CASE("objects: a late boss sample does not bring back older shots or orders
     const auto shots = [&] { return copy.BossShotsIn().at(0).second; };
     const proto::BossShots one{1, {{1, "Twinrova_Bullet_FireBullet", {1.0f, 2.0f, 3.0f}}}};
     const proto::BossShots two{2, {{2, "Twinrova_Bullet_FireBullet", {1.0f, 2.0f, 3.0f}}}};
+    const auto owner_life = [&] {
+        for (const auto& entry : copy.DigestEntries()) {
+            for (const auto& [name, value] : entry.fields) {
+                if (name == "local.owner_life") {
+                    return value;
+                }
+            }
+        }
+        return std::string("(none)");
+    };
+    const auto board = [](std::int32_t v) { return proto::KeyedValues{true, {{0, 9, v}}}; };
+    const proto::BossBsa bsa2{2, 5, std::nullopt, {}}, bsa1{1, 2, std::nullopt, {}};
+    s.state.bsa = bsa2;
+    s.state.brain = board(22);
+    s.state.life = proto::ObjectLife{4, 12};
     s.state.shots = two;
     s.state.orders = proto::BossOrders{2, {{2, 7, {}}}};
     take(1100);
+    REQUIRE(copy.BossVerbsIn().size() == 1);
+    CHECK(owner_life() == "4");
+    REQUIRE(copy.BrainStateIn().size() == 1);
     // The sample before it comes after it: with its shots, and with none.
+    s.state.bsa = bsa1;
+    s.state.variants = proto::BossVariants{};
+    s.state.brain = board(11);
+    s.state.life = proto::ObjectLife{9, 12};
     s.state.shots = one;
     s.state.orders = proto::BossOrders{1, {{1, 7, {}}}};
     take(1050);
     CHECK(shots() == two);
+    CHECK(copy.BossVerbsIn()[0].second == bsa2);
+    CHECK_FALSE(copy.BossVariantsIn(0x200));
+    CHECK(copy.BrainStateIn()[0].second == board(22));
+    CHECK(owner_life() == "4");
     REQUIRE(copy.BossOrdersIn().size() == 1);
     CHECK(copy.BossOrdersIn()[0].second.seq == 2);
     s.state.shots.reset();
@@ -9079,6 +9105,19 @@ TEST_CASE("objects: a late boss sample does not bring back older shots or orders
     s.state.shots = two;
     take(1140);
     CHECK(shots().recent.empty());
+    // The owner's clock set back: far behind is no late packet.
+    s.state.shots = one;
+    take(150);
+    CHECK(shots().recent.empty());  // (1 s behind: late)
+    now += 10000;
+    s.state.shots = two;
+    take(9000);
+    s.state.shots = one;
+    take(2000);
+    CHECK(shots() == one);
+    s.state.shots = two;
+    take(2010);
+    CHECK(shots() == two);
     // Another ownership: the old one's shots are not the new one's, and its clock may be behind.
     own(3, 5);
     CHECK(copy.BossShotsIn().empty());

@@ -867,6 +867,7 @@ public:
     // ('Pct_Wait' at once, the room logic stalled). Its own death is played again over it this long after.
     static constexpr std::uint64_t kPictureReplayUs = 3'000'000;
     static constexpr std::size_t kKeepSamples = 16;
+    static constexpr std::uint64_t kLateSampleUs = 2'000'000;  // an OBJECT_SAMPLE this far behind at most is late
     static constexpr std::uint64_t kSceneStaleUs = 5'000'000;  // a player's scene, from its samples
     static constexpr float kClaimDistance = 4.0f;  // a fresh roll this near a copy being made is it
     // A roll this near a lower-numbered player's Link is that player's to make
@@ -1457,7 +1458,8 @@ private:
         std::optional<coop::protocol::KeyedValues> brain_in;
         std::optional<coop::protocol::BossShots> shots;     // Twinrova hand-over: ours, as last read
         std::optional<coop::protocol::BossShots> shots_in;  // Twinrova hand-over: a copy's, the owner's latest
-        // A copy: the newest sample taken (its epoch, then its owner's time). OBJECT_SAMPLE may come out of order.
+        // A copy: the newest sample taken (its epoch, its owner's time). OBJECT_SAMPLE may come out of order: one
+        // at most kLateSampleUs behind it is late and not taken.
         std::pair<std::uint16_t, std::uint64_t> newest_sample{};
         bool boss_native = false;  // a bsa came for it once: its AI runs (never held), across owners
         coop::protocol::Vec3 velocity{};

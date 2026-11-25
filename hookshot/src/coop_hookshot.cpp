@@ -469,7 +469,6 @@ void SetBossOrders() {
                                               : "not wrapped in this hookshot.exe");
 }
 
-// Every 10 s while orders move: the counts (the probe run's lines).
 // Twinrova hand-over (coop_boss_shots.h): the owner's shots known in every game. Reads only.
 void SetBossShots() {
     const bool on = Env("LICHII_COOP_BOSS_SHOTS") != "0";
@@ -481,6 +480,7 @@ void SetBossShots() {
     LOG_INFO(Core, "coop: bosses: Twinrova's shots {}", on ? "sent and counted (nothing is woken)" : "not read");
 }
 
+// Every 10 s while shots move: the counts (the run's lines).
 void LogBossShots() {
     static std::uint64_t said_ms = 0;
     static CoopBossShots::Counts said{};
@@ -500,6 +500,7 @@ void LogBossShots() {
              CoopBossShots::TheTable().Bullets(), c.lost);
 }
 
+// Every 10 s while orders move: the counts (the probe run's lines).
 void LogBossOrders() {
     static std::uint64_t said_ms = 0;
     static CoopBossOrders::Counts said{};

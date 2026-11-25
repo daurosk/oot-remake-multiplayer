@@ -124,11 +124,29 @@ Table::Entry* Table::OfShooter(std::uint64_t shooter, const Reader& read) {
 bool Table::OnRequest(std::uint64_t shooter, std::uint32_t hash, std::uint32_t num, bool own_call,
                       const Reader& read) {
     std::lock_guard lock(mutex_);
-    if (!on_ || own_call || entries_.empty()) {
+    if (!on_) {
+        return false;
+    }
+    ++counts_.asked;
+    if (own_call || entries_.empty()) {
+        counts_.asked_own += own_call ? 1 : 0;
+        if (counts_.asked <= 6) {
+            Note("shooter requests: probe: a request (" + Hex(hash) + " x" + std::to_string(num & 0xffu) + ") with " +
+                 (own_call ? "our own call" : "no boss member in the table"));
+        }
         return false;
     }
     Entry* e = OfShooter(shooter, read);
-    if (e == nullptr || e->member.role != Role::copy) {
+    if (e == nullptr) {
+        ++counts_.no_entry;
+        if (counts_.no_entry <= 6) {
+            Note("shooter requests: probe: a request (" + Hex(hash) + " x" + std::to_string(num & 0xffu) +
+                 ") from shooter " + Hex(shooter) + " that no boss of ours owns");
+        }
+        return false;
+    }
+    ++(e->member.role == Role::owner ? counts_.as_owner : counts_.as_copy);
+    if (e->member.role != Role::copy) {
         return false;
     }
     if (!e->owner_came) {
@@ -145,11 +163,23 @@ bool Table::OnRequest(std::uint64_t shooter, std::uint32_t hash, std::uint32_t n
 void Table::OnRan(std::uint64_t shooter, std::uint32_t hash, std::uint32_t num, bool found, bool own_call,
                   const Reader& read) {
     std::lock_guard lock(mutex_);
-    if (!on_ || own_call || !found || !Asks(hash, num) || entries_.empty()) {
+    if (!on_ || own_call || entries_.empty()) {
         return;
     }
     Entry* e = OfShooter(shooter, read);
     if (e == nullptr || e->member.role != Role::owner) {
+        return;
+    }
+    if (!found) {
+        ++counts_.ran_not_found;
+        return;
+    }
+    if (!Asks(hash, num)) {
+        ++counts_.ran_not_asked;
+        if (counts_.ran_not_asked <= 6) {
+            Note("shooter requests: probe: our boss's request (" + Hex(hash) + " x" + std::to_string(num & 0xffu) +
+                 ") is not one a bullet asks");
+        }
         return;
     }
     const BossShot s{e->mine.seq + 1, hash, static_cast<std::uint8_t>(num & 0xffu)};

@@ -491,14 +491,18 @@ void LogBossShots() {
     const CoopBossShots::Counts c = CoopBossShots::TheTable().GetCounts();
     if (c.owner_kept == said.owner_kept && c.copy_skipped == said.copy_skipped && c.delivered == said.delivered &&
         c.copy_own_ran == said.copy_own_ran && c.dropped == said.dropped && c.restarts == said.restarts &&
-        c.missed == said.missed) {
+        c.missed == said.missed && c.asked == said.asked && c.ran_not_found == said.ran_not_found &&
+        c.ran_not_asked == said.ran_not_asked) {
         return;
     }
     said_ms = now;
     said = c;
     LOG_INFO(Core, "coop: bosses: shooter requests: ours sent {}; copies: {} owner's made, {} own skipped, {} own run "
-                   "before the owner's came, {} not known to our shooter, {} dropped, {} started again",
-             c.owner_kept, c.delivered, c.copy_skipped, c.copy_own_ran, c.missed, c.dropped, c.restarts);
+                   "before the owner's came, {} not known to our shooter, {} dropped, {} started again; asked {} "
+                   "({} by our own call, {} from no boss of ours, {} our boss's, {} a copy's; our boss's: {} not found, "
+                   "{} not a bullet's)",
+             c.owner_kept, c.delivered, c.copy_skipped, c.copy_own_ran, c.missed, c.dropped, c.restarts, c.asked,
+             c.asked_own, c.no_entry, c.as_owner, c.as_copy, c.ran_not_found, c.ran_not_asked);
 }
 
 // Every 10 s while orders move: the counts (the probe run's lines).

@@ -83,6 +83,14 @@ struct Counts {
     std::uint64_t missed = 0;        // owner's requests the copy's shooter did not know (the function answered 0)
     std::uint64_t dropped = 0;       // owner's requests dropped (too many queued, no shooter, or older than the list)
     std::uint64_t restarts = 0;      // a copy started again with the owner's list (its count went back: a new owner)
+    // Probe (row 222 run 11:00: the counters never moved): why a request did not count.
+    std::uint64_t asked = 0;         // every request the wrapped function got while the table is on
+    std::uint64_t asked_own = 0;     // of them, made by the module's own call (not the game's AI)
+    std::uint64_t no_entry = 0;      // of them, from a shooter no boss member of ours owns
+    std::uint64_t as_owner = 0;      // of them, from our own boss's shooter
+    std::uint64_t as_copy = 0;       // of them, from a copy boss's shooter
+    std::uint64_t ran_not_found = 0; // our own boss's requests the function answered 0 (no such shootable)
+    std::uint64_t ran_not_asked = 0; // our own boss's requests found but not a bullet's (Asks said no)
 };
 
 // The planner, without game memory: which of the owner's requests a copy makes next (tested). `made`: the newest

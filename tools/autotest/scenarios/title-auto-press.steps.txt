@@ -1,0 +1,17 @@
+# title-auto-press (Cookie's report, patch 0030 + coop_auto_press.h): back on the title from a join with a file loaded, the
+# module presses Continue, the newest save and Load for the player. While those presses run the game's menu mouse is held
+# (hos_coop_menu_mouse_held), so a hover cannot move the focus off Continue under them.
+# The way back to the title is the test trigger: with LICHII_COOP_TEST_TO_TITLE=1, a file to-title.now in B's game folder
+# (the folder its log names) starts it. The runner drops that file during the `sleep 91` step, and moves the real mouse
+# over B's buttons the whole run (offline crash-cookie-2-run.ps1 does both).
+# PASS: b-to-title, b-pressed, b-done, b-no-crash; shot b-after shows B's Link in the game (not the title).
+#! switches B:LICHII_COOP_TEST_TO_TITLE=1
+#! timeout 480
+start A B
+load A B
+sleep 91
+shot b-after
+lines b-to-title B min=1 coop: multiplayer tab: test: back to the title asked
+lines b-pressed B min=1 coop: title: the host's save is in: Continue, its newest save and Load pressed
+lines b-done B min=1 coop: title: the host's save: the presses that load it are done
+lines b-no-crash B max=0 unhandled exception|fault at|coop: null read

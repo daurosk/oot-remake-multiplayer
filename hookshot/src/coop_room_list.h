@@ -26,7 +26,7 @@ struct Room {
     // The lobby's difficulty as listed (coop::protocol::ListedDifficulty: 0 none said, an older host; 1 automatic,
     // 2 easy, 3 normal, 4 hard, 5 custom), the host's choice when making the lobby or since.
     int difficulty = 0;
-    std::string tag;          // what world it plays (row 281, server/relay_wire.hpp kRoomTags): "Randomizer SEED
+    std::string tag{};        // what world it plays (row 281, server/relay_wire.hpp kRoomTags): "Randomizer SEED
                               // (settings)"; empty: the base game, or a relay before 0.11.13
 };
 // The listing's difficulty bits (coop::protocol::kListingDifficultyShift; checked equal in coop_room_list_text.cpp).

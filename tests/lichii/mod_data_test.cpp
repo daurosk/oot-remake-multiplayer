@@ -56,13 +56,20 @@ TEST_CASE("mod data store: sends each change once, a clear first, one each quart
     now += proto::kModDataSendGapMs;
     next = s.Next(now);
     REQUIRE(next);
-    CHECK(*next == proto::ModData{proto::kPlayerSelf, "a", "x", B("2")});
+    // The turn goes on after the last key sent (x): y first, then x again.
+    CHECK(*next == proto::ModData{proto::kPlayerSelf, "a", "y", B("3")});
     // Not sent (the client refused it): still due.
     CHECK(s.Next(now) == next);
     s.MarkSent(*next, now, s.connection());
+    now += proto::kModDataSendGapMs;
+    next = s.Next(now);
+    REQUIRE(next);
+    CHECK(*next == proto::ModData{proto::kPlayerSelf, "a", "x", B("2")});
+    s.MarkSent(*next, now, s.connection());
     // A clear goes before a key the server has not got yet.
     s.Set("a", "x", {});
-    s.Set("a", "y", B("3"));
+    s.Set("a", "y", B("3"));  // the same value: the server has it, not sent again
+    s.Set("a", "z", B("4"));
     now += proto::kModDataSendGapMs;
     next = s.Next(now);
     REQUIRE(next);
@@ -71,7 +78,7 @@ TEST_CASE("mod data store: sends each change once, a clear first, one each quart
     now += proto::kModDataSendGapMs;
     next = s.Next(now);
     REQUIRE(next);
-    CHECK(*next == proto::ModData{proto::kPlayerSelf, "a", "y", B("3")});
+    CHECK(*next == proto::ModData{proto::kPlayerSelf, "a", "z", B("4")});
     s.MarkSent(*next, now, s.connection());
     now += proto::kModDataSendGapMs;
     CHECK_FALSE(s.Next(now));
@@ -83,6 +90,14 @@ TEST_CASE("mod data store: sends each change once, a clear first, one each quart
     next = s.Next(now);
     REQUIRE(next);
     CHECK(*next == proto::ModData{proto::kPlayerSelf, "a", "y", B("3")});
+    s.MarkSent(*next, now, s.connection());
+    now += proto::kModDataSendGapMs;
+    next = s.Next(now);
+    REQUIRE(next);
+    CHECK(*next == proto::ModData{proto::kPlayerSelf, "a", "z", B("4")});
+    s.MarkSent(*next, now, s.connection());
+    now += proto::kModDataSendGapMs;
+    CHECK_FALSE(s.Next(now));
 }
 
 TEST_CASE("mod data store: a key that changes all the time keeps no other back") {

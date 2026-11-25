@@ -396,10 +396,11 @@ TEST_CASE("session: a reconnect while held sends the status and equipment again"
       return pose ? pose->position[0] : 0.0f;
     });
   };
-  float x = 1.0f;
-  const auto walk_end = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
-  while (std::chrono::steady_clock::now() < walk_end) {
-    x = (std::min)(x + 0.2f, 100.0f);
+  // A's place comes from the time walked, not from the steps done: a 2 ms sleep takes up to 15.6 ms on Windows.
+  const auto walk_start = std::chrono::steady_clock::now();
+  const auto walk_end = walk_start + std::chrono::milliseconds(1500);
+  for (auto now = walk_start; now < walk_end; now = std::chrono::steady_clock::now()) {
+    const float x = 1.0f + 40.0f * std::chrono::duration<float>(now - walk_start).count();
     a.memory.put_vec3(test::Layout{}.game_ui + addr::kGameUiPosition, {x, 2.0f, 3.0f});
     server->service(1);
     a.step();

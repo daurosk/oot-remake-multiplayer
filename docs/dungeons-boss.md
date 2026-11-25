@@ -775,6 +775,13 @@ name the copy still lost ice shots and aimed its floors at neither Link:
   a node that chose Fire and then asked another move still holds its Fire), and a named or plain owner's move
   never goes in through a node that chose ANOTHER variation of the same move: the slot's last node, the last node, or
   another node of its own instead (only when every node conflicts, the move's own, as before).
+  Changed after run 20261124-043035 (review-geno-222): the copy's own node of the move is used whatever it chose. The
+  game keeps the request's place kind (0x34) with the asking node, and the owner's kind is its node of this move's;
+  in that run every copy put-in of 121 went in with the owner's kind through another move's node (A: StartBattle's,
+  "another node of its own"; B after its hand-over: Fly's) and none shot. The 115945 failure through the 121 node
+  was the kind bug (0x10 where that node asks 0), found later in 011531. A node asks plain and `Ice` alike (B's 121
+  node in 043035), so the plug alone gives the variation. The other nodes are used only when the copy has no node
+  of the move.
 - An ask by plug names its places too (the owner's `Ice`: the Link it aims at and a second point), but component 20
   leaves them out for an ask by plug, so the copy's move aimed at nothing (probe 3 showed the same: a place whose first
   float is NaN is none, and the shot dropped straight from the hand). Component 20 stays as it was (an older copy puts

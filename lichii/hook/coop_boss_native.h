@@ -239,10 +239,11 @@ struct OwnVariants {
 // node, another node of its own, or the move's own though it chose another variation (every node conflicts).
 enum class AskRule { own, slot, last, other, all_conflict };
 std::string_view AskRuleName(AskRule rule);
-// AskFor for the owner's move in its variation `variant` (nothing: not known, plain AskFor): never a node whose own
-// choice of this same move is ANOTHER variation (its own choice would undo ours); the slot's last node, the last
-// node, or another node of its own then, in that order; only when every node it has conflicts, the move's own.
-// `rule` (when given) says which.
+// AskFor for the owner's move in its variation `variant` (nothing: not known, plain AskFor): the copy's own node of
+// this move whenever it has one, whatever variation that node chose (the request's place kind goes with its asking
+// node; the variation goes in by the plug). Only with no node of this move: never a node whose own choice of this
+// move is ANOTHER variation; the slot's last node, the last node, or another node of its own then, in that order;
+// when every node it has conflicts, the plain AskFor's. `rule` (when given) says which.
 std::optional<OwnAsk> AskFor(const std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk>& by_move,
                              const std::map<std::int32_t, OwnAsk>& by_slot, std::uint64_t last, const BossAction& a,
                              const OwnVariants& own, const std::optional<std::string>& variant,

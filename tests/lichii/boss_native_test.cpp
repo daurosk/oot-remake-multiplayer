@@ -2939,7 +2939,7 @@ TEST_CASE("native boss: row 222, an ask by plug names its places, they go with i
     CHECK(ReqAt<float>(own, addr::kReqPlaces) == 10.0f);
 }
 
-TEST_CASE("native boss: row 222, the owner's move never goes through a node that chose another variation of it") {
+TEST_CASE("native boss: row 222, the owner's move goes through its own node of the move, whatever that node chose") {
     constexpr std::uint64_t kShotNode = 0x4000100;   // asks the ranged attack (121): its own last plain (Fire)
     constexpr std::uint64_t kStartNode = 0x4000200;  // asked StartBattle (65)
     constexpr std::uint64_t kFlyNode = 0x4000300;    // asked Fly (4), the slot's last
@@ -2954,43 +2954,38 @@ TEST_CASE("native boss: row 222, the owner's move never goes through a node that
     own.choices[{kShotNode, 0, 121}] = "";
     own.choices[{kStartNode, 0, 65}] = "StartBattle";
     own.choices[{kFlyNode, 0, 4}] = "";
-    // 'Ice' while its shot node chose plain: the slot's last node (no choice of this move), not the shot node.
-    AskRule rule = AskRule::own;
-    CHECK(AskFor(by_move, by_slot, kFlyNode, a, own, std::string("Ice"), &rule)->node == kFlyNode);
-    CHECK(rule == AskRule::slot);
+    // 'Ice' while its shot node chose plain: still the shot node (run 20261124-043035: the place kind is its node's).
+    AskRule rule = AskRule::slot;
+    CHECK(AskFor(by_move, by_slot, kFlyNode, a, own, std::string("Ice"), &rule)->node == kShotNode);
+    CHECK(rule == AskRule::own);
     // Plain while it chose plain: the shot node and its own ask, as before.
     CHECK(*AskFor(by_move, by_slot, kFlyNode, a, own, std::string{}, &rule) == OwnAsk{kShotNode});
     CHECK(rule == AskRule::own);
     // Not known (an older owner): as before.
     CHECK(*AskFor(by_move, by_slot, kFlyNode, a, own, std::nullopt) == OwnAsk{kShotNode});
-    // Its shot node chose Ice: 'Ice' goes there, plain goes elsewhere (Koume's fire after Kotake's ice, either way).
+    // Its shot node chose Ice: plain goes there too (Koume's fire after Kotake's ice, either way).
     own.choices[{kShotNode, 0, 121}] = "Ice";
     CHECK(AskFor(by_move, by_slot, kFlyNode, a, own, std::string("Ice"))->node == kShotNode);
-    CHECK(AskFor(by_move, by_slot, kFlyNode, a, own, std::string{})->node == kFlyNode);
-    // The slot's last and the last node are the shot node too: another node of its own.
-    const std::map<std::int32_t, OwnAsk> shot_slot{{0, OwnAsk{kShotNode}}};
-    CHECK(AskFor(by_move, shot_slot, kShotNode, a, own, std::string{}, &rule)->node != kShotNode);
-    CHECK(rule == AskRule::other);
-    // Only the shot node: the move's own (nothing better), said as such.
-    OwnVariants only;
-    only.choices[{kShotNode, 0, 121}] = "Ice";
-    CHECK(AskFor(by_move, shot_slot, kShotNode, a, only, std::string{}, &rule)->node == kShotNode);
+    CHECK(AskFor(by_move, by_slot, kFlyNode, a, own, std::string{}, &rule)->node == kShotNode);
+    CHECK(rule == AskRule::own);
+    // No node of this move known: not a node that chose another variation of it (the slot's last did): the last.
+    const std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk> no_shot{{{0, 65}, OwnAsk{kStartNode, 0x77, true}},
+                                                                         {{0, 4}, OwnAsk{kFlyNode}}};
+    OwnVariants fly;
+    fly.choices[{kFlyNode, 0, 121}] = "Ice";
+    CHECK(AskFor(no_shot, by_slot, kStartNode, a, fly, std::string{}, &rule)->node == kStartNode);
+    CHECK(rule == AskRule::last);
+    // Every node it has chose another variation: the plain AskFor's (the slot's last), said as such.
+    fly.choices[{kStartNode, 0, 121}] = "Ice";
+    CHECK(AskFor(no_shot, by_slot, kStartNode, a, fly, std::string{}, &rule)->node == kFlyNode);
     CHECK(rule == AskRule::all_conflict);
-    // Review-01112-h: a node keeps its choice of each move. The shot node chose Fire (plain) for 121, then asked
-    // another move (Fly, verb 4): its 121 choice still stands, so 'Ice' does not go through it.
-    OwnVariants kept;
-    kept.choices[{kShotNode, 0, 121}] = "";
-    kept.choices[{kShotNode, 0, 4}] = "";
-    kept.choices[{kStartNode, 0, 65}] = "StartBattle";
-    CHECK(AskFor(by_move, shot_slot, kShotNode, a, kept, std::string("Ice"), &rule)->node == kStartNode);
-    CHECK(rule == AskRule::other);
     // A plug not read as a name differs from every name.
     CHECK(OwnAskVariant(GameRequest(121, kNode), "Ice").empty());
     CHECK(OwnAskVariant(PlugRequest(121, kNode, 0x77), std::nullopt) == "?");
     CHECK(OwnAskVariant(PlugRequest(121, kNode, 0x77), std::string("Ice")) == "Ice");
 }
 
-TEST_CASE("native boss: row 222, a copy puts the owner's 'Ice' in through a node that did not choose Fire, with its places") {
+TEST_CASE("native boss: row 222, a copy puts the owner's 'Ice' in through its shot node that chose Fire, with its places") {
     constexpr std::uint64_t kShotNode = 0x4000100;
     constexpr std::uint64_t kStartNode = 0x4000200;
     Table t;
@@ -3014,12 +3009,12 @@ TEST_CASE("native boss: row 222, a copy puts the owner's 'Ice' in through a node
     auto c = t.Step(g, true, kBlock, kMain);
     REQUIRE(c);
     CHECK(c->function == kMain + addr::kRequestActionVerb);
-    CHECK(g.Get<std::uint64_t>(kBlock + addr::kReqNode) == kStartNode);  // (its shot node chose Fire)
+    CHECK(g.Get<std::uint64_t>(kBlock + addr::kReqNode) == kShotNode);  // (it chose Fire: the plug says Ice)
     CHECK(g.Get<std::uint8_t>(kBlock + addr::kReqHasPlug) == 1);
     CHECK(CString(g, g.Get<std::uint64_t>(kBlock + addr::kReqPlug)) == "Ice");
     CHECK(g.Get<float>(kBlock + addr::kReqPlaces) == 10.0f);  // the owner's place: it aims as the owner's did
     CHECK_FALSE(t.Step(g, true, 0, kMain));
-    // The owner's plain shot next: through its shot node, which chose plain.
+    // The owner's plain shot next: through its shot node, no plug.
     BossAction b = *ActionFromRequest(GameRequest(121, 0, true));
     b.changed = true;
     t.Receive(kActor, BossBsa{2, 2, b, {BossChange{1, a}, BossChange{2, b}}}, BossVariants{{{1, "Ice"}, {2, ""}}});
@@ -3061,8 +3056,9 @@ TEST_CASE("native boss: row 222, a named move made ours mid-move starts over wit
     CHECK(g.Get<float>(kBlock + addr::kReqPlaces) == 10.0f);
 }
 
-TEST_CASE("native boss: row 222, a node that chose Fire and then asked another move still holds its Fire") {
-    // Review-01112-h: the choice is kept per (node, slot, verb), not only the node's last ask.
+TEST_CASE("native boss: row 222, the owner's 'Ice' goes through the copy's shot node that chose Fire and then asked Fly") {
+    // Run 20261124-043035: never another move's node (StartBattle's) for the owner's move: its place kind is the
+    // shot node's.
     constexpr std::uint64_t kShotNode = 0x4000100;
     constexpr std::uint64_t kStartNode = 0x4000200;
     Table t;
@@ -3081,13 +3077,13 @@ TEST_CASE("native boss: row 222, a node that chose Fire and then asked another m
     t.Receive(kActor, BossBsa{1, 2, a, {BossChange{1, a}}}, BossVariants{{BossVariant{1, "Ice", PlacesOf(owner)}}});
     REQUIRE(t.Step(g, false, 0, kMain));
     REQUIRE(t.Step(g, true, kBlock, kMain));
-    CHECK(g.Get<std::uint64_t>(kBlock + addr::kReqNode) == kStartNode);  // never the node that chose Fire
-    CHECK(t.Totals().variant_node_moved == 1);
+    CHECK(g.Get<std::uint64_t>(kBlock + addr::kReqNode) == kShotNode);
+    CHECK(g.Get<std::uint8_t>(kBlock + addr::kReqHasPlug) == 1);
+    CHECK(t.Totals().variant_node_moved == 0);
     CHECK(t.Totals().variant_node_conflict == 0);
     const auto notes = t.TakeNotes();
-    CHECK(std::any_of(notes.begin(), notes.end(), [](const std::string& n) {
-        return n.find("another node of its own") != n.npos || n.find("its slot's last node") != n.npos;
-    }));
+    CHECK(std::any_of(notes.begin(), notes.end(),
+                      [](const std::string& n) { return n.find("its node of this move") != n.npos; }));
 }
 
 namespace {

@@ -169,7 +169,11 @@ std::optional<OwnAsk> AskFor(const std::map<std::pair<std::int32_t, std::int32_t
         const auto it = own.choices.find({node, a.slot, a.verb});
         return it != own.choices.end() && it->second != *variant;
     };
-    if (!conflicts(plain->node)) {
+    if (plain_rule == AskRule::own || !conflicts(plain->node)) {
+        // Row 222 (run 20261124-043035): its own node of this move, whatever variation it chose last. The game keeps
+        // the request's place kind (0x34) with the asking node; the owner's kind is its node of this move's, so the
+        // copy's node of the same move takes it. Through another node (StartBattle's, Fly's) the move ran with no
+        // shot. The variation goes in by the plug (WithVariant), as a node asks plain and 'Ice' alike.
         return plain;
     }
     if (const auto it = by_slot.find(a.slot);

@@ -19,6 +19,7 @@ add_executable(coop_tests
   protocol/join_password_test.cpp
   protocol/mod_world_test.cpp
   protocol/official_mark_test.cpp
+  protocol/room_object_model_test.cpp
   protocol/race_test.cpp
   protocol/traffic_crypto_test.cpp
   net/clock_test.cpp

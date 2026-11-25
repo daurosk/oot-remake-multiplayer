@@ -93,6 +93,19 @@ std::optional<std::pair<std::uint16_t, std::string>> ParseTestHost(std::string_v
     return std::pair{static_cast<std::uint16_t>(port), std::string(password)};
 }
 
+std::optional<nat::Addr> ParseTestStun(std::string_view text) {
+    constexpr std::string_view kLoopback = "127.0.0.1:";
+    if (text.size() <= kLoopback.size() || text.substr(0, kLoopback.size()) != kLoopback) return std::nullopt;
+    const std::string_view digits = text.substr(kLoopback.size());
+    if (digits.size() > 5) return std::nullopt;
+    for (const char c : digits) {
+        if (c < '0' || c > '9') return std::nullopt;
+    }
+    auto addr = nat::resolve(text, 3478);
+    if (!addr || addr->port == 0) return std::nullopt;
+    return addr;
+}
+
 #ifdef _WIN32
 std::string ProcessMemoryText() {
     // (kernel32's K32 names and HeapSummary looked up by name: no psapi link, and builds whose headers lack them)

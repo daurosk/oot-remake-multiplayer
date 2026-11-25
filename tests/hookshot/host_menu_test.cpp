@@ -685,3 +685,19 @@ TEST_CASE("host menu: the autotest's in-game host reads PORT:PASSWORD and nothin
   CHECK_FALSE(CoopHostMenu::ParseTestHost("27520:" + std::string(65, 'p')));
   CHECK(std::string(CoopHostMenu::kTestHostEnv) == "LICHII_COOP_TEST_HOST");
 }
+
+TEST_CASE("host menu: the autotest's STUN server is a 127.0.0.1 port and nothing else (issue 261)") {
+  const auto ok = CoopHostMenu::ParseTestStun("127.0.0.1:27591");
+  REQUIRE(ok.has_value());
+  CHECK(ok->port == 27591);
+  CHECK(ok->ip == coop::server::nat::resolve("127.0.0.1", 1)->ip);
+  CHECK_FALSE(CoopHostMenu::ParseTestStun(""));
+  CHECK_FALSE(CoopHostMenu::ParseTestStun("127.0.0.1"));
+  CHECK_FALSE(CoopHostMenu::ParseTestStun("127.0.0.1:"));
+  CHECK_FALSE(CoopHostMenu::ParseTestStun("127.0.0.1:0"));
+  CHECK_FALSE(CoopHostMenu::ParseTestStun("127.0.0.1:123456"));
+  CHECK_FALSE(CoopHostMenu::ParseTestStun("127.0.0.1:27x91"));
+  CHECK_FALSE(CoopHostMenu::ParseTestStun("stun.example.org:3478"));  // (never a public server: test only)
+  CHECK_FALSE(CoopHostMenu::ParseTestStun("10.0.0.1:3478"));
+  CHECK(std::string(CoopHostMenu::kTestStunEnv) == "LICHII_COOP_TEST_STUN");
+}

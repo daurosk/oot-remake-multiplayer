@@ -595,7 +595,9 @@ bool Host(const CoopTitleMenu::Options& o, bool test) {
     h.password = o.password.empty() ? nullptr : o.password.c_str();
     h.port = o.host_port;
     h.upnp = test ? 0 : 1;             // the router forward (nothing to set up)
-    h.invite = test ? 0 : 1;
+    // (the test host makes an invite only with the autotest's loopback STUN server: issue 261's direct way)
+    const char* test_stun = std::getenv(CoopHostMenu::kTestStunEnv);
+    h.invite = !test || (test_stun != nullptr && CoopHostMenu::ParseTestStun(test_stun)) ? 1 : 0;
     h.pvp = o.pvp ? 1 : 0;
     h.approve_joins = o.approve_joins ? 1 : 0;
     h.same_network_open = o.same_network_open ? 1 : 0;   // (on, the default: this network's players need no password)

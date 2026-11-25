@@ -160,6 +160,12 @@ std::optional<std::pair<std::uint16_t, std::string>> ParseTestHost(std::string_v
 // (a loopback relay in every run), so a guest's `menu paste` joins it as a player's paste does. Test only.
 inline constexpr const char* kTestRelayEnv = "LICHII_COOP_TEST_RELAY";
 inline constexpr const char* kTestRelayRoomEnv = "LICHII_COOP_TEST_RELAY_ROOM";
+// The autotest's STUN server (issue 261's direct way): LICHII_COOP_TEST_STUN=127.0.0.1:<port> (a loopback port only,
+// nothing for any other text) is the one STUN server of every host and join helper of that game, 127.0.0.1 allowed
+// as an internet address (Hooks::stun_servers, allow_private), and the test host (`menu host`) makes an invite, so a
+// room guest's answer code reaches its server through the relay. Test only.
+inline constexpr const char* kTestStunEnv = "LICHII_COOP_TEST_STUN";
+std::optional<coop::server::nat::Addr> ParseTestStun(std::string_view text);
 // Local co-op's host (the kit's scripts\local-coop.ps1, CoopPause's LocalHostStep): game 1 of 2 to 4 games on one PC
 // hosts at its start, OOT_COOP_LOCAL_HOST=PORT:PASSWORD (as ParseTestHost reads it). That host alone listens on
 // 127.0.0.1 only (Menu::LoopbackNextHost): the session is this PC's.

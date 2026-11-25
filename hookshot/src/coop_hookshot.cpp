@@ -783,6 +783,16 @@ CoopHostMenu::Menu& HostMenu() {
             std::vector<std::string> errors;
             return CoopHook::LoadSettings(ini, errors).name;
         };
+        // (the autotest's loopback STUN server, issue 261's direct way: test only)
+        if (const char* stun = std::getenv(CoopHostMenu::kTestStunEnv); stun != nullptr) {
+            if (auto addr = CoopHostMenu::ParseTestStun(stun)) {
+                h.stun_servers = std::vector<coop::server::nat::Addr>{*addr};
+                h.allow_private = true;
+                LOG_INFO(Core, "coop: test stun: {} (127.0.0.1 taken as an internet address)", stun);
+            } else {
+                LOG_WARNING(Core, "coop: test stun: {} wants 127.0.0.1:<port>: not used", CoopHostMenu::kTestStunEnv);
+            }
+        }
         return h;
     }());
     return menu;

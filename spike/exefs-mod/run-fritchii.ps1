@@ -34,12 +34,33 @@ foreach ($d in 'keys', 'config', 'nand\system') {
         if ($LASTEXITCODE -ge 8) { Say "SETUP: copy of $src failed ($LASTEXITCODE)"; exit 2 }
     }
 }
+# The copied config names the kit's own folders (qt-config.ini [Data Storage] nand/sdmc/load/dump/tas, screenshots):
+# every absolute path into the kit's user folder becomes this emulator's, so the mod is read from our load\ and nothing
+# is written into the kit. A reference to the kit left over stops the run.
+$fromUser = [IO.Path]::GetFullPath((Join-Path $From 'user')).TrimEnd('\')
+$ownUser = [IO.Path]::GetFullPath($user).TrimEnd('\')
+foreach ($ini in Get-ChildItem -LiteralPath (Join-Path $user 'config') -Filter '*.ini' -File) {
+    $text = [IO.File]::ReadAllText($ini.FullName)
+    $new = $text
+    foreach ($pair in @(@($fromUser, $ownUser), @(($fromUser -replace '\\', '/'), ($ownUser -replace '\\', '/')),
+            @(($fromUser -replace '\\', '\\'), ($ownUser -replace '\\', '\\')))) {
+        $new = [regex]::Replace($new, [regex]::Escape($pair[0]), $pair[1].Replace('$', '$$'), 'IgnoreCase')
+    }
+    if ($new -ne $text) { [IO.File]::WriteAllText($ini.FullName, $new, (New-Object System.Text.UTF8Encoding $false)); Say "config: kit paths -> own user folder in $($ini.Name)" }
+}
+$kitRoot = [IO.Path]::GetFullPath($From).TrimEnd('\')
+foreach ($form in @($kitRoot, ($kitRoot -replace '\\', '/'), ($kitRoot -replace '\\', '\\'))) {
+    $left = @(Select-String -LiteralPath (Get-ChildItem -LiteralPath (Join-Path $user 'config') -Filter '*.ini' -File).FullName -SimpleMatch -Pattern $form -ErrorAction SilentlyContinue)
+    if ($left.Count) { Say "SETUP: the config still names the kit's folder: $($left[0].Filename):$($left[0].LineNumber)"; exit 2 }
+}
 # the kit's own co-op mods are not this emulator's: only the spike mod in load\
 $load = Join-Path $user 'load\0400486024DEC000'
 if (Test-Path -LiteralPath $load) { Remove-Item -Recurse -Force -LiteralPath $load }
 New-Item -ItemType Directory -Force (Join-Path $load 'coop-exefs\exefs') | Out-Null
 Copy-Item -Force (Join-Path $Mod 'subsdk9') (Join-Path $load 'coop-exefs\exefs\subsdk9')
-Say "mod: $(Join-Path $load 'coop-exefs\exefs\subsdk9') ($((Get-Item (Join-Path $Mod 'subsdk9')).Length) bytes)"
+$installed = Join-Path $load 'coop-exefs\exefs\subsdk9'
+if (-not (Test-Path -LiteralPath $installed -PathType Leaf)) { Say "SETUP: no subsdk9 at $installed"; exit 2 }
+Say "mod: $installed ($((Get-Item -LiteralPath $installed).Length) bytes)"
 $log = Join-Path $user 'log\eden_log.txt'
 if (Test-Path -LiteralPath $log) { Remove-Item -Force -LiteralPath $log }
 

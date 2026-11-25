@@ -115,6 +115,11 @@ private:
     void RunHost(HostJob job);
     void RunJoin(JoinJob job);
     void RunRelayJoin(RelayJoinJob job);
+    // The direct way first (issue 261): the relay passes this game's answer code to the host, whose address comes
+    // back only when the host took it; then the join helper's way through both routers. True: joined that way and
+    // served until Leave (or stopped). False: no direct way, the caller goes through the relay as before.
+    // `relay_host` / `relay_port`: the relay as ENet keeps it.
+    bool TryRelayDirect(const RelayJoinJob& job, std::uint32_t relay_host, std::uint16_t relay_port);
     std::vector<coop::server::nat::Addr> StunServers() const;
     std::string NameOr(const char* given) const;
 

@@ -20,6 +20,11 @@
 //   newest first); a room leaves it when its host stops, goes quiet or
 //   unlists it. One address gets 30 pages a minute, sends 30 LIST_ROOM a
 //   minute and puts 6 rooms on the list in ten minutes; more are ignored.
+// - The direct way (kDirect): a guest's answer code goes to the host's link
+//   with a ticket; the host's kDirectReply (its address, only when the code
+//   was made with the join password) goes back to that guest. One address
+//   sends 20 kDirect in ten minutes (wrong rooms and codes count with the
+//   lookups'); a host has at most 8 answers waiting, 10 seconds each.
 //
 // Relay is the rules without a network (tests drive it); RelayServer is the
 // socket loop around it.
@@ -71,6 +76,9 @@ struct RelayConfig {
   // off the list counted (as registers_per_window counts new hosts): a room
   // taken off and listed again would go to the top of the list each time.
   std::uint32_t new_listings_per_window = 6;
+  std::uint32_t directs_per_window = 20;      // kDirect from one address in window_ms
+  std::uint64_t direct_wait_ms = 10'000;      // a passed answer code waits this long for its host's reply
+  std::size_t max_directs_per_session = 8;    // answer codes waiting for one host
   std::function<void(const std::string&)> log;
   // Random numbers for join codes; std::random_device when empty.
   std::function<std::uint64_t()> random;
@@ -105,6 +113,9 @@ struct RelayStats {
   std::uint64_t proofs_kept = 0;     // kRoomProof taken for a held room
   std::uint64_t proofs_answered = 0; // kRoomProofs sent
   std::uint64_t listings_limited = 0;  // LIST_ROOM over a limit (not taken)
+  std::uint64_t directs_passed = 0;    // answer codes passed to a host's link
+  std::uint64_t directs_answered = 0;  // host replies passed back to the guest
+  std::uint64_t directs_limited = 0;   // kDirect over a limit (not passed)
 };
 
 class Relay {
@@ -123,6 +134,7 @@ class Relay {
   // The list as kListRooms pages it: newest listed first, at most kMaxListedRooms.
   std::vector<RoomEntry> room_list() const;
   std::size_t flows() const { return flows_by_guest_.size(); }
+  std::size_t directs_waiting() const { return directs_.size(); }
   const RelayStats& stats() const { return stats_; }
 
  private:
@@ -143,6 +155,11 @@ class Relay {
     std::map<std::uint16_t, Flow> flows;
     std::uint16_t next_flow = 1;
     std::map<std::uint32_t, std::uint64_t> guests;  // address -> last datagram
+  };
+  struct Direct {  // an answer code passed to a host, waiting for its kDirectReply
+    Endpoint guest;
+    std::uint64_t token = 0;
+    std::uint64_t since_ms = 0;
   };
   struct Tries {
     std::uint64_t window_start = 0;
@@ -165,6 +182,10 @@ class Relay {
   void remove_flow(Session& s, std::uint16_t flow);
   bool over_limit(std::map<std::uint32_t, Tries>& tries, std::uint32_t address, std::uint32_t limit,
                   std::uint64_t now_ms, bool count, std::uint64_t window_ms = 0);
+  // kLookup, kLookupName and kDirect: the session `m` names (its code, or its room name), and what it was in words.
+  std::optional<std::uint64_t> target(const Message& m, std::string& what) const;
+  // kDirect: passes the answer code to the host's link, or answers the guest why not.
+  void direct(Endpoint from, const Message& m, std::uint64_t now_ms, std::vector<Outgoing>& out);
   // kListRooms: the page from `start` that fits a datagram.
   Message list_page(std::uint8_t start) const;
   // kRoomProofs: the listed rooms' proofs, newest listing first, as many as fit in a datagram.
@@ -184,6 +205,9 @@ class Relay {
   std::map<std::uint32_t, Tries> lists_;
   std::map<std::uint32_t, Tries> listings_;
   std::map<std::uint32_t, Tries> new_listings_;
+  std::map<std::uint32_t, Tries> directs_by_address_;
+  std::map<std::uint32_t, Direct> directs_;  // by ticket
+  std::uint32_t next_ticket_ = 0;
   std::uint64_t list_order_ = 0;  // a number that goes up with each new listing (newest first)
 };
 

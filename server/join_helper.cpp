@@ -56,7 +56,9 @@ bool lan_probe_ok(std::string_view password) {
 
 JoinHelper::JoinHelper(JoinConfig config) : config_(std::move(config)) {
   peer_ = config_.host;
-  if (config_.nearby) {
+  if (config_.host.ip == 0) {
+    nearby_.clear();  // (the host is not known yet: nothing to probe near it)
+  } else if (config_.nearby) {
     nearby_ = *config_.nearby;
   } else {
     // Everyone on the local network sees the broadcast probe, and its
@@ -160,12 +162,26 @@ bool JoinHelper::start(std::string& error) {
     const auto request = stun_request(ask.id);
     send_public(ask.server, request);
   }
+  if (!host_known()) {
+    say("asking a STUN server for this PC's internet address, for the answer code the relay passes to the host");
+    return true;
+  }
   say("trying the host at " + show(config_.host) + " directly" +
       (nearby_.empty() ? std::string()
        : lan_       ? std::string(" (and on this PC and your local network)")
                     : std::string(" (and on this PC; not on the local network: the join password is short, so "
                                   "the probe is not shown to everyone there)")));
   return true;
+}
+
+void JoinHelper::set_host(Addr host) {
+  if (host.ip == 0 || host_known()) return;
+  config_.host = host;
+  peer_ = host;
+  const std::uint64_t now = now_ms();
+  next_probe_ = now;
+  next_punch_ = now;
+  say("the host took the answer code: trying " + show(host) + " directly and through both routers");
 }
 
 void JoinHelper::send_public(Addr to, std::span<const std::uint8_t> bytes) {
@@ -303,7 +319,7 @@ void JoinHelper::tick(std::uint64_t now) {
       if (!ask.answered) send_public(ask.server, stun_request(ask.id));
     }
   }
-  if (config_.probe && now >= next_probe_) {
+  if (config_.probe && host_known() && now >= next_probe_) {
     send_punch(PunchType::kProbe, config_.host);
     for (const Addr& to : nearby_) send_punch(PunchType::kProbe, to);
     next_probe_ = now + (state_ == JoinState::kTrying ? 500 : 1000);
@@ -320,6 +336,11 @@ void JoinHelper::tick(std::uint64_t now) {
       a.nonce = nonce_;
       a.time = static_cast<std::uint32_t>(unix_now());
       answer_ = make_answer(a, config_.password);
+      if (!host_known()) {
+        say("answer code made: the relay passes it to the host (it is not shown or logged)");
+        if (config_.on_answer) config_.on_answer(answer_);
+        return;
+      }
       say("the host's server did not answer directly: their router keeps it closed.");
       say("Send this ANSWER CODE to the host. The host pastes it into their server window and presses Enter:");
       say("answer code: " + answer_);
@@ -329,13 +350,15 @@ void JoinHelper::tick(std::uint64_t now) {
       }
       say("waiting for the host (keep this window open)...");
       if (config_.on_answer) config_.on_answer(answer_);
+    } else if (!host_known()) {
+      say("no STUN server answered (a firewall may block UDP), so there is no answer code: no direct way");
     } else {
       say("the host's server did not answer directly, and no STUN server answered, so there is no answer code "
           "to send (a firewall may block UDP). Still trying the direct way.");
     }
   }
   if (state_ == JoinState::kWaitingForHost) {
-    if (public_ && now >= next_punch_) {
+    if (public_ && host_known() && now >= next_punch_) {
       send_punch(PunchType::kGuestPunch, config_.host);
       next_punch_ = now + 250;
     }

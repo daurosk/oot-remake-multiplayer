@@ -21,6 +21,13 @@
 
 namespace coop::server::relay {
 
+// An internet address as the direct way passes it: the first part in the highest byte (as nat::Addr).
+struct DirectAddress {
+  std::uint32_t ip = 0;
+  std::uint16_t port = 0;
+  bool operator==(const DirectAddress&) const = default;
+};
+
 struct RelayLinkConfig {
   std::string relay_host;  // a name or an IPv4 address
   std::uint16_t relay_port = kDefaultRelayPort;
@@ -46,6 +53,11 @@ struct RelayLinkConfig {
   // Set (the official game, --official-key-file): a proof for the room as listed, sent right after each listing
   // (kRoomProof). Given the room name and the listing as sent.
   std::function<std::optional<RoomProof>(const std::string& room, const RoomEntry& listed)> proof;
+  // Set (the host's server makes answer codes: its invite code): a guest's answer code the relay passed
+  // (kDirectAnswer). Returns this host's internet address when the code was made with the join password and its
+  // punches toward the guest started; nothing otherwise (the guest then comes through the relay). Unset: every
+  // answer code gets "no direct way" (a public game: nobody learns the host's address).
+  std::function<std::optional<DirectAddress>(const std::string& answer)> direct;
   // The session token; std::random_device when empty.
   std::function<std::uint64_t()> random;
 };
@@ -78,6 +90,20 @@ std::optional<RelayJoin> parse_relay_join(std::string_view text);
 std::optional<LookupResult> lookup_on_relay(const ENetAddress& relay, const RelayJoin& join,
                                             const std::function<bool()>& stop = {},
                                             std::optional<std::uint32_t> bind = std::nullopt);
+
+// The direct way (issue 261): asks the relay to pass this guest's ANSWER CODE to the host with that code or room
+// (kDirect; the code first, then the room, as lookup_on_relay), three tries a second apart, and waits up to
+// `wait_ms` in all for the host's reply. `found`: what the relay said; `host`: the host's internet address when the
+// host took the answer code. found empty: no answer (a relay from before the direct way, or not running);
+// host empty with found kOk: the host did not take it (an older host, a public game, no invite code, or another
+// join password). `bind`: as for lookup_on_relay.
+struct DirectResult {
+  std::optional<LookupResult> found;
+  std::optional<DirectAddress> host;
+};
+DirectResult direct_on_relay(const ENetAddress& relay, const RelayJoin& join, const std::string& answer,
+                             const std::function<bool()>& stop = {}, std::uint32_t wait_ms = 6000,
+                             std::optional<std::uint32_t> bind = std::nullopt);
 
 // What to tell the player for a lookup's result, in plain English.
 std::string lookup_text(std::optional<LookupResult> result, const RelayJoin& join);

@@ -1456,3 +1456,216 @@ TEST_CASE("relay: a listed room's proof is kept and passed on as given, none for
 }
 
 }  // namespace room_proof_tests
+
+// The direct way (issue 261's last step): a guest's answer code goes to the host's link, the host's address comes
+// back only from the host's reply.
+namespace direct_tests {
+
+using coop::server::relay::decode;
+using coop::server::relay::encode;
+using coop::server::relay::Message;
+using room_list_tests::host_at;
+
+namespace {
+
+// An answer code's shape (code letters and dashes); the relay never reads it.
+const std::string kAnswer = "ABCDE-FGHJK-LMNPQ-RSTUV-WXYZ2-34567-89ABC-DEFGH-JK";
+
+Message direct_message(std::string room, std::string code = {}, std::string answer = kAnswer) {
+  Message m;
+  m.kind = Kind::kDirect;
+  m.name = std::move(room);
+  m.code = std::move(code);
+  m.answer = std::move(answer);
+  return m;
+}
+
+Message reply_message(std::uint64_t token, std::uint32_t ticket, std::uint32_t ip, std::uint16_t port) {
+  Message m;
+  m.kind = Kind::kDirectReply;
+  m.token = token;
+  m.ticket = ticket;
+  m.ip = ip;
+  m.port = port;
+  return m;
+}
+
+}  // namespace
+
+TEST_CASE("relay wire: the direct way's four messages go through encode and decode, bad ones are dropped") {
+  Message by_room = direct_message("Forest-Gang");
+  auto back = decode(encode(by_room));
+  REQUIRE(back.has_value());
+  CHECK(back->kind == Kind::kDirect);
+  CHECK(back->name == "Forest-Gang");
+  CHECK(back->code.empty());
+  CHECK(back->answer == kAnswer);
+  Message by_code = direct_message("", "ABCDEFGH");
+  back = decode(encode(by_code));
+  REQUIRE(back.has_value());
+  CHECK(back->code == "ABCDEFGH");
+  CHECK(back->name.empty());
+
+  Message pass;
+  pass.kind = Kind::kDirectAnswer;
+  pass.token = 0x1122334455667788ull;
+  pass.ticket = 0xA1B2C3D4u;
+  pass.answer = kAnswer;
+  back = decode(encode(pass));
+  REQUIRE(back.has_value());
+  CHECK(back->token == pass.token);
+  CHECK(back->ticket == pass.ticket);
+  CHECK(back->answer == kAnswer);
+
+  back = decode(encode(reply_message(5, 6, 0xCB007105u, 27510)));
+  REQUIRE(back.has_value());
+  CHECK(back->kind == Kind::kDirectReply);
+  CHECK(back->token == 5);
+  CHECK(back->ticket == 6);
+  CHECK(back->ip == 0xCB007105u);
+  CHECK(back->port == 27510);
+
+  Message found;
+  found.kind = Kind::kDirectFound;
+  found.status = static_cast<std::uint8_t>(LookupResult::kOk);
+  found.ip = 0xCB007105u;
+  found.port = 27510;
+  const auto found_bytes = encode(found);
+  back = decode(found_bytes);
+  REQUIRE(back.has_value());
+  CHECK(back->ip == found.ip);
+  CHECK(back->port == 27510);
+
+  // Not an answer code (too short, other characters, too long), a bad code, no target: not decoded, not passed on.
+  CHECK_FALSE(decode(encode(direct_message("forest", {}, "ABCDE"))).has_value());
+  CHECK_FALSE(decode(encode(direct_message("forest", {}, std::string(20, 'a')))).has_value());
+  CHECK_FALSE(decode(encode(direct_message("forest", {}, std::string(kMaxAnswerBytes + 1, 'A')))).has_value());
+  CHECK_FALSE(decode(encode(direct_message("", "ABCD0FGH"))).has_value());
+  CHECK_FALSE(decode(encode(direct_message(""))).has_value());
+  // The smallest ask is bigger than the answer it can get back (a forged sender gets less than it sent).
+  CHECK(encode(direct_message("abc", {}, std::string(kMinAnswerBytes, 'A'))).size() > found_bytes.size());
+}
+
+TEST_CASE("relay: the direct way passes the answer code to the room's host and only the host's reply back") {
+  Fixture f;
+  const Endpoint host = host_at(1);
+  REQUIRE(f.register_room(1, "Forest-Gang", host).kind == Kind::kRegisteredName);
+  auto out = f.relay.received(kGuest, encode(direct_message("forest-gang")), 10);
+  REQUIRE(out.size() == 1);
+  CHECK(out[0].to == host);
+  Message pass = decoded(out[0]);
+  REQUIRE(pass.kind == Kind::kDirectAnswer);
+  CHECK(pass.token == 1);
+  CHECK(pass.answer == kAnswer);
+  CHECK(pass.ticket != 0);
+  CHECK(f.relay.directs_waiting() == 1);
+  // Nothing goes to the guest before the host answers: no address of the host from a room name alone.
+  // A reply from another token, or for another ticket, is dropped.
+  REQUIRE(f.register_room(2, "lake", host_at(2)).kind == Kind::kRegisteredName);
+  CHECK(f.relay.received(host_at(2), encode(reply_message(2, pass.ticket, 0x01020304u, 1)), 11).empty());
+  CHECK(f.relay.received(host, encode(reply_message(1, pass.ticket + 1, 0x01020304u, 1)), 11).empty());
+  CHECK(f.relay.directs_waiting() == 1);
+  out = f.relay.received(host, encode(reply_message(1, pass.ticket, 0xCB007105u, 27510)), 12);
+  REQUIRE(out.size() == 1);
+  CHECK(out[0].to == kGuest);
+  Message found = decoded(out[0]);
+  REQUIRE(found.kind == Kind::kDirectFound);
+  CHECK(found.status == static_cast<std::uint8_t>(LookupResult::kOk));
+  CHECK(found.ip == 0xCB007105u);
+  CHECK(found.port == 27510);
+  CHECK(f.relay.directs_waiting() == 0);
+  // The same reply again (late, or forged) goes nowhere.
+  CHECK(f.relay.received(host, encode(reply_message(1, pass.ticket, 0xCB007105u, 27510)), 13).empty());
+
+  // A host that did not take the code says ip 0: the guest gets ok with no address (and goes through the relay).
+  out = f.relay.received(kGuest, encode(direct_message("Forest-Gang")), 20);
+  REQUIRE(out.size() == 1);
+  pass = decoded(out[0]);
+  out = f.relay.received(host, encode(reply_message(1, pass.ticket, 0, 27510)), 21);
+  REQUIRE(out.size() == 1);
+  found = decoded(out[0]);
+  CHECK(found.status == static_cast<std::uint8_t>(LookupResult::kOk));
+  CHECK(found.ip == 0);
+  CHECK(found.port == 0);
+
+  // A join code works the same way.
+  const std::string code = f.register_host(3, host_at(3));
+  out = f.relay.received(kGuest, encode(direct_message("", code)), 30);
+  REQUIRE(out.size() == 1);
+  CHECK(out[0].to == host_at(3));
+  CHECK(decoded(out[0]).token == 3);
+  CHECK(f.relay.stats().directs_passed == 3);
+  CHECK(f.relay.stats().directs_answered == 2);
+  // Asking the direct way lets nobody in: the guest's address still needs a lookup for the relay's way.
+  CHECK(f.relay.received(kGuest, std::vector<std::uint8_t>{0x80, 0x00, 0x12, 0x34}, 31).empty());
+}
+
+TEST_CASE("relay: the direct way's wrong rooms count with the lookups', and its asks have limits of their own") {
+  Fixture f;
+  REQUIRE(f.register_room(1, "forest", host_at(1)).kind == Kind::kRegisteredName);
+  // Wrong rooms: answered unknown, counted against the one limit for guessing.
+  for (int i = 0; i < 9; ++i) {
+    auto out = f.relay.received(kGuest, encode(direct_message("nope-" + std::to_string(i))),
+                                static_cast<std::uint64_t>(10 + i));
+    REQUIRE(out.size() == 1);
+    CHECK(decoded(out[0]).status == static_cast<std::uint8_t>(LookupResult::kUnknown));
+  }
+  CHECK(f.lookup_room("wrong") == LookupResult::kUnknown);  // (the 10th wrong one)
+  auto out = f.relay.received(kGuest, encode(direct_message("forest")), 30);
+  REQUIRE(out.size() == 1);
+  CHECK(out[0].to == kGuest);  // (even the right room waits: not passed to the host)
+  CHECK(decoded(out[0]).status == static_cast<std::uint8_t>(LookupResult::kSlowDown));
+  CHECK(f.relay.stats().directs_passed == 0);
+
+  // At most 8 answer codes wait for one host; then "full" until they are answered or time out.
+  const Endpoint other{0x0900000Au, 1};
+  for (int i = 0; i < 8; ++i) {
+    out = f.relay.received(Endpoint{0x0900000Au, static_cast<std::uint16_t>(100 + i)}, encode(direct_message("forest")),
+                           40);
+    REQUIRE(out.size() == 1);
+    CHECK(decoded(out[0]).kind == Kind::kDirectAnswer);
+  }
+  out = f.relay.received(other, encode(direct_message("forest")), 41);
+  REQUIRE(out.size() == 1);
+  CHECK(out[0].to == other);
+  CHECK(decoded(out[0]).status == static_cast<std::uint8_t>(LookupResult::kFull));
+  // Unanswered for 10 seconds: dropped (an older host link never answers), room for new ones.
+  f.relay.tick(40 + 10'000);
+  CHECK(f.relay.directs_waiting() == 0);
+  Message keep;
+  keep.kind = Kind::kKeepalive;
+  keep.token = 1;
+  f.relay.received(host_at(1), encode(keep), 10'040);
+  out = f.relay.received(other, encode(direct_message("forest")), 10'050);
+  REQUIRE(out.size() == 1);
+  CHECK(decoded(out[0]).kind == Kind::kDirectAnswer);
+
+  // One address sends 20 in ten minutes (this one has sent 10 by now); then no answer at all.
+  int passed = 0;
+  for (int i = 0; i < 20; ++i) {
+    const auto now = static_cast<std::uint64_t>(10'100 + i * 20'000);
+    f.relay.received(host_at(1), encode(keep), now);  // (the host stays)
+    f.relay.tick(now);  // (each one timed out: the host's 8 never fill)
+    out = f.relay.received(other, encode(direct_message("forest")), now + 1);
+    passed += out.empty() ? 0 : 1;
+  }
+  CHECK(passed == 10);
+  CHECK(f.relay.stats().directs_limited >= 10);
+}
+
+TEST_CASE("relay: a host that stops takes its waiting answer codes with it") {
+  Fixture f;
+  REQUIRE(f.register_room(1, "forest", host_at(1)).kind == Kind::kRegisteredName);
+  auto out = f.relay.received(kGuest, encode(direct_message("forest")), 10);
+  REQUIRE(out.size() == 1);
+  const Message pass = decoded(out[0]);
+  CHECK(f.relay.directs_waiting() == 1);
+  Message bye;
+  bye.kind = Kind::kBye;
+  bye.token = 1;
+  f.relay.received(host_at(1), encode(bye), 11);
+  CHECK(f.relay.directs_waiting() == 0);
+  CHECK(f.relay.received(host_at(1), encode(reply_message(1, pass.ticket, 0x01020304u, 1)), 12).empty());
+}
+
+}  // namespace direct_tests

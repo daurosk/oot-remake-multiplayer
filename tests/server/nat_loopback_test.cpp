@@ -5,12 +5,15 @@
 
 #include <doctest/doctest.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
+#include <thread>
 #include <variant>
 #include <vector>
 
@@ -22,6 +25,8 @@
 #include "join_helper.hpp"
 #include "nat_net.hpp"
 #include "punch.hpp"
+#include "relay.hpp"
+#include "relay_link.hpp"
 #include "stun.hpp"
 
 using namespace coop::server;
@@ -388,4 +393,189 @@ TEST_CASE("join helper: the local-network probe only for a long or Host.bat-made
                                     {0x0A000009u, 0xFFFFFFFFu, 0}};
   const std::vector<Addr> want{{0x7F000001u, 27510}, {0xFFFFFFFFu, 27510}, {0xC0A801FFu, 27510}, {0x1AFFFFFFu, 27510}};
   CHECK(nearby_targets(host, cards, true) == want);
+}
+
+// The direct way through a relay (issue 261): a room name finds the host, the relay passes the guest's answer code
+// to the host's server, and only when the host took it does its address come back; the game then reaches the
+// host's server through the join helper, not through the relay.
+namespace {
+
+struct DirectWorld {
+  EnetLife enet;
+  FakeStun stun;
+  coop::server::relay::RelayServer relay{0, 0x7F000001u, coop::server::relay::RelayConfig{}};
+  std::unique_ptr<HostService> host;
+  ENetAddress relay_at{};
+  std::string pw = make_password();
+
+  explicit DirectWorld(bool invite) {
+    REQUIRE(relay.start());
+    HostServiceConfig c;
+    c.port = 0;
+    c.bind = 0x7F000001u;
+    c.helper_bind = 0x7F000001u;
+    c.session.join_password = pw;
+    c.invite = invite;
+    c.stun_servers = {stun.address()};
+    c.stun_allow_private = true;  // 127.0.0.1 is not an internet address
+    c.relay_via = "127.0.0.1:" + std::to_string(relay.port());
+    c.relay_room = "Forest-Gang";
+    host = std::make_unique<HostService>(c);
+    std::string why;
+    REQUIRE(host->start(why));
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while ((host->status().relay_room.empty() || (invite && !host->status().invite_done)) &&
+           std::chrono::steady_clock::now() < deadline) {
+      host->service(0);
+      relay.service(1);
+      stun.pump();
+    }
+    REQUIRE_FALSE(host->status().relay_room.empty());
+    relay_at = to_enet(Addr{0x7F000001u, relay.port()});
+  }
+  const std::string& password() const { return pw; }
+};
+
+// The host's side (server, relay, STUN) on a thread of its own while `body` runs, as two PCs would.
+void with_host(DirectWorld& w, const std::function<void()>& body) {
+  std::atomic<bool> done{false};
+  std::thread serve([&] {
+    while (!done) {
+      w.relay.service(1);
+      w.host->service(0);
+      w.stun.pump();
+    }
+  });
+  try {
+    body();
+  } catch (...) {
+    done = true;  // (a failed REQUIRE: stop the host's thread before the test ends)
+    serve.join();
+    throw;
+  }
+  done = true;
+  serve.join();
+}
+
+std::unique_ptr<JoinHelper> unknown_host_helper(DirectWorld& w, const std::string& password, std::string& answer) {
+  JoinConfig jc;
+  jc.host = Addr{};  // (the relay's reply gives it)
+  jc.password = password;
+  jc.stun_servers = {w.stun.address()};
+  jc.game_port = 0;
+  jc.bind = 0x7F000001u;
+  jc.direct_ms = 0;
+  jc.on_answer = [&answer](const std::string& code) { answer = code; };
+  auto helper = std::make_unique<JoinHelper>(jc);
+  std::string why;
+  REQUIRE(helper->start(why));
+  return helper;
+}
+
+}  // namespace
+
+TEST_CASE("direct way: the relay passes the answer code, the host's address comes back, the game reaches the host directly") {
+  DirectWorld w(true);
+  std::string answer;
+  auto helper = unknown_host_helper(w, w.password(), answer);
+  CHECK_FALSE(helper->host_known());
+  with_host(w, [&] {
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (answer.empty() && std::chrono::steady_clock::now() < until) helper->service(1);
+    REQUIRE_FALSE(answer.empty());
+    // Before the host's reply nothing goes toward the host: the helper has no address for it.
+    CHECK(helper->stats().to_host == 0);
+
+    coop::server::relay::RelayJoin join;
+    join.room = "forest-gang";
+    join.relay_host = "127.0.0.1";
+    join.relay_port = w.relay.port();
+    const auto r = coop::server::relay::direct_on_relay(w.relay_at, join, answer, {}, 4000, 0x7F000001u);
+    REQUIRE(r.found == coop::server::relay::LookupResult::kOk);
+    REQUIRE(r.host.has_value());
+    CHECK(r.host->ip == 0x7F000001u);
+    CHECK(r.host->port == w.host->port());   // (the invite's address: the game port, not the relay link's)
+    helper->set_host(Addr{r.host->ip, r.host->port});
+    CHECK(helper->host_known());
+
+    const auto open_until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (helper->state() != JoinState::kOpen && std::chrono::steady_clock::now() < open_until) helper->service(1);
+    REQUIRE(helper->state() == JoinState::kOpen);
+    CHECK(helper->peer() == Addr{r.host->ip, r.host->port});
+
+    // The game's own traffic now goes through the helper to the host's server: it asks for the password.
+    Game game;
+    game.connect(helper->game_port());
+    const auto game_until = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+    bool hello_sent = false;
+    while (std::chrono::steady_clock::now() < game_until && game.find<JoinChallenge>() == nullptr) {
+      helper->service(1);
+      game.pump();
+      if (game.connected && !hello_sent) {
+        hello_sent = true;
+        Hello hello;
+        hello.build_id = "nat test";
+        hello.game_build_id = "e0f3ccfaf50065ae";
+        hello.game_version = "1.1.1";
+        hello.nickname = "Saria";
+        hello.key_share = KeyPair::generate().share();
+        auto bytes = encode(Message{hello});
+        REQUIRE(bytes.has_value());
+        ENetPacket* p = enet_packet_create(bytes->data(), bytes->size(), ENET_PACKET_FLAG_RELIABLE);
+        REQUIRE(enet_peer_send(game.peer, kChannelSession, p) == 0);
+      }
+    }
+    CHECK(game.find<JoinChallenge>() != nullptr);
+    CHECK(helper->stats().to_host > 0);
+  });
+  // Not one game datagram went through the relay.
+  CHECK(w.relay.relay().stats().to_host == 0);
+  CHECK(w.relay.relay().stats().directs_passed >= 1);
+  CHECK(w.relay.relay().stats().directs_answered >= 1);
+  w.host->stop();
+}
+
+TEST_CASE("direct way: another join password, or a host without an invite code, gives no address back") {
+  coop::server::relay::RelayJoin join;
+  join.room = "Forest-Gang";
+  join.relay_host = "127.0.0.1";
+  SUBCASE("another join password: the host's server does not take the answer code") {
+    DirectWorld w(true);
+    join.relay_port = w.relay.port();
+    std::string answer;
+    auto helper = unknown_host_helper(w, "another-password-of-ours", answer);
+    with_host(w, [&] {
+      const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+      while (answer.empty() && std::chrono::steady_clock::now() < until) helper->service(1);
+      REQUIRE_FALSE(answer.empty());
+      const auto r = coop::server::relay::direct_on_relay(w.relay_at, join, answer, {}, 4000, 0x7F000001u);
+      CHECK(r.found == coop::server::relay::LookupResult::kOk);
+      CHECK_FALSE(r.host.has_value());
+    });
+    w.host->stop();
+  }
+  SUBCASE("no invite code on the host (as a public game): no direct way") {
+    DirectWorld w(false);
+    join.relay_port = w.relay.port();
+    with_host(w, [&] {
+      const auto r = coop::server::relay::direct_on_relay(w.relay_at, join, "ABCDE-FGHJK-LMNPQ-RSTUV-WXYZ2-34567",
+                                                          {}, 4000, 0x7F000001u);
+      CHECK(r.found == coop::server::relay::LookupResult::kOk);
+      CHECK_FALSE(r.host.has_value());
+    });
+    w.host->stop();
+  }
+  SUBCASE("a room nobody holds: unknown, and nothing passed") {
+    DirectWorld w(true);
+    join.relay_port = w.relay.port();
+    join.room = "nobody-here";
+    with_host(w, [&] {
+      const auto r = coop::server::relay::direct_on_relay(w.relay_at, join, "ABCDE-FGHJK-LMNPQ-RSTUV-WXYZ2-34567",
+                                                          {}, 4000, 0x7F000001u);
+      CHECK(r.found == coop::server::relay::LookupResult::kUnknown);
+      CHECK_FALSE(r.host.has_value());
+    });
+    CHECK(w.relay.relay().stats().directs_passed == 0);
+    w.host->stop();
+  }
 }

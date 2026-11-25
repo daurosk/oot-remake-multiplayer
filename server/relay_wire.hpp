@@ -13,6 +13,16 @@
 // them decodes those as nothing and answers nothing, so a host or guest that
 // gets no answer to them can say the relay is too old; hosts and guests that
 // use join codes work with either relay.
+//
+// The direct way (issue 261's last step) came after them as four more kinds:
+// a guest who knows the join password sends its ANSWER CODE (nat_codes.hpp)
+// with the room or code (kDirect); the relay passes it to that host's link
+// (kDirectAnswer), the host's server checks its signature and, only when it
+// was made with the join password, punches toward the guest and answers with
+// its own internet address (kDirectReply), which the relay passes back
+// (kDirectFound). So nobody learns the host's address by guessing a room
+// name. A relay or host link from before them answers nothing: the guest then
+// goes through the relay as before.
 
 #include <array>
 #include <cstdint>
@@ -45,6 +55,12 @@ inline constexpr std::size_t kMaxRoomLength = 24;
 inline constexpr std::size_t kMaxHostNameBytes = 32;
 inline constexpr std::size_t kMaxListedRooms = 50;
 inline constexpr std::size_t kListRequestBytes = 512;
+// kDirect and kDirectAnswer: an answer code as nat::make_answer writes it
+// (code letters and '-'), kMinAnswerBytes to kMaxAnswerBytes long. The
+// smallest kDirect is bigger than kDirectFound, so a forged sender gets less
+// than it sent.
+inline constexpr std::size_t kMinAnswerBytes = 16;
+inline constexpr std::size_t kMaxAnswerBytes = 96;
 
 enum class Kind : std::uint8_t {
   // Host link -> relay. All carry the session token the link chose.
@@ -63,6 +79,10 @@ enum class Kind : std::uint8_t {
                          // mark, docs/official-game.md). A relay before 0.11.8
                          // drops it; this one keeps it beside the listing and
                          // never checks it (the kits do).
+  kDirectReply = 0x09,   // token, ticket u32, ip u32, port u16: the host's
+                         // answer to kDirectAnswer: its internet address
+                         // (first part in the highest byte), or ip 0 when it
+                         // did not take the answer code (or has no direct way)
   // Guest -> relay.
   kLookup = 0x10,      // the 8-letter code: lets this address join that host
   kLookupName = 0x11,  // name length u8, name: the same with a room name
@@ -70,12 +90,17 @@ enum class Kind : std::uint8_t {
                        // listed rooms from this one on" (anyone may ask)
   kListProofs = 0x13,  // zeros up to kListRequestBytes in all: "the listed
                        // rooms' proofs" (a relay before 0.11.8 does not answer)
+  kDirect = 0x14,      // by u8 (0 a join code, 1 a room name), length u8 and the
+                       // code or name, answer length u8, answer code: "pass my
+                       // answer code to that host" (the direct way)
   // Relay -> host link.
   kRegistered = 0x81,      // token, code
   kRefused = 0x82,         // token, Refusal u8
   kRelayData = 0x83,       // flow u16, one ENet datagram from that guest
   kRelayClose = 0x84,      // flow u16: that guest went quiet
   kRegisteredName = 0x85,  // token, code, name length u8, name: the room is this host's
+  kDirectAnswer = 0x86,    // token, ticket u32, answer length u8, answer code: a
+                           // guest's (kDirect); answer with kDirectReply
   // Relay -> guest.
   kFound = 0x90,     // LookupResult u8
   kRoomList = 0x91,  // total u8, start u8, count u8, then count entries: room
@@ -83,6 +108,8 @@ enum class Kind : std::uint8_t {
                      // max u8, version u16, flags u8 (bit 0: a join password)
   kRoomProofs = 0x92,  // count u8, then count proofs: room length u8, room,
                        // time u64, signature (64 bytes); as many as fit
+  kDirectFound = 0x93,  // LookupResult u8, ip u32, port u16: the host's address
+                        // when it took the answer code (kOk and ip 0: it did not)
 };
 
 enum class Refusal : std::uint8_t {
@@ -149,6 +176,12 @@ struct Message {
   std::vector<RoomEntry> rooms;  // kRoomList: the rooms from `start` on that fit
   RoomProof proof;                // kRoomProof (room unused)
   std::vector<RoomProof> proofs;  // kRoomProofs
+  // The direct way: kDirect (code or name: the target, as kLookup / kLookupName), kDirectAnswer, kDirectReply,
+  // kDirectFound.
+  std::string answer;       // kDirect, kDirectAnswer: the guest's answer code
+  std::uint32_t ticket = 0; // kDirectAnswer, kDirectReply: which guest's (the relay's number)
+  std::uint32_t ip = 0;     // kDirectReply, kDirectFound: the host's internet address; 0 none
+  std::uint16_t port = 0;
 };
 
 bool has_magic(std::span<const std::uint8_t> bytes);

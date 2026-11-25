@@ -307,6 +307,16 @@ bool HostService::start(std::string& error) {
         }
       }
       c.log = [this](const std::string& text) { say("relay: " + text); };
+      // The direct way (issue 261): a guest's answer code through the relay, as if the host pasted it. Only with an
+      // invite code (a public game has none: nobody learns this PC's address), and only a code made with the join
+      // password gets the address back (add_answer checks its signature; then the punches start).
+      if (config_.invite) {
+        c.direct = [this](const std::string& answer) -> std::optional<relay::DirectAddress> {
+          if (!rendezvous_ || !invite_where_ || stopped_) return std::nullopt;
+          if (add_answer(answer) != nat::CodeError::kOk) return std::nullopt;
+          return relay::DirectAddress{invite_where_->ip, invite_where_->port};
+        };
+      }
       const std::string relay_text = config_.relay_via;
       c.on_room = [this, relay_text](const std::string& room) {
         say("relay: room \"" + room + "\" is yours. Friends join with " + room + "@" + relay_text);

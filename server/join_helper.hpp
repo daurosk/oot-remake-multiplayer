@@ -34,7 +34,10 @@
 namespace coop::server::nat {
 
 struct JoinConfig {
-  Addr host;                       // from the invite code
+  // From the invite code. ip 0 (the direct way through a relay, issue 261): not known yet. The helper then asks
+  // STUN, makes the answer code at once (on_answer: the caller passes it to the relay) and sends nothing toward the
+  // host until set_host gives its address (the host's reply). No probes to this PC or the local network then.
+  Addr host;
   std::string password;            // from the invite code (signs punches)
   std::vector<Addr> stun_servers;
   std::uint16_t game_port = 27512; // the game connects to 127.0.0.1 here; 0: any
@@ -71,6 +74,9 @@ class JoinHelper {
   // Waits up to wait_ms for a datagram, then does what is due.
   void service(std::uint32_t wait_ms);
   void stop();
+  // The host's address once known (JoinConfig::host was ip 0): probes and punches go there from now on.
+  void set_host(Addr host);
+  bool host_known() const { return config_.host.ip != 0; }
 
   JoinState state() const { return state_; }
   // Row 209: still waiting for the host after punch_ms: no way through the routers was found (both strict, or a

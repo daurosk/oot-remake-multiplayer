@@ -668,6 +668,16 @@ void Menu::RunRelayJoin(RelayJoinJob job_in) {
             return;
         }
         at.port = job.join.relay_port;
+        if (TryRelayDirect(RelayJoinJob{job.name, job.password, job.join.code, job.join.room, job.join.relay_host,
+                                        job.join.relay_port},
+                           at.host, at.port) ||
+            stop_) {
+            return;
+        }
+        {
+            std::lock_guard lock(mutex_);
+            CopyText(status_.message, sizeof status_.message, "asking the relay " + job.join.relay_host + " to let this game in");
+        }
         const auto result = relay::lookup_on_relay(at, job.join, [this] { return stop_.load(); }, coop::net::test_bind());
         if (stop_) {
             return;
@@ -700,6 +710,109 @@ void Menu::RunRelayJoin(RelayJoinJob job_in) {
     } catch (const std::exception& e) {
         Fail(std::string("the relay join stopped: ") + e.what(), HOS_COOP_PROBLEM_INTERNAL);
     }
+}
+
+bool Menu::TryRelayDirect(const RelayJoinJob& job, std::uint32_t relay_host, std::uint16_t relay_port) {
+    namespace relay = coop::server::relay;
+    // A public game's password is the room's (anyone may know it): its host takes no answer codes, and this game's
+    // address stays with the relay, as the public list promises.
+    if (coop::protocol::is_public_join_password(job.password) || job.password.empty()) {
+        return false;
+    }
+    const relay::RelayJoin join{job.code, job.room, job.relay_host, job.relay_port};
+    ENetAddress at{};
+    at.host = relay_host;
+    at.port = relay_port;
+    nat::JoinConfig config;
+    config.host = nat::Addr{};   // (not known yet: the host's reply through the relay gives it)
+    config.password = job.password;
+    config.stun_servers = StunServers();
+    config.game_port = hooks_.helper_port;
+    config.bind = coop::net::test_bind();
+    config.direct_ms = 0;
+    config.log = [this](const std::string& text) { Say("coop: join: direct way: " + text); };
+    nat::JoinHelper helper(config);
+    std::string why;
+    if (!helper.start(why)) {
+        Say("coop: join: direct way: " + why + "; through the relay");
+        return false;
+    }
+    {
+        std::lock_guard lock(mutex_);
+        CopyText(status_.message, sizeof status_.message, "looking for a direct way to the host through " + job.relay_host);
+    }
+    // Each wait short, so a host with no direct way costs a few seconds at most before the relay way.
+    const auto started = std::chrono::steady_clock::now();
+    std::optional<std::chrono::steady_clock::time_point> asked;
+    while (!stop_) {
+        helper.service(kRoundMs);
+        const auto now = std::chrono::steady_clock::now();
+        if (helper.state() == nat::JoinState::kOpen) {
+            break;
+        }
+        if (!asked) {
+            if (helper.state() == nat::JoinState::kWaitingForHost) {
+                if (helper.answer_code().empty()) {
+                    return false;   // (no STUN answer: the helper said why)
+                }
+                const relay::DirectResult r =
+                    relay::direct_on_relay(at, join, helper.answer_code(), [this] { return stop_.load(); }, 6000,
+                                           coop::net::test_bind());
+                if (r.found == relay::LookupResult::kUnknown || r.found == relay::LookupResult::kSlowDown) {
+                    // (the relay way would only be refused the same, and count one more wrong name)
+                    Say("coop: join: " + relay::lookup_text(r.found, join));
+                    Fail(relay::lookup_text(r.found, join), HOS_COOP_PROBLEM_RELAY_JOIN);
+                    return true;
+                }
+                if (!r.host) {
+                    Say(std::string("coop: join: direct way: ") +
+                        (!r.found ? "the relay or the host does not know the direct way (an older version)"
+                         : *r.found != relay::LookupResult::kOk ? relay::lookup_text(r.found, join)
+                                                                 : "the host did not take it (no invite code there, or another join password)") +
+                        "; through the relay");
+                    return false;
+                }
+                helper.set_host(nat::Addr{r.host->ip, r.host->port});
+                asked = std::chrono::steady_clock::now();
+            } else if (now - started > std::chrono::seconds(5)) {
+                return false;
+            }
+        } else if (now - *asked > std::chrono::seconds(8)) {
+            Say("coop: join: direct way: no way through both routers in 8 s; through the relay");
+            return false;
+        }
+    }
+    if (stop_) {
+        return true;
+    }
+    const bool ok = hooks_.connect && hooks_.connect(Target{"127.0.0.1", helper.game_port(), job.name, job.password});
+    {
+        std::lock_guard lock(mutex_);
+        status_.state = ok ? HOS_COOP_CONNECTED : HOS_COOP_FAILED;
+        status_.problem = ok ? HOS_COOP_PROBLEM_NONE : HOS_COOP_PROBLEM_CLIENT_FAILED;
+        status_.port = helper.peer().port;
+        CopyText(status_.message, sizeof status_.message,
+                 ok ? std::string("the host answered directly (the relay found them): connecting")
+                    : std::string("this game's co-op did not start (see the log)"));
+    }
+    Say(std::string("coop: join: direct way open (") + (helper.direct() ? "the host answered" : "through both routers") +
+        "): the game's traffic goes to the host, not through the relay");
+    if (!ok) {
+        return true;
+    }
+    // Joined: the helper carries the game's traffic until Leave.
+    while (!stop_) {
+        helper.service(kRoundMs);
+    }
+    if (hooks_.disconnect) {
+        hooks_.disconnect();
+        const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+        while (std::chrono::steady_clock::now() < until) {
+            helper.service(kRoundMs);
+        }
+    }
+    helper.stop();
+    return true;
 }
 
 int Menu::Answer(const char* code) {

@@ -1,0 +1,69 @@
+# hs-twinrova-fire (row 222 follow-up, twinrova-fire-01112): Twinrova's fire/ice floor on the COPY's screen.
+# Run 20261123-001227 (orders2): owner A fired FireBullet -> FireField twice, copy B never did (no floor on B); B's
+# ice shot (its own move in step) did. Probe 1 (owner plays left out, run 20261123-041540) FAILED: not the cause.
+# Probe 2 (copy's own asks of the owner's move run, run 20261123-055243): PART: ice synced 2/2 (put-ins by plug,
+# no places), fire 0/2 (one copy ice shot from its own AI's choice, one put-in with the owner's places: no shot).
+# Probe 3 LICHII_COOP_BOSS_COPY_OWN_PLACES=1 (both games, probe 2 off): the owner's actions go into a copy without
+# the owner's places (NaN, as an ask by plug has), so the copy's move takes its own target.
+# Steps: the fight, both games 'kill' Koume and Kotake (test only, as orders2), the merge, then 24 paired shots
+# f-01..f-24 about 1.5 s apart on both screens.
+# PASS: the logs have 'probe3 on'; for every '+ Twinrova_Bullet_FireBullet' / IceBullet in the owner's log the
+#   copy's log has the SAME bullet (fire for fire, ice for ice) and its FireField / IceField within ~3 s; the f-NN
+#   shots taken while a floor is in both logs show that floor on BOTH screens (screenshot proof); 0 crashes.
+#   Read the plug names in both logs ('by plug '<name>'', put-in lines) for the variation fix.
+# FAIL: an owner's fire shot with no fire bullet/floor on the copy, an ice shot for a fire one, or a stuck copy.
+# twinrova-run-01112-4 (variation-node-222): probe 3 OFF (the named ask carries the owner's places now), diag on.
+#   PASS adds: every owner Ice/Fire shot has the same bullet + field on the copy, the field near the Link the owner aimed at.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1,LICHII_COOP_BOSS_DIAG_222=1
+#! timeout 900
+mark start
+warp TwinrovaStage TwinrovaStage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark a-in
+wait 1800               # the intro, then the fight
+hold ZL 240
+hold ZL 60 a-1
+kill Enemy_DungeonBoss_Koume
+wait 60
+kill Enemy_DungeonBoss_Kotake
+wait 600
+mark a-k
+wait 2400               # the merge cutscene
+hold ZL 240
+hold ZL 90 f-01
+hold ZL 90 f-02
+hold ZL 90 f-03
+hold ZL 90 f-04
+hold ZL 90 f-05
+hold ZL 90 f-06
+hold ZL 90 f-07
+hold ZL 90 f-08
+hold ZL 90 f-09
+hold ZL 90 f-10
+hold ZL 90 f-11
+hold ZL 90 f-12
+hold ZL 90 f-13
+hold ZL 90 f-14
+hold ZL 90 f-15
+hold ZL 90 f-16
+hold ZL 90 f-17
+hold ZL 90 f-18
+hold ZL 90 f-19
+hold ZL 90 f-20
+hold ZL 90 f-21
+hold ZL 90 f-22
+hold ZL 90 f-23
+hold ZL 90 f-24
+wait 600
+mark end

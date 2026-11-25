@@ -1,13 +1,17 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # exefs spike: build subsdk9 (an NSO) with open LLVM (clang + ld.lld, aarch64-none-elf) and elf2nso.py.
-#   powershell -File spike\exefs\build.ps1 [-Out <folder>] [-Llvm <LLVM bin>] [-Python <python.exe>]
+#   powershell -File spike\exefs-mod\build.ps1 [-Out <folder>] [-Llvm <LLVM bin>] [-Python <python.exe>]
 # Out gets subsdk9 and, for an emulator's mod folder, exefs\subsdk9 under coop-exefs\ (load\<title id>\coop-exefs).
+# (Defaults that use $PSScriptRoot are set below the param block: in Windows PowerShell 5.1 an advanced script's
+# param defaults see it empty.)
 param(
-    [string]$Out = (Join-Path $PSScriptRoot 'out'),
+    [string]$Out = '',
     [string]$Llvm = 'C:\Program Files\LLVM\bin',
-    [string]$Python = (Join-Path $PSScriptRoot '..\..\..\tools-venv\Scripts\python.exe')
+    [string]$Python = ''
 )
 $ErrorActionPreference = 'Stop'
+if (-not $Out) { $Out = Join-Path $PSScriptRoot 'out' }
+if (-not $Python) { $Python = Join-Path $PSScriptRoot '..\..\..\tools-venv\Scripts\python.exe' }
 New-Item -ItemType Directory -Force $Out | Out-Null
 $clang = Join-Path $Llvm 'clang.exe'
 $lld = Join-Path $Llvm 'ld.lld.exe'

@@ -13,9 +13,10 @@ param(
     [Parameter(Mandatory)][string]$Out,
     [int]$Minutes = 6,
     [string]$Display = '',
-    [string]$Python = (Join-Path $PSScriptRoot '..\..\..\tools-venv\Scripts\python.exe')
+    [string]$Python = ''    # (default below: in Windows PowerShell 5.1 an advanced script's param defaults see an empty $PSScriptRoot)
 )
 $ErrorActionPreference = 'Stop'
+if (-not $Python) { $Python = Join-Path $PSScriptRoot '..\..\..\tools-venv\Scripts\python.exe' }
 New-Item -ItemType Directory -Force $Out | Out-Null
 $result = Join-Path $Out 'result.txt'
 function Say([string]$s) { $l = "$((Get-Date).ToUniversalTime().ToString('HH:mm:ss')) $s"; Write-Host $l; Add-Content -LiteralPath $result $l }

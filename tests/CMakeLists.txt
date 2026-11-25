@@ -78,6 +78,7 @@ add_executable(coop_tests
   lichii/boundary_test.cpp
   lichii/event_member_test.cpp
   lichii/snap_test.cpp
+  lichii/puppet_body_test.cpp
   lichii/follow_test.cpp
   lichii/scrub_talk_test.cpp
   lichii/scrub_sale_test.cpp

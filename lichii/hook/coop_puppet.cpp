@@ -996,7 +996,7 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
         // Row 268: held too (their cutscene). Navi's physics body undoes a plain write of her place in any
         // show; without the setter in hold her body stayed where the last hide parked it (500 m down) and
         // pulled her back each frame against our write: a tug of war, a 'snap ~500 m (warp)' line a frame.
-        if (matrix_call_ &&
+        if ((matrix_call_ || slot.body_move) &&
             !(g_watch_places.load(std::memory_order_relaxed) && slot.number != 0 &&
               g_game_holds.load(std::memory_order_relaxed) == slot.number)) {
             if (auto c = Move(slot, guest)) {
@@ -1660,6 +1660,7 @@ std::optional<Call> Director::Move(Slot& slot, Guest& guest) {
         return std::nullopt;
     }
     slot.moved_frame = frames_;
+    slot.body_move = false;
     if (slot.vtable != input_.main_base + addr::kActorVtable) {
         return std::nullopt;  // not the actor class the setter is known for
     }
@@ -1944,6 +1945,14 @@ void Director::Park(Slot& slot, Guest& guest, const Vec3& position, std::uint64_
         WriteValue(guest, p.actor + addr::kActorPositionRequest, position);
     }
     Pose(slot, guest, position, nullptr, now_ms);
+    if (body_ && slot.number != 0 && !slot.native) {
+        // A copy with a body: its body is parked with it through the game's setter (a bare write would leave
+        // the body standing where the copy was, a wall nobody sees), and the next show starts from a warp.
+        slot.body_move = true;
+        slot.body_last.reset();
+        slot.body_rotation.reset();
+        slot.body_drive.Reset();
+    }
 }
 
 void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint64_t now_ms) {
@@ -2056,7 +2065,53 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
                       cadence_.PeriodMs(), r->game_moved, r->game_moved_max);
         Say(who + buf);
     }
-    Pose(slot, guest, drawn, &rotation, now_ms);
+    if (body_ && slot.number != 0 && !slot.native) {
+        // Native puppets phase 1 (coop_puppet_body.h): the copy has a body. At rest nothing is written, so
+        // the body stays a still thing our Link can lean and stand on; a move goes through the game's own
+        // setter (Director::Move, asked for by body_move), never a bare write the physics undoes.
+        CoopPuppetBody::Input in;
+        in.body = read;
+        in.place = drawn;
+        if (target.velocity && !held) {
+            in.velocity = *target.velocity;
+        }
+        in.dt = static_cast<float>(cadence_.PeriodMs() / 1000.0);
+        in.jump = jump > 0.0f || !slot.body_last;
+        if (slot.body_rotation) {
+            for (std::size_t i = 0; i < rotation.size(); ++i) {
+                in.turned = std::max(in.turned, std::fabs(rotation[i] - (*slot.body_rotation)[i]));
+            }
+        } else {
+            in.turned = 1.0f;
+        }
+        // No speed is handed to the body yet (which field of the character controller takes one is not
+        // known: docs/native-puppets.md, probe B2), so every move is the setter's.
+        in.speed_channel = false;
+        if (read && slot.body_last) {
+            slot.body_moved_max =
+                std::max(slot.body_moved_max, CoopPuppetBody::Length(CoopPuppetBody::Sub(*read, *slot.body_last)));
+        }
+        const CoopPuppetBody::Command cmd = slot.body_drive.Step(in);
+        if (cmd.kind == CoopPuppetBody::Kind::rest) {
+            ++slot.body_rest;
+        } else {
+            ++slot.body_warp;
+            Pose(slot, guest, cmd.place, &rotation, now_ms);
+            slot.body_last = cmd.place;
+            slot.body_rotation = rotation;
+            slot.body_move = true;
+        }
+        if (slot.body_rest + slot.body_warp >= 300) {
+            char buf[160];
+            std::snprintf(buf, sizeof(buf), " body: %u frames at rest, %u moved by the setter; the game had it up to %.3f m from our place",
+                          slot.body_rest, slot.body_warp, slot.body_moved_max);
+            Say(who + buf);
+            slot.body_rest = slot.body_warp = 0;
+            slot.body_moved_max = 0.0f;
+        }
+    } else {
+        Pose(slot, guest, drawn, &rotation, now_ms);
+    }
     if (g_watch_places.load(std::memory_order_relaxed) && slot.number != 0) {
         std::lock_guard lock(g_places_mutex);
         KeptPlace& k = g_places[slot.number];
@@ -2995,6 +3050,7 @@ void Configure(PlannerSettings settings, bool verbose, Director::Log log) {
         g_director->SetSoundLists(settings.sound_lists);
         g_director->SetNullReadsZero(settings.null_reads_zero);
         g_director->SetPerceived(settings.perceived && !settings.quiet_everywhere);
+        g_director->SetBody(settings.body);
         // docs/puppet.md, "Colour". LICHII_COOP_PUPPET_TINT: 0 to 1, or off.
         // The model tint darkens the whole Link (reports puppet-colors-2): off
         // unless asked for; the colour is the tunic (PlannerSettings::tunics).

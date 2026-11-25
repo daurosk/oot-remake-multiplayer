@@ -246,6 +246,16 @@ bool PackPerceived() {
     return false;
 }
 
+// A manifest of a pack built with bodies (build.py --puppet-body).
+bool PackHasBody() {
+    for (const auto& text : PackManifests()) {
+        if (CoopPuppetBody::PackBody(text)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // The first manifest with blade copies.
 CoopPuppet::LookItems PackBlades() {
     for (const auto& text : PackManifests()) {
@@ -373,6 +383,7 @@ void Configure(bool perceived_safe) {
             }
             lines.push_back("coop: puppets are seen by enemies; quiet puppets (no guard sees them) in " + names);
         }
+        settings.body = PackHasBody();
         settings.perceived = PackPerceived();  // row 177: a hit's attacker may be the hitter's puppet
         if (!perceived_safe && PackPerceived()) {
             settings.quiet_everywhere = true;

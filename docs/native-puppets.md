@@ -734,6 +734,120 @@ Sizes: S = under a day of one worker, M = 1 to 3 days, L = more. Every proof is 
 Each phase is behind a switch, default off, and does not change the solo or idle game (no session: no copy
 exists, so the pack switches change nothing without a co-op player).
 
+## Who moves the copy's body (fable-puppet-body, 2026-11-25)
+
+Each fact: **read** (from the code or the game's files, place given), **measured** (a run), or **UNKNOWN** (with its probe).
+
+### Where phases 0 to 3 stand
+
+| Phase | In the code | Switch (all off by default) | What a run proved | Never ran |
+|---|---|---|---|---|
+| 0 Facts | no probe job exists | none | nothing | lift grades, that a Free body blocks and carries, stash path, a speed setter |
+| 1 Body | pack: body files, size entries (crash-0116-a), default preset (crash-0116-b); hook: this section | pack `--puppet-body` (manifest `"body": true`, which the hook now reads) | 2026-11-19, proof-0116-5: child x2 and adult x1, no crash, both games show the other's copy (shots). The two crashes before it were ours and are fixed | walk into, stand on, push, jitter: "not judged" (the scenario's walk missed). Nothing with this section's hook rule |
+| 2 Bomb hand-over | protocol 530-532, server rules, `coop_bomb_share.h`, wired in the spawn sync | `LICHII_COOP_BOMB_SHARE=1` | one run, FAIL: B never lifted A's lit bomb, no `BOMB_TAKE` (proof-0116, 2026-11-19); cause not found | everything after the lift: hand-over, one explosion, stash |
+| 3 Lift a young player | pack `LiftableRef` (Ruto's) and carry AS; protocol 535-538; `coop_lift_player*`; young-only gates | pack `--puppet-liftable` + `LICHII_COOP_LIFT_PLAYER=1` (needs `--puppet-body`) | none: the three tries were PACK FAIL (`Npc_Zora_Ruto_Child_001.pack.zs` not in the .nup the kit reads) | all of it, UNKNOWNs 1-8 of section 4 |
+
+### The facts the rule stands on
+
+- **When our place is set against the physics step (read, docs/puppet.md "The frame hook", docs/hookshot.md).** The
+  Director runs on the calc thread at the frame hook in `moduleCalc_` (main+0x6e6dd8 / 0x6e70f8), after the frame's
+  job graph has been waited on: the actors of frame N have run, the draw of N has not read them. So a place set in
+  hook N is drawn in N and reaches the physics in frame N+1's step. UNKNOWN: that the physics step itself is inside
+  that job graph (probe B1).
+- **What the game's setter does (read, main+0x4c6580 and main+0x4c6630, disassembled).** `0x4c6580(actor, w1)`:
+  nothing for actor state 1; sets bit 23 of actor+0x4a8; takes the physics component `[[actor+0x270]+0x50]` (none:
+  returns) and calls `0x4c6630(physics, &place(+0x31c), &rows(+0x328), 1 & ~w1)`. `0x4c6630`: the controller set is
+  `[physics+0x20]`; with the last argument 1 (our w1 = 0) and no request already waiting (`[set+0x228] & 3 == 0`) it
+  stores the 3x4 at set+0x1d0, sets `[set+0x228] |= 3` and, when the set has a character controller
+  (`[set+0x1c8]`), sets bit 7 of its byte +0x1f2; then `0x4c6870(set, the 3x4)`. So the setter is a **queued
+  teleport** of the whole controller set and its character controller, taken at the next step. With w1 = 1 the
+  queue and the bit are skipped and only `0x4c6870` runs (a move that is no teleport: UNKNOWN what it does to a
+  character controller, probe B2).
+- **A teleport keeps the body's speed (measured, reports/held-bomb.md).** The held bomb fell between places.
+- **The Director never called the setter for a player's copy (read, coop_puppet.cpp).** `matrix_call_` is set only
+  by the fairies' director (coop_fairy.cpp); a copy's place was two bare writes (+0x31c, +0x358). For an actor with
+  a body a bare write is undone within a frame (measured on enemies, docs/objects.md). So in every `--puppet-body`
+  run so far the picture was written each frame and the body was never told: it stood where the copy was made, or
+  dragged the picture back. That alone explains a copy you walk through, and a wall where nobody stands.
+- **The copy's character controller (read, build.py `body_character_controller`).** The player's, on the default
+  preset, components FrameSetup, MoveStateUpdate, Rotate, JumpExtension, FloatWater, AccumulateImpulse,
+  FollowSurfaceExtension, FollowRagdoll, ApplyVelocity; states InAir, OnGround, Free; default Free.
+- **UNKNOWN: which field takes a speed** for a Free character controller (ApplyVelocity's input). Probe B2.
+
+### The rule (lichii/hook/coop_puppet_body.h, tests/lichii/puppet_body_test.cpp)
+
+The owner game's samples are the only word on where a Link is. This game's body of it never decides anything: it
+has no gravity, no ground logic and no input (Free), and is moved once a frame, at the frame hook, by one of three
+commands (`Drive::Step`), worked out from where the game left the body (read back), where the samples put it this
+frame (the follower's drawn place) and how fast that place moves:
+
+1. **rest**: the body is within 2 mm and 0.004 rad of its place and the place is not moving. Nothing is written
+   and no game function is called. A standing copy is a still body: our Link leans on it and stands on it with no
+   tremble, and the body is not re-teleported under his feet.
+2. **drive**: speed for the next step = the samples' own speed + 0.6 x gap / frame time, capped at 40 m/s. The
+   solver moves the body, so its contacts have a real speed (it pushes a pot, carries our Link on its head). The
+   gain is under 1 so a body stopped by a contact is not pressed harder each frame. Used only once B2 names the
+   speed field (`speed_channel`); until then every move is command 3.
+3. **warp**: the place is written and the game's setter called (a teleport), for: a place that jumped (scene
+   change, a warp, a new copy, back from parked), a gap over 1.5 m, a stalled frame, a body not read, and a driven
+   body more than 0.5 m behind for 6 frames (held by something only this game has: their real Link is where the
+   samples say, so the way is free in their game).
+
+The same rule in every state of their Link, because the body never runs a state of its own:
+
+| Their Link | What the samples carry | What the body does here |
+|---|---|---|
+| ground, slope, stairs | place + speed along the slope | follows; no ground snapping of ours, so no sinking and no step pops |
+| moving platform | place and speed in the world (the platform's included) | `Carry`: the offset from the platform when the sample was made (our own platform's pose then, `PoseHistory`; platforms run in step, coop_platforms.h) is put on our platform now; the look-ahead uses `RiderSpeed` (their walk on it), so the platform is not counted twice. Pure code and tests; the glue (which platform, from coop_lift_ride's "stands on" test) is open |
+| ladder, climb, crawl | place | follows. The shape stays the standing one (`Player_cct`): UNKNOWN whether it should swap to `_climb`/`_crouch` (probe B4) |
+| water | place (swimming or sunk in iron boots) | follows; `FloatWater` does nothing in Free (UNKNOWN, probe B3: no bobbing against the samples) |
+| fall, jump, knock-back, thrown | place + their real speed | follows at their speed; no gravity of ours is added, so it neither falls ahead nor lags |
+| warp, room or scene change | a jump | warp, speed zero; hidden copies park their body through the setter too (a bare write left the body behind as a wall) |
+| samples lost | nothing new | the body stays where it is at speed zero (it still blocks); the Director's hold and hide rules go on as before |
+
+### What two games do, and why no real Link is stuck or thrown
+
+Every case rests on one more rule, `Yield`: a body is never put inside the one Link this game simulates. If the
+samples (late by the lag) put the copy's capsule into ours, the copy is moved the shortest way out: sideways, or
+down under his feet, or up over his head. The other game does the same for its own Link.
+
+- **Two players push each other.** In A's game B's copy is a wall for A (probe B1 proves a Free body blocks); in
+  B's game A's copy is a wall for B. Neither real Link is ever moved by a copy: a copy is teleported or driven
+  only to where its owner really is, and gives way if that is inside us. So nobody can be pushed off a ledge or
+  through a wall by another player; each sees the other stop. The overlap left by lag (both walk in at once)
+  shows as each copy standing aside by the overlap, a few centimetres.
+- **A copy on a moving platform.** Carried by our own platform (table above); without the glue it follows the
+  world place, late by the lag x the platform's speed.
+- **Standing on a copy.** At rest it is a still body. When it moves by warp, our Link is not carried (a teleport
+  has no speed): he slides off as off a thing pulled away. Carried rides need command 2 (B2). When it rises into
+  our feet it is kept under them (`Yield`), so our Link is not thrown.
+- **A copy crushed by a door or a block.** The copy is never held by this game's movers: a warp goes through, and
+  a driven body held back 6 frames is warped. Our door is not stopped by it either (UNKNOWN whether a Free
+  character controller blocks a moving rigid body, probe B1). The crush itself is the owner game's: its real Link
+  and its own door decide.
+- **Copies against enemies.** The body blocks an enemy's walk as the real Link does in his own game. It has no
+  sensors (phase 1), so nothing hits it or is hit; phase 4 filters hits by attacker (section 5).
+
+### In the hook now (behind the pack's `"body": true`; a pack without it: nothing changes)
+
+`CoopPuppetBody::PackBody` (manifest) -> `PlannerSettings::body` -> `Director::SetBody`. For a player's copy:
+`DrawAt` asks `Drive::Step` (no speed channel yet): rest writes nothing; a move writes the place and owes one
+setter call (`Director::Move`, the fairies' path); `Park` owes one too. Every 300 frames the log has
+`P<n> body: <r> frames at rest, <w> moved by the setter; the game had it up to <x> m from our place`.
+Open in the glue: `Yield` (our Link's place and the two capsule sizes, read from `Player_cct` in the romfs), `Carry`.
+
+### Probes (one module-only two-game run, pack `--puppet-body`, shots on both games)
+
+- **B1** A walks into standing B: A stops (shot both). A jumps onto B's copy: A's height = the copy's top (shot).
+  B walks: A's log `body:` line, x under 0.02 m. B hidden (cutscene) then back: no wall left behind (A walks through
+  the old spot, shot). A door closes on B's copy in A's game: the door closes (shot).
+- **B2** the speed field: log the 0x400 bytes of the copy's character controller (`[set+0x1c8]`) on a frame at rest
+  and on the frame after a warp of 0.2 m, and of our own Link's while he walks at a known speed: the three floats
+  that equal his speed are the field. Then `speed_channel` on, and B1 again plus: A stands on walking B and is
+  carried (shot).
+- **B3** B swims and dives: the copy's `body:` x stays under 0.02 m. **B4** B climbs a ladder beside A: A is not
+  pushed (shot); if he is, the body swaps to `Player_cct_climb`.
+
 ## The phase 1 switch (built)
 
 `tools/puppet_pack/build.py --puppet-body` (off by default). Every puppet (colours, skins and quiet copies
@@ -752,8 +866,9 @@ looking. Its character controller is the player's (merged) with `DefaultMoveStat
 the sum of the entries of every player file merged into it (`build.chain_entry`: the game parses a param in a
 heap of its entry; with Player_Child's entry alone the child's character controller, merged with Player's,
 ran out at its `InteractWithRagdoll` object and crashed `GeneralFormatAsync_` as the copy loaded,
-crash-0116-a). The manifest (`coop_puppet.json`) records `"body": true`. No hook
-change: the Director already places the puppet through the physics-aware setter.
+crash-0116-a). The manifest (`coop_puppet.json`) records `"body": true`. The hook's side is
+"Who moves the copy's body" above (the first version of this switch said the Director already placed the
+puppet through the physics-aware setter: it did not, only the fairies' director called it).
 
 Build for a proof (lane pair, offline job): `python -I -B tools\puppet_pack\build.py --romfs <the .nup>
 --mod-dir <kit>\mods\contents\0400486024DEC000\coop-puppet --puppet-body` on both games, then phase 1's

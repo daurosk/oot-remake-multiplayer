@@ -30,6 +30,7 @@
 #include "coop_native_player.h"
 #include "coop_ocarina.h"
 #include "coop_follow.h"
+#include "coop_puppet_body.h"
 #include "coop_snap.h"
 #include "coop_link_sound.h"
 #include "coop_puppet_flame.h"
@@ -530,6 +531,9 @@ public:
     }
     // The pack's puppets carry a PerceptionEmitter (PlannerSettings::perceived).
     void SetPerceived(bool on) { perceived_.store(on); }
+    // The pack's puppets have a body of their own (PlannerSettings::body, build.py --puppet-body): each
+    // player's copy is moved by CoopPuppetBody::Drive. Off (the default): placed as before.
+    void SetBody(bool on) { body_ = on; }
     static_assert(coop::protocol::kMaxPlayers < 32, "LiveMask has one bit per player number");
     std::uint64_t Frames() const { return frames_; }
     void Note(const std::string& text) const { Say(text); }  // any thread
@@ -674,6 +678,14 @@ private:
         bool head_shown = false;        // the show call was made for the head piece worn
         bool head_hair_back = false;
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
+        // A pack with bodies (SetBody; coop_puppet_body.h): the rule that moves this copy's body.
+        CoopPuppetBody::Drive body_drive;
+        bool body_move = false;             // the game's setter is owed for the place last written
+        std::optional<Mat3> body_rotation;  // the rotation last handed to the physics
+        std::uint32_t body_rest = 0;        // frames of each kind since the last 'body:' line
+        std::uint32_t body_warp = 0;
+        float body_moved_max = 0.0f;        // the furthest the game had the body from our last place
+        std::optional<Vec3> body_last;      // the place last written
         CoopPuppetSound::State sound;       // the player's Ocarina on it (issue 152)
         CoopLinkSound::Player link_sound;   // the player's own sounds on it (issues 131, 152)
         CoopPuppetFlame::State flame;       // their lit Deku stick's flame on it (issue 248)
@@ -773,6 +785,7 @@ private:
     int dress_not_made_ = 0;
     static constexpr int kDressNotMade = 2;
     bool matrix_call_ = false;
+    bool body_ = false;  // SetBody
     float tint_ = 0.0f;
     std::atomic<bool> null_reads_zero_{true};
     mutable std::mutex tunic_mutex_;
@@ -914,6 +927,8 @@ struct PlannerSettings {
     std::array<std::uint8_t, 16> character_apply_head{};
     // The pack was built with perception (PackPerception): its plain (not quiet) puppets are seen by enemies.
     bool perceived = false;
+    // The pack was built with bodies (CoopPuppetBody::PackBody): native puppets phase 1.
+    bool body = false;
 };
 
 // Character Select (github.com/snaildev99/OoT-Character-Select): a player there

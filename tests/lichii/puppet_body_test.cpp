@@ -32,13 +32,23 @@ Input At(const Vec3& body, const Vec3& place, const Vec3& velocity = {}, bool ch
 
 }  // namespace
 
-TEST_CASE("puppet body: the pack's manifest switch") {
-    using CoopPuppetBody::PackBody;
-    CHECK(PackBody(R"({"actors": [{"actor": "CoopPuppet_Child", "body": {"a": 1}}], "body": true})"));
-    CHECK_FALSE(PackBody(R"({"actors": [{"actor": "CoopPuppet_Child", "body": null}], "body": false})"));
-    CHECK_FALSE(PackBody(R"({"tool": "tools/puppet_pack"})"));  // a pack from before the switch
-    CHECK(PackBody(R"({"body" :  true})"));
-    CHECK_FALSE(PackBody(R"({"actors": [{"body": {"x": true}}]})"));  // an actor's own entry is no switch
+TEST_CASE("puppet body: which of the pack's actors have a body") {
+    using CoopPuppetBody::PackBodyActors;
+    using Names = std::vector<std::string>;
+    // --puppet-body: every copy has one.
+    CHECK(PackBodyActors(R"({"actors": [{"actor": "CoopPuppet_Child", "from": "Player_Child", "body": {"a": 1}},
+        {"actor": "CoopPuppet_Adult", "body": {"b": 2}}], "body": true})") ==
+          Names{"CoopPuppet_Child", "CoopPuppet_Adult"});
+    // --puppet-pvp alone: the pack's own "body" is false and only the _Pvp copies have one (build.py gives an
+    // actor without a body {}); the same slot places them, so they are moved by the rule too.
+    CHECK(PackBodyActors(R"({"actors": [{"actor": "CoopPuppet_Child", "body": {}},
+        {"actor": "CoopPuppet_Child_Pvp", "body": {"Phive/x": 40}}, {"actor": "CoopPuppet_Adult", "body": { }}],
+        "perception": true, "body": false})") == Names{"CoopPuppet_Child_Pvp"});
+    // The pack's own switch after the last actor is no actor's body; a pack from before bodies has none.
+    CHECK(PackBodyActors(R"({"actors": [{"actor": "CoopPuppet_Child", "members": []}], "body": true})").empty());
+    CHECK(PackBodyActors(R"({"actors": [{"actor": "CoopPuppet_Child", "body": null}], "body": false})").empty());
+    CHECK(PackBodyActors(R"({"tool": "tools/puppet_pack"})").empty());
+    CHECK(PackBodyActors(R"({"actors": [{"actor": )").empty());
 }
 
 TEST_CASE("puppet body: a body where it should be is left alone") {
@@ -140,14 +150,25 @@ TEST_CASE("puppet body: a body held back by this game alone is warped past it") 
     }
 }
 
-TEST_CASE("puppet body: lost samples leave the body where it is, with no speed") {
-    Drive d;
-    Input lost = At({1, 0, 0}, {1.4f, 0, 0}, {6, 0, 0});
-    lost.fresh = false;
-    const Command c = d.Step(lost);
-    CHECK(c.kind == Kind::rest);
-    CHECK(c.place[0] == doctest::Approx(1.0f));
-    CHECK(CoopPuppetBody::Length(c.velocity) == 0.0f);
+TEST_CASE("puppet body: bodies that only touch are left to the game") {
+    // Our Link stands on a copy (his feet a few millimetres in its top) or leans on it: no place of ours
+    // moves the copy from under him, or it would sink a little every frame.
+    const Capsule ours = CoopPuppetBody::LinkBody({0, 1.16f, 0}, true);
+    float moved = 1.0f;
+    Vec3 p = CoopPuppetBody::Yield(CoopPuppetBody::LinkBody({0, 0, 0}, false), ours, &moved);
+    CHECK(p[1] == 0.0f);
+    CHECK(moved == 0.0f);
+    p = CoopPuppetBody::Yield(CoopPuppetBody::LinkBody({0.56f, 1.16f, 0}, false), ours, &moved);
+    CHECK(p[0] == doctest::Approx(0.56f));
+    CHECK(moved == 0.0f);
+    // The sizes are the game's own (child 0.23 x 1.17, adult 0.35 x 1.68), by the actor's name.
+    CHECK(CoopPuppetBody::AdultName("CoopPuppet_Adult_Red_Pvp"));
+    CHECK_FALSE(CoopPuppetBody::AdultName("CoopPuppet_Child"));
+    CHECK(CoopPuppetBody::LinkBody({}, false).height == doctest::Approx(1.17f));
+    // Deep by lag (their Link walked where ours stands): out sideways until they touch.
+    p = CoopPuppetBody::Yield(CoopPuppetBody::LinkBody({0.3f, 1.16f, 0}, false), ours, &moved);
+    CHECK(p[0] == doctest::Approx(0.58f));
+    CHECK(moved == doctest::Approx(0.28f));
 }
 
 TEST_CASE("puppet body: a copy is never put inside our own Link") {

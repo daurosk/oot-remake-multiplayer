@@ -743,7 +743,7 @@ Each fact: **read** (from the code or the game's files, place given), **measured
 | Phase | In the code | Switch (all off by default) | What a run proved | Never ran |
 |---|---|---|---|---|
 | 0 Facts | no probe job exists | none | nothing | lift grades, that a Free body blocks and carries, stash path, a speed setter |
-| 1 Body | pack: body files, size entries (crash-0116-a), default preset (crash-0116-b); hook: this section | pack `--puppet-body` (manifest `"body": true`, which the hook now reads) | 2026-11-19, proof-0116-5: child x2 and adult x1, no crash, both games show the other's copy (shots). The two crashes before it were ours and are fixed | walk into, stand on, push, jitter: "not judged" (the scenario's walk missed). Nothing with this section's hook rule |
+| 1 Body | pack: body files, size entries (crash-0116-a), default preset (crash-0116-b); hook: this section | pack `--puppet-body` (each actor's `"body"` files in the manifest, which the hook now reads) | 2026-11-19, proof-0116-5: child x2 and adult x1, no crash, both games show the other's copy (shots). The two crashes before it were ours and are fixed | walk into, stand on, push, jitter: "not judged" (the scenario's walk missed). Nothing with this section's hook rule |
 | 2 Bomb hand-over | protocol 530-532, server rules, `coop_bomb_share.h`, wired in the spawn sync | `LICHII_COOP_BOMB_SHARE=1` | one run, FAIL: B never lifted A's lit bomb, no `BOMB_TAKE` (proof-0116, 2026-11-19); cause not found | everything after the lift: hand-over, one explosion, stash |
 | 3 Lift a young player | pack `LiftableRef` (Ruto's) and carry AS; protocol 535-538; `coop_lift_player*`; young-only gates | pack `--puppet-liftable` + `LICHII_COOP_LIFT_PLAYER=1` (needs `--puppet-body`) | none: the three tries were PACK FAIL (`Npc_Zora_Ruto_Child_001.pack.zs` not in the .nup the kit reads) | all of it, UNKNOWNs 1-8 of section 4 |
 
@@ -766,7 +766,7 @@ Each fact: **read** (from the code or the game's files, place given), **measured
 - **A teleport keeps the body's speed (measured, reports/held-bomb.md).** The held bomb fell between places.
 - **The Director never called the setter for a player's copy (read, coop_puppet.cpp).** `matrix_call_` is set only
   by the fairies' director (coop_fairy.cpp); a copy's place was two bare writes (+0x31c, +0x358). For an actor with
-  a body a bare write is undone within a frame (measured on enemies, docs/objects.md). So in every `--puppet-body`
+  a body a bare write is undone within a frame (measured on enemies, docs/objects.md; on a copy: likely, not measured until B1). So in every `--puppet-body`
   run so far the picture was written each frame and the body was never told: it stood where the copy was made, or
   dragged the picture back. That alone explains a copy you walk through, and a wall where nobody stands.
 - **The copy's character controller (read, build.py `body_character_controller`).** The player's, on the default
@@ -803,7 +803,7 @@ The same rule in every state of their Link, because the body never runs a state 
 | water | place (swimming or sunk in iron boots) | follows; `FloatWater` does nothing in Free (UNKNOWN, probe B3: no bobbing against the samples) |
 | fall, jump, knock-back, thrown | place + their real speed | follows at their speed; no gravity of ours is added, so it neither falls ahead nor lags |
 | warp, room or scene change | a jump | warp, speed zero; hidden copies park their body through the setter too (a bare write left the body behind as a wall) |
-| samples lost | nothing new | the body stays where it is at speed zero (it still blocks); the Director's hold and hide rules go on as before |
+| samples lost | nothing new | the follower's look-ahead ends (coop_follow.h `kAheadMaxMs`), the place stands, and the rule rests: the body stays (it still blocks). No flag of its own: the rule never sees "lost", only a place that stopped; the Director's hold and hide rules go on as before |
 
 ### What two games do, and why no real Link is stuck or thrown
 
@@ -828,22 +828,51 @@ down under his feet, or up over his head. The other game does the same for its o
 - **Copies against enemies.** The body blocks an enemy's walk as the real Link does in his own game. It has no
   sensors (phase 1), so nothing hits it or is hit; phase 4 filters hits by attacker (section 5).
 
-### In the hook now (behind the pack's `"body": true`; a pack without it: nothing changes)
+### In the hook now (only for an actor whose manifest entry has `"body"` files; no such actor: nothing changes)
 
-`CoopPuppetBody::PackBody` (manifest) -> `PlannerSettings::body` -> `Director::SetBody`. For a player's copy:
-`DrawAt` asks `Drive::Step` (no speed channel yet): rest writes nothing; a move writes the place and owes one
-setter call (`Director::Move`, the fairies' path); `Park` owes one too. Every 300 frames the log has
-`P<n> body: <r> frames at rest, <w> moved by the setter; the game had it up to <x> m from our place`.
-Open in the glue: `Yield` (our Link's place and the two capsule sizes, read from `Player_cct` in the romfs), `Carry`.
+Decided **per actor, never per pack**: `CoopPuppetBody::PackBodyActors` (each `"actors"` entry with files in its
+`"body"`) -> `PlannerSettings::body_actors` -> `Director::SetBodyActors`; `Create` sets `slot.body` for a player's
+copy made from one of them and starts the rule's state again (`ResetBody`: a new actor is warped, never "at rest"
+by the old one's rotation or place). A `--puppet-body` pack gives every copy a body; a `--puppet-pvp` pack alone
+(its own `"body": false`) gives one only to its `_Pvp` copies, which the same slot places: same cause, same rule.
+
+For such a copy:
+- `DrawAt` first gives way to our own Link (`Yield`): his place is his actor's (`CoopPose::FindPlayer`, +0x31c),
+  his age his actor's name; the sizes are the game's own (read from the romfs, `GameParameter/
+  CctComponentPlayerClimbParam`: `CharacterRadius` / `CharacterHeight` = 0.35 / 1.68 m adult (`Player`), 0.23 /
+  1.17 m child (`Player_Child`)). UNKNOWN: that the standing shape `Player_cct` is exactly that size, and that
+  the actor's place is the capsule's foot (probe B1: the height our Link stands at on a copy). Bodies that only
+  touch (overlap up to 0.03 m: our Link standing or leaning on a copy) are left to the solver, or the copy would
+  sink from under him a little each frame.
+- Then `Drive::Step` (no speed channel yet): rest writes nothing; a move writes the place and owes one setter call.
+- The owed call (`Director::Move`) is the slot's FIRST call of the frame, before sounds, pieces and animations.
+  The frame's budget is 8 calls for all copies (`kMaxCallsPerFrame`; one is our own state): with more than 7
+  copies moving at once some wait a frame, in turn (the round starts one slot further each frame). A copy that
+  waits has its picture right and its body one frame behind; the log counts them.
+- `Park` (hidden) owes one call per place parked at, not one a frame. While our Link holds the copy (phase 3)
+  nothing is owed and the rule starts again when he lets go.
+- A copy whose class is not the one the setter is known for (`kActorVtable`) is said once in the log (`body: ...
+  is NOT moved`), and no call is counted for it.
+
+Log, once per copy: `P<n> body: <actor> has a body; it is moved through the game's setter`. Every 300 frames:
+`P<n> body: <r> frames at rest, <w> moved (<s> setter calls made, <q> waited a frame for one), <y> gave way to
+our Link; the game had it up to <x> m from our place`. `<x>` compares our place with the actor's +0x31c, a field we
+write ourselves: UNKNOWN whether the game writes it back from a Free character body (if it does not, `<x>` is
+always 0 and "rest" only means "we did not move it"). With `LICHII_COOP_DEBUG_BODY=1` each such line is followed by
+`body probe` lines (read only): the actor's place, the controller set's request flags (+0x228) and 3x4 (+0x1d0),
+and the first 0x400 bytes of the character controller (`[set+0x1c8]`), for the copy and for our own Link.
+Open in the glue: `Carry` (which platform: coop_lift_ride's stands-on test).
 
 ### Probes (one module-only two-game run, pack `--puppet-body`, shots on both games)
 
-- **B1** A walks into standing B: A stops (shot both). A jumps onto B's copy: A's height = the copy's top (shot).
+- **B1** (run with `LICHII_COOP_DEBUG_BODY=1`) first the copy's `body: ... is moved through the game's setter` line
+  (its class). The `body probe` lines while B walks and A pushes the standing copy: does the actor's +0x31c follow
+  the body (is `<x>` real), and where in the set or the controller the body's own place is. A walks into standing B:
+  A stops (shot both). A jumps onto B's copy: A's height = the copy's top (shot).
   B walks: A's log `body:` line, x under 0.02 m. B hidden (cutscene) then back: no wall left behind (A walks through
   the old spot, shot). A door closes on B's copy in A's game: the door closes (shot).
-- **B2** the speed field: log the 0x400 bytes of the copy's character controller (`[set+0x1c8]`) on a frame at rest
-  and on the frame after a warp of 0.2 m, and of our own Link's while he walks at a known speed: the three floats
-  that equal his speed are the field. Then `speed_channel` on, and B1 again plus: A stands on walking B and is
+- **B2** the speed field, from the same `body probe` dumps (the copy's character controller at rest and while B
+  walks, our own Link's while he stands and while he walks): the three floats that are his speed are the field. Then `speed_channel` on, and B1 again plus: A stands on walking B and is
   carried (shot).
 - **B3** B swims and dives: the copy's `body:` x stays under 0.02 m. **B4** B climbs a ladder beside A: A is not
   pushed (shot); if he is, the body swaps to `Player_cct_climb`.

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // Native puppets phase 1 (docs/native-puppets.md, "Who moves the copy's body"): the one rule for
-// a copy that has a body of its own (a pack built with --puppet-body, coop_puppet.json "body": true).
+// a copy that has a body of its own (a pack built with --puppet-body or --puppet-pvp: the actor's entry
+// in coop_puppet.json has "body" files).
 //
 // The owner game's samples say where the copy is; this game's physics only ever follows. Each frame
 // the director has where the game left the body (read back), where the samples put it now and how
@@ -27,7 +28,9 @@
 #include <cmath>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace CoopPuppetBody {
 
@@ -39,24 +42,38 @@ inline Vec3 Mul(const Vec3& a, float k) { return {a[0] * k, a[1] * k, a[2] * k};
 inline float Length(const Vec3& a) { return std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]); }
 inline bool Finite(const Vec3& a) { return std::isfinite(a[0]) && std::isfinite(a[1]) && std::isfinite(a[2]); }
 
-// The pack's manifest says "body": true (build.py --puppet-body) at the top level. Each actor entry has
-// a "body" of its own (null, or its files), written before it, so the pack's is the last one that is a
-// bool (as CoopPuppet::PackPerception).
-inline bool PackBody(std::string_view manifest) {
-    constexpr std::string_view key = "\"body\"";
-    bool on = false;
-    for (auto at = manifest.find(key); at != std::string_view::npos; at = manifest.find(key, at + key.size())) {
-        const auto v = manifest.find_first_not_of(" \t\r\n:", at + key.size());
-        if (v == std::string_view::npos) {
+// The pack's actors that have a body of their own: every entry of the manifest's "actors" whose "body" is
+// a map with files in it (build.py writes {} for an actor without one, and gives a `_Pvp` copy a body in
+// a --puppet-pvp pack whose own "body" is false). Decided per actor, never per pack: each of them is
+// placed by the same Director slot. The pack's own "body" (a bool, after "actors") names no actor.
+inline std::vector<std::string> PackBodyActors(std::string_view manifest) {
+    constexpr std::string_view actor_key = "\"actor\"";
+    constexpr std::string_view body_key = "\"body\"";
+    constexpr std::string_view space = " \t\r\n:";
+    std::vector<std::string> out;
+    for (auto at = manifest.find(actor_key); at != std::string_view::npos;) {
+        const auto next = manifest.find(actor_key, at + actor_key.size());
+        const auto open = manifest.find_first_not_of(space, at + actor_key.size());
+        if (open == std::string_view::npos || manifest[open] != '"') {
+            at = next;
+            continue;
+        }
+        const auto close = manifest.find('"', open + 1);
+        if (close == std::string_view::npos) {
             break;
         }
-        if (manifest.substr(v, 4) == "true") {
-            on = true;
-        } else if (manifest.substr(v, 5) == "false") {
-            on = false;
+        const auto body = manifest.find(body_key, close);
+        if (body != std::string_view::npos && (next == std::string_view::npos || body < next)) {
+            const auto v = manifest.find_first_not_of(space, body + body_key.size());
+            const auto in = v == std::string_view::npos ? v : manifest.find_first_not_of(" \t\r\n", v + 1);
+            if (v != std::string_view::npos && manifest[v] == '{' && in != std::string_view::npos &&
+                manifest[in] != '}') {
+                out.emplace_back(manifest.substr(open + 1, close - open - 1));
+            }
         }
+        at = next;
     }
-    return on;
+    return out;
 }
 
 // Nearer than this to where the game has the body, and turned less than kRestTurn: nothing is sent.
@@ -93,7 +110,6 @@ struct Input {
     Vec3 velocity{};           // how fast that place moves, metres a second; zero when not known
     float turned = 0.0f;       // radians between the body's rotation and the one wanted
     float dt = 0.0f;           // this frame's time, seconds
-    bool fresh = true;         // samples are arriving; false: lost (the body stays, speed zero)
     bool jump = false;         // the place jumped (scene change, warp, first frame, back from parked)
     bool speed_channel = false;  // the game takes a speed for this body (else every move is a warp)
 };
@@ -114,13 +130,6 @@ public:
         }
         const Vec3 gap = Sub(in.place, *in.body);
         const float far = Length(gap);
-        if (!in.fresh) {
-            // Lost samples: no speed is made up. The body stays where it is (it still blocks and
-            // carries); the director's own hold/hide rules decide what is drawn.
-            held_ = 0;
-            out.place = *in.body;
-            return out;
-        }
         const float speed = Finite(in.velocity) ? Length(in.velocity) : 0.0f;
         if (far <= kRestM && std::fabs(in.turned) <= kRestTurn && speed * in.dt <= kRestM) {
             held_ = 0;
@@ -162,9 +171,27 @@ struct Capsule {
     float height = 0.0f;
 };
 
+// A Link's body as the game's own files give it (read from the romfs, GameParameter/
+// CctComponentPlayerClimbParam: Player = the adult, Player_Child): CharacterRadius, CharacterHeight.
+// UNKNOWN: that the standing shape `Player_cct` is exactly this size (probe B1 reads the height our
+// Link stands at on a copy).
+inline constexpr float kAdultRadius = 0.35f;
+inline constexpr float kAdultHeight = 1.68f;
+inline constexpr float kChildRadius = 0.23f;
+inline constexpr float kChildHeight = 1.17f;
+inline Capsule LinkBody(const Vec3& feet, bool adult) {
+    return {feet, adult ? kAdultRadius : kChildRadius, adult ? kAdultHeight : kChildHeight};
+}
+// An actor name of an adult Link or of his copy (Player_Adult, CoopPuppet_Adult_Red_Pvp...).
+inline bool AdultName(std::string_view actor) { return actor.find("Adult") != std::string_view::npos; }
+
+// Two bodies that only touch are the solver's business (our Link standing on a copy, leaning on it):
+// the copy gives way only when it is deeper than this in our Link on every axis.
+inline constexpr float kYieldSlackM = 0.03f;
+
 // The copy's place with our own Link given way to: `copy` moved the shortest way (sideways, or down
-// under his feet, or up over his head) so the two do not overlap. No overlap: `copy.feet` as it is.
-// `moved`: how far it was moved.
+// under his feet, or up over his head) so the two only touch. No overlap deeper than kYieldSlackM:
+// `copy.feet` as it is. `moved`: how far it was moved.
 inline Vec3 Yield(const Capsule& copy, const Capsule& ours, float* moved = nullptr) {
     if (moved != nullptr) {
         *moved = 0.0f;
@@ -178,11 +205,11 @@ inline Vec3 Yield(const Capsule& copy, const Capsule& ours, float* moved = nullp
     const float side = copy.radius + ours.radius - flat;       // how deep sideways
     const float under = copy.feet[1] + copy.height - ours.feet[1];  // the copy's top over our feet
     const float over = ours.feet[1] + ours.height - copy.feet[1];   // our top over the copy's feet
-    if (side <= 0.0f || under <= 0.0f || over <= 0.0f) {
+    const float least = std::min({side, under, over});
+    if (least <= kYieldSlackM) {
         return copy.feet;
     }
     Vec3 out = copy.feet;
-    const float least = std::min({side, under, over});
     if (least == under) {
         out[1] -= under;  // our Link stands on it: it stays under his feet
     } else if (least == over) {

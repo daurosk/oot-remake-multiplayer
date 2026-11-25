@@ -63,7 +63,15 @@ def run_quiet(cmd, **kw):
 def popen_quiet(cmd, **kw):
     """subprocess.Popen of a console program with no window on Windows (see no_window)."""
     return subprocess.Popen(cmd, **no_window(kw))
-HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def server_bind(args):
+    """A test coop_server's arguments with --bind 127.0.0.1 added unless they name their own --bind (a LAN test such
+    as lan-nopw passes its LAN address). Test listeners bind 127.0.0.1: one on all adapters, from the new exe path of
+    each build, raised Windows Firewall's prompt over the windows the runs screenshot (crash-cookie-4-run)."""
+    args = list(args)
+    return args if "--bind" in args else args + ["--bind", "127.0.0.1"]
+HERE =os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 # build-game.lock: a game build (a cache miss) is running; it stops both test lanes (tools/autotest/lanes.py), whose
 # runs hold lane1.lock / lane2.lock. A module build (build-hs.lock alone) stops no lane.

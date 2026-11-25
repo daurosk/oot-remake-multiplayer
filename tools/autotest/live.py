@@ -608,8 +608,8 @@ def server_cmd(a, alive=None, killer=None, popen=None, sleep=time.sleep):
     n = len([f for f in os.listdir(d) if f.startswith("server-out")])
     with open(os.path.join(d, "server-out-%d.txt" % n), "w") as so:
         env = dict(os.environ, OOT_COOP_TEST_PASSWORD=r.get("password", SERVER_PASSWORD))   # (in the environment, never on the command line)
-        proc = (popen or lanes.hs.popen_quiet)([r["server"], "--port", str(r["port"]), "--password-env",
-                                                "OOT_COOP_TEST_PASSWORD"], stdout=so, stderr=subprocess.STDOUT, env=env)
+        proc = (popen or lanes.hs.popen_quiet)(lanes.hs.server_bind([r["server"], "--port", str(r["port"]), "--password-env",
+                                                "OOT_COOP_TEST_PASSWORD"]), stdout=so, stderr=subprocess.STDOUT, env=env)
     write_pids(d, server=proc.pid)
     plan(d, "server", None)
     sleep(1)

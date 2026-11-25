@@ -697,6 +697,7 @@ class HookshotGames:
         if os.environ.get("OOT_COOP_TEST_PASSWORD"):
             args += ["--password-env", "OOT_COOP_TEST_PASSWORD"]
         args += self.head.get("server", [])   # the steps file's `#! server` arguments
+        args = lanes.hs.server_bind(args)      # (127.0.0.1 unless they name their own --bind)
         env = None
         if self.server_delay:
             args += self.server_delay

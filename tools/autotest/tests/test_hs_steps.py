@@ -513,8 +513,14 @@ class HookshotGamesTest(unittest.TestCase):
                 os.environ.pop("OOT_COOP_TEST_PASSWORD", None)
             else:
                 os.environ["OOT_COOP_TEST_PASSWORD"] = old
-        self.assertEqual(started[0], ["coop_server.exe", "--port", "27560", "--password-env", "OOT_COOP_TEST_PASSWORD"])
+        self.assertEqual(started[0], ["coop_server.exe", "--port", "27560", "--password-env", "OOT_COOP_TEST_PASSWORD",
+                                      "--bind", "127.0.0.1"])   # (test listeners bind 127.0.0.1: no firewall prompt)
         self.assertNotIn("zelda", " ".join(started[0]))   # the password never on the command line
+
+    def test_server_bind_keeps_its_own(self):
+        # (hs.py server_bind: 127.0.0.1 added once; a LAN test's own --bind wins)
+        self.assertEqual(hs.lanes.hs.server_bind(["s", "--port", "1"]), ["s", "--port", "1", "--bind", "127.0.0.1"])
+        self.assertEqual(hs.lanes.hs.server_bind(["s", "--bind", "192.168.1.5"]), ["s", "--bind", "192.168.1.5"])
 
     def test_server_test_delay_needs_the_test_environment(self):
         started = []

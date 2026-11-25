@@ -548,6 +548,7 @@ function Start-Server {
     if (-not $ServerPassword) { throw "-ServerPassword: every session has a join password (coop_server does not start without one)" }
     $env:OOT_COOP_TEST_PASSWORD = $ServerPassword; $sargs += " --password-env OOT_COOP_TEST_PASSWORD"
     if ($headServer) { $sargs += " $headServer" }
+    if ($sargs -notmatch '(^| )--bind ') { $sargs += ' --bind 127.0.0.1' }   # (test listeners bind 127.0.0.1; hs.py server_bind)
     $script:serverProc = Start-Process $Server -ArgumentList $sargs -PassThru -WindowStyle Minimized `
         -RedirectStandardOutput "$out\server-out$sfx.txt" -RedirectStandardError "$out\server-err$sfx.txt"
     Start-Sleep 1

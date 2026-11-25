@@ -1,17 +1,25 @@
 # title-auto-press (Cookie's report, patch 0030 + coop_auto_press.h): back on the title from a join with a file loaded, the
 # module presses Continue, the newest save and Load for the player. While those presses run the game's menu mouse is held
 # (hos_coop_menu_mouse_held), so a hover cannot move the focus off Continue under them.
+# B plays from the co-op save folder (LICHII_COOP_TEST_OWN_SAVE=0, as a real guest: the harness default 1 keeps its own
+# saves, and then the presses load B's own slot, not the host's save). A loads first, so the host's save is written into
+# B's co-op folder before B loads.
 # The way back to the title is the test trigger: with LICHII_COOP_TEST_TO_TITLE=1, a file to-title.now in B's game folder
 # (the folder its log names) starts it. The runner drops that file during the `sleep 91` step, and moves the real mouse
-# over B's buttons the whole run (offline crash-cookie-2-run.ps1 does both).
-# PASS: b-to-title, b-pressed, b-done, b-no-crash; shot b-after shows B's Link in the game (not the title).
-#! switches B:LICHII_COOP_TEST_TO_TITLE=1
+# over B's buttons the whole run (offline crash-cookie-4-run.ps1 does both).
+# PASS: every lines check; shots b-after: B's Link in the game, in the host's save (the same place as A, not the title).
+#! switches B:LICHII_COOP_TEST_TO_TITLE=1,B:LICHII_COOP_TEST_OWN_SAVE=0
 #! timeout 480
 start A B
-load A B
+load A
+sleep 25
+load B
 sleep 91
 shot b-after
+lines b-host-save B min=1 coop: save: the host's save written to
+lines b-co-op-folder B min=1 coop: save: now playing from the co-op save folder
 lines b-to-title B min=1 coop: multiplayer tab: test: back to the title asked
 lines b-pressed B min=1 coop: title: the host's save is in: Continue, its newest save and Load pressed
 lines b-done B min=1 coop: title: the host's save: the presses that load it are done
+lines b-not-own B max=0 coop: save: LICHII_COOP_TEST_OWN_SAVE|That save loaded before the host's save was in
 lines b-no-crash B max=0 unhandled exception|fault at|coop: null read

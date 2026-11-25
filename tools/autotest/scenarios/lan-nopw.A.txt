@@ -3,6 +3,7 @@
 # key); the server takes it only because the connection comes from a private address. Used for A and B.
 # Run (lane 1; <LAN-IP> = this PC's 192.168.x.x / 10.x.x.x, never 127.0.0.1):
 #   python tools\autotest\hookshot.py run --lane 1 --server <coop_server.exe> --server-arg=--same-network-open
+#     --server-arg=--bind --server-arg=<LAN-IP>   (without its own --bind the harness binds 127.0.0.1)
 #     --password gate-251 --env LICHII_COOP_SERVER=<LAN-IP>:27520 --env LICHII_COOP_PASSWORD=
 #     --name lan-nopw --script-a tools\autotest\scenarios\lan-nopw.A.txt --script-b tools\autotest\scenarios\lan-nopw.A.txt
 # PASS: server-out.txt has "a player on this network joins without the join password" twice and no "reason 6";

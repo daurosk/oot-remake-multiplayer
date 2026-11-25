@@ -1388,8 +1388,8 @@ def run(a):
                 delay = test_delay_args(a.test_delay_ms, a.test_jitter_ms)
                 if delay:
                     senv["OOT_COOP_TEST"] = "1"   # coop_server refuses the delay without it
-                server = lanes.hs.popen_quiet([a.server, "--port", str(a.port), "--password-env", "OOT_COOP_TEST_PASSWORD"]
-                                              + delay + a.server_arg, stdout=so, stderr=subprocess.STDOUT, env=senv)
+                server = lanes.hs.popen_quiet(lanes.hs.server_bind([a.server, "--port", str(a.port), "--password-env",
+                                              "OOT_COOP_TEST_PASSWORD"] + delay + a.server_arg), stdout=so, stderr=subprocess.STDOUT, env=senv)
             keep_pids()
             time.sleep(1)
         for i, x in enumerate(tags):

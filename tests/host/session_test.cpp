@@ -279,7 +279,7 @@ TEST_CASE("session: a held game keeps sending its still player, so the other's p
       server.service(1);
       a.session.service();
       b.step();
-      lowest = std::min(lowest, fade_of_a());
+      lowest = (std::min)(lowest, fade_of_a());
       std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     return lowest;
@@ -380,7 +380,7 @@ TEST_CASE("session: a reconnect while held sends the status and equipment again"
       if (frames) a.step();
       else a.session.service();
       b.step();
-      lowest = std::min(lowest, fade_of_a());
+      lowest = (std::min)(lowest, fade_of_a());
       std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     return lowest;
@@ -399,7 +399,7 @@ TEST_CASE("session: a reconnect while held sends the status and equipment again"
   float x = 1.0f;
   const auto walk_end = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
   while (std::chrono::steady_clock::now() < walk_end) {
-    x = std::min(x + 0.2f, 100.0f);
+    x = (std::min)(x + 0.2f, 100.0f);
     a.memory.put_vec3(test::Layout{}.game_ui + addr::kGameUiPosition, {x, 2.0f, 3.0f});
     server->service(1);
     a.step();

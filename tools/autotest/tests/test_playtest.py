@@ -133,7 +133,7 @@ class Parse(unittest.TestCase):
 def start_args(**kw):
     a = dict(session="s", lane=None, game_a=None, game_b=None, server="coop_server.exe", port=None, boot_a=None,
              boot_b=None, load=None, no_load=False, no_restore=False, env=[], boot_timeout=900, max_minutes=30,
-             idle_minutes=10, lock_wait=0)
+             idle_minutes=10, lock_wait=0, only=None)
     a.update(kw)
     return argparse.Namespace(**a)
 
@@ -151,21 +151,41 @@ def write_session(d, **kw):
 class LiveLane(unittest.TestCase):
     def test_a_lane_gives_its_pair_port_and_pipes(self):
         L = lanes.lane(1)
-        self.assertEqual(live.resolve(start_args(lane=1)), (L["a"], L["b"], L["port"], "coop-lane1"))
-        self.assertEqual(live.resolve(start_args(lane=1, port=27999))[2], 27999)
-        self.assertEqual(live.resolve(start_args(game_a="ga", game_b="gb")), ("ga", "gb", live.PORT, live.PIPE))
+        self.assertEqual(live.resolve(start_args(lane=1)), ({"A": L["a"], "B": L["b"]}, L["port"], "coop-lane1"))
+        self.assertEqual(live.resolve(start_args(lane=1, port=27999))[1], 27999)
+        self.assertEqual(live.resolve(start_args(game_a="ga", game_b="gb")),
+                         ({"A": "ga", "B": "gb"}, live.PORT, live.PIPE))
         with self.assertRaises(SystemExit):
-            live.resolve(start_args(game_a="ga"))
+            live.resolve(start_args())
+
+    def test_one_game_alone(self):
+        # each game is its own lane: one game starts without the other, and without a server
+        L = lanes.lane(1)
+        self.assertEqual(live.resolve(start_args(game_b="gb"))[0], {"B": "gb"})
+        self.assertEqual(live.resolve(start_args(lane=1, only="B"))[0], {"B": L["b"]})
+        with self.assertRaises(SystemExit):
+            live.resolve(start_args(game_a="ga", only="B"))
+        argv = live.runner_argv(start_args(server=None, boot_a="a.txt", boot_b="b.txt"), {"B": "gb"}, 1, "p", "dir")
+        self.assertEqual(argv[argv.index("--game-b") + 1], "gb")
+        for flag in ("--game-a", "--server", "--script-a"):
+            self.assertNotIn(flag, argv)
+        self.assertIn("--script-b", argv)
+        with tempfile.TemporaryDirectory() as d:
+            s = write_session(d)
+            del s["games"]["A"]
+            live.save(d, s)
+            self.assertEqual(live.session_tags(s), ["B"])
+            self.assertIn("error", live.do(argparse.Namespace(session=d, player="A", script="press A")))
 
     def test_runner_restores_the_saves_and_never_takes_the_lane_itself(self):
-        argv = live.runner_argv(start_args(lane=1), "ga", "gb", 27520, "coop-lane1", "dir")
+        argv = live.runner_argv(start_args(lane=1), {"A": "ga", "B": "gb"}, 27520, "coop-lane1", "dir")
         self.assertNotIn("--no-restore", argv)   # the baseline save, as lane runs
         self.assertNotIn("--lane", argv)         # the watchdog holds the lock for the whole session
         self.assertIn("--keep-open", argv)
         self.assertEqual(argv[argv.index("--pipe") + 1], "coop-lane1")
         self.assertEqual(argv[argv.index("--port") + 1], "27520")
         self.assertEqual(argv[argv.index("--password") + 1], live.SERVER_PASSWORD)   # (kept in session.json too)
-        self.assertIn("--no-restore", live.runner_argv(start_args(no_restore=True), "ga", "gb", 1, "p", "dir"))
+        self.assertIn("--no-restore", live.runner_argv(start_args(no_restore=True), {"A": "ga", "B": "gb"}, 1, "p", "dir"))
 
     def test_the_runner_keeps_pids_for_the_watchdog(self):
         with tempfile.TemporaryDirectory() as d:
@@ -590,7 +610,7 @@ class LiveWatchdog(unittest.TestCase):
         c = FakeClock(0.0)
         out = live.close(self.d, s, alive=lambda p: p in (12, 13) and p not in kills,
                          quit=lambda s, x: quits.append(x), killer=kills.append,
-                         release=lambda n, o: released.append((n, o)) or True, clock=c, sleep=c.sleep)
+                         release=lambda n, o, g=None: released.append((n, o)) or True, clock=c, sleep=c.sleep)
         self.assertEqual(quits, ["A", "B"])
         self.assertEqual(kills, [12, 13])   # B did not quit; the server always goes
         self.assertEqual(released, [(1, live.lock_owner(self.d))])
@@ -604,7 +624,7 @@ class LiveWatchdog(unittest.TestCase):
         def unreachable(s, x):
             raise OSError("no pipe")
         out = live.close(self.d, s, alive=lambda p: False, quit=unreachable, killer=lambda p: None,
-                         release=lambda n, o: released.append(n), wait=0)
+                         release=lambda n, o, g=None: released.append(n), wait=0)
         self.assertEqual(released, [])
         self.assertIn("not reached", out["A"])
 
@@ -616,7 +636,7 @@ class LiveWatchdog(unittest.TestCase):
             w = live.read_json(live.watchdog_file(d))
             self.assertEqual((w["lock"], w["pid"], w["ended"]), ("held", 4242, None))
             raise RuntimeError("bridge gone")
-        code = live.run_watchdog(self.d, acquire=lambda n, o, wait: taken.append((n, o, wait)) or True,
+        code = live.run_watchdog(self.d, acquire=lambda n, o, wait, g=None: taken.append((n, o, wait)) or True,
                                  watcher=boom, closer=lambda d, s: closed.append(s["lane"]) or {"lock": "released"},
                                  pid=4242)
         self.assertEqual(code, 0)
@@ -639,7 +659,7 @@ class LiveWatchdog(unittest.TestCase):
     def test_a_busy_lane_refuses_the_session(self):
         write_session(self.d, lane=1)
         closed = []
-        code = live.run_watchdog(self.d, acquire=lambda n, o, wait: False, watcher=lambda d: "x",
+        code = live.run_watchdog(self.d, acquire=lambda n, o, wait, g=None: False, watcher=lambda d: "x",
                                  closer=lambda d, s: closed.append(1), pid=1)
         self.assertEqual(code, 1)
         self.assertEqual(closed, [])   # nothing started, nothing to close
@@ -967,6 +987,30 @@ class TalkTest(unittest.TestCase):
         self.assertEqual([b["text"] for b in r["boxes"]], ["Line 1"])
 
     # --- markup, repeats, the speaker and the frame cap (a lane run of patch 0042: Kokiri shop and Mido) -------------
+    def test_strip_markup_counts_the_params_in_bytes(self):
+        # A name with a character of more than one byte: the tag's size is bytes, the text has one character for it.
+        name = "Gr\u0101t"                                     # 4 characters, 5 bytes in UTF-8
+        n = len(name.encode("utf-8"))
+        t = bytes([0x0e, 4, 0, 0, 0, n & 255, n >> 8]).decode("latin-1") + name
+        self.assertEqual(ph.strip_markup("A" + t + "B"), "AB")
+        self.assertEqual(ph.strip_markup("A" + t), "A")
+        # a size that names more bytes than the text has still loses only the first byte
+        self.assertEqual(ph.strip_markup("A" + t[:-2]), "A" + t[1:-2])
+
+    def test_the_helper_source_has_no_literal_markup_byte(self):
+        src = open(ph.__file__, "rb").read()
+        self.assertNotIn(b"\x0e", src)                           # (the tag byte is written "\\x0e" in the source)
+
+    def test_strip_markup_keeps_a_variable_as_its_name_in_braces(self):
+        item = tag(2, 3, b"\x13\x00Shop_SelectItemName\xff\xff")
+        price = tag(2, 1, b"\x14\x00Shop_SelectItemPrice\xff\xff\x00")
+        span = tag(0, 3, b"\xff\xff")
+        self.assertEqual(ph.strip_markup("The " + item + span + "? That'll cost\n" + price + " rupees."),
+                         "The {Shop_SelectItemName}? That'll cost\n{Shop_SelectItemPrice} rupees.")
+        self.assertEqual(ph.strip_markup("Hi " + tag(2, 23, b"\x05\x00Name\x00\xff\xff")), "Hi {Name}")
+        self.assertEqual(ph.strip_markup("Hi " + tag(2, 23, b"\x05\x00Name\x00\xff\xff"), variables=False), "Hi")
+        self.assertEqual(ph.strip_markup("Hi " + tag(2, 23, b"")), "Hi")             # (a variable with no name)
+
     def test_strip_markup_page_break_is_a_space(self):
         # The page break (group 0, type 4, no params) ends a page: its two sides are two sentences, not one word.
         self.assertEqual(ph.strip_markup("Link!" + tag(0, 4) + "Let's go."), "Link! Let's go.")
@@ -985,7 +1029,7 @@ class TalkTest(unittest.TestCase):
                          "One two three.")
         self.assertEqual(ph.strip_markup("Line" + tag(5, 1) + " next\nrow — end"), "Line next\nrow — end")
         self.assertEqual(ph.strip_markup("No markup at all"), "No markup at all")
-        self.assertEqual(ph.strip_markup(tag(2, 23, b"\x05\x00Name\x00\xff\xff")), "")
+        self.assertEqual(ph.strip_markup(tag(2, 23, b"\x05\x00Name\x00\xff\xff"), variables=False), "")
         # a tag cut short, or one that names more bytes than there are, loses only its first byte
         self.assertEqual(ph.strip_markup("Words\x0e\x01\x00"), "Words\x01\x00")
         cut = ph.strip_markup("\x0e\x01\x00\x02\x00\x40\x00words")
@@ -1004,6 +1048,13 @@ class TalkTest(unittest.TestCase):
         self.assertNotIn("raw", r["boxes"][1])             # (nothing was cut: the text is the raw)
         self.assertFalse(r["boxes"][1]["markup"])
 
+    def test_whitespace_at_the_edges_is_not_markup(self):
+        g = FakeTalk([("box", "Speaker A", "  Hi  ")])
+        r = ph.talk(g)
+        self.assertEqual(r["boxes"][0]["text"], "Hi")
+        self.assertFalse(r["boxes"][0]["markup"])
+        self.assertNotIn("raw", r["boxes"][0])
+
     def test_a_text_of_only_markup_is_not_a_box(self):
         g = FakeTalk([("box", "Speaker A", tag(2, 23, b"\x05\x00Name\x00\xff\xff")), ("box", "Speaker A", "Line 2")])
         r = ph.talk(g)
@@ -1021,6 +1072,25 @@ class TalkTest(unittest.TestCase):
         r = ph.talk(g)
         self.assertTrue(r["done"], r)
         self.assertEqual([b["text"] for b in r["boxes"]], ["Line 1", "Line 2", "Line 1"])
+
+    def test_the_same_line_twice_in_a_row_is_two_boxes(self):
+        g = FakeTalk([("box", "Speaker A", "Line 1"), ("box", "Speaker A", "Line 1"), ("box", "Speaker A", "Line 2")])
+        orig = g._show
+
+        def again():
+            g.shown.clear()                                # (the game sets a box's text every time, same or not)
+            orig()
+        g._show = again
+        r = ph.talk(g)
+        self.assertTrue(r["done"], r)
+        self.assertEqual([b["text"] for b in r["boxes"]], ["Line 1", "Line 1", "Line 2"])
+
+    def test_a_box_with_a_variable_keeps_it_and_a_lone_variable_is_no_box(self):
+        item = tag(2, 3, b"\x13\x00Shop_SelectItemName\xff\xff")
+        g = FakeTalk([("box", "Speaker A", item), ("box", "Speaker A", "Buy " + item + "?")])
+        r = ph.talk(g)
+        self.assertTrue(r["done"], r)
+        self.assertEqual([b["text"] for b in r["boxes"]], ["Buy {Shop_SelectItemName}?"])
 
     def test_the_speaker_is_the_name_pane_even_when_it_is_set_after_the_body(self):
         g = FakeTalk([("box", "Speaker A", "Line 1"), ("box", "Speaker A", "Line 2")], name_after=True)

@@ -227,6 +227,11 @@ const std::vector<Command>& Commands() {
          "place, talk to someone or read a sign within a minute to travel. Not during a cutscene, a talk or a boss "
          "fight."},
         {"/tp <player>", "The same as /teleport."},
+        // Emotes and pings (lichii/hook/coop_emote.cpp Parse): the others see your Link play a gesture.
+        {"/emote", "Lists the emotes."},
+        {"/wave, /yes, /no, /look, /here, /wow",
+         "Your Link plays a gesture on the other players' screens, as they see you (/emote wave is the same). /here "
+         "also calls out. It stops when you move. Nothing happens when you play alone."},
         {"/pvp", "Says whether players can hurt each other (PvP) in this game."},
         {"/pvp on, /pvp off", "The host only: lets players hurt each other, or stops it, for everyone."},
         // Down but not out (docs/play-online.md "Down but not out"; lichii/hook/coop_dbno.cpp Parse).
@@ -406,6 +411,29 @@ void Menu::HostRuleLines(std::vector<Line>& out, bool guest) const {
                                            "their own. Applies at your next Host."
                                          : "Shared: a kill drops the token in every game, and one pickup counts once "
                                            "for everyone. Applies at your next Host.")});
+    // Race mode (coop_race_mode.h), as Gold Skulltulas: the choice for the next Host; a session keeps its mode.
+    const std::string race_now = live ? std::string(session_.race ? "This game: On." : "This game: Off.") : std::string();
+    out.push_back({Toggle("Race mode", options_.race), Act::kRace,
+                   guest ? std::string(kYourNextHost) + " " + race_now
+                   : live && options_.race != session_.race
+                       ? "Applies at your next Host: stop hosting, then start again. " + race_now
+                       : std::string(options_.race
+                                         ? "On: everyone sees each other, chats and talks, and plays the world alone: "
+                                           "no items, enemies, doors, switches or saves are shared. PvP works as "
+                                           "set below. Applies at your next Host."
+                                         : "Off: the world is shared (the usual co-op). Applies at your next Host.")});
+    // Shared floor switches (coop_switch_stand_mode.h), the same way: on by default.
+    const std::string switches_now =
+        live ? std::string(session_.floor_switches ? "This game: On." : "This game: Off.") : std::string();
+    out.push_back({Toggle("Shared floor switches", options_.floor_switches), Act::kFloorSwitches,
+                   guest ? std::string(kYourNextHost) + " " + switches_now
+                   : live && options_.floor_switches != session_.floor_switches
+                       ? "Applies at your next Host: stop hosting, then start again. " + switches_now
+                       : std::string(options_.floor_switches
+                                         ? "On: another player standing on a floor switch holds it down in every "
+                                           "game. Applies at your next Host."
+                                         : "Off: a floor switch is held only by your own Link or a block. Applies at "
+                                           "your next Host.")});
     Row pvp = Toggle("PvP", live ? session_.pvp : options_.pvp);
     pvp.fixed = guest;
     out.push_back({pvp, Act::kPvp,
@@ -1892,6 +1920,8 @@ void Menu::Decide(Act act) {
     case Act::kGameKind:
     case Act::kApproveJoins:
     case Act::kGoldSkulltulas:
+    case Act::kRace:
+    case Act::kFloorSwitches:
     case Act::kPvp:
     case Act::kDbno:
         Change(act, 0);   // (a toggle: A flips it)
@@ -2025,6 +2055,14 @@ void Menu::Change(Act act, int step) {
         break;
     case Act::kGoldSkulltulas:
         options_.gold_own = !options_.gold_own;   // (two choices: either way flips it)
+        request_ = Request{Request::Kind::kSave, {}};
+        break;
+    case Act::kRace:
+        options_.race = step > 0 ? true : step < 0 ? false : !options_.race;
+        request_ = Request{Request::Kind::kSave, {}};
+        break;
+    case Act::kFloorSwitches:
+        options_.floor_switches = step > 0 ? true : step < 0 ? false : !options_.floor_switches;
         request_ = Request{Request::Kind::kSave, {}};
         break;
     case Act::kPvp: {

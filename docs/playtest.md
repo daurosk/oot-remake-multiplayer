@@ -11,7 +11,7 @@ Maintainer only, like the rest of `tools/autotest`: it needs two Hookshot test c
 
 | Piece | What it does |
 | --- | --- |
-| `tools/autotest/live.py start` | Starts the server and both games (the runner with `--keep-open`), plays each game's boot script (e.g. warp to a dungeon, past the title), and leaves them running. Each game's save is restored to its baseline first (`--no-restore` keeps the copies' saves). `--lane N` uses a test lane's pair, port and pipes (`tools/autotest/lanes.py`). Starts the session's watchdog. Writes `session.json` in the session folder. |
+| `tools/autotest/live.py start` | Starts the server and both games (the runner with `--keep-open`), plays each game's boot script (e.g. warp to a dungeon, past the title), and leaves them running. Each game's save is restored to its baseline first (`--no-restore` keeps the copies' saves). `--lane N` uses a test lane's pair, port and pipes (`tools/autotest/lanes.py`). One game alone: only `--game-a` or only `--game-b`, or `--lane N --only A` (or `B`); it keeps its own bridge pipe and play-test port, and with `--lane` takes its own lock (`laneN-A.lock`), so two sessions can drive A and B of one lane at once, while a two-game session on that lane waits for both. `--server` is optional (without it the games use their `coop.ini`). Starts the session's watchdog. Writes `session.json` in the session folder. |
 | `live.py do --session DIR A "lines"` | Plays test script lines in one game (`goto`, `toward`, `press`, `hold`, `warp`, `place`, `setflag`, `kill`, `hit`, ...; `;` between lines), then returns that game's state. |
 | `live.py state --session DIR [A\|B] [--since ID]` | Each game's control-bridge snapshot (map, Link's place, facing, camera, life, rupees, age, event, loading, A prompt) and its new `coop:` log lines since the last look. Each look has a `state_id`; with `--since` only what changed comes back ("Kit helpers"). A session started with the play-test bridge adds `menu` (what co-op's menus show, see below; `menu_error` when the bridge did not answer). |
 | `live.py shot --session DIR [A\|B]` | A screenshot of each game (a PNG path). |
@@ -173,8 +173,9 @@ player's game copies nothing.
   animation such as `Greeting`) and a variable (`Shop_SelectItemName`, `UI_MessageTargetActorName`), between the
   words. `talk` cuts the tags out of a box's `text` and keeps the whole in `raw`. The page-break tag (group 0, type 4,
   no bytes, seen in the Kokiri shop and Mido's text, 2026-11-24) becomes one space, so two pages are not glued into one
-  word. Not yet handled: a variable (an item name, a price) is cut with the markup and its words are missing from
-  `text`; read `raw` or `get_text` for those.
+  word. A variable (an item name, a price: tag group 2) stays in `text` as `{Name}`, e.g. `The {Shop_SelectItemName}?`:
+  the bridge has only the variable's name, the game fills in the value later (read it from the shop's info panes). A
+  tag's size is in bytes; a character from U+0100 up counts as its UTF-8 bytes, a lower one as one byte.
 - An exe without patch 0041 answers `hooked` false, and the module logs `coop: playtest: this Hookshot has no pane
   text wrap (patch 0041)` once at the HELLO.
 
@@ -452,8 +453,8 @@ server calls them; a script can too). They only use the bridge's commands, so th
   does not walk) presses `A`, then reads the new texts of the message layouts through `text`: `speakers` (in order),
   `boxes` [{speaker, text, markup, raw}] (a wrap-26 text of a message layout, see [Text boxes](#text-boxes); empty
   without patch 0042), and the reply buttons (`PaMessageBtn_00`) as `choices`. A box's `text` is its words with the
-  markup cut out; `raw` (only when something was cut) is the text as the game set it. A box set again as it was is
-  one box, and a text of only markup (a name variable) is no box. `speaker` is the name pane set with the box, also
+  markup cut out; `raw` (only when something was cut) is the text as the game set it. A box set again as it was, before
+  the next A, is one box; the same line after an A is a new box. A text of only markup or variables is no box. `speaker` is the name pane set with the box, also
   when the game sets it after the body; it is null only when the game shows no name. It presses `A` when a speaker,
   a box or buttons came, or when the event went quiet for 3 reads (10 frames each). When buttons show it takes the
   next of `reply` (a text, or a list: one per set of buttons, in order), presses Down to the button of that text
@@ -544,6 +545,9 @@ button layout was known):
   clean `text` and the `raw` kept, no box twice, `speaker` the name pane when the game shows one, `done` true, Link
   free to walk after. Kokiri shop: `talk` stops at the first buttons and lists them; `talk` with the `reply` texts
   as listed and `since` buys the shield.
+- Also look at (helper nits, 2026-11-24): a box with an item or price shows `{Shop_SelectItemName}` and
+  `{Shop_SelectItemPrice}` in `text`; two equal lines in a row are two boxes. A box's `speaker` can be the name of the
+  box before when the name pane is set late: check the first box after a speaker change.
 
 ### Set a test up (start a boss or a dungeon in one call)
 

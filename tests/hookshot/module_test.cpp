@@ -32,7 +32,9 @@
 #include "hos_coop_nodes.h"
 #include "hos_coop_bosses.h"
 #include "hos_coop_boss_orders.h"
+#include "hos_coop_boss_shots.h"
 #include "coop_boss_orders.h"
+#include "coop_boss_shots.h"
 #include "coop_svc.h"
 
 namespace {
@@ -70,6 +72,21 @@ std::string NewFile(const std::string& patch, const std::string& path) {
         at = end + 1;
     }
     return out;
+}
+
+// `text` without the lines `patch` adds to `path` (each once, the first match): what it was before that patch.
+std::string WithoutAddedLines(std::string text, const std::string& patch, const std::string& path) {
+    const std::size_t from = patch.find("diff --git a/" + path + " ");
+    if (from == std::string::npos) return text;
+    const std::size_t to = patch.find("\ndiff --git a/", from + 1);
+    std::istringstream in(patch.substr(from, to == std::string::npos ? std::string::npos : to - from));
+    for (std::string line; std::getline(in, line);) {
+        if (line.size() < 1 || line[0] != '+' || line.rfind("+++", 0) == 0) continue;
+        const std::string whole = line.substr(1) + "\n";
+        const std::size_t at = text.find(whole);
+        if (at != std::string::npos) text.erase(at, whole.size());
+    }
+    return text;
 }
 
 // `text` with a later patch's hunks for `path` applied (unified diff: context
@@ -670,7 +687,10 @@ TEST_CASE("hookshot: a module tab may draw a picture beside its page (patch 0019
 TEST_CASE("hookshot: the module may turn the player camera's yaw and pitch (patch 0040, hos_coop_turn.h)") {
     const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0040-coop-camera-angles.patch");
     REQUIRE_FALSE(patch.empty());
-    CHECK(NewFile(patch, "host/hos_coop_turn.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_turn.h"));
+    // hookshot/src's header is 0040's with 0043's added lines (the wake's state -1).
+    CHECK(WithoutAddedLines(ReadFile(kRepo / "hookshot" / "src" / "hos_coop_turn.h"),
+                            ReadFile(kRepo / "hookshot" / "patches" / "0043-coop-camera-wake.patch"),
+                            "host/hos_coop_turn.h") == NewFile(patch, "host/hos_coop_turn.h"));
     // The bridge looks for the optional export; the camera hook asks it first, whatever the Mouse camera row, and
     // writes the angles only in states 3 and 4, the pitch within the camera's limits.
     CHECK(patch.find("GetProcAddress(m, \"hos_coop_turn\")") != std::string::npos);
@@ -694,6 +714,26 @@ TEST_CASE("hookshot: the module may turn the player camera's yaw and pitch (patc
     CHECK(module.find("return CoopLookView::Turn(yaw, pitch, state, g_on) ? 1 : 0;") != std::string::npos);
     const std::string live = ReadFile(kRepo / "hookshot" / "src" / "coop_look_live.cpp");
     CHECK(live.find("g_steer.Command({*yaw, *pitch}, state, coop_on && g_orbit.Asked(NowMs()))") != std::string::npos);
+}
+
+TEST_CASE("hookshot: the camera wake (patch 0043) asks the module with state -1 and clears only the skip bit") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0043-coop-camera-wake.patch");
+    REQUIRE_FALSE(patch.empty());
+    CHECK(patch.find("+    if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_turn_fn) hos_coop_camera_wake();") !=
+          std::string::npos);
+    CHECK(patch.find("+    if (hos_coop_turn_filter(NULL, NULL, -1) != 1) return;") != std::string::npos);
+    CHECK(patch.find("+    if (*skip & NODE_SKIP_UPDATE) __atomic_fetch_and(skip, (char)~NODE_SKIP_UPDATE, __ATOMIC_SEQ_CST);") != std::string::npos);
+    CHECK(patch.find("+#define WAKE_AFTER_NS 50000000LL") != std::string::npos);
+    for (std::size_t at = patch.find("diff --git a/"); at != std::string::npos; at = patch.find("diff --git a/", at + 1)) {
+        bool allowed = false;
+        for (const std::string prefix : {"diff --git a/host/coop_bridge.c ", "diff --git a/host/mouse_native.c ",
+                                         "diff --git a/host/hos_coop_turn.h "}) {
+            allowed = allowed || patch.compare(at, prefix.size(), prefix) == 0;
+        }
+        CHECK(allowed);
+    }
+    const std::string view = ReadFile(kRepo / "hookshot" / "src" / "coop_look_view.h");
+    CHECK(view.find("return asked && want_.has_value() && phase_ != Phase::lost;") != std::string::npos);
 }
 
 TEST_CASE("hookshot: every export's guard site has a name of its own (a crash log names the right export)") {
@@ -907,7 +947,7 @@ TEST_CASE("hookshot: the pane text wrap (patch 0041) is one row in 0005's table,
     CHECK(patch.find(" stp x20, x19\n+    # HOS_COOP_WRAP_PANE_TEXT") != std::string::npos);   // (after 0036's boss orders row)
     // The id is free in the one wrap space (1-9, 16-19, 24).
     for (const unsigned used : {HOS_COOP_WRAP_SOUND_EMIT, HOS_COOP_WRAP_GAME_OVER_SAVE, HOS_COOP_WRAP_SAVE_LOADED,
-                                HOS_COOP_WRAP_EVENT_REQUEST}) {
+                                HOS_COOP_WRAP_EVENT_REQUEST, HOS_COOP_WRAP_BOSS_ORDER}) {
         CHECK(HOS_COOP_WRAP_PANE_TEXT != used);
     }
     CHECK(HOS_COOP_WRAP_PANE_TEXT < 64);
@@ -932,10 +972,10 @@ TEST_CASE("hookshot: the pane body wraps (patch 0042) are two rows after 0041's,
     CHECK(patch.find(row) != std::string::npos);
     // After 0041's row, at the table's end.
     CHECK(patch.find(" stp x20, x19\n+    # HOS_COOP_WRAP_PANE_BODY") != std::string::npos);
-    // The ids are free in the one wrap space (1-9, 16-19, 24, 25).
+    // The ids are free in the one wrap space (1-10, 16-19, 24, 25).
     for (const unsigned id : {HOS_COOP_WRAP_PANE_BODY, HOS_COOP_WRAP_PANE_ALIAS}) {
         for (const unsigned used : {HOS_COOP_WRAP_SOUND_EMIT, HOS_COOP_WRAP_GAME_OVER_SAVE, HOS_COOP_WRAP_SAVE_LOADED,
-                                    HOS_COOP_WRAP_EVENT_REQUEST, HOS_COOP_WRAP_PANE_TEXT}) {
+                                    HOS_COOP_WRAP_EVENT_REQUEST, HOS_COOP_WRAP_BOSS_ORDER, HOS_COOP_WRAP_PANE_TEXT}) {
             CHECK(id != used);
         }
         CHECK(id < 64);
@@ -1101,6 +1141,32 @@ TEST_CASE("hookshot: the boss orders wrap (patch 0036) is one row in 0005's tabl
     CHECK(module.find("t.OnReceive(x[0], actor, type, payload, t_own_call)") != std::string::npos);
     CHECK(module.find("WrapIn(HOS_COOP_WRAP_BOSS_ORDER) && Env(\"LICHII_COOP_BOSS_ORDERS\") != \"0\"") !=
           std::string::npos);
+}
+
+TEST_CASE("hookshot: the boss shots wrap (patch 0044) is one row at the table's end, its header hookshot/src's") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0044-coop-boss-shots-wrap.patch");
+    CHECK(NewFile(patch, "host/hos_coop_boss_shots.h") ==
+          ReadFile(kRepo / "hookshot" / "src" / "hos_coop_boss_shots.h"));
+    // The function's first words (build e0f3ccfa): a leaf, tst w2, #0xff; b.eq; cbz w1; ldr w9, [x0, #0x2c].
+    char row[160];
+    std::snprintf(row, sizeof row, "+    (%u, 0x%llx, (0x72001c5f, 0x54000260, 0x34000241, 0xb9402c09)),",
+                  HOS_COOP_WRAP_SHOOTER_REQUEST, static_cast<unsigned long long>(CoopBossShots::addr::kRequestCreate));
+    CHECK_MESSAGE(patch.find(row) != std::string::npos, row);
+    // Free in the one wrap space (0005: 1-3, 0013: 4-5, 0024: 6-9, 0036: 10, 0010: 16-23, 0014: 24, 0041: 25,
+    // 0042: 26-27).
+    CHECK(HOS_COOP_WRAP_SHOOTER_REQUEST == HOS_COOP_WRAP_BOSS_ORDER + 1);
+    CHECK(HOS_COOP_WRAP_SHOOTER_REQUEST < 16);
+    // After 0042's last row, at the table's end.
+    CHECK(patch.find("     (27, 0x377a990,") != std::string::npos);
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("if (id == HOS_COOP_WRAP_SHOOTER_REQUEST) {") != std::string::npos);
+    CHECK(module.find("t.OnRequest(asked.shooter, asked.hash, asked.num, asked.own_call, read)") != std::string::npos);
+    CHECK(module.find("t.OnRan(asked.shooter, asked.hash, asked.num, (x[0] & 0xffffffffu) != 0, asked.own_call, read)") !=
+          std::string::npos);
+    CHECK(module.find("WrapIn(HOS_COOP_WRAP_SHOOTER_REQUEST) && Env(\"LICHII_COOP_BOSS_SHOTS\") != \"0\"") !=
+          std::string::npos);
+    // The copy's requests are made before the boss table's put-ins of the owner's moves.
+    CHECK(CoopBossShots::Table::kCallerOrder < CoopCallerOrders::kBossTable);
 }
 
 TEST_CASE("hookshot: on Linux the exe exports every function the module finds in it by name") {

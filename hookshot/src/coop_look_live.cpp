@@ -21,6 +21,7 @@
 #include <mutex>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include "common/fs/path_util.h"
 #include "common/logging.h"
@@ -1035,12 +1036,19 @@ double GameFov() {
 
 }  // namespace
 
-bool LinkShown() {
+bool LinkShown(bool* clear) {
     Showing showing = Showing::flat_no_link;
     const bool shown = OwnLink(&showing).has_value();
     std::optional<std::string> line;
     {
         std::lock_guard lock(g_mutex);
+        const bool hidden = shown && g_steer.Hidden();
+        if (hidden) {
+            showing = Showing::flat_blocked;
+        }
+        if (clear) {
+            *clear = !hidden;
+        }
         line = g_watch.Drawn(showing, NowMs());
     }
     if (line) {
@@ -1069,7 +1077,8 @@ bool Camera(double eye[3], double target[3]) {
     }
     const auto link = OwnLink();   // (outside the lock: the hook's own lock)
     const double fov = GameFov();
-    std::lock_guard lock(g_mutex);
+    std::unique_lock lock(g_mutex);
+    g_steer.Viewed();   // (the log: no camera hook call while the page is asked)
     const Vec3 game_eye{eye[0], eye[1], eye[2]};
     const Vec3 game_target{target[0], target[1], target[2]};
     const auto aim = g_orbit.Camera(game_eye, game_target, link, now, fov);
@@ -1078,38 +1087,49 @@ bool Camera(double eye[3], double target[3]) {
         return false;
     }
     // The game's camera turned with the orbit (patch 0040): its own eye, placed by its collision, kept and aimed at
-    // Link. Otherwise (no patch 0040, the probe, a camera that does not follow): Aim's shot.
+    // Link; a blocked eye holds the last clear view, or none yet (the flat picture: LinkShown). Otherwise (no patch
+    // 0040, the probe, a camera that does not follow): Aim's shot (Steer::Picture).
     g_steer.Observe(game_eye, game_target);
-    std::optional<Shot> shot;
-    if (g_steer.Driving()) {
-        shot = Framed(game_eye, game_target, *aim, *link, g_orbit.window(), g_steer.FreeDistance(), fov);
-    }
-    if (!shot) {
-        shot = aim;
-    }
+    const auto shot = g_steer.Picture(game_eye, game_target, *aim, *link, g_orbit.window(), fov);
     g_steer.Want(DirectionOf(game_target, aim->eye),
                  std::hypot(aim->eye[0] - game_target[0], aim->eye[1] - game_target[1], aim->eye[2] - game_target[2]));
-    g_watch.Framed(now);
-    for (int i = 0; i < 3; ++i) {
-        eye[i] = shot->eye[i];
-        target[i] = shot->target[i];
+    std::vector<std::string> notes;
+    while (auto note = g_steer.TakeNote()) {
+        notes.push_back(std::move(*note));   // (a blocked eye: once per change)
     }
-    return true;
+    if (shot) {
+        g_watch.Framed(now);
+        for (int i = 0; i < 3; ++i) {
+            eye[i] = shot->eye[i];
+            target[i] = shot->target[i];
+        }
+    }
+    lock.unlock();
+    for (const auto& note : notes) {
+        LOG_INFO(Core, "{}", note);
+    }
+    return shot.has_value();   // (none: hidden behind the flat picture, the game's own view)
 }
 
 bool Turn(float* yaw, float* pitch, int state, bool coop_on) {
+    if (yaw == nullptr && pitch == nullptr && state == -1) {   // (the host's wake: a question only)
+        std::lock_guard lock(g_mutex);
+        return g_steer.WantsCamera(coop_on && g_orbit.Asked(NowMs()));
+    }
     if (yaw == nullptr || pitch == nullptr) {
         return false;
     }
     std::optional<Angles> angles;
-    std::optional<std::string> note;
+    std::vector<std::string> notes;
     {
         std::lock_guard lock(g_mutex);
         angles = g_steer.Command({*yaw, *pitch}, state, coop_on && g_orbit.Asked(NowMs()));
-        note = g_steer.TakeNote();
+        while (auto n = g_steer.TakeNote()) {
+            notes.push_back(std::move(*n));
+        }
     }
-    if (note) {
-        LOG_INFO(Core, "{}", *note);
+    for (const auto& note : notes) {
+        LOG_INFO(Core, "{}", note);
     }
     if (!angles) {
         return false;

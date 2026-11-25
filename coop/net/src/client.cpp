@@ -1,5 +1,7 @@
 #include "coop/net/client.hpp"
 
+#include "coop/protocol/race.hpp"
+
 // ENet pulls in windows.h on Windows; keep its min and max macros out.
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -562,6 +564,14 @@ void Client::on_receive(const std::uint8_t* data, std::size_t size,
 }
 
 void Client::on_connected_message(proto::Message message, std::uint8_t channel) {
+  // Race mode (coop/protocol/race.hpp): the host's setting, as the server relays it; the world stays ours.
+  if (const auto* mods = std::get_if<proto::ModSettings>(&message)) {
+    if (const auto race = proto::race_of(mods->settings)) race_ = *race;
+  }
+  if (race_ && proto::race_private(message)) {
+    ++race_dropped_;
+    return;
+  }
   if (const auto* pong = std::get_if<proto::Pong>(&message)) {
     // Only an echo of a PING sent on this connection counts.
     const std::uint64_t now = now_us();
@@ -776,6 +786,9 @@ bool Client::send_on(const proto::Message& message, std::uint8_t channel) {
     return false;
   }
   if (!send_raw(message, channel)) return false;
+  if (const auto* mods = std::get_if<proto::ModSettings>(&message)) {  // the host's own race setting
+    if (const auto race = proto::race_of(mods->settings)) race_ = *race;
+  }
   if (const auto* status = std::get_if<proto::PlayerStatus>(&message)) {
     if (Player* self = player_entry(player_number_)) self->status = status->flags;
   }
@@ -839,6 +852,10 @@ bool Client::answer_challenge(const proto::JoinChallenge& challenge,
 }
 
 bool Client::send_raw(const proto::Message& message, std::uint8_t channel) {
+  if (race_ && proto::race_private(message)) {  // race mode: kept in our game, done as far as the caller goes
+    ++race_dropped_;
+    return true;
+  }
   std::vector<std::uint8_t> bytes;
   if (proto::encode(message, bytes) != proto::Error::none) return false;
   return send_packet(bytes, channel);
@@ -907,6 +924,7 @@ void Client::clear_shared() {
   their_joins_.clear();
   pending_.clear();
   host_number_ = 0;
+  race_ = false;  // a new session: off until its host's settings say on
 }
 
 void Client::settle_pending(std::span<const proto::FlagEntry> flags) {

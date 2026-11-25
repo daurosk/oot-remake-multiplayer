@@ -162,6 +162,20 @@ class Locks(Base):
         hs.lock_release(self.root, "game", say=q)
         self.assertTrue(lanes.lock_acquire(2, "run", root=self.root, say=q))
 
+    def test_each_game_of_a_lane_is_a_lane_of_its_own(self):
+        """Two workers drive A and B of one lane at once; a pair run and either of its games exclude each other."""
+        q = lambda *a: None
+        self.assertTrue(lanes.lock_acquire(1, "worker A", root=self.root, say=q, game="A"))
+        self.assertTrue(lanes.lock_acquire(1, "worker B", root=self.root, say=q, game="B"))
+        self.assertFalse(lanes.lock_acquire(1, "pair run", root=self.root, say=q))
+        self.assertFalse(lanes.lock_acquire(1, "worker A2", root=self.root, say=q, game="A"))
+        self.assertTrue(lanes.lock_acquire(2, "lane 2 pair", root=self.root, say=q))
+        hs.lock_release(self.root, "lane1-A", say=q)
+        hs.lock_release(self.root, "lane1-B", say=q)
+        self.assertTrue(lanes.lock_acquire(1, "pair run", root=self.root, say=q))
+        self.assertFalse(lanes.lock_acquire(1, "worker B", root=self.root, say=q, game="B"))
+        self.assertIn("lane1-A", hs.LANE_LOCKS)   # a game build waits for one-game sessions too
+
     def test_a_build_starting_between_take_and_check_wins(self):
         """The lane takes its lock, then a game build takes build-game.lock before the lane looks: the lane lets its lock
         go again, so the build (which looks for lane locks after taking its own) and the run never both go."""

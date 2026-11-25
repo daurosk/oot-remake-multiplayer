@@ -25,12 +25,20 @@ the plan; [dungeons-boss.md](dungeons-boss.md) says how the sync works today.
   an owner who goes down or dies at once and one paused after 2 s (`fight_owner_dead_us`, `fight_owner_paused_us`;
   out of a fight the old 10 s and 6 s), for a player up and playing. With nobody up it stays where it is.
 - **Nor on a player held in a cutscene of their own** (row 164 follow-up): an item get, Navi's talk or a late intro of their own game holds the owner's Link, and the boss's AI (which fights that Link alone) stood with it on every screen. A boss whose owner has been `in_cutscene` for 3 s (`fight_owner_cutscene_us`; 0 off) goes to a player up, playing and in no cutscene. Never while the boss itself plays an event or its death or is at life 0 (its own intro, phase change or death: every game is in that one, the owner's AI is in it on purpose), and never to a game in a cutscene too. Only a boss whose AI stands in that event: never in its attack (`attack_hold_max_us`), never while a piece of it holds its owner's Link (row 232), and only once its owner's samples show one move (animation, action verb, life) unchanged for those 3 s, so a boss that grabs or throws its owner's Link (Morpha's tentacle: an event of about 6 s in its owner's game) keeps it. Stat `boss_from_cutscene`. Tests: `session_test.cpp` (row 164 follow-up).
-- **Plain enemies can take turns too, OFF by default** (`enemy_turns`): the same rule as a boss's, between its
-  attacks, among the players within 12 m of it (`enemy_turn_m`). It stays off: a plain enemy's AI chases only its
-  owner's Link, so every turn walks it over to the other player and back (the shuttle of report 138, docs/objects.md
-  "Sticky target"), where solo a mob keeps the Link it fights; the chase, near and sticky rules already give it to
-  the player fighting it. On, the server's `enemies:` line counts them as `enemy turns`. (Also: only a boss or part
-  is listed with `object_presence::takes_turns` by the hook, so plain enemies would need that flag first.)
+- **Plain enemies take turns too, for the big melee kinds only** (`enemy_turns`, on; the kinds are the hook's list
+  `TurnsAsEnemy`: Moblin, Lizalfos, Dinolfos, Stalfos, Like Like, Iron Knuckle, each with its variants; the hook sets
+  `object_presence::takes_turns` for them, so a kind not listed never turns, and an older build never does). The
+  rule is a boss's, with caps: only at the end of the owner's own attack (never mid-attack), at most one move per
+  enemy per 15 s (`enemy_turn_gap_us`), and only while the owner and the next player are both up (not downed,
+  loading or paused) and within 12 m of it (`enemy_turn_m`). Why the caps: a plain enemy's AI chases only its owner's
+  Link, so a turn walks it over to the other player and back (the shuttle of report 138, docs/objects.md "Sticky
+  target"); at 15 s a swing from one player to the next is a change of target, not a shuttle. Balance: a turn goes
+  only to a near player who owns fewer fighting enemies than the owner does, the one with the fewest (ties by player
+  number after the owner), so a player holding two Moblins hands the next free turn to the one with none, and two
+  players with one each keep theirs. A pack (Lizalfos, Dinolfos, Stalfos) moves with its root, so only the root
+  turns. Solo, or with one fit player near: nothing changes. No setting (the switch is `enemy_turns` in the server
+  config), no message change. The server's `enemies:` line counts them as `enemy turns`. Tests: `session_test.cpp`
+  (`ai-turns:` cases, among them 3 players round with no back and forth), `objects_test.cpp` (`TurnsAsEnemy`).
 - **A stun hands the boss to the stunner, also right after a turn:** a stun in another player's game (Gohma's eye,
   a ball sent back into a copy Phantom Ganon or Ganondorf) asks the boss over at most every 8 s
   (`boss_hitter_cooldown_us`), counted from the last change that was no turn (`Object::hitter_changed_at`): with a
@@ -58,6 +66,7 @@ except the split shots below.
 - **Ceiling / wander:** she crawls toward her target and drops eggs. With turns she goes after each player; the
   eggs hatch in every game. Fun: yes, one player stuns the eye with the slingshot, the others slash.
 - **Change:** none needed. Later: more eggs with more players (the enemies scale says 125%).
+- **Not yet proven (split shot):** whether Gohma spits a shot at one player (her acid), and its actor name. A test run on 2026-11-24 never got her out of her ceiling wait (no drawn window, intro not played), so no name was read and she is not on the split list. Needs a run with a drawn window or the intro played by hand; the shot's log line then names it.
 
 ### King Dodongo (Dodongo's Cavern, child)
 - **Inhale / fire breath:** aimed at one player; any player can throw the bomb in. **Roll:** chases one player.
@@ -202,11 +211,12 @@ a game run (unit tests only), for players to check:
 | What | Where it went | Check in a game |
 | --- | --- | --- |
 | Never mid-attack: no enemy changes owner by a chase, the near rule or a nearer player while its owner's attack runs (a grab or hold stays on its victim), at most 8 s | server `attack_hold_max_us`, `mid_attack` | B hits a Like Like holding A: A freed, A moves after |
-| Not applied (geno-fix-0119): boss-style turns for one-on-one fighters (Iron Knuckles, Poe sisters Amy/Beth/Joelle, Stalfos, Lizalfos, Dinolfos, white Wolfos, the club Moblin). Their AI is a plain enemy's (it chases only its owner's Link), so boss rules would pass them between players: the mob shuttle the owner settled off (enemy_turns off) | none: they are plain enemies | no "boss turns:" lines for them |
+| Not applied (geno-fix-0119): boss-style turns for one-on-one fighters (Iron Knuckles, Poe sisters Amy/Beth/Joelle, Stalfos, Lizalfos, Dinolfos, white Wolfos, the club Moblin). Their AI is a plain enemy's (it chases only its owner's Link), so boss rules would pass them between players: the mob shuttle the owner settled off. They are not bosses: the kinds in the list above take the plain-enemy turns, with caps | none: they are plain enemies | no "boss turns:" lines for them; "enemy turns" for the listed kinds |
 | Packs under one owner: Lizalfos/Dinolfos, Stalfos and Wolfos of one family within 25 m are one group (root: the lowest id), so their teamwork (messages between their AIs: `IsRequestingCoop`, `IsDisableMeleeBattle`...) runs whole in one game (never the boss bit: plain enemies, no turns; geno-fix-0119) | `PackFamily` in `GroupsOf` | one owner for both of a pair; one attacks at a time |
 | Anubis keeps its target (it mirrors the player moving it) | `KeepsTarget` in `Sync::StateOf` | the mirror follows one player |
 | Ganon bound for the last blow (`InsideGanonCastle_Dungeon_BossBind0`) shared like the other stage changes | `coop_boss_scenes` entry 12 | both games' Ganon bound |
 | The Flare Dancer's fireballs split | `kSplit` | each player gets their own fire |
+| The Poe's fireball (`PoeHyrule_Bullet_*`) split | `kSplit` | each player gets their own fireball; Gohma's eggs and Volvagia's rocks are not shots (minions / each game's own), so not on the list |
 | The Goron City statue's moves shared | `IsMovable` | both see it pushed |
 | Capstans' turns shared (Spirit Temple mirrors, Shadow Temple room 1 statue) | `IsCapstan` shifters | the turn shows; the beam and the "correct" check in the game that follows |
 | Per-player room flags no longer shared: the Dark Link rooms' passage flags, the Shadow lifts' crush flag | `coop_dungeon.cpp` | B in room 22/23 while A passes a Dark Link door; B on the boat while A is crushed |

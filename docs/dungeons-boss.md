@@ -117,7 +117,7 @@ Goal: every boss fight the same in every game, run by the game's own code. Gohma
 - **Every change, once, in order** (branch bosses). Each sample carries the owner's newest 8 changes (a brain verb set with its force, or an action request with its "verb changed" argument), each with its `seq`, beside the state now. A copy makes every change after the newest it made, one call each, in the owner's order, so a lost sample loses no attack and no phase. An older sample after a newer one is dropped. A copy that missed more than 8 starts from the state now (the brain verb, then the last action, each only when it is not so already; log `started again from the owner's state`).
 - **Put back.** A copy's brain verb that differs from the owner's for about a second with nothing queued (a change the game made where no wrap sees it, or one of ours it refused) is set to the owner's again, at most 5 times per owner state (a verb the game keeps refusing is then left alone until the owner's next state; the log says so once).
 - **Minions.** A boss's mid-fight minions (`CoopObjects::MinionMaker`: King Dodongo's baby spawner `Enemy_DungeonBoss_Dodongo_SpawnBabyDodongo` and the `Enemy_BabyDodongo` it makes, Gohma's fight eggs `Enemy_DungeonBoss_Gohma_Egg`, Big Octo's `Enemy_Shabom_BigOctoChild`) are made only by the game that owns their boss. They are shared like every made object; a copy boss's own create request for one is stopped (`Table::CopyMakes`), or the minion is deleted when it was made anyway. A minion's create is judged by its whole name (the create hook reads 63 bytes; 31 before boss-larva-0116, so the 42-byte spawner name never matched). Gohma's larvae keep their own rule (out of an egg, gohma-sync, above), and so do the eggs the Deku Tree places (`Enemy_Gohma_Egg`, a placement hash); the bosses' shots go through the enemy-shot rule (only the shooter's owner fires). Parts a boss makes as it loads (Attention actors, Barinade's jellyfish, Morpha's tentacle) are each game's own and follow their root.
-- A hand-over (the boss changes owner) keeps the state: the new owner counts on from the old owner's `seq`, and the brain verb it sends is always the one its own game's boss is in (read from the BSA each frame), never a queued change it had not made yet. The other copies forget the old owner's last state when the owner changes, see the new owner's number and start again from its first state, so a new owner whose count is behind theirs is not ignored. A resync (joiner, new owner, more than 8 changes missed) asks the owner's current action again, so that move starts over on the copy, except when that action is the one last put into the copy and its own AI ran no action since (row 149: a sword hit with no stun restarted King Dodongo's roll on the hitter's screen).
+- A hand-over (the boss changes owner) keeps the state: the new owner counts on from the old owner's `seq`, and the brain verb it sends is always the one its own game's boss is in (read from the BSA each frame), never a queued change it had not made yet. The other copies forget the old owner's last state when the owner changes, see the new owner's number and start again from its first state, so a new owner whose count is behind theirs is not ignored. When that first state goes on from the chain the copy held (below, "Twinrova hand-over"), its changes after the copy's newest are made in order instead. A resync (joiner, new owner, more than 8 changes missed) asks the owner's current action again, so that move starts over on the copy, except when that action is the one last put into the copy and its own AI ran no action since (row 149: a sword hit with no stun restarted King Dodongo's roll on the hitter's screen).
 
 **Log.** `coop: bosses: native sync on (brain verbs wrapped, action verbs wrapped)`; per boss `coop: bosses: Enemy_DungeonBoss_Gohma: native boss sync on (BSA 0x..., ours|a copy)` and on a copy `...: the owner's verbs came (brain N): the copy's own brain is skipped from now`; every 10 s while it works `coop: bosses: ours sent N brain + N action verbs (N by plug); copies: N own skipped, N brain + N action verbs put in (N waited for a node), N busy`.
 
@@ -736,6 +736,184 @@ Not proven in a game yet: the probe run (two games, hs-twinrova-native) must sho
 (`coop: bosses: battle manager orders shared (wrapped)`), `battle orders: ours sent N` in the owner's log and
 `N owner's put in, M own skipped` in the copy's, and both games' sisters in the same attack through a forced
 hand-over.
+
+## Variations: the owner's attack variation reaches every copy (row 222 part 2, Twinrova's fire/ice)
+
+A boss move asked "by plug" carries a short name the game adds to the action's command (main+0xbe070 builds
+`RangedAttack` plain = Fire, `RangedAttack:Ice` = Ice, and the feints `1FeintFire` ...). Before, only "by plug or not"
+was sent, so a copy named whatever plug its own AI last asked for that move: Twinrova's copy threw ice for the owner's
+fire (probe 2, run 20261123-055243). Every boss move with variants had the same gap, not only Twinrova's.
+
+- Owner: the action-verb wrap reads the plug name of every request (`CoopBossNative::PlugName`), and the table keeps
+  it with the change; the boss sample sends the names of the action changes in its recent list as OBJECT_SAMPLE
+  component 24 (`BossVariants`: per change its seq + the name, empty = asked plain; at most 8 names of 32 printable
+  characters). No protocol bump: an older peer skips the unknown component and keeps today's behaviour.
+  The server decodes each sample and encodes it again to forward it, so a server older than component 24 drops it:
+  every copy then counts its put-ins `not known` (no `named`, no `plain`), as in the two-game run on 2026-11-24
+  whose server was built before component 24. Host with a server of the same build as the module.
+- Copy: the name of the change it puts in (also a resync and a restart) decides the plug: empty -> no plug, even when
+  its own AI's last plug was `Ice`; a name -> written once into a name pool and asked with that address; no name (an
+  older owner) -> its own AI's plug, as before. The first pool (16 slots of 40 bytes) follows the request in our block;
+  when every pool is full the game's own malloc gives another (`native boss sync: variation name pool N at ...`), so
+  every boss of a run keeps its names (the game's plug names are a bounded set; a pool lives as long as the game, as
+  the block). Only past 16 pools (256 names) does a name fall back to the copy's own plug (noted once). A move kept (not asked again) also compares the variation, so the same action in another variation is a
+  new move.
+- Tests: boss_native_test (owner keeps names by seq; plain, named and unknown put-ins, more names than a pool across two bosses, past the last pool, a resync), codec_test
+  'component 24' (round trip, an older build skips it, refusals).
+
+Not proven in a game yet: hs-twinrova-fire must show fire for fire and ice for ice on the copy, the floor on both
+screens. Merges only after the owner's OK on component 24.
+
+**The node and the places (row 222, LANE1 runs 20261123-115945 and the diag run 20261123-160338).** With the right
+name the copy still lost ice shots and aimed its floors at neither Link:
+- Twinrova's bullets and floors are made once when the room loads and reused (12 creates on each game, none stopped):
+  a missing shot is never a create we stopped.
+- An AI node keeps its own choice of a move's variation. The copy's two `Ice` put-ins were the same bytes but for the
+  node: through its StartBattle node the IceBullet came; through its own 121 node, whose own AI had just asked the
+  plain (Fire) shot, `Attack_L` played and nothing was shot (both failed put-ins of run 115945 used that node too).
+  Fix: the table keeps each node's own last choice of each move it asked (node, slot, verb -> variation, `OwnVariants`;
+  a node that chose Fire and then asked another move still holds its Fire), and a named or plain owner's move
+  never goes in through a node that chose ANOTHER variation of the same move: the slot's last node, the last node, or
+  another node of its own instead (only when every node conflicts, the move's own, as before).
+  Changed after run 20261124-043035 (review-geno-222): the copy's own node of the move is used whatever it chose. The
+  game keeps the request's place kind (0x34) with the asking node, and the owner's kind is its node of this move's;
+  in that run every copy put-in of 121 went in with the owner's kind through another move's node (A: StartBattle's,
+  "another node of its own"; B after its hand-over: Fly's) and none shot. The 115945 failure through the 121 node
+  was the kind bug (0x10 where that node asks 0), found later in 011531. A node asks plain and `Ice` alike (B's 121
+  node in 043035), so the plug alone gives the variation. The other nodes are used only when the copy has no node
+  of the move.
+- An ask by plug names its places too (the owner's `Ice`: the Link it aims at and a second point), but component 20
+  leaves them out for an ask by plug, so the copy's move aimed at nothing (probe 3 showed the same: a place whose first
+  float is NaN is none, and the shot dropped straight from the hand). Component 20 stays as it was (an older copy puts
+  its own plug in only for an action with no place); the named ask's places go with its name in component 24, and the
+  copy puts them in with the named plug, also when the move starts over as ours (row 178 restart).
+- The put-in line names the node it used and why (`node 0x...: its node of this move / its slot's last node / its
+  last node / another node of its own / ... though it chose another variation`), and the boss summary counts the
+  put-ins moved to another node and those with no such node left (the case still open).
+- Related cases, all by the same code (every boss and mini-boss on the native sync, no name list): Koume's and Kotake's
+  own shots before the fusion, the fused Twinrova's fire, ice and feints, every move a boss asks by plug name in more
+  than one variation (StartBattle and other named moves keep working: a node whose last ask was another move never
+  conflicts), the resync and the restart of a move (same AskFor with the variation). Plain enemies are not on this path.
+- Tests: boss_native_test (a plug ask's places go with its variation; AskFor never picks a node that chose another
+  variation; a copy puts `Ice` in through a node that did not choose Fire, with the owner's place; then plain through
+  its shot node), codec_test (component 24 places: round trip, none on a plain name, finite only).
+- The places' kind (run 20261124-011531, LANE1 FAIL: as a copy, A got all three of B's 121 put-ins with the right
+  variation and node, with the owner's places, and shot nothing until it became the owner). The game's request
+  function (main+0xc09f0) takes the request's word at 0x34 (the game's default 0x10, kept when the request says 0x10)
+  and keeps it in the move's slot with the places. Each asking node sets its own: Twinrova's 121 node asks with 0
+  (places: Link and a point off him), another of her nodes with 0x10 (Link and a point 0.8 above him); verbs 28 and 80
+  ask with 0x10. Our put-in always wrote 0x10, so the owner's places went in under the wrong kind and the move spawned
+  no FireBullet or IceBullet; with no place (probe 3) the kind was not read and the node aimed by itself. The owner now
+  sends each ask's kind in component 24 (plain and named), and the copy puts the owner's action in, and starts a move
+  over as ours (row 178), with that kind; with no kind from the owner, the kind its own AI asked that same move with,
+  else 0x10 (KindFor). The other words of the request (0x44, the bytes after the flags) are not read by the function.
+  Related cases, same code: every boss move put in with places (plain or named, every boss on the native sync), the
+  restart, and the copy's own late asks (Table::Ask). Tests: boss_native_test (KindFor's order; the owner records the
+  kind; plain 0 and `Ice` 0x10 put in with the owner's kind; no owner's kind: its own AI's; the restart keeps it),
+  codec_test (the kind's round trip).
+
+## A copy's own asks of the owner's move run (row 222, Twinrova's copy fired nothing)
+
+With the variation, node and place kind right, the copy still spawned no FireBullet or IceBullet while the other game
+owned Twinrova, and fired at once when it became the owner. The cause: the owner's AI asks its move (verb 121) every
+frame, and its module runs the move on from those asks. A copy skipped every own ask (answered as taken) and got only
+the owner's put-ins, sparse over the network (a second put-in in the same frame answers busy). Without its per-frame
+asks the move went PreAttack -> Attack_R with no shot. Her bullets are split shots (each game shoots its own copy's),
+so a copy that never reaches the shot shows none.
+
+Now a copy's own repeat (changed 0) of the move the owner's last put-in named (the same slot and verb) runs in the
+game, through its own node, with its own places and kind (it aims at its own Link, as a split shot should). When its
+plug is another variation than the owner's, the wrap writes the owner's into the request first: its name from our
+pools, or no plug for a plain ask. A name not in a pool yet is skipped as before. While its own asks run the move
+(within `kOwnMoveSteps` frames), the owner's repeats of it (changed 0) are left out; the owner's starts and other
+moves go in as before, and the copy's own asks of any other move are still skipped. Its own starts of the move
+(changed 1, its AI asking it again after it ended) stay skipped: only the owner's start a move, or a copy would fire
+twice (review). Owners and solo games never take this path.
+
+Same path, same fix: every boss move on the native sync whose module needs its AI's per-frame asks. From the
+boss-share list: Twinrova phases 1 and 2, Phantom Ganon (bolt, shockwaves, light ball), Ganondorf (row 211), Ganon,
+King Dodongo's breath, Flare Dancer, Volvagia's rocks and Barinade's beam. Not this path: owner-only minions and shots
+(Gohma's eggs, King Dodongo's babies, Big Octo's child, Meg's dummies, Octorok and scrub shots).
+Counts in the boss log: `copy_own_move`, `own_move_renamed`, `owner_move_left`. Tests: boss_native_test (the own ask
+runs renamed to the owner's 'Ice', an own 'Ice' runs as it is, the owner's repeat is left out, another own move is
+skipped; the owner's next move still goes in and then the old move's own asks are skipped again).
+
+Two-game run on 2026-11-24 (this fix): both copies fired phase 2's bullets, and a mid-fight hand-over fired once.
+One copy's Attack_R fired nothing: it put the move in with its own learnt plug (plain), because no variation came
+(`0 named, 0 plain, N not known`). One probe with that game as owner showed the owner reads every plug name
+(`owner's variations kept N (plug names read N, not read 0)` in the boss log line). The variations were lost at the
+lane's server, built before component 24 (above). A second run with a server of the same build: every copy put-in
+had its variation (0 not known), the copy's Attack_R fired its FireBullet, and every copy bullet matched its attack
+(Attack_L Ice, Attack_R Fire) through two hand-overs. Not this row: right at a hand-over a copy played an attack with
+no bullet twice, and one copy showed fewer attacks than its owner in the same stretch (next section).
+
+## Twinrova hand-over: a copy's attack with no bullet, and attacks lost (0.11.13)
+
+Seen in the second row 222 run: right at a hand-over a copy played an attack with no bullet (one Attack_R, one
+Attack_L), and a copy logged 4 attacks while its owner logged 6. Two causes, both in `Table::Publish` at an owner
+change:
+
+1. The own asks (each move's node, plug and variation, `AskFor`) were forgotten at every role change (row 177's
+   review). A copy's first put-ins after the hand-over then went in through its last node, a node of another move
+   (Fly), whose own choice of the attack may be the other variation: the attack ran with no shot. Row 177's reason
+   holds only for a brain change (the action sequence's nodes may go with it). Now the asks are kept across a hand-over
+   and forgotten when a new brain verb runs in our game (`BrainRuns`: the owner's own, the copy's own or put in) or when
+   it is not known which verb they were learnt in. The owner learns its own asks too (`LearnOwnAsk`), so a game that
+   hands its boss over knows the nodes of the brain verb it is in (before, an old owner made a copy had no node at all
+   until its own AI asked again).
+2. The new copy started again from the new owner's first state (a resync: only the move it is in now). Every move the
+   new owner made before that state reached us was lost. A new owner counts on from the last state it had of the old
+   owner, so its changes up to our newest seq are ours when it had all of them. Now the chain we held is kept (our own
+   state as the old owner, the old owner's last state as a copy), and when the new owner's first state holds our newest
+   change unchanged (`ContinuesChain`), the changes after it are made in order; a copy that stays a copy also keeps the
+   old owner's moves still queued. Any change both hold that differs (it had not had all of ours): a resync, as before.
+   The log says `the new owner goes on from seq N`.
+
+No protocol change. Solo play and owners are not touched (an owner only learns its asks). Not covered: a copy made
+the owner drops the old owner's moves still queued (its own AI runs the boss from here). Tests: boss_native_test
+("Twinrova hand-over": the attack's node kept, a brain change still forgets it; both moves the new owner made are put
+in, in order; `ContinuesChain` refuses a chain that differs or lacks our newest change).
+
+## Shooter requests: a copy throws what its owner's boss prepared (row 222 part 3, 0.11.13)
+
+Seen in the third row 222 run (20261124-161320): the copy played 4 owner attacks and threw a bullet in one. In all
+three lost shots the put-in request (plug, places, kind, node) was right. The one that worked was the one where the
+copy's own AI had chosen the same variation of the move as the owner.
+
+Root cause, in the game (build e0f3ccfa): a ranged attack is two things. The action plays the throw and lets go of a
+shootable actor (pooled at load, no create). Which shootable is ready was asked before it, by the shooter's create
+request `main+0x374d20` (the shooter, the shootable's name hash, how many): it finds the shootable in the shooter's
+table and raises its asked count. Its only callers are the attack sequences' start step
+`game__bsa__ActionSeqProcShootableActorCreate` (`main+0x746b48`, in the sequence step executor `main+0x746380`), the
+AI node `OneShotShooterRequestCreateShootableActors` (`main+0x293ff98`) and the shooter itself (`main+0x378754`). All
+run from the game's own AI. The native boss sync carries the owner's brain and action verbs, never this request, so on
+a copy it came from the copy's own choice of move: the same variation as the owner (the right bullet), another one
+(the wrong bullet: nothing thrown by the hand that plays), or none (nothing prepared).
+
+The fix (`lichii/hook/coop_boss_shots.h`, Hookshot patch 0044, wrap row 11, OBJECT_SAMPLE component 25, no protocol
+bump): the function is wrapped.
+
+- The owner's game lets each request of a shared boss run and keeps the ones that found their shootable. They go out
+  in the boss's own samples, at once, and from the start (an empty list tells the copies their owner shares them).
+- A copy game skips its own boss's requests once the owner's list has come, and makes the owner's requests through
+  the same function (our caller, order `kBossShots`, before the boss table's put-ins), in the owner's order, each
+  once.
+- The list holds only fresh requests (`kFreshRounds` walks); the owner's count goes on. A copy that starts (a join, a
+  hand-over) makes the ones in the list and nothing older. At a hand-over the new owner's list starts empty and what a
+  copy had queued from the old owner is dropped.
+- Every shared boss with a shooter is covered, since the wrap is on the shooter's function and not on a move:
+  Twinrova (Fire, Ice, the feints), Koume and Kotake, Phantom Ganon, Ganondorf, and any enemy the native boss list
+  holds. A shooter that is no shared boss's (Link's, any other enemy's) is never touched, nor is solo play.
+- An older owner sends no list: its copies' own requests run, as before. A hookshot.exe without the wrap, or
+  `LICHII_COOP_BOSS_SHOTS=0`: each game's own, as before.
+
+Log: `coop: bosses: shooter requests shared (wrapped)`, `... our boss's first (0x<hash> x<n>) is sent`, `... the
+owner's first (...) is made on our copy`, and every 10 s the counts. Tests: boss_shots_test (the run's three attacks:
+the copy's function sees exactly the owner's requests, once each), codec_test (component 25), module_test (patch 0044's
+row and header).
+
+Not known yet: that the request alone gives the shot in game. The sequence step executor runs other step types at a
+move's start (effects, sounds); only the shooter one is proven tied to the lost bullets.
 
 ## A boss part another game killed dies in our game too (rows 257/258, Barinade crash, 0.11.12)
 

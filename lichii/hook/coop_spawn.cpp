@@ -672,6 +672,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         if (hit && landing && !r.landed) {
             r.landed = true;
             ++landed_;
+            // ai-stuns: it is shown reaching the spot kBehindUs late; a stun there is the thrower's.
+            CoopProjectiles::TheShotHits().Add(r.Position(), r.got_us + behind);
         }
         if (hit && landing && r.effect.empty() && hit_effects_ == HitEffectMode::copy &&
             now_us >= r.got_us + behind && !CoopProjectiles::HitEffect(info->kind).empty()) {

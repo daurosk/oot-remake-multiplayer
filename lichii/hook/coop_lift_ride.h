@@ -63,9 +63,34 @@ struct Lift {
 // The lifts (of `lifts`) with one of `others` standing on them.
 std::vector<std::uint64_t> Ridden(const std::vector<Lift>& lifts, const std::vector<coop::protocol::Vec3>& others);
 
-// The svc caller: the set-bool on each ridden lift, once a frame.
+// ai-switches (held step switches, "anyone stands on it"): the step switch's logic has no contact input like
+// RideOnPlayer (the probe on Dodongo's Obj_StepSwitch_A_01: pulses BootUp, Logic_Create, Logic_Delete,
+// RespawnTrigger; bools OnState, OffState, FirstOn and two unnamed ones). Its AI sets its contact bool (plug key
+// 0x9cdaf491, unnamed: 1 while our Link stands on it) from physics, so a puppet never holds it. The same rider sets
+// that bool through the game's set-bool each frame a fresh player of our scene stands on the switch; the AI puts
+// its 0 back once nobody is on it (holder left, timed out or stepped off: OthersHere drops them, kHoldMs later).
+// Blocks need nothing: a pushed block is in every game (WORLD_MOVE) and presses the switch by its own physics.
+// LICHII_COOP_SWITCH_STAND=0 turns it off.
+// The lane (NEXT42): the contact bool already read 1 in the watching game with nobody on the switch, so a set-bool
+// on it changes nothing; it is not what presses the switch. The stander sets OnState (the switch's "on" output its
+// shutter follows) instead; LICHII_COOP_SWITCH_STAND=contact puts the contact bool back, for a probe.
+inline constexpr std::uint32_t kStepContact = 0x9cdaf491u ^ 7u;  // name key of the unnamed contact bool
+inline constexpr std::uint32_t kStepOnState = 0xf1792ec3u;        // Murmur3("OnState")
+inline constexpr float kStandRadiusM = 1.2f;
+inline constexpr float kStandBelowM = 0.5f;
+inline constexpr float kStandAboveM = 1.5f;
+
+// A step switch a player holds down by standing on it (Obj_*StepSwitch_*).
+bool IsStandSwitch(std::string_view name);
+
+// The switches (of `switches`) with one of `others` standing on them.
+std::vector<std::uint64_t> Stood(const std::vector<Lift>& switches, const std::vector<coop::protocol::Vec3>& others);
+
+// The svc caller: the set-bool of plug `key` (a name key) on each wanted actor, once a frame.
 class Rider {
 public:
+    explicit Rider(std::uint32_t key = kRideOnPlayer, std::string_view what = "lift ride") : key_(key), what_(what) {}
+
     // The objects walk (any thread): the lifts ridden now. `main` is main's base.
     void Want(const std::vector<std::uint64_t>& lifts, std::uint64_t main, std::uint64_t now_ms);
     // The calc thread (CoopCallers::Caller contract).
@@ -77,11 +102,16 @@ public:
 
 private:
     std::optional<CoopPuppet::Call> Next(CoopPuppet::Guest& guest, std::uint64_t main);
+    // A note, once per step, of why a wanted actor got no set-bool (the in-game check reads it).
+    void Why(std::string_view step);
+    std::vector<std::string> whys_;
 
     std::mutex mutex_;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> wanted_;  // (lift, until ms)
     std::uint64_t main_ = 0;
     std::vector<std::string> notes_;
+    std::uint32_t key_;
+    std::string what_;
     // The calc thread's own.
     std::deque<std::uint64_t> frame_;  // this frame's lifts still to set
     std::uint64_t block_ = 0;
@@ -92,5 +122,9 @@ private:
 
 // The one rider (coop_objects.cpp registers it).
 Rider& TheRider();
+// The one switch stander (plug from LICHII_COOP_SWITCH_STAND).
+// The stander's plug key for LICHII_COOP_SWITCH_STAND's value (null: unset): OnState unless "contact".
+std::uint32_t StandKey(const char* env);
+Rider& TheStander();
 
 }  // namespace CoopLiftRide

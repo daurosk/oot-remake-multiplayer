@@ -461,6 +461,10 @@ class Client {
   // True once the path to the server lost full datagrams (DropReason
   // small_path): every connection from then on uses ENet's smallest, 576.
   bool small_datagrams() const { return small_datagrams_; }
+  // Race mode (coop/protocol/race.hpp): on while the session's host says so (its MOD_SETTINGS, sent or
+  // received). While on, no world message is sent or taken in; race_dropped() counts them.
+  bool race() const { return race_; }
+  std::size_t race_dropped() const { return race_dropped_; }
 
  private:
   void use_small_datagrams();
@@ -540,6 +544,8 @@ class Client {
   std::vector<Player> players_;  // sorted by number
   std::deque<Event> events_;
   std::size_t rejected_ = 0;
+  bool race_ = false;
+  std::size_t race_dropped_ = 0;
 
   std::map<FlagKey, protocol::FlagEntry> flags_;
   std::map<FlagKey, protocol::FlagEntry> pending_;  // our unanswered FLAG_SETs

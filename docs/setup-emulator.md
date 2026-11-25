@@ -212,6 +212,8 @@ Press Enter in the game to open the chat box. A line that starts with `/teleport
   - Refused, with a line in the chat box: while your game loads or plays a cutscene or a talk, during your boss fight, while the other player is busy (loading, a cutscene, a talk, in the air) or in a boss fight, and when the other player is in a place only for the other age (`_Child` or `_Adult`) than your Link, or in a place with no entrance to arrive at (the boss-rush room, the ending, the Sage room). Lake Hylia, Lon Lon Ranch, the Temple of Time and the houses are parts of Hyrule Field, the Market or their village, so those work. A dungeon gives a warning: you may need its items to get on from there.
   - A player with an older build does not answer: "no answer from" after 5 seconds.
 
+A line that starts with a gesture name is a command too. `/wave`, `/yes`, `/no`, `/look`, `/here` (a gesture and a call) and `/wow` (or `/emote <name>`; `/emote` alone lists them) make your Link play that gesture on the other players' screens, as the game's own talk gestures. It stops when you move. Alone in the game, or within 1.5 seconds of the last one, nothing is sent and a line in the chat box says so. Your own screen shows only that line.
+
 `LICHII_COOP_TELEPORT=0` turns it off in your game: the command says so, and the others' requests to come to you are refused.
 
 ## Chat notices

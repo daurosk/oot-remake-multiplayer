@@ -14,6 +14,7 @@
 
 #include "coop_dbno.h"
 #include "coop_difficulty.h"
+#include "coop_emote.h"
 #include "coop_lobby.h"
 #include "coop_pause_menu.h"
 #include "coop_pvp.h"
@@ -53,6 +54,9 @@ std::string Typed(std::string form) {
 bool Taken(const std::string& text) {
     if (CoopTeleport::Parse(text) || CoopPvp::Parse(text)) {
         return true;
+    }
+    if (const auto c = CoopEmote::Parse(text)) {
+        return c->kind != CoopEmote::Command::Kind::unknown;
     }
     if (const auto c = CoopDbno::Parse(text)) {
         return c->kind != CoopDbno::Command::Kind::bad;
@@ -95,7 +99,7 @@ TEST_CASE("chat commands: every command the game handles is on the Commands page
     const std::map<std::string, std::string> files = {
         {"Teleport", "lichii/hook/coop_teleport.cpp"}, {"Pvp", "lichii/hook/coop_pvp.cpp"},
         {"Dbno", "lichii/hook/coop_dbno.cpp"},         {"Difficulty", "lichii/hook/coop_difficulty.cpp"},
-        {"Lobby", "lichii/hook/coop_lobby.cpp"},
+        {"Lobby", "lichii/hook/coop_lobby.cpp"},       {"Emote", "lichii/hook/coop_emote.cpp"},
     };
     const std::string hook = Code(ReadSource("lichii/hook/coop_hook.cpp"));
     const auto begin = hook.find("bool SendChat(const std::string& text) {");

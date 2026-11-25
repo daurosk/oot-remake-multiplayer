@@ -83,6 +83,7 @@ struct FrameReport {
   std::uint64_t server_now_us = 0;      // the client's estimate; 0 when not connected
   bool hosting = false;                 // the watcher's role is host
   bool holding = false;                 // a snapshot is coming in parts: hold the game
+  bool race = false;                    // race mode: nothing of the world is shared (coop/protocol/race.hpp)
   // Rows 106/107: a held snapshot was dropped this frame (FlagWatcher::kHoldMaxFrames): the hook says so once.
   bool hold_timeout = false;
   // How long (1/60 s) the watcher's load window has been open; 0 when closed. Our own changes are not sent
@@ -354,6 +355,7 @@ class Session {
   std::function<void(const net::Event&, net::Client&)> on_event_;
   std::function<std::uint64_t()> game_frame_age_us_;  // SessionSettings::game_frame_age_us
   bool sharing_ = false;  // set once, before any thread starts
+  bool race_ = false;     // the game thread's: race mode seen in this session (frame())
   bool welcomed_held_ = false;  // a WELCOME came while held: service() sends the status again
 
   // Guarded by presence_mutex_.

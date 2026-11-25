@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <utility>
 
 namespace CoopLookView {
@@ -241,8 +242,8 @@ std::optional<Angles> Steer::Restore() {
 
 void Steer::Lose(const std::string& why) {
     phase_ = Phase::lost;
-    note_ = "coop: look: the game camera does not turn with the Customize picture (" + why +
-            "): the picture keeps its own framing, and the camera is put back";
+    Say("coop: look: the game camera does not turn with the Customize picture (" + why +
+            "): the picture keeps its own framing, and the camera is put back");
 }
 
 std::optional<Angles> Steer::Drive() {
@@ -251,7 +252,7 @@ std::optional<Angles> Steer::Drive() {
         offset_yaw_ = Wrap(offset_yaw_ + kGain * Wrap(seen_->yaw - sign_yaw_ * last_.yaw - offset_yaw_));
         offset_pitch_ += kGain * (seen_->elevation - sign_pitch_ * last_.pitch - offset_pitch_);
         const double off_yaw = std::fabs(Wrap(want_->yaw - seen_->yaw));
-        const double off_elevation = std::fabs(want_->elevation - seen_->elevation);
+        const double off_elevation = std::fabs(Elevation() - seen_->elevation);
         off_ = off_yaw > kLostYaw || off_elevation > kLostElevation ? off_ + 1 : 0;
         seen_.reset();
         if (off_ >= kLostFrames) {
@@ -263,11 +264,55 @@ std::optional<Angles> Steer::Drive() {
         }
     }
     last_.yaw = static_cast<float>(Wrap(sign_yaw_ * Wrap(want_->yaw - offset_yaw_)));
-    last_.pitch = static_cast<float>(sign_pitch_ * (want_->elevation - offset_pitch_));
+    last_.pitch = static_cast<float>(sign_pitch_ * (Elevation() - offset_pitch_));
     return last_;
 }
 
 std::optional<Angles> Steer::Command(Angles now, int state, bool asked) {
+    since_turn_ = 0;
+    auto angles = Step(now, state, asked);
+    Watch(state, asked);
+    return angles;
+}
+
+void Steer::Watch(int state, bool asked) {
+    if (!asked || phase_ == Phase::probe || phase_ == Phase::drive) {
+        gate_now_.reset();
+        gate_said_.reset();   // (said again at the next opening that does not turn)
+        gate_calls_ = 0;
+        return;
+    }
+    const Gate gate{state, want_.has_value(), phase_};
+    if (gate_now_ != gate) {
+        gate_now_ = gate;
+        gate_calls_ = 0;
+    }
+    if (++gate_calls_ != kGateCalls || gate_said_ == gate) {
+        return;
+    }
+    gate_said_ = gate;
+    char line[400];
+    std::snprintf(line, sizeof line,
+                  "coop: look: the game camera is not turned by the Customize picture (the camera hook hands in "
+                  "state %d, the page is asked, a wanted direction: %s, the steer %s): the probe starts only in "
+                  "states 3 and 4 with a wanted direction",
+                  state, gate.want ? "yes" : "no",
+                  phase_ == Phase::lost ? "gave up on it (lost)" : "has not started (idle)");
+    Say(line);
+}
+
+void Steer::Viewed() {
+    if (++since_turn_ == kNoTurnFrames) {
+        char line[300];
+        std::snprintf(line, sizeof line,
+                      "coop: look: the camera hook (hos_coop_turn, patch 0040) was not called in %d frames of the "
+                      "Customize picture: the game camera is not turned (no player camera update reaches the hook)",
+                      kNoTurnFrames);
+        Say(line);
+    }
+}
+
+std::optional<Angles> Steer::Step(Angles now, int state, bool asked) {
     if (state != 3 && state != 4) {
         // Another camera has the view (an event): its angles are not the ones to put back; the probe starts again.
         phase_ = Phase::idle;
@@ -290,7 +335,9 @@ std::optional<Angles> Steer::Command(Angles now, int state, bool asked) {
         original_ = now;
         phase_ = Phase::probe;
         step_ = waited_ = off_ = 0;
-        free_ = 0;
+        blocked_ = false;
+        held_.reset();
+        lift_ = 0;
         seen_.reset();
         [[fallthrough]];
     case Phase::probe: {
@@ -339,7 +386,7 @@ std::optional<Angles> Steer::Command(Angles now, int state, bool asked) {
                       "times its yaw and pitch; its eye %.2f m from its target, the picture's own %.2f m), so the "
                       "game's collision places the eye where it moves it in",
                       ratio_yaw, ratio_pitch, free_, aim_distance_);
-        note_ = line;
+        Say(line);
         return Drive();
     }
     case Phase::drive:
@@ -352,6 +399,13 @@ void Steer::Observe(const Vec3& game_eye, const Vec3& game_target) {
     if (const auto d = DirectionOf(game_target, game_eye)) {
         seen_ = d;
         if (phase_ == Phase::probe || phase_ == Phase::drive) {
+            // The best seen at this place, over the whole turn and earlier openings: a page opened in a tight spot
+            // learns the open side as the turn reaches it, and keeps it when opened there again.
+            if (!free_at_ || std::hypot(game_target[0] - (*free_at_)[0], game_target[1] - (*free_at_)[1],
+                                        game_target[2] - (*free_at_)[2]) > kSamePlace) {
+                free_ = 0;
+                free_at_ = game_target;
+            }
             free_ = std::max(free_, std::hypot(game_eye[0] - game_target[0], game_eye[1] - game_target[1],
                                                game_eye[2] - game_target[2]));
         }
@@ -363,10 +417,83 @@ void Steer::Want(const std::optional<Direction>& want, double aim_distance) {
     aim_distance_ = aim_distance;
 }
 
+void Steer::Say(std::string line) {
+    notes_.push_back(std::move(line));
+}
+
 std::optional<std::string> Steer::TakeNote() {
-    auto n = std::move(note_);
-    note_.reset();
+    if (notes_.empty()) {
+        return std::nullopt;
+    }
+    auto n = std::move(notes_.front());
+    notes_.pop_front();
     return n;
+}
+
+double Steer::Elevation() const {
+    if (!want_) {
+        return 0.0;
+    }
+    const double e = want_->elevation;
+    return std::min(e + lift_, std::max(e, kLiftTo));
+}
+
+std::optional<Shot> Steer::Picture(const Vec3& game_eye, const Vec3& game_target, const Shot& aim,
+                                   const Subject& link, const Window& window, double fov_y) {
+    if (phase_ != Phase::drive) {
+        return aim;
+    }
+    const double dist = std::hypot(game_eye[0] - game_target[0], game_eye[1] - game_target[1],
+                                   game_eye[2] - game_target[2]);
+    const double floor = std::max(kBlockedMin, kBlockedShare * free_);
+    const double h = link.height > 0 ? link.height : 1.0;
+    const Vec3 middle{link.feet[0], link.feet[1] + h * 0.5, link.feet[2]};
+    std::optional<Shot> shot;
+    const bool far_enough = dist >= floor * (blocked_ ? kClearMargin : 1.0);
+    if (far_enough) {
+        if (lift_ <= 0 && !(dist < free_ * kPulledIn)) {
+            // Open ground: the orbit's own eye, so he fits (the game's camera may sit nearer than it by itself).
+            shot = aim;
+        } else {
+            // Moved in by a wall, or raised over one: from where the game's collision put the eye.
+            shot = Framed(game_eye, game_target, aim, link, window,
+                          lift_ > 0 ? std::numeric_limits<double>::infinity() : free_, fov_y);
+        }
+    }
+    if (shot) {
+        if (blocked_) {
+            char line[200];
+            std::snprintf(line, sizeof line,
+                          "coop: look: the Customize camera is clear again (its eye %.2f m from its target, free "
+                          "distance %.2f m)",
+                          dist, free_);
+            Say(line);
+        }
+        blocked_ = false;
+        held_ = Vec3{shot->eye[0] - middle[0], shot->eye[1] - middle[1], shot->eye[2] - middle[2]};
+        lift_ = std::max(lift_ - kLiftStep, 0.0);   // (a clear view: back down to the orbit's elevation)
+        return shot;
+    }
+    if (!blocked_) {
+        blocked_ = true;
+        char line[320];
+        std::snprintf(line, sizeof line,
+                      "coop: look: the Customize camera is blocked (its eye %.2f m from its target, free distance "
+                      "%.2f m, blocked under %.2f m): %s",
+                      dist, free_, floor,
+                      held_ ? "the picture holds its last clear view"
+                            : "no clear view yet, the flat picture shows and the camera rises to look over it");
+        Say(line);
+    }
+    if (held_) {
+        lift_ = std::max(lift_ - kLiftStep, 0.0);   // (it rises only until the first clear view)
+        const Vec3 eye{middle[0] + (*held_)[0], middle[1] + (*held_)[1], middle[2] + (*held_)[2]};
+        return ReAim(eye, middle, window, fov_y);
+    }
+    // Too near: raised to look over the wall. Far enough but too steep to put him in the window's middle (the view
+    // would tilt past straight down): lowered again.
+    lift_ = far_enough ? std::max(lift_ - kLiftStep, 0.0) : std::min(lift_ + kLiftStep, kLiftTo);
+    return std::nullopt;
 }
 
 namespace {
@@ -381,6 +508,8 @@ const char* Describe(Showing showing) {
     case Showing::live_adult: return "live, the camera around your adult Link";
     case Showing::flat_no_link: return "flat: the co-op hook has no Link this frame (no game, scene or place)";
     case Showing::live_event: return "live, our own event (a cutscene) runs: the camera around your Link";
+    case Showing::flat_blocked:
+        return "flat: the camera turns around your Link but its eye is blocked and has had no clear view yet";
     }
     return "?";
 }

@@ -1013,7 +1013,8 @@ def read_text(path):
 # game compiles cold at every start (~440 s on Longshot rc.7, ~230 s on rc.4, longer with several compiling at once).
 # A fixed deadline is wrong for some of them, so the wait follows the progress: it fails only when the count stops
 # rising for RENDERER_STALL s, or at RENDERER_LIMIT s in all.
-RENDERER_PROGRESS = re.compile(r"vk: (start-up: pipelines|noted pipelines:) (\d+) of (\d+)")
+# Longshot rc.4 to rc.7 write "start-up: pipelines N of M"; later builds write "start-up: shaders N of M".
+RENDERER_PROGRESS = re.compile(r"vk: (start-up: (?:pipelines|shaders)|noted pipelines:) (\d+) of (\d+)")
 RENDERER_STALL = 180    # s without a new progress count (it comes every ~10 s while the compile moves)
 RENDERER_LIMIT = 3600   # s in all, progress or not (a new game folder's first start: ~18 min)
 
@@ -1328,8 +1329,10 @@ def run(a):
     out = os.path.abspath(a.out)
     os.makedirs(out, exist_ok=True)
     say = Log(os.path.join(out, "steps.txt"), echo=print)
-    tags = [a.only] if getattr(a, "only", None) else ["A", "B"]   # --only: one game into a live session (live.py relaunch)
-    games = {"A": os.path.abspath(a.game_a), "B": os.path.abspath(a.game_b)}
+    # One game (only --game-a or only --game-b) runs alone: its own bridge, play-test port and log, as in a pair.
+    # --only: one game into a live session (live.py relaunch).
+    games = {x: os.path.abspath(g) for x, g in (("A", a.game_a), ("B", a.game_b)) if g}
+    tags = [a.only] if getattr(a, "only", None) else list(games)
     kits = {"A": getattr(a, "kit_a", None), "B": getattr(a, "kit_b", None)}
     for x in tags:
         if kits[x]:
@@ -1410,7 +1413,7 @@ def run(a):
                 env.update(host_in_game_env(a.port, a.password))
             if a.playtest_ports:
                 # the play-test bridge (docs/playtest.md "Bridge protocol"): off unless its port is given
-                env["LICHII_COOP_PLAYTEST_PORT"] = str(a.playtest_ports + "AB".index(x) + 1)   # (A p1, B p2, also --only)
+                env["LICHII_COOP_PLAYTEST_PORT"] = str(a.playtest_ports + "AB".index(x) + 1)   # (A p1, B p2, also alone or --only)
                 env["LICHII_COOP_PLAYTEST_VERBS"] = "1"   # act, warp, flag, give: a player's game never gets this
                 env.setdefault("LICHII_COOP_CHEATS", "1")   # the bridge's give goes through the cheats queue
             for kv in a.env:
@@ -1612,8 +1615,8 @@ def main(argv=None):
     r = sub.add_parser("run", help="the two-game test (tools/autotest/run.ps1 -Runtime hookshot)")
     r.add_argument("--lane", type=int, choices=[1, 2],
                    help="test lane (tools/autotest/lanes.py): its pair, port, pipe and run folder unless given; holds its lock")
-    r.add_argument("--game-a", help="(required without --lane)")
-    r.add_argument("--game-b", help="(required without --lane)")
+    r.add_argument("--game-a", help="(without --lane: this one, --game-b, or both)")
+    r.add_argument("--game-b", help="(without --lane: this one, --game-a, or both)")
     r.add_argument("--server", help="coop_server to start (none: the games use their coop.ini)")
     r.add_argument("--host-in-game", action="store_true",
                    help="no coop_server: game A hosts through its own Multiplayer > Host (script step `menu host`) on "
@@ -1689,8 +1692,8 @@ def main(argv=None):
         if not re.fullmatch(r"[!-~]{1,64}", a.password):
             p.error("--host-in-game: --password of 1 to 64 printable letters")
     if not a.lane:
-        if not (a.game_a and a.game_b and a.out):
-            p.error("--game-a, --game-b and --out (or --lane N)")
+        if not ((a.game_a or a.game_b) and a.out):
+            p.error("--game-a and/or --game-b, and --out (or --lane N)")
         a.port, a.pipe = a.port or 27560, a.pipe or "coop-auto"
         return run(a)
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # (python -I leaves the script's folder out)

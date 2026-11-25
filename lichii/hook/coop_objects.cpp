@@ -64,6 +64,7 @@
 #include "coop_actor_events.h"
 #include "coop_boss_native.h"
 #include "coop_boss_orders.h"
+#include "coop_boss_shots.h"
 #include "coop_difficulty.h"
 #include "coop_puppet.h"
 #include "coop_pvp.h"
@@ -119,6 +120,8 @@
 #include <atomic>
 #include <unordered_map>
 #include "coop_world.h"
+#include "coop_race_mode.h"
+#include "coop_switch_stand_mode.h"
 #include "coop_lift_ride.h"
 #include "coop_room_objects.h"
 #include "coop_switch_share.h"
@@ -2094,6 +2097,7 @@ public:
                     bosses.Publish({});
                 }
                 CoopBossOrders::TheTable().Publish({});  // row 222: no owner or copy: our managers decide again
+                CoopBossShots::TheTable().Publish({});   // part 3: nor a shooter of ours to watch
                 sharing_ = false;
             }
             if (CoopWorldSnapshot::TheStore().Enabled() && scene && !scene->empty() && Ready(system)) {
@@ -2181,6 +2185,13 @@ public:
                                        return CoopBossNative::TheTable().Step(guest, after_call, result,
                                                                               TheBossMain().load());
                                    });
+                // Row 222 part 3: the owner's shooter requests made on our copies (coop_boss_shots.h).
+                CoopSvc::AddCaller(CoopBossShots::Table::kCallerOrder,
+                                   [](CoopPuppet::Guest& guest, bool after_call,
+                                      std::uint64_t result, std::uint64_t) {
+                                       return CoopBossShots::TheTable().Step(guest, after_call, result,
+                                                                             TheBossMain().load());
+                                   });
                 // Row 222: the owner's battle manager orders put into our copies (coop_boss_orders.h).
                 CoopSvc::AddCaller(CoopBossOrders::Table::kCallerOrder,
                                    [](CoopPuppet::Guest& guest, bool after_call,
@@ -2198,6 +2209,12 @@ public:
                                    [](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                       std::uint64_t now_ms) {
                                        return CoopLiftRide::TheRider().Step(guest, after_call, result, now_ms);
+                                   });
+                // ai-switches: another player on our step switch: its contact bool through the game's set-bool.
+                CoopSvc::AddCaller(CoopCallerOrders::kSwitchStand,
+                                   [](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+                                      std::uint64_t now_ms) {
+                                       return CoopLiftRide::TheStander().Step(guest, after_call, result, now_ms);
                                    });
                 // room-objects: another player's timed switch is on: ours held on through the game's set-bool.
                 CoopSvc::AddCaller(kSwitchShareCallerOrder,
@@ -2230,6 +2247,9 @@ public:
             // A projectile copy's blast here is not our hit (docs/objects.md, "Projectiles").
             sync_.SetBlastNear([](const coop::protocol::Vec3& at, std::uint64_t now) {
                 return CoopProjectiles::TheBlasts().Near(at, now);
+            });
+            sync_.SetShotHitNear([](const coop::protocol::Vec3& at, std::uint64_t now) {
+                return CoopProjectiles::TheShotHits().Near(at, now);
             });
             take_at_ = server_now_us + 3'000'000;
             LOG_INFO(Core, "coop: objects: share on, poses {}, hurt {}", pose_ ? "on" : "off",
@@ -2441,7 +2461,7 @@ public:
             TheBossMain().store(main_);
             bosses.Publish(list);
             for (const auto& [address, state] : sync_.BossVerbsIn()) {
-                bosses.Receive(address, state);
+                bosses.Receive(address, state, sync_.BossVariantsIn(address));  // (row 222 part 2: its variations)
             }
             for (const std::string& note : bosses.TakeNotes()) {
                 LOG_INFO(Core, "coop: bosses: {}", note);
@@ -2462,6 +2482,25 @@ public:
                     orders.Receive(address, state);
                 }
                 for (const std::string& note : orders.TakeNotes()) {
+                    LOG_INFO(Core, "coop: bosses: {}", note);
+                }
+            }
+            // Row 222 part 3 (coop_boss_shots.h): the same bosses for their shooter requests, then the owner's.
+            CoopBossShots::Table& shots = CoopBossShots::TheTable();
+            if (shots.On()) {
+                std::vector<CoopBossShots::Member> members;
+                members.reserve(list.size());
+                for (const CoopBossNative::Boss& b : list) {
+                    members.push_back({b.actor,
+                                       b.role == CoopBossNative::Role::owner ? CoopBossShots::Role::owner
+                                                                             : CoopBossShots::Role::copy,
+                                       b.owner, b.name});
+                }
+                shots.Publish(members);
+                for (const auto& [address, state] : sync_.BossShotsIn()) {
+                    shots.Receive(address, state);
+                }
+                for (const std::string& note : shots.TakeNotes()) {
                     LOG_INFO(Core, "coop: bosses: {}", note);
                 }
             }
@@ -2765,6 +2804,30 @@ public:
             auto& rider = CoopLiftRide::TheRider();
             rider.Want(CoopLiftRide::Ridden(ride_lifts_, sync_.OthersHere(server_now_us)), main_, SteadyNowMs());
             for (const auto& line : rider.TakeNotes()) {
+                LOG_INFO(Core, "coop: {}", line);
+            }
+        }
+        // ai-switches: held step switches, anyone stands on it; the host's setting, and never in race mode (nothing
+        // of the world is shared there; this path sends no message for race_private to stop).
+        if (switch_stand_on_ && CoopSwitchStandMode::InForce() && !CoopRaceMode::InForce()) {
+            auto& stander = CoopLiftRide::TheStander();
+            const auto others = sync_.OthersHere(server_now_us);
+            const auto stood = CoopLiftRide::Stood(stand_switches_, others);
+            // (NEXT40 found nothing pressed: every 5 s with switches here, what the footprint sees)
+            if (!stand_switches_.empty() && SteadyNowMs() >= stand_note_ms_) {
+                stand_note_ms_ = SteadyNowMs() + 5000;
+                float best = 1e9f, dx = 0, dy = 0, dz = 0;
+                for (const auto& s : stand_switches_) {
+                    for (const auto& o : others) {
+                        const float x = o[0] - s.position[0], y = o[1] - s.position[1], z = o[2] - s.position[2];
+                        if (x * x + z * z < best) best = x * x + z * z, dx = x, dy = y, dz = z;
+                    }
+                }
+                LOG_INFO(Core, "coop: switch stand: {} switches, {} others here, {} stood; nearest other {:.2f} {:.2f} {:.2f} off a switch",
+                         stand_switches_.size(), others.size(), stood.size(), dx, dy, dz);
+            }
+            stander.Want(stood, main_, SteadyNowMs());
+            for (const auto& line : stander.TakeNotes()) {
                 LOG_INFO(Core, "coop: {}", line);
             }
         }
@@ -3109,6 +3172,9 @@ public:
     std::size_t hit_probe_lines_ = 0;
     std::vector<CoopLiftRide::Lift> ride_lifts_;  // jabu-lifts (#65): this walk's lifts
     bool lift_ride_on_ = true;                    // LICHII_COOP_LIFT_RIDE=0 turns it off
+    std::vector<CoopLiftRide::Lift> stand_switches_;  // ai-switches: this walk's step switches
+    std::uint64_t stand_note_ms_ = 0;                 // ai-switches: the next footprint note
+    bool switch_stand_on_ = true;                     // LICHII_COOP_SWITCH_STAND=0 turns it off
     bool scrubs_on_ = true;  // LICHII_COOP_SCRUBS=0 turns it off (issue 149)
     std::vector<CoopScrubs::Seen> scrubs_seen_;
     // This walk's own-game mobs (CoopStrike::OwnGameMob): not shared, so not in `seen`, but a test kill may kill them.
@@ -3527,6 +3593,7 @@ private:
             pvp_watch_.Reset();
             CoopProjectiles::TheOwnShots().Reset();
             CoopBossOrders::TheTable().Reset();  // row 222: its block and nodes were the old game's
+            CoopBossShots::TheTable().Reset();   // part 3: its bosses and shooters too
             extras_.Reset();  // difficulty: that run's extra enemies are gone with it
             horde_.Reset();
             {
@@ -4314,6 +4381,7 @@ private:
     bool Collect(Reader& r, std::vector<Seen>& out) {
         gimmicks_.clear();  // dungeon gimmicks for the probe
         ride_lifts_.clear();  // jabu-lifts (#65)
+        stand_switches_.clear();  // ai-switches
         share_switches_.clear();  // room-objects
         platform_drivers_.clear();
         scrubs_seen_.clear();  // issue 149
@@ -4638,6 +4706,15 @@ private:
                 }
                 ride_lifts_.push_back(std::move(l));
             }
+            if (switch_stand_on_ && CoopLiftRide::IsStandSwitch(known.first)) {  // ai-switches
+                CoopLiftRide::Lift l;
+                l.address = a;
+                l.name = known.first;
+                for (std::size_t i = 0; i < 3; ++i) {
+                    l.position[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
+                }
+                stand_switches_.push_back(std::move(l));
+            }
             if (((gimmick_probe_on_ || logic_probe_on_) && CoopWorld::IsGimmick(known.first)) ||
                 (logic_probe_on_ && (IsRoomAsker(known.first) || IsProbeSwitch(known.first)))) {  // the asker's trigger
                 CoopWorld::GimmickProbe::Gimmick g;
@@ -4720,7 +4797,7 @@ private:
                         s.bsa_component = r.Ptr(*table + CoopBossNative::addr::kComponentBsa).value_or(0);
                     }
                     if (s.bsa_component != 0) {
-                        s.bsa = CoopBossNative::TheTable().OwnerState(a);
+                        s.bsa = CoopBossNative::TheTable().OwnerState(a, &s.variants);
                         if (own_hit_life) {
                             (void)NewOwnHitAt(r, a, *own_hit_life, s.position, own_hit_took_life);
                         }  // our own hit: its own reaction runs (NoteOwnHit) unless it took life (NoteOwnDamage)
@@ -4759,8 +4836,9 @@ private:
                     if (const auto table = r.Ptr(a + kActorComponents)) {
                         s.bsa_component = r.Ptr(*table + CoopBossNative::addr::kComponentBsa).value_or(0);
                     }
-                    s.bsa = CoopBossNative::TheTable().OwnerState(a);
+                    s.bsa = CoopBossNative::TheTable().OwnerState(a, &s.variants);
                     s.orders = CoopBossOrders::TheTable().OwnerOrders(a);  // row 222: its manager's orders, ours
+                    s.shots = CoopBossShots::TheTable().OwnerShots(a);     // part 3: its shooter requests, ours
                     if (own_hit_life) {
                         s.hit_at = NewOwnHitAt(r, a, *own_hit_life, s.position, own_hit_took_life);
                     } else if (CoopBossNative::TheTable().OwnShotNear(s.position)) {
@@ -6719,6 +6797,7 @@ Objects& Instance() {
         objects.gimmick_probe_on_ = EnvFlag("LICHII_COOP_GIMMICK_PROBE");  // opt-in: many reads
         objects.logic_probe_on_ = EnvFlag("LICHII_COOP_LOGIC_PROBE");      // jabu-lifts: reads only
         objects.hit_probe_on_ = EnvFlag("LICHII_COOP_HIT_PROBE");          // enemy-late-kill: log only
+        objects.switch_stand_on_ = EnvOnUnlessZero("LICHII_COOP_SWITCH_STAND");      // ai-switches, on unless =0
         objects.lift_ride_on_ = EnvOnUnlessZero("LICHII_COOP_LIFT_RIDE");            // jabu-lifts (#65), on unless =0
         {
             const std::string platforms = EnvText("LICHII_COOP_PLATFORMS");

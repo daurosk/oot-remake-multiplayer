@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 #include "coop_fairy.h"
 #include "coop_room_objects.h"
@@ -19,20 +20,35 @@ bool IsRideLift(std::string_view name) {
     return name.find("ElevatorLift_") != std::string_view::npos || name.find("MoveFloor_") != std::string_view::npos;
 }
 
-std::vector<std::uint64_t> Ridden(const std::vector<Lift>& lifts, const std::vector<coop::protocol::Vec3>& others) {
+namespace {
+std::vector<std::uint64_t> On(const std::vector<Lift>& lifts, const std::vector<coop::protocol::Vec3>& others,
+                              float radius, float below, float above) {
     std::vector<std::uint64_t> out;
     for (const Lift& l : lifts) {
         for (const auto& p : others) {
             const float dx = p[0] - l.position[0];
             const float dz = p[2] - l.position[2];
             const float dy = p[1] - l.position[1];
-            if (dx * dx + dz * dz <= kRideRadiusM * kRideRadiusM && dy >= -kRideBelowM && dy <= kRideAboveM) {
+            if (dx * dx + dz * dz <= radius * radius && dy >= -below && dy <= above) {
                 out.push_back(l.address);
                 break;
             }
         }
     }
     return out;
+}
+}  // namespace
+
+std::vector<std::uint64_t> Ridden(const std::vector<Lift>& lifts, const std::vector<coop::protocol::Vec3>& others) {
+    return On(lifts, others, kRideRadiusM, kRideBelowM, kRideAboveM);
+}
+
+bool IsStandSwitch(std::string_view name) {
+    return name.starts_with("Obj_") && name.find("StepSwitch_") != std::string_view::npos;
+}
+
+std::vector<std::uint64_t> Stood(const std::vector<Lift>& switches, const std::vector<coop::protocol::Vec3>& others) {
+    return On(switches, others, kStandRadiusM, kStandBelowM, kStandAboveM);
 }
 
 void Rider::Want(const std::vector<std::uint64_t>& lifts, std::uint64_t main, std::uint64_t now_ms) {
@@ -71,7 +87,7 @@ std::optional<CoopPuppet::Call> Rider::Step(CoopPuppet::Guest& guest, bool after
             asked_malloc_ = false;
             if (result == 0) {
                 failed_ = true;
-                notes_.push_back("lift ride: the game's malloc gave nothing; lift rides off");
+                notes_.push_back(what_ + ": the game's malloc gave nothing; off");
                 return std::nullopt;
             }
             block_ = result;
@@ -85,7 +101,12 @@ std::optional<CoopPuppet::Call> Rider::Step(CoopPuppet::Guest& guest, bool after
             for (const auto& w : wanted_) frame_.push_back(w.first);
         }
     }
-    if (failed_ || main == 0 || frame_.empty()) return std::nullopt;
+    if (failed_ || frame_.empty()) return std::nullopt;
+    if (main == 0) {
+        Why("main's base not known");
+        return std::nullopt;
+    }
+    if (!after_call) Why("the caller runs with an actor wanted");
     if (block_ == 0) {
         if (after_call) return std::nullopt;  // the malloc is asked at the start of a frame only
         std::lock_guard lock(mutex_);
@@ -99,21 +120,32 @@ std::optional<CoopPuppet::Call> Rider::Next(CoopPuppet::Guest& guest, std::uint6
     while (!frame_.empty()) {
         const std::uint64_t lift = frame_.front();
         frame_.pop_front();
-        if (!CoopFairy::ActorPresent(guest, lift)) continue;
+        if (!CoopFairy::ActorPresent(guest, lift)) {
+            Why("actor not present");
+            continue;
+        }
         // The execute reads [actor+0x270] without a check: only a lift whose logic has a live bool RideOnPlayer.
-        const auto plug = CoopLogicSet::BoolPlug(guest, lift, kRideOnPlayer);
-        if (!plug) continue;
-        if (plug->value == std::uint8_t{1}) continue;  // on already (our Link, or set this frame)
-        if (!CoopLogicSet::WriteNode(guest, block_, main, lift, kRideOnPlayer)) continue;
+        const auto plug = CoopLogicSet::BoolPlug(guest, lift, key_);
+        if (!plug) {
+            Why("no live bool plug with our key");
+            continue;
+        }
+        if (plug->value == std::uint8_t{1}) {
+            Why("plug on already");
+            continue;  // on already (our Link, or set this frame)
+        }
+        if (!CoopLogicSet::WriteNode(guest, block_, main, lift, key_)) {
+            Why("node write failed");
+            continue;
+        }
         {
             std::lock_guard lock(mutex_);
             if (std::find(told_.begin(), told_.end(), lift) == told_.end()) {
                 told_.push_back(lift);
-                char line[160];
+                char line[200];
                 std::snprintf(line, sizeof line,
-                              "lift ride: another player is on our lift 0x%llx: its RideOnPlayer set through the "
-                              "game's set-bool",
-                              static_cast<unsigned long long>(lift));
+                              "%s: another player is on our 0x%llx: its plug %08x set through the game's set-bool",
+                              what_.c_str(), static_cast<unsigned long long>(lift), key_);
                 notes_.emplace_back(line);
             }
         }
@@ -122,9 +154,28 @@ std::optional<CoopPuppet::Call> Rider::Next(CoopPuppet::Guest& guest, std::uint6
     return std::nullopt;
 }
 
+void Rider::Why(std::string_view step) {
+    std::lock_guard lock(mutex_);
+    if (std::find(whys_.begin(), whys_.end(), step) != whys_.end()) return;
+    whys_.emplace_back(step);
+    notes_.push_back(what_ + ": " + std::string(step));
+}
+
 Rider& TheRider() {
     static Rider rider;
     return rider;
+}
+
+std::uint32_t StandKey(const char* env) {
+    return env != nullptr && std::string_view(env) == "contact" ? kStepContact : kStepOnState;
+}
+
+Rider& TheStander() {
+    static Rider stander([] {
+        const char* v = std::getenv("LICHII_COOP_SWITCH_STAND");
+        return StandKey(v);
+    }(), "switch stand");
+    return stander;
 }
 
 }  // namespace CoopLiftRide

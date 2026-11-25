@@ -1,6 +1,7 @@
 #include "session.hpp"
 
 #include "coop/protocol/animation_words.hpp"
+#include "coop/protocol/race.hpp"
 #include "coop/protocol/scene_place.hpp"
 
 #include <algorithm>
@@ -732,6 +733,10 @@ void Session::dispatch_player_message(ConnectionId id, Connection& c, std::uint8
     ++stats_.repeated_hello;
     return;
   }
+  if (race_ && race_private(message)) {  // race mode: the world stays in each game, neither kept nor relayed
+    ++stats_.race_dropped;
+    return;
+  }
   if (std::holds_alternative<LocalJoin>(message) || std::holds_alternative<LocalLeave>(message) ||
       std::holds_alternative<LocalSample>(message) || std::holds_alternative<LocalMessage>(message)) {
     on_local(id, c, message, now_us);
@@ -1070,6 +1075,12 @@ void Session::on_mods(ConnectionId id, Connection& c, Message& message) {
     log("player " + std::to_string(c.number) + " runs " + std::to_string(list->mods.size()) + " shared mods");
   } else {
     mod_settings_ = std::get<ModSettings>(message);
+    // Race mode: on from the host's first "on" until the session empties. An "off" later does not bring
+    // sharing back: what each game did alone is never pushed or pulled (docs/world.md, "Race mode").
+    if (race_of(mod_settings_->settings).value_or(false) && !race_) {
+      race_ = true;
+      log("race mode on: the world stays in each game");
+    }
   }
   send_to_others(id, kChannelSession, message);
   ++stats_.relayed;
@@ -1944,6 +1955,17 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
     const double at = metres(*c.position, d.position);
     if (!mine || at < *mine) mine = at;
   }
+  // ai-stuns: a stun on a copy (a nut, boomerang or hookshot: a DAMAGE of 0) is in the stunner's game only, and
+  // the owner's enemy goes on attacking. The stunner within handover_near_m takes it, whatever the margin, the
+  // hand-back or the sticky-target rule (the stun is a player's own act, sent at most every 2 s; the 5 s
+  // cooldown above still holds), and every game then follows its stunned enemy.
+  if (d.amount == 0) {
+    if (mine && *mine <= config_.handover_near_m &&
+        ask_handover(d.id, o, id, now_us, "a stun by a copy (ai-stuns)")) {
+      ++stats_.stun_to_stunner;
+    }
+    return;
+  }
   const auto theirs = distance_to(owner->second, o, now_us);
   if (mine && theirs && *mine <= config_.handover_near_m &&
       *mine + config_.handover_margin_m <= *theirs && !hands_back_soon(o, id, now_us)) {
@@ -2388,6 +2410,11 @@ std::optional<ConnectionId> Session::next_turn(Object& o, ConnectionId owner, st
   if (o.fight_began == 0) o.fight_began = stamp(now_us);
   const std::uint64_t turn_began = std::max(o.fight_began, o.changed_at);
   if (now_us - turn_began < config_.boss_turn_us) return std::nullopt;
+  // A plain enemy (ai-turns): only a kind its owner's game lists (takes_turns: the hook's big melee kinds), and at
+  // most one move per enemy_turn_gap_us (report 138's shuttle).
+  if (!o.boss && (!o.takes_turns.contains(owner) || now_us - turn_began < config_.enemy_turn_gap_us)) {
+    return std::nullopt;
+  }
   // Only right where its own attack ended in its owner's game (boss_turn_edge_us): never in an attack or in a
   // reaction's tail (Phantom Ganon's SmallDamage into 'Run'), never in a phase with no attack, and never for an
   // owner that reads no attacks. An edge older than the turn (the old owner's) does not count.
@@ -2417,8 +2444,18 @@ std::optional<ConnectionId> Session::next_turn(Object& o, ConnectionId owner, st
   const auto own = connections_.find(owner);
   if (own == connections_.end()) return std::nullopt;
   const std::uint8_t from = own->second.number;
+  if (!o.boss) {
+    // Two fit players near it: its owner too must be up and within enemy_turn_m of it, else the chase, near and
+    // unfit rules decide as before.
+    const auto od = distance_to(own->second, o, now_us);
+    if (busy(own->second) || !od || *od > config_.enemy_turn_m) return std::nullopt;
+  }
   std::optional<ConnectionId> after;  // the lowest number above the owner's
   std::optional<ConnectionId> first;  // the lowest number of all (round)
+  std::size_t owner_load = 0;
+  std::optional<ConnectionId> lightest;  // a plain enemy: the near player with the fewest fighting enemies
+  std::size_t lightest_load = 0;
+  if (!o.boss) owner_load = fighting_enemies(owner, now_us);
   for (ConnectionId other : o.present) {
     if (other == owner || !has_loaded(other, o) || o.unready.contains(other)) continue;
     // An older build (no takes_turns) would keep it for the rest of the fight: it sends no attack end.
@@ -2430,10 +2467,36 @@ std::optional<ConnectionId> Session::next_turn(Object& o, ConnectionId owner, st
     const auto lower = [&](const std::optional<ConnectionId>& than) {
       return !than || pc.number < connections_.at(*than).number;
     };
+    if (!o.boss) {
+      // Balance: the fewest fighting enemies, the next number after the owner's (round) among equals.
+      const std::size_t load = fighting_enemies(other, now_us);
+      const auto rank = [&](const Connection& c) { return c.number > from ? c.number : c.number + 256; };
+      if (!lightest || load < lightest_load ||
+          (load == lightest_load && rank(pc) < rank(connections_.at(*lightest)))) {
+        lightest = other;
+        lightest_load = load;
+      }
+      continue;
+    }
     if (pc.number > from && lower(after)) after = other;
     if (lower(first)) first = other;
   }
+  if (!o.boss) {
+    // Only to a player with fewer fighting enemies than the owner keeps: two players with one each keep theirs.
+    if (lightest && lightest_load + 1 <= owner_load) return lightest;
+    return std::nullopt;
+  }
   return after ? after : first;
+}
+
+std::size_t Session::fighting_enemies(ConnectionId owner, std::uint64_t now_us) const {
+  std::size_t n = 0;
+  for (const auto& entry : objects_) {
+    const Object& e = entry.second;
+    if (e.removed || e.boss || e.fish || e.projectile || !e.owner || *e.owner != owner) continue;
+    if (in_fight(e, now_us)) ++n;
+  }
+  return n;
 }
 
 bool Session::hands_back_soon(const Object& o, ConnectionId to, std::uint64_t now_us) {
@@ -2963,7 +3026,7 @@ void Session::run_ownership(std::uint64_t now_us) {
     // A boss in a fight takes turns: its AI fights only its owner's Link, so
     // every player gets it for a while (Phantom Ganon's ball, a charge, a
     // breath aimed at each in turn). Every other enemy too, among the players
-    // near it, when enemy_turns is on (off by default: a mob would shuttle between Links, report 138).
+    // near it, of the kinds the hook lists (takes_turns), under next_turn's caps (a mob would shuttle, report 138).
     if (o.boss || (config_.enemy_turns && !o.fish)) {
       if (auto next = next_turn(o, owner, now_us)) {
         ++(o.boss ? stats_.boss_turns : stats_.enemy_turns);
@@ -3223,6 +3286,7 @@ void Session::on_voice(ConnectionId id, const Connection& c, VoiceFrame& m,
 
 void Session::send_to_place(const std::string& scene, std::optional<ConnectionId> except,
                             std::uint8_t channel, const Message& m) {
+  if (race_held(m)) return;
   std::vector<std::uint8_t> bytes;
   if (encode(m, bytes) != Error::none) return;
   for (const auto& [id, c] : connections_) {
@@ -3234,6 +3298,7 @@ void Session::send_to_place(const std::string& scene, std::optional<ConnectionId
 
 void Session::send_to_scene(const std::string& scene, std::optional<ConnectionId> except,
                             std::uint8_t channel, const Message& m) {
+  if (race_held(m)) return;
   std::vector<std::uint8_t> bytes;
   if (encode(m, bytes) != Error::none) return;
   for (const auto& [id, c] : connections_) {
@@ -3609,6 +3674,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     difficulty_set_by_ = 0;
     difficulty_told_ = {};
     mod_settings_.reset();
+    race_ = false;
     lobby_mutes_.clear();
     banned_ids_.clear();
     for (const std::string& id : config_.kept_bans) {   // (the host's kept bans stay: SessionConfig::kept_bans)
@@ -3904,13 +3970,21 @@ std::uint8_t Session::free_number(std::uint8_t preferred) const {
   return 0;  // unreachable: on_hello refuses a full session first
 }
 
+bool Session::race_held(const Message& m) {
+  if (!race_ || !race_private(m)) return false;
+  ++stats_.race_dropped;
+  return true;
+}
+
 void Session::send(ConnectionId to, std::uint8_t channel, const Message& m) {
+  if (race_held(m)) return;  // what the server kept or makes of the world (a snapshot, an owner) too
   SendAction action{to, channel, {}};
   if (encode(m, action.bytes) != Error::none) return;  // our own message; cannot happen
   actions_.push_back(std::move(action));
 }
 
 void Session::send_to_others(ConnectionId except, std::uint8_t channel, const Message& m) {
+  if (race_held(m)) return;
   std::vector<std::uint8_t> bytes;
   if (encode(m, bytes) != Error::none) return;
   for (const auto& [id, c] : connections_) {

@@ -251,6 +251,9 @@ private:
 };
 
 Blasts& TheBlasts();
+// ai-stuns: where another player's shot copy (nut, seed, arrow, boomerang, hookshot) hit here, kept the same way: a
+// stun of our copy of an enemy there is that player's (its game asks for the enemy), not ours.
+Blasts& TheShotHits();
 
 // Issue 133 (whose hit): our own projectiles (seeds, arrows, nuts, bombs, the boomerang, the hookshot's tip) by
 // actor address, kept kKeepUs after each was last seen on our list, so a seed that hit an enemy and was removed

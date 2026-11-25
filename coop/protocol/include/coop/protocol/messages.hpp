@@ -209,6 +209,7 @@ enum class MessageType : std::uint16_t {
   pvp_strike = 540,  // 540 to 544: PvP on real bodies (docs/protocol.md, "PvP on real bodies")
   pvp_result = 541,
   pvp_native = 542,
+  emote = 615,  // 615 to 619: emotes and pings (docs/protocol.md, "Emotes")
 };
 
 // PLAYER_SAMPLE component ids.
@@ -859,6 +860,8 @@ enum class ObjectComponent : std::uint16_t {
   hit = 21,    // protocol 14: the hit the owner's game took (ObjectHit below)
   strike = 22,  // row 230: a Redead's or Gibdo's scream that froze the owner's Link (ObjectStrike below)
   orders = 23,  // protocol 16, row 222: the battle manager's orders this enemy took (BossOrders below)
+  variants = 24,  // row 222 part 2: the variation (plug name) of the owner's boss actions (BossVariants below)
+  shots = 25,  // row 222 part 3: the shootables the owner's boss asked its shooter to prepare (BossShots below)
 };
 
 struct ObjectLife {
@@ -990,6 +993,54 @@ struct BossOrders {
   bool operator==(const BossOrders&) const = default;
 };
 
+// Component 25 (row 222 part 3, no protocol bump: older builds skip it by its length and keep their old behaviour):
+// the shootables a boss asked its shooter to prepare. The game's attack sequences prepare the bullet the action
+// throws through the shooter's create request (main+0x374d20: the shootable's name hash, how many); only the game
+// whose own AI entered the attack ran it, so a copy threw nothing, or another variation's bullet. The owner's game
+// sends each request that found its shootable; a copy makes the same ones through the same function and skips its
+// own (coop_boss_shots.h). seq is the owner's own count for this boss (0: none yet; sent from the start, so a copy
+// knows its owner shares them); recent holds the newest kMaxBossShots, oldest first.
+inline constexpr std::size_t kMaxBossShots = 8;
+struct BossShot {
+  std::uint32_t seq = 0;
+  std::uint32_t hash = 0;  // the shootable's name hash (never 0: the game's function does nothing for 0)
+  std::uint8_t num = 0;    // how many (the game reads the low byte; never 0)
+  bool operator==(const BossShot&) const = default;
+};
+struct BossShots {
+  std::uint32_t seq = 0;  // the newest request's seq
+  std::vector<BossShot> recent;
+  bool operator==(const BossShots&) const = default;
+};
+
+// Component 24 (row 222 part 2, no protocol bump: older builds skip it by its length and keep their old
+// behaviour): the variation of the owner's boss actions. The game asks a move with an optional plug name and runs
+// the command '<verb's name>:<plug name>' (no plug: the verb's plain command), main+0xbe070: Twinrova's ranged
+// attack is plain for Fire and 'Ice', '1FeintFire', ... for the others. The bsa component (20) carries no name, so a
+// copy named its own last plug and could run another variation. One entry per action change in bsa's recent (its
+// seq), the plug name or empty for a plain ask; recent holds the newest kMaxBossVariants, oldest first; names are
+// 1 to kMaxBossVariantChars printable ASCII characters or empty.
+inline constexpr std::size_t kMaxBossVariants = 8;
+inline constexpr std::size_t kMaxBossVariantChars = 32;
+struct BossVariant {
+  std::uint32_t seq = 0;  // the action change's seq (bsa's recent)
+  std::string name;       // its plug name; empty: asked with no plug
+  // A named ask's places (row 222, diag run 20261123-160338: Twinrova's 'Ice' aims at the Link these name): bsa's
+  // action leaves them out for an ask by plug, as older copies expect. Finite; none for a plain ask (bsa has them).
+  std::array<std::optional<Vec3>, 3> places{};
+  // The ask's place kind (its request's word at 0x34; the game's default 0x10), plain or named. Row 222 (run
+  // 20261124-011531): the game keeps it with the move's places and each asking node sets its own (Twinrova's 121
+  // node 0, another of her nodes 0x10); the owner's places put in under another kind gave the copy no shot.
+  std::uint32_t kind = 0x10;
+  bool operator==(const BossVariant&) const = default;
+};
+struct BossVariants {
+  std::vector<BossVariant> recent;
+  bool operator==(const BossVariants&) const = default;
+};
+// Whether a plug name may go on the wire (empty, or 1 to kMaxBossVariantChars printable ASCII characters).
+bool ValidVariantName(std::string_view name);
+
 // The components of OBJECT_SAMPLE, OBJECT_SPAWN and HANDOVER_STATE. time is
 // always sent; the others when the sender has them. Floats must be finite.
 struct ObjectState {
@@ -1006,6 +1057,8 @@ struct ObjectState {
   std::optional<ObjectHit> hit;                     // protocol 14: the owner's newest hit taken
   std::optional<ObjectStrike> strike;               // row 230: the owner's Link frozen by its scream
   std::optional<BossOrders> orders;                 // protocol 16: its battle manager's orders (row 222)
+  std::optional<BossVariants> variants;             // row 222 part 2: its owner's action variations (no bump)
+  std::optional<BossShots> shots;                   // row 222 part 3: its owner's shooter requests (no bump)
   bool operator==(const ObjectState&) const = default;
 };
 
@@ -1020,6 +1073,7 @@ inline constexpr std::uint8_t unready = 1u << 3;
 // Boss turns (boss-turns-older-0119): this game reads its bosses' attacks (object_state::attack_read in its
 // samples when it owns one) and takes turns. An older build never sets it: the server gives it no turn, as a
 // boss it owned would never send an attack end and keep its one owner for the rest of the fight.
+// A game also sets it on the plain enemy kinds it lists for turns (ai-turns, CoopObjects::TurnsAsEnemy): no layout change.
 inline constexpr std::uint8_t takes_turns = 1u << 4;
 // Row 212 (gerudo-212): this game's own level logic made this encounter (not a copy of another game's) and answers
 // its death with its own defeat event: Gerudo Fortress's cell guards (GerudoFortress_Common_Level_CarpenterSet_0N:
@@ -1803,6 +1857,18 @@ struct BossAlive {
   bool operator==(const BossAlive&) const = default;
 };
 
+// EMOTE (branch ai-emotes, 615): one emote or ping of the sender's Link (/wave, /yes, /no, /look, /here), by its
+// number in the emote table (lichii/hook/coop_emote.h). A one-shot event, never kept: the others' games play the
+// emote's animation on the sender's puppet for a moment and start its sound there. The id is any 1 to
+// kMaxEmoteId; a game that does not know the id ignores it, so the table can grow with no version bump.
+inline constexpr std::uint8_t kMaxEmoteId = 32;
+
+struct Emote {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 16 relayed
+  std::uint8_t id = 0;                       // 1 to kMaxEmoteId
+  bool operator==(const Emote&) const = default;
+};
+
 // VOICE_FRAME (protocol 11, branch proximity-voip): 20 ms of the sender's
 // microphone as one Opus packet (48 kHz mono), or an empty packet with
 // voice::end that closes a talk spurt (the gate closed). Channel 5,
@@ -2190,7 +2256,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage, LinkSound,
                              BossScene, BossHeart, PlayerLook, SwitchState, JoinKnock, JoinAllow,
                              BombTake, BombAnswer, BombShare, LiftAsk, LiftAnswer, LiftPlace,
-                             LiftShare, PvpStrike, PvpResult, PvpNative, BossAlive>;
+                             LiftShare, PvpStrike, PvpResult, PvpNative, BossAlive, Emote>;
 
 MessageType type_of(const Message& message);
 

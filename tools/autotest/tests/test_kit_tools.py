@@ -288,7 +288,7 @@ class DeltaTools(unittest.TestCase):
     def test_live_state_since_and_the_cli_flag(self):
         looks = iter([{"map": "M", "life": 12, "log": ["coop: a"]}, {"map": "M", "life": 8, "log": []}])
         with tempfile.TemporaryDirectory() as d:
-            live.save(d, {"games": {}, "offsets": {}})
+            live.save(d, {"games": {"A": {}}, "offsets": {}})
             saved = live.look
             live.look = lambda d, s, x: dict(next(looks))
             try:

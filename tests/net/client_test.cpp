@@ -2771,3 +2771,29 @@ TEST_CASE("client: dropped by the server for a backlog, the reason is backlog, a
   welcome_client(client, server);
   REQUIRE(wait_event(client, server, events, EventKind::reconnected));
 }
+
+TEST_CASE("client race mode: the host's setting stops world messages both ways, chat goes on") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 2, {{1, "Saria"}});
+  CHECK_FALSE(client.race());  // a session starts shared until its host says
+
+  server.send(proto::ModSettings{1, {{"coop", "race", "on"}}}, proto::kChannelSession);
+  server.send(proto::FlagState{1, {bool_flag(7, true)}}, proto::kChannelProgress);
+  server.send(proto::Chat{1, "go"}, proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::chat));
+  CHECK(client.race());
+  CHECK(client.flags().empty());
+  CHECK_FALSE(events.find(EventKind::flag_state).has_value());
+  CHECK(client.race_dropped() == 1);
+
+  // Ours: done for the caller, never on the wire.
+  const std::size_t from = server.received.size();
+  CHECK(client.set_flags(std::vector<proto::FlagEntry>{bool_flag(10, true)}));
+  CHECK(client.send_chat("hi"));
+  REQUIRE(pump(client, server, [&] { return server.find<proto::Chat>(from).has_value(); }));
+  CHECK_FALSE(server.find<proto::FlagSet>(from).has_value());
+  CHECK(client.race_dropped() == 2);
+}

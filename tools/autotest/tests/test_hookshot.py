@@ -815,6 +815,11 @@ class RendererWaitTest(unittest.TestCase):
         self.assertEqual(hs.renderer_progress(text), (894 + 768, "vk: start-up: pipelines 894 of 36753"))
         self.assertEqual(hs.renderer_progress("nothing"), (0, ""))
 
+    def test_progress_matches_the_shaders_wording(self):
+        # the game's line since the lane-2 boot of 2026-11-24: "vk: start-up: shaders N of M"
+        text = "vk: start-up: shaders 120 of 38809, 2% of all" + chr(10) + "vk: start-up: shaders 980 of 38809, 3% of all" + chr(10)
+        self.assertEqual(hs.renderer_progress(text), (980, "vk: start-up: shaders 980 of 38809"))
+
     def test_run_options_have_the_progress_defaults(self):
         import argparse
         p = argparse.ArgumentParser()

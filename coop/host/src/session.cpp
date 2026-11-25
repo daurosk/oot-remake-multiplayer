@@ -30,6 +30,9 @@ FrameReport Session::frame(const std::optional<PlayerReading>& reading, FlagStor
     report.connected = client_.state() == net::State::connected;
     if (report.connected) report.server_now_us = client_.server_now_us();
     number = client_.player_number();
+    // Race mode (coop/protocol/race.hpp): once this session's host says on, our flags stay ours for as long as
+    // this session lives. Turned off again, nothing is pushed or pulled: sharing comes back with a new session.
+    if (client_.race()) race_ = true;
     inbox.swap(inbox_);
   }
 
@@ -57,7 +60,7 @@ FrameReport Session::frame(const std::optional<PlayerReading>& reading, FlagStor
           }
           break;
       }
-    } else if (watcher_) {
+    } else if (watcher_ && !race_) {
       watcher_->receive(std::get<protocol::Message>(in));
     }
   }
@@ -83,7 +86,7 @@ FrameReport Session::frame(const std::optional<PlayerReading>& reading, FlagStor
         out.emplace_back(std::move(message));
       }
     }
-    if (watcher_ && flags != nullptr) {
+    if (watcher_ && flags != nullptr && !race_) {
       // No Link to read: the game is loading (FlagWatcher::set_loading). Hookshot's title menu up is never play
       // either, Link or not (forest-temple-a: a host's save load through it was not seen as one, and the old
       // save's floors were put back into the new save, once a frame).
@@ -106,7 +109,12 @@ FrameReport Session::frame(const std::optional<PlayerReading>& reading, FlagStor
       report.save_load_native = seen->native;
       report.save_load_retry = seen->retry;
     }
+    if (race_) {  // no snapshot comes in race mode: the game is never held for one
+      report.holding = false;
+      report.hold_timeout = false;
+    }
   }
+  report.race = race_;
   report.queued = out.size();
 
   if (!out.empty()) {

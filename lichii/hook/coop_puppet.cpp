@@ -4,6 +4,7 @@
 #include "coop_camera.h"
 #include "coop_char_colours.h"
 #include "coop_colors.h"
+#include "coop_emote.h"
 #include "coop_local_game.h"
 #include "coop_look_share.h"
 #include "coop_pose.h"
@@ -2839,6 +2840,10 @@ std::array<std::optional<std::uint32_t>, kNumbers> g_color; // the same; guarded
 std::optional<std::uint32_t> g_own_color;                    // ours; guarded
 std::array<CoopPuppetSound::Wanted, kNumbers> g_ocarina;  // the same; guarded (issue 152)
 std::array<std::vector<CoopLinkSound::Sound>, kNumbers> g_sounds;  // the same; guarded (LINK_SOUND)
+CoopEmote::Holds g_emotes;                                  // guarded (EMOTE, coop_emote.h)
+std::array<std::uint32_t, kNumbers> g_emote_serials{};      // goes up with each EMOTE; guarded
+std::array<std::uint32_t, kNumbers> g_emote_logged{};       // the serial last logged as played; guarded, reset with a new session
+constexpr std::uint32_t kEmoteSerialBase = 0x80000000u;     // apart from the samples' serials
 
 } // namespace
 
@@ -2892,6 +2897,9 @@ void OnEvent(const coop::net::Event& event) {
         g_color = {};
         g_ocarina = {};
         g_sounds = {};
+        g_emotes.ClearAll();
+        g_emote_serials = {};
+        g_emote_logged = {};
     } else if (event.kind == EventKind::player_left && event.player < g_anims.size()) {
         std::lock_guard lock(g_anim_mutex);
         g_anims[event.player].Clear();
@@ -2901,6 +2909,7 @@ void OnEvent(const coop::net::Event& event) {
         g_color[event.player].reset();
         g_ocarina[event.player] = {};
         g_sounds[event.player].clear();
+        g_emotes.Clear(event.player);
     } else if (event.kind == EventKind::player_equip && event.player != 0 &&
                event.player < g_gear.size()) {
         const auto& e = event.equipment;
@@ -2943,6 +2952,34 @@ void OnEvent(const coop::net::Event& event) {
             queue.erase(queue.begin());  // the newest are kept
         }
         queue.push_back(CoopLinkSound::Sound{sound->name, now_ms});
+    } else if (const auto* emote = std::get_if<coop::protocol::Emote>(&event.message);
+               event.kind == EventKind::message && emote != nullptr) {
+        // EMOTE (coop_emote.h): the puppet holds the emote's animation (Collect) and makes its sound. An id this
+        // build does not know is ignored.
+        if (emote->player_number == 0 || emote->player_number >= g_sounds.size()) {
+            return;
+        }
+        const auto now_ms = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        std::lock_guard lock(g_anim_mutex);
+        if (!g_emotes.Start(emote->player_number, emote->id, now_ms)) {
+            return;
+        }
+        ++g_emote_serials[emote->player_number];
+        const CoopEmote::Def* def = CoopEmote::ById(emote->id);
+        if (g_director) {
+            g_director->Note("P" + std::to_string(emote->player_number) + " EMOTE received: '" +
+                            (def != nullptr ? def->name : "?") + "'");
+        }
+        if (def != nullptr && def->sound[0] != '\0') {
+            auto& queue = g_sounds[emote->player_number];
+            if (queue.size() >= CoopLinkSound::kHeardMax) {
+                queue.erase(queue.begin());
+            }
+            queue.push_back(CoopLinkSound::Sound{def->sound, now_ms});
+        }
     } else if (event.kind == EventKind::message) {
         const auto* sample = std::get_if<coop::protocol::PlayerSample>(&event.message);
         if (sample == nullptr || !sample->animation || sample->player_number == 0 ||
@@ -3073,6 +3110,17 @@ std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_n
                     r.anim = a->anim;
                     r.anim_serial = a->serial;
                 }
+                // An emote in hand (coop_emote.h): its AS command, at a serial of its own so it plays once.
+                const auto emote_now_ms = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch())
+                        .count());
+                if (const CoopEmote::Def* e =
+                        g_emotes.Apply(r.number, r.anim ? std::string_view(r.anim->name) : std::string_view(),
+                                       emote_now_ms)) {
+                    r.anim = Anim{e->command, 0.0f, 1.0f};
+                    r.anim_serial = kEmoteSerialBase + g_emote_serials[r.number];
+                }
             }
             if (r.number < g_gear.size()) {
                 r.gear = g_gear[r.number];
@@ -3098,6 +3146,18 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
         return;  // puppets are off
     }
     std::vector<Remote> remotes = Collect(session, server_now_us);
+    {
+        // One log line when a puppet starts playing an emote (its serial is the emote's own: kEmoteSerialBase up).
+        std::lock_guard lock(g_anim_mutex);
+        for (const auto& r : remotes) {
+            if (r.number < g_emote_logged.size() && r.anim && r.anim_serial >= kEmoteSerialBase &&
+                r.anim_serial != g_emote_logged[r.number]) {
+                g_emote_logged[r.number] = r.anim_serial;
+                g_director->Note("P" + std::to_string(r.number) + " EMOTE played on the puppet: AS '" +
+                                r.anim->name + "'");
+            }
+        }
+    }
     Gear own_gear;
     std::optional<std::uint8_t> own_drawn;
     std::optional<std::uint32_t> own_color;

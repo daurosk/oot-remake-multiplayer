@@ -99,6 +99,8 @@ struct Options {
     bool pvp = false;              // pvp (the host's)
     bool approve_joins = false;    // approve_joins (the host's: each new player waits for /allow or /deny); read only
     bool gold_own = false;         // gold_skulltulas = own (the host's: Gold Skulltulas not shared; no line: shared)
+    bool race = false;             // race = on (the host's race mode, coop_race_mode.h; no line: off)
+    bool floor_switches = true;    // floor_switches = off (the host's: coop_switch_stand_mode.h; no line: on)
     bool same_network_open = true;    // the host's: on, the default, players from a private address join without
                                       // the join password; off (same_network_password = on), they need it too
     bool auto_rejoin = false;      // auto_rejoin (join the last friend's game again by itself: coop_auto_rejoin.h)

@@ -458,6 +458,11 @@ Blasts& TheBlasts() {
     return blasts;
 }
 
+Blasts& TheShotHits() {
+    static Blasts hits;
+    return hits;
+}
+
 void OwnShots::Note(std::uint64_t address, std::uint64_t now_us) {
     if (address == 0) {
         return;

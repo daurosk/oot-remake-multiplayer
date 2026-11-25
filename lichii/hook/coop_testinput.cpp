@@ -935,10 +935,10 @@ const char* KindWord(Kind kind) {
     case Kind::drop: return "drop";
     case Kind::setflag: return "setflag";
     case Kind::setenum: return "setenum";
+    case Kind::event: return "event";
     case Kind::sync: return "sync";
     case Kind::menu: return "menu";
     case Kind::dump: return "dump";
-    case Kind::event: return "event";
     }
     return "?";
 }

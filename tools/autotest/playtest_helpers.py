@@ -11,6 +11,7 @@ is no longer in the list or its name changed. It never falls back to another act
 other (the held game of a pair must be stepped by the same frames, or the two drift). Standard library only.
 """
 import math
+import re
 
 import playtest_client as pc
 
@@ -461,23 +462,46 @@ def _choice_text(t):
 
 
 PAGE_BREAK = (0, 4)  # the markup tag (group, type) that starts a new page of the same text
+VARIABLE_GROUP = 2   # the markup tag group of a variable (an item name, a price, an actor name)
 
 
-def strip_markup(text):
-    """The words of a box text without its markup. The game's text holds tags as bytes: 0x0e, then group, type and size
-    (16-bit little-endian each), then `size` bytes of parameters (a name such as an animation or a variable, a pause,
-    a colour). A tag cut short, or one that names more bytes than there are, loses only its first byte."""
+def _param_chars(text, start, size):
+    """How many characters of `text` from `start` are `size` bytes of tag parameters, or None when the text ends
+    first or a character straddles the end. The bridge sends valid UTF-8 as characters and any other byte as one
+    character below U+0100, so a character from U+0100 up is 2 to 4 bytes and a lower one is counted as one."""
+    used = 0
+    for k in range(start, len(text)):
+        if used == size:
+            return k - start
+        used += len(text[k].encode("utf-8", "surrogatepass")) if ord(text[k]) > 255 else 1
+        if used > size:
+            return None
+    return len(text) - start if used == size else None
+
+
+def strip_markup(text, variables=True):
+    """The words of a box text without its markup. The game's text holds tags as bytes: 0x0e, then group, type and
+    size (16-bit little-endian each), then `size` bytes of parameters (a name such as an animation or a variable, a
+    pause, a colour). A tag cut short, or one that names more bytes than there are, loses only its first byte. A
+    page break becomes one space. A variable (an item name, a price) stays as `{Name}` unless `variables` is false:
+    the bridge's text has only its name, the game fills in the value later."""
     out, i, n = [], 0, len(text)
     while i < n:
         c = text[i]
-        if c == "":
+        if c == "\x0e":
             if i + 7 <= n and ord(text[i + 5]) < 256 and ord(text[i + 6]) < 256:
                 size = ord(text[i + 5]) | ord(text[i + 6]) << 8
-                if i + 7 + size <= n:
-                    kind = (ord(text[i + 1]) | ord(text[i + 2]) << 8, ord(text[i + 3]) | ord(text[i + 4]) << 8)
-                    if kind == PAGE_BREAK and out and not out[-1].isspace():
+                count = _param_chars(text, i + 7, size)
+                if count is not None:
+                    group = ord(text[i + 1]) | ord(text[i + 2]) << 8
+                    kind = ord(text[i + 3]) | ord(text[i + 4]) << 8
+                    if (group, kind) == PAGE_BREAK and out and not out[-1].isspace():
                         out.append(" ")  # a page break ends a sentence: its two sides are not one word
-                    i += 7 + size
+                    elif group == VARIABLE_GROUP and variables:
+                        found = re.match(r"[A-Za-z0-9_]+", text[i + 9:i + 7 + count])  # (after the 2-byte name length)
+                        if found:
+                            out.append("{" + found.group(0) + "}")
+                    i += 7 + count
                     continue
             i += 1
             continue
@@ -566,14 +590,15 @@ def talk(client, ident=None, name=None, reply=None, max_boxes=TALK_BOXES, max_fr
             elif (pane in BOX_PANES or t.get("wrap") == BODY_WRAP) and text:
                 last = out["boxes"][-1] if out["boxes"] else None
                 words = strip_markup(text)
+                has_words = bool(strip_markup(text, variables=False))
                 if last and not last["done"] and text.startswith(last["_raw"]) and text != last["_raw"]:
                     last.update(_raw=text, text=words)   # (the same box, grown)
                     moved = out["frames"]
-                elif last and text == last["_raw"]:
-                    pass                                   # (the same box set again)
-                elif words:
+                elif last and not last["done"] and text == last["_raw"]:
+                    pass                                   # (the same box set again, before any A)
+                elif has_words:
                     out["boxes"].append({"speaker": speaker, "text": words, "_raw": text, "done": False,
-                                         "markup": bool(t.get("markup")) or words != text})
+                                         "markup": bool(t.get("markup")) or words != text.strip()})
                     moved = out["frames"]
                 fresh = True
         if choices:
@@ -632,7 +657,7 @@ def talk(client, ident=None, name=None, reply=None, max_boxes=TALK_BOXES, max_fr
     for b in out["boxes"]:
         b.pop("done", None)
         raw = b.pop("_raw")
-        if raw != b["text"]:
+        if raw.strip() != b["text"]:   # (whitespace at the edges alone is not markup)
             b["raw"] = raw
     if out["done"] and len(out["picked"]) < len(replies):
         out["result"] = "done, but no choices showed for %s" % ", ".join(map(repr, replies[len(out["picked"]):]))

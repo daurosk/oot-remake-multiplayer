@@ -23,6 +23,8 @@
 #include "coop_dbno_game.h"
 #include "coop_difficulty.h"
 #include "coop_gold_mode.h"
+#include "coop_race_mode.h"
+#include "coop_switch_stand_mode.h"
 #include "coop_hook.h"
 #include "coop_hookshot.h"
 #include "coop_host_menu.h"
@@ -254,6 +256,8 @@ CoopPauseMenu::Session SessionNow() {
         s.rules = true;
         s.pvp = CoopPvp::On();
         s.gold_own = CoopGoldMode::NotShared();
+        s.race = CoopRaceMode::InForce();
+        s.floor_switches = CoopSwitchStandMode::InForce();
         s.dbno = rules.on;
         s.dbno_bleed_s = rules.bleed_s;
         s.dbno_revive_tenths = rules.revive_tenths;
@@ -584,6 +588,8 @@ bool Host(const CoopTitleMenu::Options& o, bool test) {
     CoopHookshot::HostMenu().Leave();   // (a failed start: clear it)
     CoopFiles::SetCoopEnvironment(o);
     CoopGoldMode::SetChoice(o.gold_own ? CoopGoldMode::Mode::own : CoopGoldMode::Mode::shared);   // (row 63)
+    CoopRaceMode::SetChoice(o.race);
+    CoopSwitchStandMode::SetChoice(o.floor_switches);
     HosCoopHostOptions h{};
     h.size = sizeof h;
     h.name = o.name.c_str();
@@ -1394,10 +1400,15 @@ bool Picture(int tab, HosCoopMenuPicture* out) {
         return false;   // (not the Customize page)
     }
     // Your own Link in the game, through a clear window, the camera around him (coop_look_view.h); the flat picture
-    // when he cannot be shown (the title screen, a cutscene).
+    // when he cannot be shown (the title screen, a cutscene), or while the camera's eye is blocked with no clear
+    // view yet (it is still asked for, so the camera keeps turning toward one).
     const CoopLookView::Window window{out->window[0], out->window[1], out->window[2], out->window[3], out->aspect};
-    if (window.Valid() && CoopLookView::LinkShown()) {
+    bool clear = true;
+    const bool shown = window.Valid() && CoopLookView::LinkShown(&clear);
+    if (shown) {
         CoopLookView::Ask(window);
+    }
+    if (shown && clear) {
         out->live = 1;
         out->shapes_n = 0;
         out->shapes = nullptr;

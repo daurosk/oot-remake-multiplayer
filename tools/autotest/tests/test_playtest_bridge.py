@@ -1578,11 +1578,11 @@ class LiveStartPlaytest(unittest.TestCase):
         return argparse.Namespace(**a)
 
     def test_off_unless_asked(self):
-        self.assertNotIn("--playtest-ports", live.runner_argv(self.args(), "ga", "gb", 1, "p", "dir"))
+        self.assertNotIn("--playtest-ports", live.runner_argv(self.args(), {"A": "ga", "B": "gb"}, 1, "p", "dir"))
 
     def test_ports_match_the_mcp_servers(self):
         for lane in (None, 1, 2):
-            argv = live.runner_argv(self.args(playtest=True, lane=lane), "ga", "gb", 1, "p", "dir")
+            argv = live.runner_argv(self.args(playtest=True, lane=lane), {"A": "ga", "B": "gb"}, 1, "p", "dir")
             base = int(argv[argv.index("--playtest-ports") + 1])
             self.assertEqual((base + 1, base + 2), (pc.port_for("p1", lane), pc.port_for("p2", lane)))
 

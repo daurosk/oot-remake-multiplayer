@@ -12,6 +12,7 @@
 
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <optional>
 #include <string>
 
@@ -170,17 +171,55 @@ public:
     static constexpr double kLostYaw = 20.0;
     static constexpr double kLostElevation = 25.0;
     static constexpr int kLostFrames = 45;
+    // While driven, the game's eye counts as blocked (a wall or a ceiling at the lens: rock, a dark frame, his
+    // tunic filling it; camera-check-2, the Bottom of the Well) when it is nearer its target than kBlockedMin
+    // metres, or than kBlockedShare of the free distance. It is clear again only kClearMargin times further (so
+    // an eye at the edge does not flip the picture back and forth).
+    static constexpr double kBlockedMin = 1.2;
+    static constexpr double kBlockedShare = 0.6;
+    static constexpr double kClearMargin = 1.1;
+    // Blocked with no clear view yet: the camera is raised this many degrees a frame, to look down over the wall,
+    // up to kLiftTo degrees above level (the game's collision still places the eye); lowered again when the eye is
+    // far enough but the view would have to tilt past straight down to put Link in the window's middle (a window
+    // off the screen's middle runs out of tilt sooner). Once a clear view has been had it comes back down,
+    // kLiftStep a frame, to the orbit's own elevation (blocked again on the way: the clear view is held).
+    static constexpr double kLiftStep = 1.5;
+    static constexpr double kLiftTo = 60.0;
+    // The free distance is kept over openings of the page while the game's target stays within this (metres) of
+    // where it was learned; further away (another scene, Link walked on), it is learned anew.
+    static constexpr double kSamePlace = 1.5;
+    // The log while the page is asked and the camera is not turned (the lane run of 2026-11-24 saw no steer line at
+    // all): the camera hook's state, said once per change after it held this many calls.
+    static constexpr int kGateCalls = 30;
+    // The view hook's frames with the page asked and no call of the camera hook: said once at this many.
+    static constexpr int kNoTurnFrames = 120;
 
     // The camera hook (the game's thread), before the camera's update: the angles to give it, or none. `state`:
     // the camera's (3 follows Link, 4 the player's; others: another camera has the view). `asked`: the picture is
     // still asked for.
     std::optional<Angles> Command(Angles now, int state, bool asked);
+    // The view hook, each frame the page is asked: counts the frames with no Command since the last one.
+    void Viewed();
+    // The camera's update is wanted (patch 0043, the wake, hos_coop_turn.h): the page is asked, the orbit wants a
+    // direction, and the camera was not given up on. Changes nothing.
+    bool WantsCamera(bool asked) const { return asked && want_.has_value() && phase_ != Phase::lost; }
     // The view hook (the game's thread): the eye and target the game's camera placed this frame.
     void Observe(const Vec3& game_eye, const Vec3& game_target);
     // The view hook: where the orbit wants the eye seen from the game's target, or none (no picture now), and how
     // far Aim's eye is from that target (for the log).
     void Want(const std::optional<Direction>& want, double aim_distance = 0.0);
-    // The furthest the game's eye was seen from its target since the probe began (0: none seen).
+    // The view hook, after Observe: the picture for this frame. Not driven (the probe, a camera that does not
+    // follow): `aim`, the orbit's own. Driven: from the game's eye (Framed), or `aim` in open ground (the eye not
+    // moved in and the camera not raised), or, when the eye is blocked, the last clear view held (its eye kept
+    // where it was beside Link, aimed at his middle). Blocked with no clear view yet: none (the page shows the flat
+    // picture, Hidden) and the camera is raised. Never `aim` while driven otherwise: it has no collision, and in a
+    // narrow place it is inside the rock.
+    std::optional<Shot> Picture(const Vec3& game_eye, const Vec3& game_target, const Shot& aim, const Subject& link,
+                                const Window& window, double fov_y = kFovY);
+    // Driven, blocked, and no clear view to hold: the page shows the flat picture (and still asks for the live
+    // one, so the camera keeps turning to find a clear view).
+    bool Hidden() const { return phase_ == Phase::drive && blocked_ && !held_; }
+    // The furthest the game's eye was seen from its target at this place (0: none seen).
     double FreeDistance() const { return free_; }
     Phase phase() const { return phase_; }
     // The game's camera turns with the orbit: its eye is the picture's.
@@ -189,9 +228,21 @@ public:
     std::optional<std::string> TakeNote();
 
 private:
+    // What the camera hook was handed while the page is asked and the camera is not turned (for the log).
+    struct Gate {
+        int state = 0;
+        bool want = false;
+        Phase phase = Phase::idle;
+        bool operator==(const Gate&) const = default;
+    };
+    std::optional<Angles> Step(Angles now, int state, bool asked);
+    void Watch(int state, bool asked);
     std::optional<Angles> Restore();
     void Lose(const std::string& why);
     std::optional<Angles> Drive();
+    void Say(std::string line);
+    // The elevation the camera is given now: the orbit's, raised by lift_ (no higher than kLiftTo).
+    double Elevation() const;
 
     Phase phase_ = Phase::idle;
     std::optional<Angles> original_;   // the camera's angles before the first turn: put back at the end
@@ -204,7 +255,14 @@ private:
     double sign_yaw_ = 1, sign_pitch_ = 1;   // the eye's turn over the camera's
     double offset_yaw_ = 0, offset_pitch_ = 0;   // eye direction = sign * camera angle + offset
     double free_ = 0, aim_distance_ = 0;         // metres
-    std::optional<std::string> note_;
+    std::optional<Vec3> free_at_;                // the game's target where free_ was learned
+    bool blocked_ = false;
+    std::optional<Vec3> held_;                   // the last clear view's eye, from Link's middle
+    double lift_ = 0;                            // degrees the camera is raised over the orbit's elevation
+    std::deque<std::string> notes_;
+    std::optional<Gate> gate_now_, gate_said_;
+    int gate_calls_ = 0;
+    int since_turn_ = 0;   // the view hook's frames since the last Command
 };
 
 // What the page shows, for the log (0.11.1: adult Link got the flat picture
@@ -214,6 +272,7 @@ enum class Showing : std::uint8_t {
     live_adult,     // the live picture, an adult Link
     flat_no_link,   // the flat one: the hook has no Link (no game, scene or place) for longer than Keep::kGapMs
     live_event,     // the live picture while our own event (a cutscene) runs: the camera still turns around him
+    flat_blocked,   // the flat one while the camera turns: its eye is blocked and it has had no clear view yet
 };
 const char* Describe(Showing showing);
 
@@ -262,13 +321,17 @@ private:
 //
 // Your own Link can be shown now (the game runs, his place is known, no
 // cutscene): the page asks for the live picture, else draws the flat one.
-bool LinkShown();
+// `clear` (when given): false while the camera's eye is blocked with no clear
+// view yet (Steer::Hidden); the page then still asks (the camera keeps
+// turning) but draws the flat picture.
+bool LinkShown(bool* clear = nullptr);
 // The menu's thread, each drawing of the live picture.
 void Ask(const Window& window);
 // hos_coop_view (the game's thread): 1 = eye and target replaced.
 bool Camera(double eye[3], double target[3]);
 // hos_coop_turn (the game's thread, patch 0040): 1 = yaw and pitch replaced. `coop_on` false (co-op switched off):
-// a camera still turned is put back once, then left alone.
+// a camera still turned is put back once, then left alone. Yaw and pitch null with state -1 (the host's wake,
+// hos_coop_turn.h): true while the Customize picture wants the camera's update (Steer::WantsCamera); nothing changes.
 bool Turn(float* yaw, float* pitch, int state, bool coop_on);
 
 }  // namespace CoopLookView

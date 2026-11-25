@@ -64,6 +64,7 @@
 #include "coop_frame_clock.h"
 #include "coop_boss_scenes.h"
 #include "coop_teleport_game.h"
+#include "coop_emote_game.h"
 #include "coop_pvp_game.h"
 #include "coop_lift_player_game.h"
 #include "coop_pvp_native_game.h"
@@ -1947,14 +1948,17 @@ public:
                         view.scene, event, view.position,
                         reading ? reading->rotation : std::nullopt,
                         reading ? reading->animation : std::nullopt, report.server_now_us);
+        // Race mode (coop/protocol/race.hpp): the world's parts run as alone, so this game owns all its enemies,
+        // bosses, drops, spawns and its clock; the players still see each other, chat and talk.
+        coop::host::Session* const world = report.connected && !report.race ? session_.get() : nullptr;
         // jitter-b: stamped with the game frame the objects were read from (coop_frame_clock.h).
-        CoopObjects::Share(system, report.connected ? session_.get() : nullptr, view.scene,
+        CoopObjects::Share(system, world, view.scene,
                            coop::host::frame_aligned_us(report.server_now_us, CoopFrameClock::PresentAgeUs()));
         CoopHud::Frame(report.connected ? session_.get() : nullptr);  // our hearts (PLAYER_LIFE)
-        CoopSpawn::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
-        CoopDrops::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
+        CoopSpawn::Frame(system, world, view.scene, report.server_now_us);
+        CoopDrops::Frame(system, world, view.scene, report.server_now_us);
         if (!reading) CoopTime::Loading(report.server_now_us);  // issue 159: a reload, a death
-        CoopTime::Frame(system, view.game ? base_ : 0, report.connected ? session_.get() : nullptr,
+        CoopTime::Frame(system, view.game ? base_ : 0, world,
                         report.server_now_us,
                         reading && reading->event_running.value_or(false),  // issue 192: no nudge in a cutscene
                         // Row 164 follow-up: our game paused (a menu in front, no event), for the host's catch-up.
@@ -1977,7 +1981,7 @@ public:
         }
         CoopBoss::Frame(system, view.game ? base_ : 0, view.scene, view.position,
                         reading && reading->event_running.value_or(false), boss_shut_in,
-                        report.connected ? session_.get() : nullptr, report.server_now_us);
+                        world, report.server_now_us);
         // /teleport <player> (docs/setup.md "Chat commands"), after the boss
         // rooms: it reads whether our boss fight runs.
         CoopTeleport::Frame(system, view.game ? base_ : 0, reading, report.connected ? session_.get() : nullptr);
@@ -1987,6 +1991,9 @@ public:
         // LICHII_COOP_SCENE_PROBE=1 only (docs/scenes.md "Free-play scene change").
         CoopSceneProbe::Frame(system, view.game ? base_ : 0, reading);
         for (auto& line : CoopTeleport::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
+        for (auto& line : CoopEmote::TakeLines()) {
             chat_.Add(std::move(line), true);
         }
         // PvP (docs/play-online.md "PvP"), after the objects and spawn syncs:
@@ -2124,6 +2131,9 @@ public:
         }
         if (CoopPvp::OnChat(text, *session_)) {
             return true;  // /pvp: the same
+        }
+        if (CoopEmote::OnChat(text, *session_)) {
+            return true;  // /wave, /here, /emote ...: the same (coop_emote.h)
         }
         if (CoopDbno::OnChat(text, *session_)) {
             return true;  // /dbno: the same

@@ -781,18 +781,20 @@ rm -rf "$kit2"
 # --- start.sh (Linux only: its checks read this PC) --------------------------------------------
 if [[ $(uname -s) == Linux ]]; then
     : >"$log"
-    OOT_COOP_SECRET=1 bash "$kit/start-squadala.sh" --no-update </dev/null >"$tmp/start1.txt" 2>&1; export CODE=$?
+    # (the problem-report address lookup (problem_report.py ADDRESS_LOOKUP) kept offline in every start below: this kit
+    # has no address, and a looked-up one makes the start ask and write logs/problem-send.json)
+    https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 OOT_COOP_SECRET=1 bash "$kit/start-squadala.sh" --no-update </dev/null >"$tmp/start1.txt" 2>&1; export CODE=$?
     check 'start: builds if needed, then starts the game in data/game' bash -c '[ $CODE -eq 0 ] && grep -q "^started $2 1 $3$" "$1"' _ "$log" "$D" "$D/game"
     check 'start: without a terminal, what it says goes to data/logs/start.log' has "$D/logs/start.log" 'start without a terminal'
     # MsgNotFound (P-parked): start.sh's own merge after build.sh (its pack step) parks the tab's files that build.sh's
     # merge left in play (from the 2nd merge on): the game is built again without the tab's code, then it starts.
     : >"$log"; rm -f "$tmp/merges"
-    FAKE_MERGE_COUNT=$tmp/merges FAKE_PARK_FROM=2 OOT_COOP_SECRET=1 bash "$kit/start-squadala.sh" --no-update </dev/null >"$tmp/startpark.txt" 2>&1; export CODE=$?
+    https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 FAKE_MERGE_COUNT=$tmp/merges FAKE_PARK_FROM=2 OOT_COOP_SECRET=1 bash "$kit/start-squadala.sh" --no-update </dev/null >"$tmp/startpark.txt" 2>&1; export CODE=$?
     check "start: the merge after the pack step parks the tab's files: the game built again without its code, then started" \
         bash -c '[ $CODE -eq 0 ] && grep -q "kept aside just now" "$1" && [ ! -e "$2" ] && grep -q "^started " "$3" && [ "$(cat "$4")" = 4 ] && [ "$(cat "$5")" = 1 ] && ! grep -q "coop-puppet/exefs/" "$6"' _ \
         "$tmp/startpark.txt" "$csn" "$log" "$tmp/merges" "$D/charsel-parked.txt" "$D/game/coop-built-from.txt"
     : >"$log"; rm -f "$tmp/merges"
-    FAKE_MERGE_COUNT=$tmp/merges FAKE_PARK_FROM=99 OOT_COOP_SECRET=1 bash "$kit/start-squadala.sh" --no-update </dev/null >"$tmp/startpark2.txt" 2>&1; export CODE=$?
+    https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 FAKE_MERGE_COUNT=$tmp/merges FAKE_PARK_FROM=99 OOT_COOP_SECRET=1 bash "$kit/start-squadala.sh" --no-update </dev/null >"$tmp/startpark2.txt" 2>&1; export CODE=$?
     check "start: put back again: the tab's code back in before the game starts (no second build round)" \
         bash -c '[ $CODE -eq 0 ] && [ -f "$1" ] && grep -q "^started " "$2" && [ "$(cat "$3")" = 2 ] && ! grep -q "just now" "$4"' _ \
         "$csn" "$log" "$tmp/merges" "$tmp/startpark2.txt"

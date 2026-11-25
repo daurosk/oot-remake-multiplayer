@@ -179,13 +179,14 @@ void DecideInGame(coop::net::Client& client) {
                  g_dir.string());
         return;
     }
-    if (TestOwnSave()) {
+    if (TestOwnSave() || client.race()) {
         g_use = false;
         g_guest = save::GuestSession{};   // (as for the host: nothing of an earlier session's ask stays)
         g_lines = save::GuestNotices{g_in_game};
         g_pending.clear();
         g_suspended = false;
-        LOG_INFO(Core, "coop: save: LICHII_COOP_TEST_OWN_SAVE: this guest keeps its own saves (a test)");
+        LOG_INFO(Core, "coop: save: {}: this guest keeps its own saves",
+                 client.race() ? "race mode" : "LICHII_COOP_TEST_OWN_SAVE (a test)");
         return;
     }
     AskAtTitle();
@@ -227,6 +228,13 @@ void SwitchFrame(coop::net::Client& client) {
         }
         g_live = g_decided && !over;   // (decided below in this frame: on from the next one)
     }
+    // Race mode (coop/protocol/race.hpp): each player plays their own save. The host's setting can come a moment
+    // after the guest chose to wait for the host's save: that wait ends, and the game stays on its own folder.
+    if (client.race() && g_use && !g_pending.empty()) {
+        g_use = false;
+        g_pending.clear();
+        LOG_INFO(Core, "coop: save: race mode: this guest keeps its own saves (no host's save asked)");
+    }
     if (!g_decided && !g_dir.empty()) {
         const bool connected = client.state() == coop::net::State::connected && client.host_number() != 0;
         auto choice = save::folder_choice(std::nullopt, true, connected, connected && client.is_host(), g_in_game);
@@ -236,8 +244,9 @@ void SwitchFrame(coop::net::Client& client) {
             PendingFrame();
             return;
         }
-        if (choice == save::FolderChoice::coop && TestOwnSave()) {
-            LOG_INFO(Core, "coop: save: LICHII_COOP_TEST_OWN_SAVE: this guest keeps its own saves (a test)");
+        if (choice == save::FolderChoice::coop && (TestOwnSave() || client.race())) {
+            LOG_INFO(Core, "coop: save: {}: this guest keeps its own saves",
+                     client.race() ? "race mode" : "LICHII_COOP_TEST_OWN_SAVE (a test)");
             choice = save::FolderChoice::own;
         }
         g_decided = true;

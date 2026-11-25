@@ -69,7 +69,9 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 # runs hold lane1.lock / lane2.lock. A module build (build-hs.lock alone) stops no lane.
 LOCK_NAMES = {"emu": "build-emu.lock", "hs": "build-hs.lock", "game": "build-game.lock", "lane1": "lane1.lock",
               "lane2": "lane2.lock"}
-LANE_LOCKS = ("lane1", "lane2")
+# Each game of a lane is a lane of its own too (a one-game live session): laneN-A.lock, laneN-B.lock.
+LOCK_NAMES.update({"lane%d-%s" % (n, x): "lane%d-%s.lock" % (n, x) for n in (1, 2) for x in "AB"})
+LANE_LOCKS = tuple(k for k in LOCK_NAMES if k.startswith("lane"))
 OLD_LOCK = "build.lock"
 # What is per player or per run in a game folder: never cached, never overwritten in a pair.
 PER_PLAYER = {"hookshot_coop.dll", "coop.ini", "coop-options.ini", "user", "save", "autotest-save", "mods",

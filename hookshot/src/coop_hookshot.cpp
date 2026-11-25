@@ -63,6 +63,7 @@
 #include "coop_actor_events.h"
 #include "coop_boss_native.h"
 #include "coop_boss_orders.h"
+#include "coop_boss_shots.h"
 #include "coop_boss_scenes.h"
 #include "coop_hallway.h"
 #include "coop_dbno_body.h"
@@ -127,6 +128,7 @@
 #include "hos_coop_nodes.h"
 #include "hos_coop_bosses.h"
 #include "hos_coop_boss_orders.h"
+#include "hos_coop_boss_shots.h"
 #include "hos_coop_pads.h"
 #include "hos_coop_save_load.h"
 #include "hos_coop_sound.h"
@@ -464,6 +466,41 @@ void SetBossOrders() {
                                               : "not wrapped in this hookshot.exe");
 }
 
+// Row 222 part 3 (coop_boss_shots.h): a copy boss's shooter gets its owner's requests, when this hookshot.exe wraps
+// the shooter's create request (patch 0044) and LICHII_COOP_BOSS_SHOTS is not 0. Asked with SetBossNative.
+void SetBossShots() {
+    const bool on = WrapIn(HOS_COOP_WRAP_SHOOTER_REQUEST) && Env("LICHII_COOP_BOSS_SHOTS") != "0";
+    CoopBossShots::Table& t = CoopBossShots::TheTable();
+    if (t.On() == on) {
+        return;
+    }
+    t.SetOn(on);
+    LOG_INFO(Core, "coop: bosses: shooter requests {} ({})", on ? "shared" : "each game's own",
+             WrapIn(HOS_COOP_WRAP_SHOOTER_REQUEST) ? (on ? "wrapped" : "wrapped, off by LICHII_COOP_BOSS_SHOTS")
+                                                   : "not wrapped in this hookshot.exe");
+}
+
+// Every 10 s while requests move: the counts (the run's lines).
+void LogBossShots() {
+    static std::uint64_t said_ms = 0;
+    static CoopBossShots::Counts said{};
+    const std::uint64_t now = SteadyMs();
+    if (now - said_ms < 10'000) {
+        return;
+    }
+    const CoopBossShots::Counts c = CoopBossShots::TheTable().GetCounts();
+    if (c.owner_kept == said.owner_kept && c.copy_skipped == said.copy_skipped && c.delivered == said.delivered &&
+        c.copy_own_ran == said.copy_own_ran && c.dropped == said.dropped && c.restarts == said.restarts &&
+        c.missed == said.missed) {
+        return;
+    }
+    said_ms = now;
+    said = c;
+    LOG_INFO(Core, "coop: bosses: shooter requests: ours sent {}; copies: {} owner's made, {} own skipped, {} own run "
+                   "before the owner's came, {} not known to our shooter, {} dropped, {} started again",
+             c.owner_kept, c.delivered, c.copy_skipped, c.copy_own_ran, c.missed, c.dropped, c.restarts);
+}
+
 // Every 10 s while orders move: the counts (the probe run's lines).
 void LogBossOrders() {
     static std::uint64_t said_ms = 0;
@@ -486,6 +523,10 @@ void LogBossOrders() {
              c.owner_kept, c.delivered, c.copy_skipped, c.copy_own_ran, c.dropped, c.restarts, c.unknown, c.replayed);
 }
 
+// Row 222: how many plugs of the action-verb wrap read as a name (the owner's variations), and how many did not.
+std::atomic<std::uint64_t> g_plug_read{0};
+std::atomic<std::uint64_t> g_plug_unread{0};
+
 // Every 10 s while a boss is synced natively: the counts (first proof lines).
 void LogBossNative() {
     static std::uint64_t said_ms = 0;
@@ -504,7 +545,11 @@ void LogBossNative() {
         c.copy_hits_to_owner == said.copy_hits_to_owner && c.copy_own_stuns == said.copy_own_stuns &&
         c.plain_wakes == said.plain_wakes && c.plain_deaths == said.plain_deaths &&
         c.action_slot_busy == said.action_slot_busy && c.action_busy_again == said.action_busy_again &&
-        c.body_deaths == said.body_deaths) {
+        c.body_deaths == said.body_deaths &&
+        c.variant_named == said.variant_named && c.variant_plain == said.variant_plain &&
+        c.variant_node_moved == said.variant_node_moved && c.variant_node_conflict == said.variant_node_conflict &&
+        c.copy_own_move == said.copy_own_move && c.owner_move_left == said.owner_move_left &&
+        c.owner_variants == said.owner_variants) {
         return;
     }
     said_ms = now;
@@ -514,11 +559,16 @@ void LogBossNative() {
                    "{} hits that took life left to the owner), "
                    "{} own minions not made; {} own Life steps held at 1, {} let die after the owner's, {} ended in their death; "
                    "plain enemies: {} own other phases told, {} own wakes run, {} deaths begun; {} boss bodies dead before the outro; "
-                   "owner's brain verbs given to copies {} ({} the copy was in already)",
+                   "owner's brain verbs given to copies {} ({} the copy was in already); variations put in: {} named, {} "
+                   "plain, {} not known, {} past the name pools; {} through another node (the move's chose another "
+                   "variation), {} with no such node left (row 222); {} own asks of the owner's move run ({} renamed to its "
+                   "variation), {} owner's repeats left out; owner's variations kept {} (plug names read {}, not read {})",
              c.owner_brain, c.owner_action, c.plug_actions, c.copy_skipped, c.brain_applied, c.action_applied,
              c.action_waiting, c.action_slot_busy, c.action_busy_again, c.copy_own_run, c.copy_own_late, c.copy_shot_hits, c.copy_own_stuns, c.copy_hits_to_owner, c.minions_stopped, c.copy_life_held,
              c.copy_killed, c.copy_finished, c.plain_wants, c.plain_wakes, c.plain_deaths, c.body_deaths, c.brain_came,
-             c.brain_already);
+             c.brain_already, c.variant_named, c.variant_plain, c.variant_unknown, c.variant_pool_full,
+             c.variant_node_moved, c.variant_node_conflict, c.copy_own_move, c.own_move_renamed, c.owner_move_left, c.owner_variants, g_plug_read.load(),
+             g_plug_unread.load());
 }
 
 // ---- Name tags on the game's own balloons (coop_native_tags.h, B3 of reports/ui-audit-01112.md), at the frame hook.
@@ -1776,6 +1826,7 @@ void Frame(void* ctx, int site) {
         NativeTags(ctx);            // the name tags on the game's balloons (coop_native_tags.h)
         LogBossNative();
         LogBossOrders();
+        LogBossShots();
         CoopMapPage::Frame(ctx, g_api);   // the Map page's panes, found once while the game plays
         if (const auto menu = CoopMapPage::MenuState()) {  // minimap-b: the drop log's menu state (patch 0018)
             coop::host::map_drop_log().set_menu(menu->menu_open, menu->map_page);
@@ -1809,6 +1860,7 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         g_world_wraps.store(level.wraps);
         SetBossNative();
         SetBossOrders();
+        SetBossShots();
         if (g_world_version.exchange(level.version) != level.version) {
             LOG_INFO(Core, "coop: world hooks: hookshot.exe has level {} (this module {}), wraps {:#x}{}", level.version,
                      HOS_COOP_WORLD_VERSION, level.wraps,
@@ -2233,6 +2285,40 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
         x[0] = 1;
         return 1;
     }
+    if (id == HOS_COOP_WRAP_SHOOTER_REQUEST) {
+        // Row 222 part 3: a shooter is asked to prepare a shootable (x0 the shooter, w1 its name hash, w2 how many).
+        // A copy boss's own request is skipped once its owner's list has come (1: the function does not run; x0 1,
+        // its answer for a shootable it found); our own boss's is kept after it ran and found one (phase 1: x0).
+        // Both phases on the same game thread, one after the other.
+        struct Asked {
+            std::uint64_t shooter = 0;
+            std::uint32_t hash = 0;
+            std::uint32_t num = 0;
+            bool own_call = false;
+            bool on = false;
+        };
+        thread_local Asked asked;
+        CoopBossShots::Table& t = CoopBossShots::TheTable();
+        const CoopBossShots::Reader read = [](std::uint64_t a, void* out, std::size_t n) {
+            return CoopRuntime::Read(a, out, n);
+        };
+        if (phase == 0) {
+            asked = {x[0], static_cast<std::uint32_t>(x[1]), static_cast<std::uint32_t>(x[2]), t_own_call, t.On()};
+            if (!asked.on) {
+                return 0;
+            }
+            if (!t.OnRequest(asked.shooter, asked.hash, asked.num, asked.own_call, read)) {
+                return 0;
+            }
+            asked.on = false;
+            x[0] = 1;
+            return 1;
+        }
+        if (std::exchange(asked.on, false)) {
+            t.OnRan(asked.shooter, asked.hash, asked.num, (x[0] & 0xffffffffu) != 0, asked.own_call, read);
+        }
+        return 0;
+    }
     if (id == HOS_COOP_WRAP_ACTION_VERB && phase == 0) {
         // Native boss sync: a boss's action verb request (x0 BSA, x1 the request in guest memory).
         CoopBossNative::Table& t = CoopBossNative::TheTable();
@@ -2253,7 +2339,28 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
         if (!t.ActionsOn()) {
             return 0;
         }
-        if (!t.OnActionVerb(x[0], r, (x[2] & 1) != 0, t_own_call)) {
+        // Row 222 part 2: the plug's name, the move's variation ('Ice', a feint, ...), kept by an owner to send.
+        std::optional<std::string> plug_name;
+        if (r[CoopBossNative::addr::kReqHasPlug] == 1) {
+            std::uint64_t plug = 0;
+            std::memcpy(&plug, r.data() + CoopBossNative::addr::kReqPlug, sizeof plug);
+            plug_name = CoopBossNative::VariantName(
+                [](std::uint64_t a, void* out, std::size_t n) { return CoopRuntime::Read(a, out, n); }, plug);
+            if (plug_name) {
+                g_plug_read.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                g_plug_unread.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        std::optional<CoopBossNative::Request> renamed;
+        if (!t.OnActionVerb(x[0], r, (x[2] & 1) != 0, t_own_call, std::move(plug_name), &renamed)) {
+            if (renamed) {
+                // Row 222: a copy's own ask of the owner's move, run with the owner's variation: its plug and
+                // has-plug set before the game reads the request (0x38..0x40).
+                CoopRuntime::Write(x[1] + CoopBossNative::addr::kReqPlug,
+                                   renamed->data() + CoopBossNative::addr::kReqPlug,
+                                   CoopBossNative::addr::kReqHasPlug + 1 - CoopBossNative::addr::kReqPlug);
+            }
             return 0;
         }
         // Skipped: the result its callers pass up is what the game gives for a request it took (0, its main path

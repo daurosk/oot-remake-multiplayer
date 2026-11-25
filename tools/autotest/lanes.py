@@ -347,12 +347,30 @@ def blockers(root, alive=hs.pid_alive, now=None):
     return out
 
 
-def lock_acquire(n, owner, wait=0.0, root=None, say=print, sleep=time.sleep, clock=time.time, pid=0, check=None):
-    """Takes laneN.lock FIRST, then looks for a game build; blocked: lets it go again and retries. A game build takes
-    build-game.lock first, then looks for lane locks (hs.build), so of the two one always sees the other."""
+def lock_name(n, game=None):
+    """laneN (the pair) or laneN-A / laneN-B (one game of it, a lane of its own)."""
+    return "lane%d" % n if not game else "lane%d-%s" % (n, game)
+
+
+def overlaps(root, n, game=None, alive=hs.pid_alive):
+    """The live locks that share a game with lock_name(n, game): a pair and its games exclude each other, A and B
+    do not."""
+    out = []
+    for name in ([lock_name(n)] if game else [lock_name(n, x) for x in "AB"]):
+        p = os.path.join(root, hs.LOCK_NAMES[name])
+        if os.path.isdir(p) and not hs.lock_stale(p, alive=alive):
+            out.append("%s (%s)" % (hs.LOCK_NAMES[name], hs.lock_info(p).get("owner", "?")))
+    return out
+
+
+def lock_acquire(n, owner, wait=0.0, root=None, say=print, sleep=time.sleep, clock=time.time, pid=0, check=None,
+                 game=None):
+    """Takes laneN.lock (laneN-A/B.lock for one game) FIRST, then looks for a game build and for a lock that shares a
+    game; blocked: lets it go again and retries. A game build takes build-game.lock first, then looks for lane locks
+    (hs.build), so of the two one always sees the other; the same holds for a pair and one of its games."""
     root = root or hs.main_root(REPO)
-    check = check or blockers
-    name = "lane%d" % n
+    check = check or (lambda r: blockers(r) + overlaps(r, n, game))
+    name = lock_name(n, game)
     end = clock() + wait
     while True:
         b = []
@@ -363,7 +381,7 @@ def lock_acquire(n, owner, wait=0.0, root=None, say=print, sleep=time.sleep, clo
                 return True
             hs.lock_release(root, name, owner, say=lambda *_: None)
         if clock() >= end:
-            say("lane %d: not free: %s" % (n, "; ".join(b) if b else "lane%d.lock is held" % n))
+            say("lane %d: not free: %s" % (n, "; ".join(b) if b else "%s.lock is held" % name))
             return False
         sleep(min(10.0, max(0.1, end - clock())))
 
@@ -432,10 +450,13 @@ def main(argv=None):
             b = blockers(root)
             print("blocking every lane: %s" % ("; ".join(b) if b else "nothing"))
             for x in which:
-                p = os.path.join(root, hs.LOCK_NAMES["lane%d" % x])
-                info = hs.lock_info(p) if os.path.isdir(p) else {}
-                print("lane %d: %s" % (x, "held by %s since %s" % (info.get("owner", "?"), hs.fmt_time(info.get("time")))
-                                       if os.path.isdir(p) else "free"))
+                for g in (None, "A", "B"):
+                    p = os.path.join(root, hs.LOCK_NAMES[lock_name(x, g)])
+                    info = hs.lock_info(p) if os.path.isdir(p) else {}
+                    if g and not info:
+                        continue   # (a free game of a lane: the pair's line says it)
+                    print("lane %d%s: %s" % (x, "-" + g if g else "", "held by %s since %s" % (
+                        info.get("owner", "?"), hs.fmt_time(info.get("time"))) if os.path.isdir(p) else "free"))
             return 0
         if not a.lane:
             raise Fail("--lane N")

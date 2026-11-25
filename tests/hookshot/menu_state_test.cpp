@@ -4,7 +4,6 @@
 
 #include <string>
 
-#include "coop_char_colours.h"
 #include "coop_look_menu.h"
 #include "coop_menu_state.h"
 
@@ -61,6 +60,7 @@ TEST_CASE("menu state: a character's Customize screen gives its model's own rows
     const auto s = FromDriver(d, true, true);
     const auto j = Json(Tab{}, s);
     CHECK(Has(j, "\"customize_screen\":{\"open\":true,\"driven\":true,"));
+    CHECK(Has(j, "\"page_no\":1,\"pages\":1"));
     CHECK(Has(j, "{\"option\":0,\"label\":\"Hair Colour\","));
     CHECK(Has(j, "{\"option\":1,\"label\":\"Eye Colour\","));
     CHECK(Has(j, "\"focused\":0,\"focused_label\":\"Hair Colour\""));

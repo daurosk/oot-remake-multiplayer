@@ -32,7 +32,9 @@
 #include "hos_coop_nodes.h"
 #include "hos_coop_bosses.h"
 #include "hos_coop_boss_orders.h"
+#include "hos_coop_boss_shots.h"
 #include "coop_boss_orders.h"
+#include "coop_boss_shots.h"
 #include "coop_svc.h"
 
 namespace {
@@ -1132,6 +1134,32 @@ TEST_CASE("hookshot: the boss orders wrap (patch 0036) is one row in 0005's tabl
     CHECK(module.find("t.OnReceive(x[0], actor, type, payload, t_own_call)") != std::string::npos);
     CHECK(module.find("WrapIn(HOS_COOP_WRAP_BOSS_ORDER) && Env(\"LICHII_COOP_BOSS_ORDERS\") != \"0\"") !=
           std::string::npos);
+}
+
+TEST_CASE("hookshot: the boss shots wrap (patch 0044) is one row at the table's end, its header hookshot/src's") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0044-coop-boss-shots-wrap.patch");
+    CHECK(NewFile(patch, "host/hos_coop_boss_shots.h") ==
+          ReadFile(kRepo / "hookshot" / "src" / "hos_coop_boss_shots.h"));
+    // The function's first words (build e0f3ccfa): a leaf, tst w2, #0xff; b.eq; cbz w1; ldr w9, [x0, #0x2c].
+    char row[160];
+    std::snprintf(row, sizeof row, "+    (%u, 0x%llx, (0x72001c5f, 0x54000260, 0x34000241, 0xb9402c09)),",
+                  HOS_COOP_WRAP_SHOOTER_REQUEST, static_cast<unsigned long long>(CoopBossShots::addr::kRequestCreate));
+    CHECK_MESSAGE(patch.find(row) != std::string::npos, row);
+    // Free in the one wrap space (0005: 1-3, 0013: 4-5, 0024: 6-9, 0036: 10, 0010: 16-23, 0014: 24, 0041: 25,
+    // 0042: 26-27).
+    CHECK(HOS_COOP_WRAP_SHOOTER_REQUEST == HOS_COOP_WRAP_BOSS_ORDER + 1);
+    CHECK(HOS_COOP_WRAP_SHOOTER_REQUEST < 16);
+    // After 0042's last row, at the table's end.
+    CHECK(patch.find("     (27, 0x377a990,") != std::string::npos);
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("if (id == HOS_COOP_WRAP_SHOOTER_REQUEST) {") != std::string::npos);
+    CHECK(module.find("t.OnRequest(asked.shooter, asked.hash, asked.num, asked.own_call, read)") != std::string::npos);
+    CHECK(module.find("t.OnRan(asked.shooter, asked.hash, asked.num, (x[0] & 0xffffffffu) != 0, asked.own_call, read)") !=
+          std::string::npos);
+    CHECK(module.find("WrapIn(HOS_COOP_WRAP_SHOOTER_REQUEST) && Env(\"LICHII_COOP_BOSS_SHOTS\") != \"0\"") !=
+          std::string::npos);
+    // The copy's requests are made before the boss table's put-ins of the owner's moves.
+    CHECK(CoopBossShots::Table::kCallerOrder < CoopCallerOrders::kBossTable);
 }
 
 TEST_CASE("hookshot: on Linux the exe exports every function the module finds in it by name") {

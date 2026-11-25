@@ -64,6 +64,7 @@
 #include "coop_actor_events.h"
 #include "coop_boss_native.h"
 #include "coop_boss_orders.h"
+#include "coop_boss_shots.h"
 #include "coop_difficulty.h"
 #include "coop_puppet.h"
 #include "coop_pvp.h"
@@ -2096,6 +2097,7 @@ public:
                     bosses.Publish({});
                 }
                 CoopBossOrders::TheTable().Publish({});  // row 222: no owner or copy: our managers decide again
+                CoopBossShots::TheTable().Publish({});   // part 3: nor a shooter of ours to watch
                 sharing_ = false;
             }
             if (CoopWorldSnapshot::TheStore().Enabled() && scene && !scene->empty() && Ready(system)) {
@@ -2182,6 +2184,13 @@ public:
                                       std::uint64_t result, std::uint64_t) {
                                        return CoopBossNative::TheTable().Step(guest, after_call, result,
                                                                               TheBossMain().load());
+                                   });
+                // Row 222 part 3: the owner's shooter requests made on our copies (coop_boss_shots.h).
+                CoopSvc::AddCaller(CoopBossShots::Table::kCallerOrder,
+                                   [](CoopPuppet::Guest& guest, bool after_call,
+                                      std::uint64_t result, std::uint64_t) {
+                                       return CoopBossShots::TheTable().Step(guest, after_call, result,
+                                                                             TheBossMain().load());
                                    });
                 // Row 222: the owner's battle manager orders put into our copies (coop_boss_orders.h).
                 CoopSvc::AddCaller(CoopBossOrders::Table::kCallerOrder,
@@ -2473,6 +2482,25 @@ public:
                     orders.Receive(address, state);
                 }
                 for (const std::string& note : orders.TakeNotes()) {
+                    LOG_INFO(Core, "coop: bosses: {}", note);
+                }
+            }
+            // Row 222 part 3 (coop_boss_shots.h): the same bosses for their shooter requests, then the owner's.
+            CoopBossShots::Table& shots = CoopBossShots::TheTable();
+            if (shots.On()) {
+                std::vector<CoopBossShots::Member> members;
+                members.reserve(list.size());
+                for (const CoopBossNative::Boss& b : list) {
+                    members.push_back({b.actor,
+                                       b.role == CoopBossNative::Role::owner ? CoopBossShots::Role::owner
+                                                                             : CoopBossShots::Role::copy,
+                                       b.owner, b.name});
+                }
+                shots.Publish(members);
+                for (const auto& [address, state] : sync_.BossShotsIn()) {
+                    shots.Receive(address, state);
+                }
+                for (const std::string& note : shots.TakeNotes()) {
                     LOG_INFO(Core, "coop: bosses: {}", note);
                 }
             }
@@ -3565,6 +3593,7 @@ private:
             pvp_watch_.Reset();
             CoopProjectiles::TheOwnShots().Reset();
             CoopBossOrders::TheTable().Reset();  // row 222: its block and nodes were the old game's
+            CoopBossShots::TheTable().Reset();   // part 3: its bosses and shooters too
             extras_.Reset();  // difficulty: that run's extra enemies are gone with it
             horde_.Reset();
             {
@@ -4809,6 +4838,7 @@ private:
                     }
                     s.bsa = CoopBossNative::TheTable().OwnerState(a, &s.variants);
                     s.orders = CoopBossOrders::TheTable().OwnerOrders(a);  // row 222: its manager's orders, ours
+                    s.shots = CoopBossShots::TheTable().OwnerShots(a);     // part 3: its shooter requests, ours
                     if (own_hit_life) {
                         s.hit_at = NewOwnHitAt(r, a, *own_hit_life, s.position, own_hit_took_life);
                     } else if (CoopBossNative::TheTable().OwnShotNear(s.position)) {

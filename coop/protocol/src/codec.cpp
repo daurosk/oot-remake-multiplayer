@@ -689,6 +689,14 @@ Error check_object_state(const ObjectState& s) {
       before = v.seq;
     }
   }
+  if (s.shots) {
+    if (s.shots->recent.size() > kMaxBossShots) return Error::bad_value;
+    std::uint32_t before = 0;
+    for (const BossShot& b : s.shots->recent) {
+      if (b.seq == 0 || b.seq <= before || b.seq > s.shots->seq || b.hash == 0 || b.num == 0) return Error::bad_value;
+      before = b.seq;
+    }
+  }
   if (s.orders) {
     if (s.orders->recent.size() > kMaxBossOrders) return Error::bad_value;
     std::uint32_t before = 0;
@@ -842,6 +850,17 @@ void write_object_state(const ObjectState& s, Writer& w) {
           }
         }
         w.u32(v.kind);  // (row 222: the ask's place kind)
+      }
+    });
+  }
+  if (s.shots) {
+    component(ObjectComponent::shots, [&] {
+      w.u32(s.shots->seq);
+      w.u8(static_cast<std::uint8_t>(s.shots->recent.size()));
+      for (const BossShot& b : s.shots->recent) {
+        w.u32(b.seq);
+        w.u32(b.hash);
+        w.u8(b.num);
       }
     });
   }
@@ -1586,6 +1605,25 @@ Error decode_component(ObjectComponent id, Reader& c, ObjectState& s, bool& know
         if (o.seq == 0 || o.seq <= before || o.seq > b.seq) return Error::bad_value;
         before = o.seq;
         for (std::uint8_t& byte : o.payload) COOP_READ(c.u8(byte));
+      }
+      return Error::none;
+    }
+    case ObjectComponent::shots: {
+      BossShots& b = s.shots.emplace();
+      std::uint8_t count = 0;
+      COOP_READ(c.u32(b.seq));
+      COOP_READ(c.u8(count));
+      if (count > kMaxBossShots) return Error::bad_value;
+      std::uint32_t before = 0;
+      for (std::uint8_t i = 0; i < count; ++i) {
+        BossShot& shot = b.recent.emplace_back();
+        COOP_READ(c.u32(shot.seq));
+        COOP_READ(c.u32(shot.hash));
+        COOP_READ(c.u8(shot.num));
+        if (shot.seq == 0 || shot.seq <= before || shot.seq > b.seq || shot.hash == 0 || shot.num == 0) {
+          return Error::bad_value;
+        }
+        before = shot.seq;
       }
       return Error::none;
     }

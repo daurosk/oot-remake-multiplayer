@@ -63,6 +63,7 @@
 #include "coop_actor_events.h"
 #include "coop_boss_native.h"
 #include "coop_boss_orders.h"
+#include "coop_boss_shots.h"
 #include "coop_boss_scenes.h"
 #include "coop_hallway.h"
 #include "coop_dbno_body.h"
@@ -127,6 +128,7 @@
 #include "hos_coop_nodes.h"
 #include "hos_coop_bosses.h"
 #include "hos_coop_boss_orders.h"
+#include "hos_coop_boss_shots.h"
 #include "hos_coop_pads.h"
 #include "hos_coop_save_load.h"
 #include "hos_coop_sound.h"
@@ -462,6 +464,41 @@ void SetBossOrders() {
     LOG_INFO(Core, "coop: bosses: battle manager orders {} ({})", on ? "shared" : "each game's own",
              WrapIn(HOS_COOP_WRAP_BOSS_ORDER) ? (on ? "wrapped" : "wrapped, off by LICHII_COOP_BOSS_ORDERS")
                                               : "not wrapped in this hookshot.exe");
+}
+
+// Row 222 part 3 (coop_boss_shots.h): a copy boss's shooter gets its owner's requests, when this hookshot.exe wraps
+// the shooter's create request (patch 0044) and LICHII_COOP_BOSS_SHOTS is not 0. Asked with SetBossNative.
+void SetBossShots() {
+    const bool on = WrapIn(HOS_COOP_WRAP_SHOOTER_REQUEST) && Env("LICHII_COOP_BOSS_SHOTS") != "0";
+    CoopBossShots::Table& t = CoopBossShots::TheTable();
+    if (t.On() == on) {
+        return;
+    }
+    t.SetOn(on);
+    LOG_INFO(Core, "coop: bosses: shooter requests {} ({})", on ? "shared" : "each game's own",
+             WrapIn(HOS_COOP_WRAP_SHOOTER_REQUEST) ? (on ? "wrapped" : "wrapped, off by LICHII_COOP_BOSS_SHOTS")
+                                                   : "not wrapped in this hookshot.exe");
+}
+
+// Every 10 s while requests move: the counts (the run's lines).
+void LogBossShots() {
+    static std::uint64_t said_ms = 0;
+    static CoopBossShots::Counts said{};
+    const std::uint64_t now = SteadyMs();
+    if (now - said_ms < 10'000) {
+        return;
+    }
+    const CoopBossShots::Counts c = CoopBossShots::TheTable().GetCounts();
+    if (c.owner_kept == said.owner_kept && c.copy_skipped == said.copy_skipped && c.delivered == said.delivered &&
+        c.copy_own_ran == said.copy_own_ran && c.dropped == said.dropped && c.restarts == said.restarts &&
+        c.missed == said.missed) {
+        return;
+    }
+    said_ms = now;
+    said = c;
+    LOG_INFO(Core, "coop: bosses: shooter requests: ours sent {}; copies: {} owner's made, {} own skipped, {} own run "
+                   "before the owner's came, {} not known to our shooter, {} dropped, {} started again",
+             c.owner_kept, c.delivered, c.copy_skipped, c.copy_own_ran, c.missed, c.dropped, c.restarts);
 }
 
 // Every 10 s while orders move: the counts (the probe run's lines).
@@ -1789,6 +1826,7 @@ void Frame(void* ctx, int site) {
         NativeTags(ctx);            // the name tags on the game's balloons (coop_native_tags.h)
         LogBossNative();
         LogBossOrders();
+        LogBossShots();
         CoopMapPage::Frame(ctx, g_api);   // the Map page's panes, found once while the game plays
         if (const auto menu = CoopMapPage::MenuState()) {  // minimap-b: the drop log's menu state (patch 0018)
             coop::host::map_drop_log().set_menu(menu->menu_open, menu->map_page);
@@ -1822,6 +1860,7 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         g_world_wraps.store(level.wraps);
         SetBossNative();
         SetBossOrders();
+        SetBossShots();
         if (g_world_version.exchange(level.version) != level.version) {
             LOG_INFO(Core, "coop: world hooks: hookshot.exe has level {} (this module {}), wraps {:#x}{}", level.version,
                      HOS_COOP_WORLD_VERSION, level.wraps,
@@ -2245,6 +2284,40 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
         }
         x[0] = 1;
         return 1;
+    }
+    if (id == HOS_COOP_WRAP_SHOOTER_REQUEST) {
+        // Row 222 part 3: a shooter is asked to prepare a shootable (x0 the shooter, w1 its name hash, w2 how many).
+        // A copy boss's own request is skipped once its owner's list has come (1: the function does not run; x0 1,
+        // its answer for a shootable it found); our own boss's is kept after it ran and found one (phase 1: x0).
+        // Both phases on the same game thread, one after the other.
+        struct Asked {
+            std::uint64_t shooter = 0;
+            std::uint32_t hash = 0;
+            std::uint32_t num = 0;
+            bool own_call = false;
+            bool on = false;
+        };
+        thread_local Asked asked;
+        CoopBossShots::Table& t = CoopBossShots::TheTable();
+        const CoopBossShots::Reader read = [](std::uint64_t a, void* out, std::size_t n) {
+            return CoopRuntime::Read(a, out, n);
+        };
+        if (phase == 0) {
+            asked = {x[0], static_cast<std::uint32_t>(x[1]), static_cast<std::uint32_t>(x[2]), t_own_call, t.On()};
+            if (!asked.on) {
+                return 0;
+            }
+            if (!t.OnRequest(asked.shooter, asked.hash, asked.num, asked.own_call, read)) {
+                return 0;
+            }
+            asked.on = false;
+            x[0] = 1;
+            return 1;
+        }
+        if (std::exchange(asked.on, false)) {
+            t.OnRan(asked.shooter, asked.hash, asked.num, (x[0] & 0xffffffffu) != 0, asked.own_call, read);
+        }
+        return 0;
     }
     if (id == HOS_COOP_WRAP_ACTION_VERB && phase == 0) {
         // Native boss sync: a boss's action verb request (x0 BSA, x1 the request in guest memory).

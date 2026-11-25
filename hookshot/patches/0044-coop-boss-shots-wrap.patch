@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Tue, 24 Nov 2026 02:00:00 -0600
+Subject: [PATCH] Co-op boss shots wrap: a boss's shooter create requests to
+ the module
+
+One more wrapped game function in patch 0005's table
+(nx2/coop_world_wraps.py WRAPS; its id in host/hos_coop_boss_shots.h), for
+oot-remake-multiplayer's row 222 (docs/dungeons-boss.md "Shooter
+requests"):
+- 11: main+0x374d20, the shooter's create request (shooter, shootable name
+  hash, how many). The attack sequences' start step
+  ActionSeqProcShootableActorCreate (main+0x746b48), the AI node
+  OneShotShooterRequestCreateShootableActors (main+0x293ff98) and the
+  shooter itself (main+0x378754) call it; it prepares the bullet a ranged
+  attack throws.
+Only the game whose own AI entered the attack ran it, so another game's
+copy of the boss played the move with no bullet, or another variation's.
+The owner's game runs it and the module sends each request; the other
+games' copies make the same requests through the same function, whose own
+calls for that boss the module skips there (phase 0 answers 1). Any other
+shooter's requests run untouched. Nothing else changes: the wrap machinery,
+the checks (build id, first words) and the hello's bits are 0005's.
+---
+ host/hos_coop_boss_shots.h | 21 +++++++++++++++++++++
+ nx2/coop_world_wraps.py    |  5 +++++
+ 2 files changed, 26 insertions(+)
+ create mode 100644 host/hos_coop_boss_shots.h
+
+diff --git a/host/hos_coop_boss_shots.h b/host/hos_coop_boss_shots.h
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/host/hos_coop_boss_shots.h
+@@ -0,0 +1,21 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later
++   A boss's shooter requests, on Hookshot (oot-remake-multiplayer, docs/dungeons-boss.md "Shooter requests").
++
++   One wrapped game function more in the one wrap table (patch 0005's nx2/coop_world_wraps.py WRAPS; the ids are in
++   the one wrap space of hos_coop_world.h). Patch 0044 adds its row and this file (Hookshot's host/hos_coop_boss_shots.h
++   is the same file). The module's hos_coop_wrap gets it; Hookshot announces it in HOS_COOP_WORLD_HELLO's bits. The row:
++     (11, 0x374d20, (0x72001c5f, 0x54000260, 0x34000241, 0xb9402c09)),  # tst w2, #0xff; b.eq; cbz w1; ldr w9, [x0, #0x2c]
++   Phase 0 may return 1 (skip); the module then sets x0 to 1, the function's answer for a shootable it found. Phase 1
++   has its answer in x0. Plain C. */
++#ifndef HOS_COOP_BOSS_SHOTS_H
++#define HOS_COOP_BOSS_SHOTS_H
++
++/* main+0x374d20, the shooter's create request: x0 the shooter (an actor's component, [[actor+0x270]+0x3d8]), w1 the
++   shootable's name hash, w2 how many (the low byte). It finds the shootable in the shooter's table (+0x20, 0x38-byte
++   entries, count at +0x2c) and raises its asked count (entry+0x34, up to entry+8); returns 1 when found, else 0. A
++   leaf with no frame. Its callers: the attack sequences' start step game__bsa__ActionSeqProcShootableActorCreate
++   (main+0x746b48), the AI node OneShotShooterRequestCreateShootableActors (main+0x293ff98) and the shooter itself
++   (main+0x378754). It prepares the bullet a ranged attack throws. */
++#define HOS_COOP_WRAP_SHOOTER_REQUEST 11u
++
++#endif
+diff --git a/nx2/coop_world_wraps.py b/nx2/coop_world_wraps.py
+index 0000000..0000000 100644
+--- a/nx2/coop_world_wraps.py
++++ b/nx2/coop_world_wraps.py
+@@ -63,6 +63,11 @@ WRAPS = (
+     # HOS_COOP_WRAP_PANE_ALIAS (patch 0042): the set-text of each pane of a layout with a matching alias (x0 the
+     # pane, x1 a reference {+0 the text, +8 its length}). For the play-test bridge only, reads only
+     (27, 0x377a990, (0xd503237f, 0xa9bc7bfd, 0xf9000bf7, 0xa90257f6)),  # pacibsp; stp x29, x30; str x23; stp x22, x21
++    # HOS_COOP_WRAP_SHOOTER_REQUEST (patch 0044): the shooter's create request (x0 the shooter, w1 the shootable's
++    # name hash, w2 how many): it prepares the bullet a ranged attack throws. A leaf with no frame; returns 1 when
++    # the shootable was found. The owner's game sends its boss's requests; the others' copies make them through
++    # this same function and skip their own boss's (phase 0 answers 1; phase 1 has the function's answer)
++    (11, 0x374d20, (0x72001c5f, 0x54000260, 0x34000241, 0xb9402c09)),  # tst w2, #0xff; b.eq; cbz w1; ldr w9, [x0, #0x2c]
+ )
+ 
+ 
+-- 
+2.56.0.windows.4
+

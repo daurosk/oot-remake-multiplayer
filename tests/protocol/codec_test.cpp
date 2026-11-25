@@ -1307,6 +1307,64 @@ TEST_CASE("component 24 carries a named ask's places (row 222: Twinrova's 'Ice' 
   CHECK(encode(s, out) == Error::bad_value);
 }
 
+TEST_CASE("object samples carry the owner's boss shooter requests, component 25 (row 222 part 3, no bump)") {
+  CHECK(static_cast<int>(ObjectComponent::shots) == 25);
+  ObjectSample s{0, test::kPlacedId, 3, {}};
+  s.state.time = {100, 1};
+  s.state.shots = BossShots{9, {BossShot{7, 0x1234abcd, 0xff}, BossShot{9, 0x89d661eb, 2}}};
+  const Bytes bytes = must_encode(s);
+  Message back;
+  REQUIRE(decode(bytes, back) == Error::none);
+  CHECK(std::get<ObjectSample>(back) == s);
+  // None yet (an owner that shares them, before its first request): seq 0, an empty list.
+  s.state.shots = BossShots{0, {}};
+  REQUIRE(decode(must_encode(s), back) == Error::none);
+  CHECK(std::get<ObjectSample>(back) == s);
+  // An older build (no component 25) skips it by its length and reads the rest.
+  s.state.shots = BossShots{9, {BossShot{9, 0x89d661eb, 2}}};
+  ObjectSample older = s;
+  older.state.shots.reset();
+  Bytes raw = must_encode(s);
+  const Bytes without = must_encode(older);
+  bool patched = false;
+  for (std::size_t i = 0; i + 1 < raw.size(); ++i) {
+    if (raw[i] == 25 && raw[i + 1] == 0 && raw.size() > without.size()) {
+      Bytes probe = raw;
+      probe[i] = 30;  // an id no build knows yet
+      Message m;
+      if (decode(probe, m) == Error::none && std::get<ObjectSample>(m) == older) {
+        patched = true;
+        break;
+      }
+    }
+  }
+  CHECK(patched);
+  REQUIRE(decode(without, back) == Error::none);
+  CHECK_FALSE(std::get<ObjectSample>(back).state.shots);
+  // Refused: a seq of 0 or not rising or above the newest, a hash or a count of 0 (the game's function does
+  // nothing for those), more than the limit.
+  Bytes out;
+  s.state.shots = BossShots{9, {BossShot{0, 1, 1}}};
+  CHECK(encode(s, out) == Error::bad_value);
+  s.state.shots = BossShots{9, {BossShot{5, 1, 1}, BossShot{5, 1, 1}}};
+  CHECK(encode(s, out) == Error::bad_value);
+  s.state.shots = BossShots{4, {BossShot{5, 1, 1}}};
+  CHECK(encode(s, out) == Error::bad_value);
+  s.state.shots = BossShots{5, {BossShot{5, 0, 1}}};
+  CHECK(encode(s, out) == Error::bad_value);
+  s.state.shots = BossShots{5, {BossShot{5, 1, 0}}};
+  CHECK(encode(s, out) == Error::bad_value);
+  s.state.shots = BossShots{static_cast<std::uint32_t>(kMaxBossShots + 1), {}};
+  for (std::size_t i = 0; i <= kMaxBossShots; ++i) {
+    s.state.shots->recent.push_back(BossShot{static_cast<std::uint32_t>(i + 1), 1, 1});
+  }
+  CHECK(encode(s, out) == Error::bad_value);
+  s.state.shots = BossShots{1, {}};
+  raw = must_encode(s);
+  raw.back() = static_cast<std::uint8_t>(kMaxBossShots + 1);
+  CHECK(decode_bytes(raw) == Error::bad_value);
+}
+
 TEST_CASE("object id layout on the wire") {
   const Bytes b = must_encode(ObjectOwner{test::kMadeId, 2, 0x0102, 0x0a0b0c0d});
   REQUIRE(b.size() == kHeaderSize + 10 + 1 + 2 + 4);

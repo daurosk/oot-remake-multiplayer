@@ -20,6 +20,7 @@ inline constexpr int kMover = 30;         // the objects' mover (coop_objects.cp
 inline constexpr int kDrops = 40;         // drops, after the mover (coop_drops.cpp)
 inline constexpr int kGrass = 41;         // the others' field grass cuts (coop_objects.cpp, coop_world.h)
 inline constexpr int kTime = 42;          // the clock, after the objects (coop_time.cpp)
+inline constexpr int kBossShots = 43;     // row 222 part 3: the owner's shooter requests, before its moves (coop_boss_shots.h)
 inline constexpr int kSwitchStand = 44;  // ai-switches: another player on our step switch (coop_lift_ride.h)
 inline constexpr int kBossTable = 45;     // after the drops, before the boss rooms (coop_boss_native.h)
 inline constexpr int kBossOrders = 46;    // row 222: the owner's battle manager orders into our copies (coop_boss_orders.h)
@@ -41,7 +42,7 @@ inline constexpr int kKeptShield = 69;    // row 160 (b): kept kills' copies hel
 inline constexpr int kLifeGauge = 70;     // row 238: HUD gauges refreshed after co-op life writes (coop_life_gauge.h)
 
 inline constexpr std::array kAll{kSpawn,     kShotReflect, kFairy,       kMover,     kDrops,   kGrass,        kTime,
-                                 kSwitchStand, kBossTable, kBossOrders, kLiftRide,    kDbnoBody,  kSwitchShare, kBossRooms, kEventResult, kEyeSwitch,
+                                 kBossShots, kSwitchStand, kBossTable, kBossOrders, kLiftRide,    kDbnoBody,  kSwitchShare, kBossRooms, kEventResult, kEyeSwitch,
                                  kLiveEvents, kTeleportEvent, kScrubs, kCounters, kStory,      kOcarinaEquip, kPvpShield,
                                  kTestDress, kKeptShield, kLifeGauge};
 

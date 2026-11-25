@@ -874,6 +874,47 @@ the owner drops the old owner's moves still queued (its own AI runs the boss fro
 ("Twinrova hand-over": the attack's node kept, a brain change still forgets it; both moves the new owner made are put
 in, in order; `ContinuesChain` refuses a chain that differs or lacks our newest change).
 
+## Shooter requests: a copy throws what its owner's boss prepared (row 222 part 3, 0.11.13)
+
+Seen in the third row 222 run (20261124-161320): the copy played 4 owner attacks and threw a bullet in one. In all
+three lost shots the put-in request (plug, places, kind, node) was right. The one that worked was the one where the
+copy's own AI had chosen the same variation of the move as the owner.
+
+Root cause, in the game (build e0f3ccfa): a ranged attack is two things. The action plays the throw and lets go of a
+shootable actor (pooled at load, no create). Which shootable is ready was asked before it, by the shooter's create
+request `main+0x374d20` (the shooter, the shootable's name hash, how many): it finds the shootable in the shooter's
+table and raises its asked count. Its only callers are the attack sequences' start step
+`game__bsa__ActionSeqProcShootableActorCreate` (`main+0x746b48`, in the sequence step executor `main+0x746380`), the
+AI node `OneShotShooterRequestCreateShootableActors` (`main+0x293ff98`) and the shooter itself (`main+0x378754`). All
+run from the game's own AI. The native boss sync carries the owner's brain and action verbs, never this request, so on
+a copy it came from the copy's own choice of move: the same variation as the owner (the right bullet), another one
+(the wrong bullet: nothing thrown by the hand that plays), or none (nothing prepared).
+
+The fix (`lichii/hook/coop_boss_shots.h`, Hookshot patch 0044, wrap row 11, OBJECT_SAMPLE component 25, no protocol
+bump): the function is wrapped.
+
+- The owner's game lets each request of a shared boss run and keeps the ones that found their shootable. They go out
+  in the boss's own samples, at once, and from the start (an empty list tells the copies their owner shares them).
+- A copy game skips its own boss's requests once the owner's list has come, and makes the owner's requests through
+  the same function (our caller, order `kBossShots`, before the boss table's put-ins), in the owner's order, each
+  once.
+- The list holds only fresh requests (`kFreshRounds` walks); the owner's count goes on. A copy that starts (a join, a
+  hand-over) makes the ones in the list and nothing older. At a hand-over the new owner's list starts empty and what a
+  copy had queued from the old owner is dropped.
+- Every shared boss with a shooter is covered, since the wrap is on the shooter's function and not on a move:
+  Twinrova (Fire, Ice, the feints), Koume and Kotake, Phantom Ganon, Ganondorf, and any enemy the native boss list
+  holds. A shooter that is no shared boss's (Link's, any other enemy's) is never touched, nor is solo play.
+- An older owner sends no list: its copies' own requests run, as before. A hookshot.exe without the wrap, or
+  `LICHII_COOP_BOSS_SHOTS=0`: each game's own, as before.
+
+Log: `coop: bosses: shooter requests shared (wrapped)`, `... our boss's first (0x<hash> x<n>) is sent`, `... the
+owner's first (...) is made on our copy`, and every 10 s the counts. Tests: boss_shots_test (the run's three attacks:
+the copy's function sees exactly the owner's requests, once each), codec_test (component 25), module_test (patch 0044's
+row and header).
+
+Not known yet: that the request alone gives the shot in game. The sequence step executor runs other step types at a
+move's start (effects, sounds); only the shooter one is proven tied to the lost bullets.
+
 ## A boss part another game killed dies in our game too (rows 257/258, Barinade crash, 0.11.12)
 
 **Seen.** #258 (host log, kit 0.11.11; P2 owned Barinade): each of P2's five jellyfish kills was replayed twice on

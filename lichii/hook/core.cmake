@@ -8,6 +8,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_boss_game.cpp"
     "${_coop_hook}/coop_boss_native.cpp"
     "${_coop_hook}/coop_boss_orders.cpp"
+    "${_coop_hook}/coop_boss_shots.cpp"
     "${_coop_hook}/coop_boss_scenes.cpp"
     "${_coop_hook}/coop_teleport.cpp"
     "${_coop_hook}/coop_teleport_game.cpp"

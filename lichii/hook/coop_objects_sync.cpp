@@ -1530,6 +1530,20 @@ std::optional<proto::BossVariants> Sync::BossVariantsIn(std::uint64_t address) c
     return it->second.variants_in;
 }
 
+std::vector<std::pair<std::uint64_t, proto::BossShots>> Sync::BossShotsIn() const {
+    std::vector<std::pair<std::uint64_t, proto::BossShots>> out;
+    for (const auto& [address, o] : objects_) {
+        if (!o.shots_in) {
+            continue;
+        }
+        const auto owner = owners_.find(o.id);
+        if (owner != owners_.end() && owner->second.player != 0 && owner->second.player != self_) {
+            out.emplace_back(address, *o.shots_in);
+        }
+    }
+    return out;
+}
+
 std::vector<std::pair<std::uint64_t, proto::BossOrders>> Sync::BossOrdersIn() const {
     std::vector<std::pair<std::uint64_t, proto::BossOrders>> out;
     for (const auto& [address, o] : objects_) {
@@ -1789,6 +1803,9 @@ proto::ObjectState Sync::StateOf(Object& o, std::uint64_t now_us) {
     }
     if (o.orders) {
         state.orders = o.orders;  // row 222: its battle manager's orders
+    }
+    if (o.shots) {
+        state.shots = o.shots;  // row 222 part 3: its shooter requests (component 25)
     }
     if (o.rotation) {
         state.rotation = QuatOf(*o.rotation);
@@ -2473,6 +2490,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.bsa = s.bsa;
         o.variants = s.variants;
         o.orders = s.orders;
+        o.shots = s.shots;
         o.attacking = AttackWithRally(s, rally_makers);
         const bool rally_held = o.attacking.value_or(false) && !s.attacking.value_or(true);
         if (rally_held && !o.rally_held) {
@@ -2868,6 +2886,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.bsa = s->bsa;
         o.variants = s->variants;
         o.orders = s->orders;
+        o.shots = s->shots;
         o.attacking = AttackWithRally(*s, rally_makers);
         o.seen_at = now_us;
         o.name = s->name;
@@ -3333,7 +3352,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                                  Turned(rotation, o.sent_rotation) ||
                                  animation != o.sent_animation || slots != o.sent_slots ||
                                  (o.bsa && o.sent_bsa_seq != o.bsa->seq) ||  // native boss sync: a new boss verb at once
-                                 (o.orders && o.sent_orders_seq != o.orders->seq);  // row 222: a new order at once
+                                 (o.orders && o.sent_orders_seq != o.orders->seq) ||  // row 222: a new order at once
+                                 (o.shots && o.sent_shots_seq != o.shots->seq);  // part 3: a shooter request at once
             if (!o.sent_once || changed || now_us - o.sent_at >= kStillEveryUs) {
                 proto::ObjectSample sample;
                 sample.id = o.id;
@@ -3358,6 +3378,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 }
                 if (o.orders) {
                     o.sent_orders_seq = o.orders->seq;
+                }
+                if (o.shots) {
+                    o.sent_shots_seq = o.shots->seq;
                 }
             }
         }
@@ -4235,6 +4258,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             o->bsa_in.reset();
             o->variants_in.reset();
             o->orders_in.reset();
+            o->shots_in.reset();
             if (owner->owner == self) {
                 // Ours now, where it stands here: nothing pulls it. A hit of
                 // ours not yet sent is already in its life, and the others
@@ -4280,6 +4304,9 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             }
             if (sample->state.orders) {
                 o->orders_in = sample->state.orders;  // row 222: the owner's battle manager orders
+            }
+            if (sample->state.shots) {
+                o->shots_in = sample->state.shots;  // row 222 part 3: the owner's shooter requests
             }
             if (sample->state.position && Finite(*sample->state.position)) {
                 const std::uint64_t t = sample->state.time.server_time_us;

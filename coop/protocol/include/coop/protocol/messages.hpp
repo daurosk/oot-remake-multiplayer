@@ -861,6 +861,7 @@ enum class ObjectComponent : std::uint16_t {
   strike = 22,  // row 230: a Redead's or Gibdo's scream that froze the owner's Link (ObjectStrike below)
   orders = 23,  // protocol 16, row 222: the battle manager's orders this enemy took (BossOrders below)
   variants = 24,  // row 222 part 2: the variation (plug name) of the owner's boss actions (BossVariants below)
+  shots = 25,  // row 222 part 3: the shootables the owner's boss asked its shooter to prepare (BossShots below)
 };
 
 struct ObjectLife {
@@ -992,6 +993,26 @@ struct BossOrders {
   bool operator==(const BossOrders&) const = default;
 };
 
+// Component 25 (row 222 part 3, no protocol bump: older builds skip it by its length and keep their old behaviour):
+// the shootables a boss asked its shooter to prepare. The game's attack sequences prepare the bullet the action
+// throws through the shooter's create request (main+0x374d20: the shootable's name hash, how many); only the game
+// whose own AI entered the attack ran it, so a copy threw nothing, or another variation's bullet. The owner's game
+// sends each request that found its shootable; a copy makes the same ones through the same function and skips its
+// own (coop_boss_shots.h). seq is the owner's own count for this boss (0: none yet; sent from the start, so a copy
+// knows its owner shares them); recent holds the newest kMaxBossShots, oldest first.
+inline constexpr std::size_t kMaxBossShots = 8;
+struct BossShot {
+  std::uint32_t seq = 0;
+  std::uint32_t hash = 0;  // the shootable's name hash (never 0: the game's function does nothing for 0)
+  std::uint8_t num = 0;    // how many (the game reads the low byte; never 0)
+  bool operator==(const BossShot&) const = default;
+};
+struct BossShots {
+  std::uint32_t seq = 0;  // the newest request's seq
+  std::vector<BossShot> recent;
+  bool operator==(const BossShots&) const = default;
+};
+
 // Component 24 (row 222 part 2, no protocol bump: older builds skip it by its length and keep their old
 // behaviour): the variation of the owner's boss actions. The game asks a move with an optional plug name and runs
 // the command '<verb's name>:<plug name>' (no plug: the verb's plain command), main+0xbe070: Twinrova's ranged
@@ -1037,6 +1058,7 @@ struct ObjectState {
   std::optional<ObjectStrike> strike;               // row 230: the owner's Link frozen by its scream
   std::optional<BossOrders> orders;                 // protocol 16: its battle manager's orders (row 222)
   std::optional<BossVariants> variants;             // row 222 part 2: its owner's action variations (no bump)
+  std::optional<BossShots> shots;                   // row 222 part 3: its owner's shooter requests (no bump)
   bool operator==(const ObjectState&) const = default;
 };
 

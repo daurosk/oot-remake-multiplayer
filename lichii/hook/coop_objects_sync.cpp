@@ -1565,7 +1565,8 @@ std::vector<std::pair<std::uint64_t, proto::BossShots>> Sync::BossShotsIn() cons
             continue;
         }
         const auto owner = owners_.find(o.id);
-        if (owner != owners_.end() && owner->second.player != 0 && owner->second.player != self_) {
+        if (owner != owners_.end() && owner->second.player != 0 && owner->second.player != self_ &&
+            o.newest_sample.first >= owner->second.epoch) {  // (not an ownership's before the last change)
             out.emplace_back(address, *o.shots_in);
         }
     }
@@ -1584,6 +1585,12 @@ std::vector<std::pair<std::uint64_t, proto::BossOrders>> Sync::BossOrdersIn() co
         }
     }
     return out;
+}
+
+std::uint16_t Sync::EpochOf(std::uint64_t address) const {
+    const auto it = objects_.find(address);
+    const auto owner = it == objects_.end() ? owners_.end() : owners_.find(it->second.id);
+    return owner == owners_.end() ? std::uint16_t{0} : owner->second.epoch;
 }
 
 std::optional<std::uint8_t> Sync::OwnerOf(std::uint64_t address) const {
@@ -4327,6 +4334,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             o->variants_in.reset();
             o->orders_in.reset();
             o->shots_in.reset();
+            o->newest_sample = {};  // (the new owner, and a forgotten object, start anew)
             if (owner->owner == self) {
                 // Ours now, where it stands here: nothing pulls it. A hit of
                 // ours not yet sent is already in its life, and the others
@@ -4362,6 +4370,12 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             if (own != owners_.end() && sample->epoch < own->second.epoch) {
                 continue;  // from an owner before the last change
             }
+            // A sample that comes after a newer one (the channel does not keep the order).
+            const std::pair<std::uint16_t, std::uint64_t> stamp{sample->epoch, sample->state.time.server_time_us};
+            const bool late = stamp < o->newest_sample;
+            if (!late) {
+                o->newest_sample = stamp;
+            }
             if (sample->state.state && (*sample->state.state & proto::object_state::in_event) != 0) {
                 o->owner_event_until = now_us + kEventKeepUs;  // S2: its owner's event binds it
             }
@@ -4370,7 +4384,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 o->variants_in = sample->state.variants;  // row 222 part 2: with it (none from an older owner)
                 o->boss_native = true;
             }
-            if (sample->state.orders) {
+            if (sample->state.orders && !late) {  // (a late list's count would go back: every order again)
                 o->orders_in = sample->state.orders;  // row 222: the owner's battle manager orders
             }
             if (sample->state.brain) {
@@ -4378,7 +4392,9 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 std::size_t dropped = 0;
                 o->brain_in = proto::MergeKeyed(o->brain_in ? &*o->brain_in : nullptr, *sample->state.brain, dropped);
             }
-            if (sample->state.shots) {
+            if (late) {
+                // (the newer sample's shots stand, its empty list too)
+            } else if (sample->state.shots) {
                 o->shots_in = sample->state.shots;  // Twinrova hand-over: the owner's shots
             } else if (o->shots_in) {
                 o->shots_in->recent.clear();  // none awake there now (its empty tail missed)

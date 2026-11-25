@@ -9017,3 +9017,84 @@ TEST_CASE("objects: a boss sample with no shots clears the copy's owner shots (T
     REQUIRE(in.size() == 1);
     CHECK(in[0].second.recent.empty());
 }
+
+TEST_CASE("objects: a late boss sample does not bring back older shots or orders (Twinrova hand-over)") {
+    const std::string twinrova = "Enemy_DungeonBoss_Twinrova";
+    Sync owner;
+    Seen e = Enemy(0x100, 0x11, 12, 0.0f, twinrova);
+    e.bsa = proto::BossBsa{1, 2, std::nullopt, {}};
+    Tick(owner, 0, {e});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+    Own(owner, id, 1, 4);
+    const auto samples = All<proto::ObjectSample>(Tick(owner, 10 * kMs, {e}));
+    REQUIRE(samples.size() == 1);
+
+    Sync copy;
+    Seen c = Enemy(0x200, 0x11, 12, 0.0f, twinrova);
+    Tick(copy, 0, {c}, 2);
+    std::uint64_t now = 1000;
+    const auto next = [&] {
+        now += 10;
+        Tick(copy, now * kMs, {c}, 2);
+    };
+    const auto own = [&](std::uint8_t player, std::uint16_t epoch) {
+        Own(copy, id, player, epoch);
+        next();
+    };
+    own(1, 4);
+    CHECK(copy.EpochOf(0x200) == 4);
+    CHECK(copy.EpochOf(0x999) == 0);
+    proto::ObjectSample s = samples[0];
+    s.player_number = 1;
+    const auto take = [&](std::uint64_t sent_ms) {
+        s.state.time = {sent_ms * kMs, 1};
+        copy.Receive(s);
+        next();
+    };
+    const auto shots = [&] { return copy.BossShotsIn().at(0).second; };
+    const proto::BossShots one{1, {{1, "Twinrova_Bullet_FireBullet", {1.0f, 2.0f, 3.0f}}}};
+    const proto::BossShots two{2, {{2, "Twinrova_Bullet_FireBullet", {1.0f, 2.0f, 3.0f}}}};
+    s.state.shots = two;
+    s.state.orders = proto::BossOrders{2, {{2, 7, {}}}};
+    take(1100);
+    // The sample before it comes after it: with its shots, and with none.
+    s.state.shots = one;
+    s.state.orders = proto::BossOrders{1, {{1, 7, {}}}};
+    take(1050);
+    CHECK(shots() == two);
+    REQUIRE(copy.BossOrdersIn().size() == 1);
+    CHECK(copy.BossOrdersIn()[0].second.seq == 2);
+    s.state.shots.reset();
+    s.state.orders.reset();
+    take(1060);
+    CHECK(shots() == two);
+    // The same time again (a sample that came twice) and a newer one are taken.
+    s.state.shots = two;
+    take(1100);
+    CHECK(shots() == two);
+    s.state.shots = proto::BossShots{2, {}};
+    take(1150);
+    CHECK(shots().recent.empty());
+    // A late list does not fill the empty one.
+    s.state.shots = two;
+    take(1140);
+    CHECK(shots().recent.empty());
+    // Another ownership: the old one's shots are not the new one's, and its clock may be behind.
+    own(3, 5);
+    CHECK(copy.BossShotsIn().empty());
+    s.player_number = 3;
+    s.epoch = 5;
+    s.state.shots = one;
+    take(900);
+    CHECK(shots() == one);
+    // The same player's next ownership (a change away and back that this game saw as one): not the one before's.
+    own(3, 7);
+    CHECK(copy.BossShotsIn().empty());
+    CHECK(copy.EpochOf(0x200) == 7);
+    s.state.shots = two;
+    take(950);  // (the old ownership's sample: not taken)
+    CHECK(copy.BossShotsIn().empty());
+    s.epoch = 7;
+    take(960);
+    CHECK(shots() == two);
+}

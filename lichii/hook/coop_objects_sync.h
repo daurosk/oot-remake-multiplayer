@@ -1379,6 +1379,8 @@ public:
     // The player who owns the object at `address` (0: the server, none: not
     // known). For coop_enemy_shots.
     std::optional<std::uint8_t> OwnerOf(std::uint64_t address) const;
+    // Its ownership's epoch (0: not known): another one is another ownership, also of the same player.
+    std::uint16_t EpochOf(std::uint64_t address) const;
     // Row 178: boss copies' places not taken so far because the owner's was kBossFallBelowStartM below (Poses).
     std::uint64_t BossCopiesKept() const { return boss_copies_kept_; }
     // Our own player number (0: not known yet).
@@ -1455,6 +1457,8 @@ private:
         std::optional<coop::protocol::KeyedValues> brain_in;
         std::optional<coop::protocol::BossShots> shots;     // Twinrova hand-over: ours, as last read
         std::optional<coop::protocol::BossShots> shots_in;  // Twinrova hand-over: a copy's, the owner's latest
+        // A copy: the newest sample taken (its epoch, then its owner's time). OBJECT_SAMPLE may come out of order.
+        std::pair<std::uint16_t, std::uint64_t> newest_sample{};
         bool boss_native = false;  // a bsa came for it once: its AI runs (never held), across owners
         coop::protocol::Vec3 velocity{};
         std::uint64_t seen_at = 0;

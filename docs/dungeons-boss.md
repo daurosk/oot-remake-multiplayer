@@ -896,36 +896,45 @@ own AI in another move goes on, and a copy's own start of another move than the 
 
 Item 3's hold did not bring the copy's bullets back in step: the copy's AI still fires on its own time. Twinrova's
 bullets are split shots (each game keeps its own copy boss's bullet), so a copy whose AI missed the window showed the
-attack with no bullet. Now the bullet follows the owner's shot, not the copy's AI (`coop_boss_shots.h`):
+attack with no bullet. `coop_boss_shots.h` makes the owner's shots known in every game. **It reads only: a copy's
+bullets are still fired by its own AI, and no bullet is woken, moved or put back by it.**
 
 Her bullets are not made when she fires. Each is made once at room load through a create request whose handle the
-game keeps, and stays kept (actor state 3, +0x2c). Her AI fires one by waking it (state 4); it goes back to 3 when it
-ends. In the fight there is no create and no call of the shoot code main+0xc16cf0 (NEXT65, NEXT66: the fight's
-bullets were the twelve made in the intro, by address). The game's own wake is a compare-and-swap of 3 to 4 in the
-actor manager (main+0x14acc).
+game keeps, and stays kept (actor state 3, +0x2c). Her AI fires one by waking it (state 4). In the fight there is no
+create and no call of the shoot code main+0xc16cf0 (NEXT65, NEXT66: the fight's bullets were the twelve made in the
+intro, by address). What wakes one is her Shooter component (read in the game's code, not seen in game yet): prepare
+main+0x2eb1ed0, shoot main+0x2eb2a40, request sleep main+0x2eb26b0. They also move the actor's flags (+0x30), the
+actor manager's queue and the Shooter's record of the bullet. A write of the state alone leaves those three in the
+old state, so there is none. A bullet that went to sleep is in state 6, not 3. The copy's wake through the game's own
+calls comes after a run has shown what they are given.
 
 - Every game keeps the handles of its `Twinrova_Bullet_*` creates (CREATE_REQUEST) and reads each one's actor
   (request +0x08) at the next frames. The game's take of a made actor clears the slot, and the bullets are made in
-  the intro, before she is listed: read later, none gave an actor (NEXT68). The slot is not read again, since it is
-  used for other creates. The bullets are forgotten when her room goes.
-- The owner's game reads its bullets every frame. A wake (3 to 4) is one shot. The bullets awake now, each with its
-  seq, name and place, go out in the boss's samples (OBJECT_SAMPLE component 29 `shots`, no protocol bump); an empty
-  list is sent for 500 ms after the last one ends.
-- A copy wakes a kept bullet of the same name for each new owner shot: the same 3 to 4 write, with the owner's place.
-  Every frame after that it puts the bullet on the owner's newest place, so it moves where the owner's does, and its
-  own collision still hits the copy's Link. When the owner's bullet ends, the copy's is put back to 3. One that hits
-  the copy's Link first ends there by itself.
-- Once the owner's first sample has come, a wake by the copy's own AI is put back to 3 on the next frame (before
-  the owner's new shots are woken, so a bullet it took that frame is free for them), so each owner shot is one bullet
-  in every game. An owner sample with no `shots` counts as an empty list, so a copy that missed the empty tail does
-  not keep a bullet hanging. Before that (a new copy, an older owner) the copy's own wakes stand.
-- A hand-over starts it again: bullets in flight finish on their own and are no one's shot; the new owner counts from
-  its next wake, and a game made a copy waits for the new owner's first sample.
+  the intro, before she is listed: read later, none gave an actor (NEXT68). A slot that names another actor than this
+  bullet (not written yet, or a failed create) is looked at for 60 s and never taken. The slot is not read again
+  once its actor is known, since it is used for other creates, also another bullet's.
+- A kept actor is used only while it still is that bullet: before every use its name (+0x260), its class (vtable
+  main+0x4b25e18) and a state that is not a delete's (7 to 11) are read. Else the bullet is dropped (`lost`).
+- The bullets go when her room is left in either phase (another scene than the one Koume, Kotake or Twinrova was
+  listed in), and one by one as their actors go (a retry in the same scene). Leaving co-op keeps the bullets (a
+  rejoin in her room sees no new creates) and forgets their shots: what flies then is no one's shot.
+- The owner's game reads its bullets every frame. A wake (to 4) is one shot. The bullets awake now, each with its
+  seq, name and place, go out in the boss's samples (OBJECT_SAMPLE component 29 `shots`, no protocol bump). An empty
+  list is sent for 500 ms after the last one ends. The seq never goes back in one game, over hand-overs and rejoins.
+- A copy counts each of the owner's shots once and pairs it with a wake by its own AI of the same name within 2 s:
+  `paired`, `missing` (the owner's, no bullet here: row 286's fault), `extra` (ours, none of the owner's), `in no
+  list` (it began and ended between two samples). An owner sample with no `shots` counts as an empty list.
+- OBJECT_SAMPLE may come out of order. A sample older than one taken (its ownership's epoch, then its owner's time)
+  does not change `shots` nor the battle manager's `orders` (whose count would go back: every order again).
+- A hand-over starts it again, also one back to the same player between two walks (the epoch): bullets in flight
+  finish on their own and are no one's shot. The new owner counts from its next wake.
 
-The log says `shots: the owner's came` per copy and a summary line every 10 s (`ours sent`, `owner's fired`, `own
-stopped`, `dropped`). `LICHII_COOP_BOSS_SHOTS=0` turns it off. Not yet known: whether a bullet woken by our write
-(not the manager's) flies and hits as the game's own does; if not, the copy only shows it. Tests: boss_native_test
-("boss shots"), codec_test (component 29).
+The log says `shots: the owner's came` per copy, a line per missing or extra shot, and a summary line every 10 s (`ours
+sent`, `owner's seen`, `in no list`, `own`, `paired`, `missing`, `extra`, `bullets known`, `lost`).
+`LICHII_COOP_BOSS_SHOTS=0` turns it off. Not known in game yet: that a bullet's actor has that class (else a note says
+so once, and nothing is counted). Not covered: a first join in her room (the caller is added by the first session, the
+slots are cleared by then), so no shot is sent or counted until the room is made again, and Koume's and Kotake's beams.
+Tests: boss_native_test ("boss shots"), objects_test ("a late boss sample"), codec_test (component 29).
 
 ## A boss part another game killed dies in our game too (rows 257/258, Barinade crash, 0.11.12)
 

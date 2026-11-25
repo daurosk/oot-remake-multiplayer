@@ -470,7 +470,7 @@ void SetBossOrders() {
 }
 
 // Every 10 s while orders move: the counts (the probe run's lines).
-// Twinrova hand-over (coop_boss_shots.h): a copy fires the owner's shots. The shoot hook is patch 0007's.
+// Twinrova hand-over (coop_boss_shots.h): the owner's shots known in every game. Reads only.
 void SetBossShots() {
     const bool on = Env("LICHII_COOP_BOSS_SHOTS") != "0";
     CoopBossShots::Table& t = CoopBossShots::TheTable();
@@ -478,7 +478,7 @@ void SetBossShots() {
         return;
     }
     t.SetOn(on);
-    LOG_INFO(Core, "coop: bosses: Twinrova's shots {}", on ? "fired on the owner's word" : "each game's own AI's");
+    LOG_INFO(Core, "coop: bosses: Twinrova's shots {}", on ? "sent and counted (nothing is woken)" : "not read");
 }
 
 void LogBossShots() {
@@ -489,15 +489,15 @@ void LogBossShots() {
         return;
     }
     const CoopBossShots::Counts c = CoopBossShots::TheTable().GetCounts();
-    if (c.owner_kept == said.owner_kept && c.copy_stopped == said.copy_stopped && c.fired == said.fired &&
-        c.dropped == said.dropped && c.restarts == said.restarts) {
+    if (c == said) {
         return;
     }
     said_ms = now;
     said = c;
-    LOG_INFO(Core, "coop: bosses: shots: ours sent {}; copies: {} owner's fired, {} own stopped, {} dropped, {} "
-                   "started again",
-             c.owner_kept, c.fired, c.copy_stopped, c.dropped, c.restarts);
+    LOG_INFO(Core, "coop: bosses: shots: ours sent {}; copies: {} owner's seen, {} in no list, {} own, {} paired, {} "
+                   "missing, {} extra; {} started again, {} bullets known, {} lost",
+             c.owner_kept, c.seen, c.unseen, c.own, c.paired, c.missing, c.extra, c.restarts,
+             CoopBossShots::TheTable().Bullets(), c.lost);
 }
 
 void LogBossOrders() {

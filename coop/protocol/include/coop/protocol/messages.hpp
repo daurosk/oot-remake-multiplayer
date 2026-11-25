@@ -1071,9 +1071,9 @@ KeyedValues MergeKeyed(const KeyedValues* kept, const KeyedValues& in, std::size
 // Component 29 (Twinrova hand-over, no protocol bump: older builds skip it by its length): the owner's boss's
 // bullets in flight. Twinrova's bullets are made once at room load and kept (state 3); her AI fires one by waking it
 // (state 4, NEXT66), with no create. A copy's own AI wakes its bullets on its own time and after hand-overs in other
-// windows than the owner's (NEXT49: 4 of 11), so a copy wakes a kept bullet of the same name for each of the owner's
-// and moves it on the owner's places, and its own AI's wakes are put back (coop_boss_shots.h). Each: seq (the owner's
-// own wake count for this boss, from 1), the bullet's name (1 to kMaxBossShotChars printable ASCII) and its place now.
+// windows than the owner's (NEXT49: 4 of 11): a copy knows the owner's shots by these (coop_boss_shots.h). Each: seq
+// (the owner's game's own count of wakes, from 1, never back over hand-overs and rejoins), the bullet's name (1 to
+// kMaxBossShotChars printable ASCII) and its place now.
 // recent holds the bullets awake now, at most kMaxBossShots, oldest first; an empty list (sent for a while after the
 // last one ends) says none is.
 inline constexpr std::size_t kMaxBossShots = 8;

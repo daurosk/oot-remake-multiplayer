@@ -2148,7 +2148,7 @@ public:
                 }
                 CoopBossOrders::TheTable().Publish({});  // row 222: no owner or copy: our managers decide again
                 CoopBrainState::TheTable().Publish({});   // row 149: nothing to hand over
-                CoopBossShots::TheTable().Publish({});   // our bosses fire on their own again
+                CoopBossShots::TheTable().Leave();       // no owner or copy: no shot is sent or counted
                 sharing_ = false;
             }
             if (CoopWorldSnapshot::TheStore().Enabled() && scene && !scene->empty() && Ready(system)) {
@@ -2250,7 +2250,7 @@ public:
                                        return CoopBossOrders::TheTable().Step(guest, after_call, result,
                                                                               TheBossMain().load());
                                    });
-                // Twinrova hand-over: our bullets' wakes, and the owner's shown by our copies (coop_boss_shots.h).
+                // Twinrova hand-over: our bullets' wakes, read only (coop_boss_shots.h).
                 CoopSvc::AddCaller(CoopBossShots::Table::kCallerOrder,
                                    [](CoopPuppet::Guest& guest, bool after_call,
                                       std::uint64_t result, std::uint64_t) {
@@ -2604,11 +2604,11 @@ public:
                     members.push_back({b.actor,
                                        b.role == CoopBossNative::Role::owner ? CoopBossShots::Role::owner
                                                                              : CoopBossShots::Role::copy,
-                                       b.owner, b.name});
+                                       b.owner, b.name, sync_.EpochOf(b.actor)});
                 }
-                shots.Publish(members);
+                shots.Publish(members, *scene);
                 for (const auto& [address, state] : sync_.BossShotsIn()) {
-                    shots.Receive(address, state);
+                    shots.Receive(address, state, CoopEvery::NowUs());
                 }
                 for (const std::string& note : shots.TakeNotes()) {
                     LOG_INFO(Core, "coop: bosses: {}", note);

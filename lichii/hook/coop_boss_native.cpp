@@ -1552,8 +1552,8 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
         const std::optional<OwnAsk> asked =
             AskFor(e.own_asks, e.own_slot_asks, e.own_node, action, e.own_variants, d.variant, &rule);
         OwnAsk ask = asked.value_or(OwnAsk{e.own_node});
-        const bool moved = d.variant && asked && e.own_asks.contains({action.slot, action.verb}) &&
-                           rule != AskRule::own && rule != AskRule::all_conflict;
+        // (row 222: no node of this move known, so another move's node: the open case, counted to be seen)
+        const bool moved = asked && rule != AskRule::own;
         // Row 222 part 2: the owner's variation of this move (its plug name, or plain), not our own AI's last.
         if (WithVariant(guest, d.variant, ask)) {
             call = PoolCall(main_base);  // (a new name pool first; this change is asked again after it)

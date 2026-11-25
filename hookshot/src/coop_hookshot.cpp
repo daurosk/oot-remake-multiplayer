@@ -523,8 +523,8 @@ void LogBossNative() {
                    "{} own minions not made; {} own Life steps held at 1, {} let die after the owner's, {} ended in their death; "
                    "plain enemies: {} own other phases told, {} own wakes run, {} deaths begun; {} boss bodies dead before the outro; "
                    "owner's brain verbs given to copies {} ({} the copy was in already); variations put in: {} named, {} "
-                   "plain, {} not known, {} past the name pools; {} through another node (the move's chose another "
-                   "variation), {} with no such node left (row 222); {} own asks of the owner's move run ({} renamed to its "
+                   "plain, {} not known, {} past the name pools; {} through another node (none of the move known, "
+                   "another move's kind), {} with no such node left (row 222); {} own asks of the owner's move run ({} renamed to its "
                    "variation), {} owner's repeats left out; owner's variations kept {} (plug names read {}, not read {})",
              c.owner_brain, c.owner_action, c.plug_actions, c.copy_skipped, c.brain_applied, c.action_applied,
              c.action_waiting, c.action_slot_busy, c.action_busy_again, c.copy_own_run, c.copy_own_late, c.copy_shot_hits, c.copy_own_stuns, c.copy_hits_to_owner, c.minions_stopped, c.copy_life_held,

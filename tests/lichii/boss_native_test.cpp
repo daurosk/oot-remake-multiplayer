@@ -3086,6 +3086,29 @@ TEST_CASE("native boss: row 222, the owner's 'Ice' goes through the copy's shot 
                       [](const std::string& n) { return n.find("its node of this move") != n.npos; }));
 }
 
+TEST_CASE("native boss: row 222, the owner's move with no node of it known goes through another node, counted") {
+    // The open case of the own-node rule: its AI never asked 121 (only StartBattle), so another move's node takes the
+    // owner's move and the boss line counts it ("through another node").
+    constexpr std::uint64_t kStartNode = 0x4000200;
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Twinrova(Role::copy)});
+    FakeGuest g;
+    const std::int32_t brain = 2;
+    g.Write(kBsa + addr::kBsaBrainVerb, &brain, 4);
+    t.OnActionVerb(kBsa, PlugRequest(65, kStartNode, 0x77), true, false, std::string("StartBattle"));
+    Request owner = GameRequest(121, 0, true);
+    owner[addr::kReqHasPlug] = 1;
+    BossAction a = *ActionFromRequest(owner);
+    a.changed = true;
+    t.Receive(kActor, BossBsa{1, 2, a, {BossChange{1, a}}}, BossVariants{{BossVariant{1, "Ice", PlacesOf(owner)}}});
+    REQUIRE(t.Step(g, false, 0, kMain));
+    REQUIRE(t.Step(g, true, kBlock, kMain));
+    CHECK(g.Get<std::uint64_t>(kBlock + addr::kReqNode) == kStartNode);
+    CHECK(t.Totals().variant_node_moved == 1);
+    CHECK(t.Totals().variant_node_conflict == 0);
+}
+
 namespace {
 Request WithKind(Request r, std::uint32_t kind) {
     std::memcpy(r.data() + addr::kReqKind3, &kind, 4);

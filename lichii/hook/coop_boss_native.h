@@ -444,8 +444,9 @@ struct Counts {
     std::uint64_t variant_named = 0;
     std::uint64_t variant_unknown = 0;
     std::uint64_t variant_pool_full = 0;
-    // Row 222 (review-01112-h): owner's moves put in through another node than the move's own (that node chose another
-    // variation of it), and those with no node left that did not (the move's own then: the bug still possible).
+    // Row 222: owner's moves put in through another move's node, as the copy knew no node of this move (the open
+    // case of 4ecf8ef4: the place kind may not go with that node), and of those, the ones where every node it had
+    // chose another variation of the move.
     std::uint64_t variant_node_moved = 0;
     std::uint64_t variant_node_conflict = 0;
 };

@@ -127,6 +127,7 @@
 #include "coop_room_objects.h"
 #include "coop_switch_share.h"
 #include "coop_logic_probe.h"
+#include "coop_move_probe.h"
 #include "coop_sensor_claim.h"
 #include "coop_platforms.h"
 #include "coop_counters.h"
@@ -3199,6 +3200,8 @@ public:
     bool gimmick_probe_on_ = false;
     CoopLogicProbe::Watch logic_probe_;  // LICHII_COOP_LOGIC_PROBE=1 (jabu-lifts)
     bool logic_probe_on_ = false;
+    CoopMoveProbe::Watch move_probe_;  // LICHII_COOP_MOVE_PROBE=1 (row 287)
+    bool move_probe_on_ = false;
     bool hit_probe_on_ = false;  // LICHII_COOP_HIT_PROBE=1: a fall given in place of a replay never taken, said
     std::size_t hit_probe_lines_ = 0;
     std::vector<CoopLiftRide::Lift> ride_lifts_;  // jabu-lifts (#65): this walk's lifts
@@ -4861,6 +4864,20 @@ private:
                             if (read) {
                                 s.attacking = InAttackSequenceOf(a, bits, IsBossOrPart(s.name));
                                 NoteAttackEdge(a, s.name, *s.attacking, verbs, bits);
+                            }
+                            if (move_probe_on_ && read && IsBossOrPart(s.name)) {  // row 287
+                                CoopMoveProbe::Seen seen;
+                                seen.actor = a;
+                                seen.name = s.name;
+                                seen.owner = sync_.OwnerOf(a).value_or(0);
+                                seen.ours = seen.owner != 0 && seen.owner == sync_.Self();
+                                seen.verbs = verbs;
+                                seen.animation = s.animation ? s.animation->name : std::string{};
+                                seen.at = s.position;
+                                for (const auto& line :
+                                     move_probe_.Look([&r](u64 at) { return r.Get<u64>(at); }, seen)) {
+                                    LOG_INFO(Core, "coop: {}", line);
+                                }
                             }
                         }
                     }
@@ -6862,6 +6879,7 @@ Objects& Instance() {
         objects.pose_ = EnvOnUnlessZero("LICHII_COOP_OBJECTS_POSE");
         objects.gimmick_probe_on_ = EnvFlag("LICHII_COOP_GIMMICK_PROBE");  // opt-in: many reads
         objects.logic_probe_on_ = EnvFlag("LICHII_COOP_LOGIC_PROBE");      // jabu-lifts: reads only
+        objects.move_probe_on_ = EnvFlag("LICHII_COOP_MOVE_PROBE");        // row 287: reads only
         objects.hit_probe_on_ = EnvFlag("LICHII_COOP_HIT_PROBE");          // enemy-late-kill: log only
         objects.switch_stand_on_ = EnvOnUnlessZero("LICHII_COOP_SWITCH_STAND");      // ai-switches, on unless =0
         objects.lift_ride_on_ = EnvOnUnlessZero("LICHII_COOP_LIFT_RIDE");            // jabu-lifts (#65), on unless =0
@@ -7069,6 +7087,11 @@ void QueueTestDrop(std::string name, float metres) {
     if (TestDropQueue().size() < 16 && metres > 0.0f) {
         TestDropQueue().emplace_back(std::move(name), metres);
     }
+}
+
+void QueueTestVerb(const std::string& name, std::int32_t verb) {
+    LOG_INFO(Core, "coop: test verb {} {}: {}", name, verb,
+             CoopBossNative::TheTable().TestMove(name, verb) ? "asked of our boss" : "no boss of ours by that name");
 }
 
 std::uint64_t QueueTestKill(std::string name, std::uint64_t id) {

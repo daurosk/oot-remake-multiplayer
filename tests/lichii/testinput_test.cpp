@@ -710,6 +710,21 @@ TEST_CASE("testinput: setenum hands the hook an Enum flag (name or 0x hash) and 
     CHECK(requests[1].start == "Bow");
 }
 
+TEST_CASE("testinput: verb hands the hook a boss name and its action verb (row 287, test only)") {
+    std::string error;
+    for (const char* bad : {"verb\n", "verb X\n", "verb X 0\n", "verb X 501\n", "verb X 1x\n"}) {
+        CHECK_FALSE(Parse(bad, error));
+    }
+    Runner r(Must("verb Enemy_DungeonBoss_PhantomGanon 139\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].kind == Kind::verb);
+    CHECK(requests[0].name == "Enemy_DungeonBoss_PhantomGanon");
+    CHECK(requests[0].start == "139");
+}
+
 TEST_CASE("testinput: drop hands the hook a boss name and its metres (row 178, test only)") {
     std::string error;
     CHECK_FALSE(Parse("drop\n", error));

@@ -151,6 +151,7 @@ enum class Kind {
     kill,    // test only: the nearest actor of that name hit by our Link for all its life
     hurt,    // test only: our own Link hit for N quarter hearts (the game's own hit)
     hit,     // test only: the nearest actor of that name hit by our Link for N of its life (its Life step)
+    verb,    // test only (row 287): the boss of that name that is OURS runs an action verb (the game's own request)
     stun,    // test only: our copy of the nearest boss of that name says its owner a stun (DAMAGE 0)
     drop,    // test only (row 178): the nearest boss of that name that is OURS moved N m straight down
     setflag, // test only: an Int or Bool flag of this game set to a value (issue 130: shop-buy)

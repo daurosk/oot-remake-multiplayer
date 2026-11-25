@@ -1176,6 +1176,25 @@ void Table::Fall(Entry& e, const Boss& b) {
          " m below its fight start (row 178): put back at its fight start, its AI chooses again");
 }
 
+bool Table::TestMove(std::string_view name, std::int32_t verb) {
+    std::lock_guard lock(mutex_);
+    for (auto& [bsa, e] : by_bsa_) {
+        if (e.name != name || e.role != Role::owner || e.plain || e.dying || e.own_node == 0) {
+            continue;
+        }
+        BossAction a;
+        a.verb = verb;
+        a.flags = static_cast<std::uint16_t>(addr::kReqStartOver);
+        e.restart_ask = AskFor(e.own_asks, e.own_slot_asks, e.own_node, a).value_or(OwnAsk{e.own_node});
+        e.restart_action = a;
+        e.restart_variant = {};
+        e.restart_variant_places = {};
+        e.restart_variant_kind = {};
+        return true;
+    }
+    return false;
+}
+
 bool Table::WakesOwnBrain(std::uint64_t actor) const {
     std::lock_guard lock(mutex_);
     if (!brain_on_) {

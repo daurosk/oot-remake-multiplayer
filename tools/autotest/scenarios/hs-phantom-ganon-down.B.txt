@@ -1,0 +1,135 @@
+# hs-phantom-ganon-down B side (the A script's header holds both) (row 287: after his knock-down, verb 139, was seen as a copy, the next hand-over dropped Phantom Ganon
+# through the floor; the fall guard put him back 3 times, then left him: a soft-lock). A is the host and owns him first.
+#   t1..t5  A hits 6 a turn: phase 2 (42 -> 12)
+#   k1..k5  both ask `verb PG 139`: only the game that owns him runs it (the knock-down), the other sees it as a copy;
+#           then 1500 frames with a mark every 300, so his turn goes to the other player
+#   h1      A (the host) goes down: the server hands him to B; B watches, then `verb 139` again on B's
+#   d1      B `kill`s him; both see his death and the Heart Container (shots)
+# What each log must show (LICHII_COOP_MOVE_PROBE=1, log only), the question of the probe:
+#   - 'move probe: Enemy_DungeonBoss_PhantomGanon ... move state' at 139's start and end, as ours and as a copy, and at each
+#     'HANDED OVER' line: does a copy stay at state 1 (state 2 again only on the owner's game) and does it fall after?
+#   - 'fell N m below its fight start (row 178)' and 'again: left': the bug, when they come after a HANDED OVER line
+#   - 'coop: test verb ... asked of our boss' at least once in each game (else: no knock-down was played, VOID)
+# PASS of the fix later: no 'fell' line, no state 1 left over at a HANDED OVER line, shots of both games in the arena.
+# The `dump` steps write each game's shared flags (playtest/dumps, as a checkpoint's): the two games' must agree.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-phantom-ganon-down
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1,LICHII_COOP_MOVE_PROBE=1
+#! timeout 1500
+mark start
+nofairy                  # every bottle emptied: a bottled fairy revives instead of downing
+warp PhantomGanonStage PhantomGanonStage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark b-in
+wait 3900               # the intro, then the fight
+press ZL 10             # lock on
+wait 600
+mark t1
+wait 600
+mark t2
+wait 600
+mark t3
+wait 600
+mark t4
+wait 600
+mark t5
+wait 600
+dump phase2
+mark k1
+verb Enemy_DungeonBoss_PhantomGanon 139
+wait 60
+mark k1-down
+wait 300
+mark k1-1
+wait 300
+mark k1-2
+wait 300
+mark k1-3
+wait 300
+mark k1-4
+wait 300
+mark k1-5
+mark k2
+verb Enemy_DungeonBoss_PhantomGanon 139
+wait 60
+mark k2-down
+wait 300
+mark k2-1
+wait 300
+mark k2-2
+wait 300
+mark k2-3
+wait 300
+mark k2-4
+wait 300
+mark k2-5
+mark k3
+verb Enemy_DungeonBoss_PhantomGanon 139
+wait 60
+mark k3-down
+wait 300
+mark k3-1
+wait 300
+mark k3-2
+wait 300
+mark k3-3
+wait 300
+mark k3-4
+wait 300
+mark k3-5
+mark k4
+verb Enemy_DungeonBoss_PhantomGanon 139
+wait 60
+mark k4-down
+wait 300
+mark k4-1
+wait 300
+mark k4-2
+wait 300
+mark k4-3
+wait 300
+mark k4-4
+wait 300
+mark k4-5
+mark k5
+verb Enemy_DungeonBoss_PhantomGanon 139
+wait 60
+mark k5-down
+wait 300
+mark k5-1
+wait 300
+mark k5-2
+wait 300
+mark k5-3
+wait 300
+mark k5-4
+wait 300
+mark k5-5
+dump turns
+mark h1
+wait 600
+mark h2
+verb Enemy_DungeonBoss_PhantomGanon 139
+wait 300
+mark h3
+wait 300
+mark h4
+wait 300
+mark h5
+kill Enemy_DungeonBoss_PhantomGanon
+wait 1800
+mark d1
+wait 900
+mark d2
+dump dead
+mark end

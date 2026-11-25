@@ -1048,6 +1048,18 @@ class DropTest(unittest.TestCase):
                 hs.parse(bad)
 
 
+class VerbTest(unittest.TestCase):
+    """Row 287: `verb NAME N` (a boss of ours runs action verb N, test only)."""
+
+    def test_parses_and_goes_to_the_module(self):
+        steps = hs.parse("verb Enemy_DungeonBoss_PhantomGanon 139\n")
+        self.assertEqual((steps[0].kind, steps[0].name, steps[0].start), ("verb", "Enemy_DungeonBoss_PhantomGanon", "139"))
+        self.assertIn("verb", hs.MODULE_ONLY)
+        for bad in ("verb\n", "verb X\n", "verb X 0\n", "verb X 501\n", "verb X 1.5\n"):
+            with self.assertRaises(hs.ScriptError):
+                hs.parse(bad)
+
+
 class AwaitTest(unittest.TestCase):
     """Row 325: `await TICKS REGEX`, until a new line of the game's own log matches (the runner reads it, no module)."""
 

@@ -543,6 +543,10 @@ public:
     // verbs came). Its wake is then its own brain's alone; the Mover's pose-era give-back of the wake's
     // animation (Sync::TakeOwnWakes) is for the other copies only, or the rise is played twice (rows 109/111).
     bool WakesOwnBrain(std::uint64_t actor) const;
+    // Test only (row 287, the `verb` step): our own boss of this name runs this action verb (slot 0), asked as a move
+    // started over is (restart_action), named by the node its own AI names for it. False: none of ours, dying, or its
+    // AI has asked no move yet (no node to name).
+    bool TestMove(std::string_view name, std::int32_t verb);
     // Row 178: whether this actor is a boss (never a plain enemy) on the brain path: a copy of it made ours
     // goes on through its own AI here (its move started over as ours, or its AI chooses again), so the Mover's
     // issue-157 replay of the animation its AI wanted as a copy is not played over it. That replay put

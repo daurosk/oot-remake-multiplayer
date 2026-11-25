@@ -9,7 +9,7 @@ Windows, a Unix socket on Linux, newline-delimited JSON. This module is our clie
   wait, hold, press, stick and rstick as bridge inputs let go by `release` when their time is up; `mark` logged and
   shot; `warp` as the bridge's teleport (retried until the game takes it, as the hook does); `goto` and `toward`
   steered from Link's position read through guest memory (`HOS_CONTROL_MEM=ro`). Steps that need the co-op module
-  inside the game (chat, give, wear, assign, place, kill, hit, stun, drop, hurt, setflag, setenum, menu) are written, as the script has them, to
+  inside the game (chat, give, wear, assign, place, kill, hit, stun, drop, verb, hurt, setflag, setenum, menu) are written, as the script has them, to
   the game's LICHII_COOP_TEST_COMMANDS file: the module (lichii/hook/coop_testinput.cpp) plays them on its next
   check (4 a second) and empties the file, so the player knows they were taken. Without that file they are logged as
   skipped.
@@ -67,7 +67,7 @@ STICK_KEYS = {  # full stick directions: (stick, x, y)
     "RSTICK_UP": ("R", 0, 1), "RSTICK_DOWN": ("R", 0, -1), "RSTICK_LEFT": ("R", -1, 0), "RSTICK_RIGHT": ("R", 1, 0),
 }
 WEAR_SLOTS = ("weapon", "shield", "head", "armor", "boots", "hand")
-MODULE_ONLY = ("chat", "give", "wear", "dress", "assign", "place", "face", "aim", "kill", "hit", "stun", "drop", "hurt", "setflag", "setenum", "menu",
+MODULE_ONLY = ("chat", "give", "wear", "dress", "assign", "place", "face", "aim", "kill", "hit", "stun", "drop", "verb", "hurt", "setflag", "setenum", "menu",
                "dump", "event", "autosave")
 
 
@@ -362,6 +362,11 @@ def parse(text):
             if len(w) != 3 or _whole_in(w[2], 1, 500) is None:
                 fail("want: drop ACTOR METRES (1 to 500)")
             s.kind, s.name, s.start = "drop", w[1], w[2]
+        elif cmd == "VERB":
+            # Row 287: the boss of that name that this game owns runs action verb N through the game's own request.
+            if len(w) != 3 or _whole_in(w[2], 1, 500) is None:
+                fail("want: verb ACTOR N (1 to 500)")
+            s.kind, s.name, s.start = "verb", w[1], w[2]
         elif cmd == "STUN":
             if len(w) != 2:
                 fail("want: stun BOSS")

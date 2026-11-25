@@ -5,7 +5,7 @@
 # ball. B kills him at the end. Run: run.ps1 -Runtime hookshot -Lane 2 -Scenario hs-phantom-ganon-ball
 #! noload
 #! start coop: test warp done
-#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1,LICHII_COOP_MOVE_PROBE=1
 #! timeout 900
 mark start
 warp PhantomGanonStage PhantomGanonStage

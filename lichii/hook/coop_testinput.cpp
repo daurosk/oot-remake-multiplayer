@@ -507,6 +507,18 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             step.kind = Kind::drop;
             step.mark = std::string(w[1]);
             step.start = std::string(w[2]);
+        } else if (cmd == "VERB") {
+            // verb ACTOR N: test only (row 287): the boss of that name that our game owns runs action verb N (slot 0)
+            // through the game's own request, so a move the harness cannot bring about (his knock-down) is played.
+            int verb = 0;
+            const std::string_view n = w.size() == 3 ? std::string_view(w[2]) : std::string_view();
+            const auto r = std::from_chars(n.data(), n.data() + n.size(), verb);
+            if (w.size() != 3 || r.ec != std::errc{} || r.ptr != n.data() + n.size() || verb < 1 || verb > 500) {
+                return fail("want: verb ACTOR N (1 to 500)");
+            }
+            step.kind = Kind::verb;
+            step.mark = std::string(w[1]);
+            step.start = std::string(w[2]);
         } else if (cmd == "HIT") {
             int amount = 0;
             std::size_t at = 1;
@@ -764,7 +776,7 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
             return;
         }
         if (s.kind == Kind::warp || s.kind == Kind::give || s.kind == Kind::wear ||
-            s.kind == Kind::assign || s.kind == Kind::dress || s.kind == Kind::chat || s.kind == Kind::kill || s.kind == Kind::drop || s.kind == Kind::hurt ||
+            s.kind == Kind::assign || s.kind == Kind::dress || s.kind == Kind::chat || s.kind == Kind::kill || s.kind == Kind::drop || s.kind == Kind::verb || s.kind == Kind::hurt ||
             s.kind == Kind::hit || s.kind == Kind::stun ||
             s.kind == Kind::setflag || s.kind == Kind::setenum || s.kind == Kind::menu || s.kind == Kind::dump ||
             s.kind == Kind::event || s.kind == Kind::autosave) {
@@ -942,6 +954,7 @@ const char* KindWord(Kind kind) {
     case Kind::hit: return "hit";
     case Kind::stun: return "stun";
     case Kind::drop: return "drop";
+    case Kind::verb: return "verb";
     case Kind::setflag: return "setflag";
     case Kind::setenum: return "setenum";
     case Kind::event: return "event";
@@ -1570,7 +1583,7 @@ bool NowKind(Kind k) {
     switch (k) {
     case Kind::mark: case Kind::give: case Kind::wear: case Kind::assign: case Kind::dress: case Kind::chat:
     case Kind::place: case Kind::face: case Kind::aim: case Kind::kill: case Kind::hurt: case Kind::hit:
-    case Kind::stun: case Kind::drop: case Kind::setflag: case Kind::setenum: case Kind::menu: case Kind::dump:
+    case Kind::stun: case Kind::drop: case Kind::verb: case Kind::setflag: case Kind::setenum: case Kind::menu: case Kind::dump:
     case Kind::event: case Kind::autosave:
         return true;
     default:
@@ -1651,6 +1664,8 @@ void Do(Core::System& system, const Runner::Request& request, double now,
         CoopObjects::QueueTestStun(request.name);  // logged where it is done
     } else if (request.kind == Kind::drop) {
         CoopObjects::QueueTestDrop(request.name, static_cast<float>(Whole(request.start)));  // logged there
+    } else if (request.kind == Kind::verb) {
+        CoopObjects::QueueTestVerb(request.name, Whole(request.start));  // logged there
     } else if (request.kind == Kind::hurt) {
         if (g_state.link) {
             const std::array<float, 3> at = *g_state.link;

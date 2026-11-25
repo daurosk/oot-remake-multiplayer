@@ -180,6 +180,9 @@ void QueueTestStun(std::string name);
 // down at the next placing (the set-matrix call the copies are placed with), so the fall guard and the copies' fall
 // line run in a game. A copy (or none here) is not moved. Logs "coop: test drop ...". Any thread.
 void QueueTestDrop(std::string name, float metres);
+// The `verb` step (row 287, test only): the boss of that name that our game owns runs this action verb (slot 0), asked
+// through the game's own request as a move started over is (CoopBossNative::Table::TestMove). Logged.
+void QueueTestVerb(const std::string& name, std::int32_t verb);
 
 // Present thread: the actors of the shared things this game owns now (for
 // coop_drops: a drop beside one of them is its owner's to decide).

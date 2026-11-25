@@ -48,6 +48,8 @@ add_executable(coop_tests
   host/session_test.cpp
   host/scene_test.cpp
   host/event_owner_test.cpp
+  host/event_object_test.cpp
+  host/sync_clock_test.cpp
   overlay/overlay_test.cpp
   overlay/map_icons_test.cpp
   lichii/camera_test.cpp

@@ -1,7 +1,7 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 6a023e980eb5ccea7fcc1b2cc1628d08bb1cbaf4 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Sun, 8 Nov 2026 17:46:31 -0900
-Subject: [PATCH 2/5] coop: hand the game's camera to the co-op hook
+Subject: [PATCH] coop: hand the game's camera to the co-op hook
 
 With LICHII_COOP on, each draw calls CoopCamera::Track from the hook's
 coop_camera_track.h after its pipeline is configured. It looks for the same
@@ -12,30 +12,27 @@ so co-op can draw player markers in the world.
  1 file changed, 7 insertions(+)
 
 diff --git a/src/video_core/renderer_vulkan/vk_rasterizer.cpp b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
-index 7d973646f4..3d3168469e 100644
+index bdf5cbc779..65ca498178 100644
 --- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
 +++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
-@@ -81,6 +81,9 @@
- #include "video_core/nx2_debug_control.h"
- #include "video_core/nx2_perf.h"
- #include "video_core/nx2_profile.h"
+@@ -134,6 +134,9 @@
+         VideoCommon::OneFollower::Lend(VideoCommon::OneFollower::LentOp::op, onef_call);           \
+         return std::move(*onef_result);                                                            \
+     }
 +#ifdef LICHII_COOP
 +#include "coop_camera_track.h"
 +#endif
  
  namespace Vulkan {
  
-@@ -892,6 +895,10 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
-         return;
+@@ -2980,6 +2983,10 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
+         }
      }
  
 +#ifdef LICHII_COOP
 +    CoopCamera::Track(texture_cache, buffer_cache, device_memory, maxwell3d->regs,
 +                      render_trace_frame);
 +#endif
-     TrackOcarinaCamera();
-     TrackOcarinaActor(pipeline->ShaderHashes()[1], is_indexed, is_indirect);
-     TracePendingCpuWrites(false, pipeline->ShaderHashes());
--- 
-2.56.0.windows.4
-
+     if (VideoCommon::MemStageShadow::g_on.load(std::memory_order_relaxed) && !ring_on &&
+         OcarinaTemporalEnabled()) [[unlikely]] {
+         VerifyTrackerRecord(tracker_record ? &*tracker_record : nullptr);

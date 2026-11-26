@@ -41,7 +41,8 @@ class PartyHud(unittest.TestCase):
     def test_without_its_switches_deselected(self):
         p, s = self.run_suite()
         self.assertEqual(results(s), {}, p.stdout[-2000:])
-        self.assertEqual(sorted(d["test"].split("::")[-1] for d in s["deselected"]), sorted(TESTS), s["deselected"])
+        mine = [d["test"].split("::")[-1] for d in s["deselected"] if d["test"].startswith("test_party_hud.py::")]
+        self.assertEqual(sorted(mine), sorted(TESTS), s["deselected"])   # (other files' switch-gated tests: theirs)
 
     def test_a_crash_in_the_boot_is_fail(self):
         """B logs the game's crash report in the boot's load: both tests FAIL (not SETUP-FAIL), the crash named."""

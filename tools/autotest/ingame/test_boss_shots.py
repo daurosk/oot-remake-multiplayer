@@ -171,9 +171,10 @@ def judge_shots(pair, base, judged, info):
 
 
 def need_in_play(pair):
-    for x in ("A", "B"):
-        s = pair.state(x)
-        assert pair.in_play(s), "%s not in play (%s)" % (x, s.get("not_ready"))
+    """The shared default-boot precondition: both games STEPPED until in play, in the boot's scene (Pair.need_boot_place,
+    harness-c133-scene). Was one state read per game: right after the lane boot (tb-rows has no smoke tier first) a
+    game with no Link sample yet failed as 'not in play' (gifts-237 / row53 SETUP-FAIL class, port-g5-237 16:25)."""
+    pair.need_boot_place()
 
 
 def shooter_on(pair):

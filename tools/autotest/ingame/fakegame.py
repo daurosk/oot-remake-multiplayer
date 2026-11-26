@@ -85,6 +85,10 @@ class FakeGame:
         self.srv.bind(("127.0.0.1", 0))
         self.srv.listen(1)
         self.port = self.srv.getsockname()[1]
+        # (the module's bridge line, hookshot/src/coop_playtest.cpp:836; BT_FAKE_NO_MODULE=B: B's module never started,
+        # party-hud-bridge-85e3b255. Its bridge port still answers here, so only the log check can catch it)
+        if tag not in os.environ.get("BT_FAKE_NO_MODULE", ""):
+            self.say("coop: playtest: listening on 127.0.0.1:%d (control on; dumps and shots in %s)" % (self.port, folder))
         threading.Thread(target=self.serve, daemon=True).start()
 
     def say(self, line):
@@ -315,6 +319,20 @@ class FakeLane:
 
     def games(self):
         return {x: {"port": g.port, "folder": g.folder, "log": g.log_path} for x, g in self.g.items()}
+
+    def window_picture(self, x, path):
+        """The fake of a WINDOW shot (bt_plugin's fake Pair.window_shooter): game x's picture plus a bar the bridge
+        shot never has (Longshot's ImGui overlay is only in the window). Does not step the game."""
+        from PIL import Image, ImageDraw
+        g = self.g[x]
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with g.lock:
+            g.picture(path)
+        with Image.open(path) as im:
+            im = im.convert("RGB")
+        ImageDraw.Draw(im).rectangle([200, 150, 300, 170], fill=(250, 200, 0))   # ("the overlay")
+        im.save(path)
+        return path
 
     def close(self):
         for g in self.g.values():

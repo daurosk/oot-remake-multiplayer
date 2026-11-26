@@ -34,6 +34,7 @@ import pair as P   # noqa: E402
 import testpack    # noqa: E402
 import testsave    # noqa: E402
 import solo        # noqa: E402
+import windowshot  # noqa: E402
 
 RESULTS = ("PASS", "FAIL", "FLAKY", "SETUP-FAIL", "NO-REF", "SKIP", "NOT-RUN")
 DEFAULT_BUDGET = 120
@@ -68,6 +69,16 @@ def pytest_runtest_makereport(item, call):
     # starts with the recovery, the pair fixture's boot_ready; a miss cannot cascade into the tests after it)
     if rep.failed or (rep.when == "call" and item.get_closest_marker("leaves_play")):
         item.config._bt_dirty = True
+
+
+def _fake_window_shooter(lanefake):
+    """The fake lane's Pair.window_shooter. BT_FAKE_WINDOW_COVERED=A[,B] (selftest): that game's window is covered,
+    the SETUP-FAIL windowshot.Shooter gives for screen-shot.ps1's exit 3."""
+    def shoot(x, path):
+        if x in (os.environ.get("BT_FAKE_WINDOW_COVERED") or "").split(","):
+            raise P.SetupFail("window shot %s: not taken (exit 3: COVERED %s: fake cover)" % (x, path))
+        return lanefake.window_picture(x, path)
+    return shoot
 
 
 def pytest_addoption(parser):
@@ -230,6 +241,10 @@ def _deselect_needs_env(config, items):
 DEFAULT_BOOT = "live-kakariko-child"
 BOOT_A = os.path.join(AUTOTEST, "scenarios", DEFAULT_BOOT + ".A.txt")
 BOOT_B = os.path.join(AUTOTEST, "scenarios", DEFAULT_BOOT + ".B.txt")
+# Boots whose game A hosts through its own Multiplayer > Host (the A script's `menu host` step, LICHII_COOP_TEST_HOST,
+# 127.0.0.1 only: hookshot/src/coop_host_menu.cpp:401-404) and whose B joins it on 127.0.0.1: live.py start
+# --host-in-game, no --server (rows 292, 170; B #138: B joins on 127.0.0.1, the LAN-list path is test_lan251's).
+HOST_IN_GAME_BOOTS = ("live-kakariko-host",)
 
 
 def boot_paths(name):
@@ -294,12 +309,14 @@ def _opt(config, name):
 def boot_args(config, lane, server, session):
     """live.py start's arguments for this lane's boot (after 'start'): the ONE list lane_pair boots with and
     --lane-check-only proves (live.py start --dry-run = hookshot.py run's own parser + script parse)."""
-    a, b = boot_paths(config.getoption("boot"))
+    boot = config.getoption("boot")
+    a, b = boot_paths(boot)
     if _opt(config, "solo"):         # (solo.py: game A alone, no --server, so no LICHII_COOP_SERVER: hookshot.py run)
         args = ["--session", session, "--lane", str(lane), "--only", solo.GAME, "--playtest", "--boot-a", a, "--no-load"]
     else:
-        args = ["--session", session, "--lane", str(lane), "--playtest", "--server", server, "--boot-a", a,
-                "--boot-b", b, "--no-load"]
+        host = ["--host-in-game"] if boot in HOST_IN_GAME_BOOTS else ["--server", server]
+        args = ["--session", session, "--lane", str(lane), "--playtest"] + host + ["--boot-a", a, "--boot-b", b,
+                                                                                  "--no-load"]
     for e in boot_env(config):
         args += ["--env", e]
     if nocs_wanted(config):           # (live.py resolve: --game-b wins over the lane's B with --lane)
@@ -562,7 +579,9 @@ def lane_pair(request):
             games = {solo.GAME: games[solo.GAME]}
         pair = P.Pair(games, out_dir=out, refs_dir=os.environ.get("BT_FAKE_REFS", refs))
         pair.lane, pair.info = lane, {"fake": True}
+        pair.window_shooter = _fake_window_shooter(lanefake)
         try:
+            _module_proof(pair, lane)
             if config.getoption("solo"):
                 _solo_proof(pair, lane)
             else:
@@ -599,6 +618,10 @@ def lane_pair(request):
             raise GameCrash(why) if crash else P.SetupFail(why)
         pair = P.Pair(P.read_session(session), out_dir=out, refs_dir=refs)
         pair.lane, pair.info, pair.session = lane, dict(info, boot_s=round(time.monotonic() - t0, 1)), session
+        pair.live = _live                       # (Pair.rejoin: live.py quit + relaunch in this session)
+        pair.boot = dict(zip(("A", "B"), boot_paths(config.getoption("boot"))))   # (rejoin: the lane's own boot)
+        pair.window_shooter = windowshot.Shooter(session)   # (screen-shot.ps1 on the session's game pids)
+        _module_proof(pair, lane)               # (before any bridge call: a game with no module refuses the connection)
         for x in pair.c:
             h = pair.c[x].hello()
             if not h.get("control"):
@@ -620,12 +643,22 @@ def lane_pair(request):
         config._bt_commit = dict(getattr(config, "_bt_commit", None) or {}, **{"lane%d" % lane: mem.stop()})
 
 
+def _module_proof(pair, lane):
+    """Each game's module started (Pair.module_started), else SetupFail 'lane N boot: X: the module never started': every
+    test of the lane is SETUP-FAIL boot at once (B #137 14:57, party-hud-bridge-85e3b255: ConnectionRefusedError 336 s in)."""
+    try:
+        pair.module_started()
+    except P.SetupFail as e:
+        raise P.SetupFail("lane%d boot: %s" % (lane, e)) from e
+
+
 def _boot_proof(config, pair, lane):
     """Both games in play, no event, in the boot's scene (Pair.boot_ready), else SetupFail 'lane N boot: ...': every
     test of the lane is SETUP-FAIL boot. Its notes (a game warped there) go into pair.info['boot_proof']."""
     pair.begin(BOOT_READY_S)
+    pair.boot_scene = boot_scene(config.getoption("boot"))   # (every test's start place: Pair.need_boot_place)
     try:
-        pair.boot_ready(boot_scene(config.getoption("boot")))
+        pair.boot_ready(pair.boot_scene)
     except P.SetupFail as e:
         raise P.SetupFail("lane%d %s" % (lane, e)) from e
     pair.info = dict(pair.info, boot_proof="; ".join(pair.notes) or "both in play, no event, in the boot scene")
@@ -686,6 +719,14 @@ def pair(request, lane_pair):
         import live
         live.touch(lane_pair.session)          # (the session's watchdog counts it as a tester's command)
     yield lane_pair
+    if not getattr(request.config, "_bt_dirty", False):
+        # (a test that PASSED but left a game away from the boot's place, e.g. no put-back after a warp: the next
+        # test starts with the recovery instead of running in the wrong map; row 285, B #136 14:38. Named here, on
+        # the test that left it, so its owner sees the missing put-back)
+        away = lane_pair.away_from_boot()
+        if away:
+            request.config._bt_dirty = True
+            lane_pair.notes.append("left the boot's place (the next test recovers first): %s" % "; ".join(away))
     request.node.user_properties.append(("shots", list(lane_pair.shots)))
     request.node.user_properties.append(("notes", list(lane_pair.notes)))
     missing = lane_pair.no_ref()

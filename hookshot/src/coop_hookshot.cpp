@@ -13,6 +13,7 @@
 // - settings: coop.ini beside longshot.exe, then the LICHII_COOP_* variables,
 //   as in the emulator (the kit's launcher sets them from coop-options.ini).
 #include "coop_hookshot.h"
+#include "coop_game_clock.h"
 
 #include <algorithm>
 #include <cctype>
@@ -2139,6 +2140,7 @@ void Frame(void* ctx, int site) {
         // The play-test bridge's hold (docs/playtest.md): first, before any co-op work and with no lock of ours held,
         // so a held frame has not run at all and nothing else waits on it. Off: one atomic load.
         CoopPlaytest::AtFrame();
+        CoopGameClock::NoteFrame();   // the game's clock: one frame ran (coop_game_clock.h), solo too
     }
     CoopWindowBrand::Tick(CoopRuntime::GameDir());  // the window's title and icon, co-op on or idle (solo too)
     if (site == HOS_COOP_SITE_FRAME) {  // row 271: this game's memory once a minute, solo too (coop_host_menu.h)

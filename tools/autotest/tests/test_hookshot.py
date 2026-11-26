@@ -787,9 +787,11 @@ class LoadTest(unittest.TestCase):
 
 
 class RendererWaitTest(unittest.TestCase):
-    READY = "[hos host] vk: precompile: 18170 programs, 25346 graphics and 1132 compute pipelines, 0 mesh fallback programs in 172544 ms (8092 ms of it the caches opened)\n"
+    PRECOMPILED = ("[hos host] vk: precompile: 18170 programs, 25346 graphics and 1132 compute pipelines, 0 mesh fallback "
+                   "programs in 172544 ms (8092 ms of it the caches opened)\n")
+    READY = PRECOMPILED + "[hos host] vk: start-up: the shaders took 175.0 s\n[hos host] rx: renderer: Vulkan (longshot_vk.dll)\n"
 
-    def test_waits_for_the_precompile_line(self):
+    def test_waits_for_the_renderer_line(self):
         c, reads = Clock(), []
 
         def log():
@@ -799,11 +801,28 @@ class RendererWaitTest(unittest.TestCase):
         self.assertEqual(len(reads), 5)
         self.assertAlmostEqual(waited, 2.0, places=2)
 
-    def test_rc4_start_up_line_is_ready_too(self):
+    def test_rc4_start_is_ready_at_its_renderer_line(self):
         log = ("[hos host] vk: precompile: load at create (RX_VK_LOAD=create): 32623 noted pipelines found, none built\n"
-               "[hos host] vk: start-up: the shaders took 6.5 s\n")
+               "[hos host] vk: start-up: the shaders took 6.5 s\n[hos host] rx: renderer: Vulkan (longshot_vk.dll)\n")
         self.assertEqual(hs.wait_renderer(lambda: log, lambda: True, 60, clock=Clock(), sleep=Clock().sleep), 0.0)
-        self.assertFalse(hs.RENDERER_READY.search(log.splitlines()[0]))
+        self.assertFalse(any(hs.RENDERER_READY.search(ln) for ln in log.splitlines()[:2]))
+
+    def test_the_precompile_summary_is_not_ready(self):
+        """party-hud-bridge-85e3b255 (B #137 14:57): B logged the precompile's summary, then its start-up never ended (no
+        'rx: renderer: Vulkan'); it was called ready and the boot went on to a game with no module. Now the wait fails
+        after the stall, naming the hang."""
+        c = Clock()
+        with self.assertRaises(TimeoutError) as e:
+            hs.wait_renderer(lambda: self.PRECOMPILED, lambda: True, 30, stall=180, clock=c, sleep=c.sleep)
+        self.assertIn("the precompile ended but Longshot's start-up did not", str(e.exception))
+        self.assertFalse(hs.RENDERER_READY.search(self.PRECOMPILED))
+
+    def test_a_renderer_that_draws_nothing_fails_at_once(self):
+        c = Clock()
+        with self.assertRaises(RuntimeError) as e:
+            hs.wait_renderer(lambda: "[hos host] rx: the Vulkan back end could not start on the window: nothing is drawn\n",
+                             lambda: True, 600, clock=c, sleep=c.sleep)
+        self.assertIn("did not start", str(e.exception))
 
     def test_test_lane_precompile_rule(self):
         # (game-commit-c141, B #142 GO) test games start without the precompile; 'default' is Longshot's own start
@@ -816,18 +835,16 @@ class RendererWaitTest(unittest.TestCase):
         # the switch it sets is one the run lets through (LONGSHOT_SWITCHES_PROVEN), so --env RX_VK_PRECOMPILE=1 works
         self.assertIsNone(hs.longshot_switch_refused(hs.TEST_LANE_PRECOMPILE[0]))
 
-    def test_no_precompile_start_index_line_is_ready(self):
-        # (game-commit-c141: Longshot v3.1.1 RX_VK_PRECOMPILE=0, run-b0ee5af3 noprecompile game-out-A.txt:159; before this
-        # the wait ran to the session's end with the game up: 'the game closed before its renderer started')
-        log = ("[hos host] vk: swapchain 1280x720, 4 images, mailbox (V-Sync Auto)\n"
-               "[hos host] vk: programs: load at create: 37691 notes of 23916 programs indexed, 4 type signatures, 3361 "
-               "compute programs listed, in 9.0 ms (47867 kept program keys); 2 workers in play, 2 while the game loads; "
-               "pipelines from: pipeline caches\n")
+    def test_no_precompile_start_is_ready_at_the_renderer_line(self):
+        # (game-commit-c141: test games start with RX_VK_PRECOMPILE=0; run-b0ee5af3 noprecompile game-out-A.txt:159-160,
+        # the same in run-8dd1d8af and both games of pair-98d95485) its index line comes first and is NOT the ready line;
+        # the renderer's own 'rx: renderer: Vulkan (' line, the next one, is
+        index = ("[hos host] vk: programs: load at create: 37691 notes of 23916 programs indexed, 4 type signatures, 3361 "
+                 "compute programs listed, in 9.0 ms (47867 kept program keys); 2 workers in play, 2 while the game loads; "
+                 "pipelines from: pipeline caches\n")
+        self.assertFalse(hs.RENDERER_READY.search(index))
+        log = index + "[hos host] rx: renderer: Vulkan (longshot_vk.dll)\n"
         self.assertEqual(hs.wait_renderer(lambda: log, lambda: True, 60, clock=Clock(), sleep=Clock().sleep), 0.0)
-        self.assertFalse(hs.RENDERER_READY.search(log.splitlines()[0]))
-        # a precompile start's lines are not this one (run-b0ee5af3 default: precompile progress, then its total)
-        self.assertFalse(hs.RENDERER_READY.search(
-            "[hos host] vk: precompile: compute programs: those listed (3361 keys listed: 3361 in the shipped list)"))
 
     def test_times_out_and_notices_a_closed_game(self):
         c = Clock()
@@ -852,7 +869,8 @@ class RendererWaitTest(unittest.TestCase):
                          "[hos host] vk: noted pipelines: %d of 32625 pipelines in %d s, about 500 s left\n"
                          % (n, n + 20, i * 10))
             if ready_at is not None and t >= ready_at:
-                text += "[hos host] vk: start-up: the shaders took %d s\n" % ready_at
+                text += ("[hos host] vk: start-up: the shaders took %d s\n"
+                         "[hos host] rx: renderer: Vulkan (longshot_vk.dll)\n" % ready_at)
             return text
         return log
 
@@ -934,7 +952,17 @@ class SaveTest(unittest.TestCase):
 class RunTest(unittest.TestCase):
     def test_two_games(self):
         """run: both games started with the bridge and memory on, loaded, both scripts played, shots of both, quit."""
+        self.two_games(module=True)
+
+    def test_marks_the_module_never_took_fail_the_run(self):
+        """B #137 (party-hud-bridge-85e3b255): B had no module, its marks were 'NOT taken', yet run exited 0 and live.py
+        start answered ok. Now the run FAILs, naming them."""
+        self.two_games(module=False)
+
+    def two_games(self, module):
         import tempfile
+        import threading
+        done = threading.Event()
 
         class Proc:
             pid, returncode = 1, None
@@ -944,6 +972,19 @@ class RunTest(unittest.TestCase):
                 if "stdout" in kw:   # the game's log: its renderer is ready (run waits for this line)
                     kw["stdout"].write(RendererWaitTest.READY.encode())
                 started.append(self)
+                if module:   # (the module reads its commands file: empties it, as coop_test_commands does)
+                    import threading
+                    path = self.env["LICHII_COOP_TEST_COMMANDS"]
+
+                    def read():
+                        while not done.is_set():
+                            try:
+                                if os.path.getsize(path):
+                                    open(path, "w").close()
+                            except OSError:
+                                pass
+                            done.wait(0.05)
+                    threading.Thread(target=read, daemon=True).start()
 
             def poll(self):
                 return None
@@ -974,9 +1015,17 @@ class RunTest(unittest.TestCase):
                                 "--every", "0", "--env", "B:ONLY_B=1", "--env", "BOTH=1",
                                 "--display", "DISPLAY7", "--playtest-ports", "5010"])
             finally:
+                done.set()
                 hs.subprocess.Popen, hs.Bridge.connect = popen, connect
                 FakePlacement.restore()
             out = os.path.join(tmp, "out")
+            if not module:
+                self.assertEqual(code, 1)
+                with open(os.path.join(out, "FAILED.txt")) as f:
+                    self.assertIn("NOT taken by the module (not started?): A mark one, give (line 3)", f.read())
+                for g in fakes.values():
+                    g.close()
+                return
             with open(os.path.join(out, "steps.txt")) as f:
                 self.assertEqual(code, 0, f.read())
             self.assertTrue(os.path.isdir(os.path.join(tmp, "A", "user", "save", "u")))   # baseline put back
@@ -1006,7 +1055,7 @@ class RunTest(unittest.TestCase):
             self.assertEqual([r["buttons"] for r in gb.cmds("press")][-1], ["A"])
             with open(os.path.join(out, "player-A.txt")) as f:
                 a_log = f.read()
-            self.assertIn("coop: test give NOT taken", a_log)   # no module here to take it
+            self.assertIn("coop: test give sent", a_log)   # (the fake module emptied the commands file: taken)
             self.assertEqual([p.env["LICHII_COOP_TEST_COMMANDS"] for p in started],
                              [os.path.join(out, "commands-%s.txt" % x) for x in "AB"])
             self.assertIn("coop: test script done", a_log)

@@ -149,6 +149,27 @@ bool wait_for(const std::function<bool()>& done, int ms, const std::function<voi
     return false;
 }
 
+// A join is done when BOTH sides say so: the host's server counts the player when it sends WELCOME, but the
+// game's client is connected only once it has read that WELCOME in a later service(). Waiting on the host's
+// count alone and then checking the client raced (CI: guest state 2 'handshaking' == 3 'connected').
+bool wait_joined(const CoopHostMenu::Menu& host, std::size_t players, const std::vector<coop::net::Client*>& clients,
+                 int ms, const std::function<void()>& pump) {
+    const bool ok = wait_for(
+        [&] {
+            if (status_of(host).players != players) return false;
+            for (auto* c : clients) {
+                if (c->state() != coop::net::State::connected) return false;
+            }
+            return true;
+        },
+        ms, pump);
+    if (!ok) {
+        MESSAGE("host players " << status_of(host).players << ", wanted " << players);
+        for (auto* c : clients) MESSAGE("client state " << static_cast<int>(c->state()) << ", wanted 3 (connected)");
+    }
+    return ok;
+}
+
 HosCoopHostOptions host_options() {
     HosCoopHostOptions o{};
     o.size = sizeof o;
@@ -177,8 +198,7 @@ TEST_CASE("host menu: Host makes a password, runs the server and points this gam
     CHECK(t.password == std::string(s.password));
 
     game.start_client();
-    REQUIRE(wait_for([&] { return status_of(menu).players == 1; }, 5000, [&] { game.client->service(1); }));
-    CHECK(game.client->state() == coop::net::State::connected);
+    REQUIRE(wait_joined(menu, 1, {game.client.get()}, 5000, [&] { game.client->service(1); }));
 
     // A second Host while hosting is refused, and says why.
     CHECK(menu.HostStart(&o) == 0);
@@ -484,11 +504,10 @@ TEST_CASE("host menu: Host with an invite code, and a second game joins with onl
     CHECK(t.port != hs.port);  // the helper's port, not the host's
     CHECK(t.password == std::string(hs.password));
     guest_game.start_client();
-    REQUIRE(wait_for([&] { return status_of(host).players == 2; }, 8000, [&] {
+    REQUIRE(wait_joined(host, 2, {host_game.client.get(), guest_game.client.get()}, 8000, [&] {
         host_game.client->service(0);
         guest_game.client->service(0);
     }));
-    CHECK(guest_game.client->state() == coop::net::State::connected);
 
     guest_game.client->stop();
     guest.Leave();
@@ -614,8 +633,7 @@ TEST_CASE("host menu: Host on a custom port: a manual IP and port join gets in w
     CHECK(join_game.target()->server == "127.0.0.1");
     CHECK(join_game.target()->port == 38515);
     join_game.start_client();
-    REQUIRE(wait_for([&] { return status_of(host_menu).players == 1; }, 5000, [&] { join_game.client->service(1); }));
-    CHECK(join_game.client->state() == coop::net::State::connected);
+    REQUIRE(wait_joined(host_menu, 1, {join_game.client.get()}, 5000, [&] { join_game.client->service(1); }));
 
     join_game.client->stop();
     join_menu.Leave();
@@ -632,8 +650,8 @@ TEST_CASE("host menu: with approve_joins the host's game is asked about a new pl
     REQUIRE(wait_for([&] { return status_of(menu).state == HOS_COOP_HOSTING && game.target().has_value(); }, 3000));
     game.start_client();
     // The host's own game is never asked about: it is the first in.
-    REQUIRE(wait_for([&] { return game.client->state() == coop::net::State::connected; }, 5000,
-                     [&] { game.client->service(1); }));
+    // (and the host's count of 1 seen, so the players == 1 check below is not a stale 0 from the host thread)
+    REQUIRE(wait_joined(menu, 1, {game.client.get()}, 5000, [&] { game.client->service(1); }));
 
     const Target t = *game.target();
     coop::net::ClientConfig config;
@@ -662,11 +680,10 @@ TEST_CASE("host menu: with approve_joins the host's game is asked about a new pl
     CHECK(riley.state() == coop::net::State::handshaking);
     CHECK(status_of(menu).players == 1);
     REQUIRE(game.client->send(coop::protocol::JoinAllow{asked->knock, true, false}));
-    REQUIRE(wait_for([&] { return riley.state() == coop::net::State::connected && status_of(menu).players == 2; }, 5000,
-                     [&] {
-                         game.client->service(1);
-                         riley.service(1);
-                     }));
+    REQUIRE(wait_joined(menu, 2, {game.client.get(), &riley}, 5000, [&] {
+        game.client->service(1);
+        riley.service(1);
+    }));
     riley.stop();
     game.client->stop();
     menu.Leave();

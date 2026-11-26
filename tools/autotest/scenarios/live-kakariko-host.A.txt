@@ -1,0 +1,24 @@
+# live-kakariko-host A (boot for live.py start --host-in-game; bt_plugin HOST_IN_GAME_BOOTS): live-kakariko-child's A, then
+# A hosts through its own Multiplayer > Host (`menu host` = CoopPause::TestHost, hookshot/src/coop_pause.cpp:2550; on
+# LICHII_COOP_TEST_HOST's port and password, 127.0.0.1 only: coop_host_menu.cpp:401-404). B joins it on 127.0.0.1.
+# Rows 292 (host frame spikes while hosting) and 170 (TestHost). Co-op is off at A's start: no server line.
+#! noload
+#! switches LICHII_COOP_CHEATS=1
+#! timeout 900
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 600
+mark a-in
+menu host
+await 600 coop: multiplayer tab: test host on port
+wait 300
+mark a-host

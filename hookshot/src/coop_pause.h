@@ -158,10 +158,11 @@ bool Rejoin(std::string* host);
 // of it.
 void PasteAnswerNow();
 
-// The autotest's `menu customize|close|host|paste` step (LICHII_COOP_TEST_COMMANDS only, coop_testinput.h): the menu
+// The autotest's `menu customize|close|host|paste|leave|main` step (LICHII_COOP_TEST_COMMANDS only, coop_testinput.h): the menu
 // opened on the Customize page, or closed, or the game hosts through the Multiplayer page's Host
 // (LICHII_COOP_TEST_HOST, CoopHostMenu::ParseTestHost; a relay room with kTestRelayEnv/kTestRelayRoomEnv), or joins
-// with the clipboard's code as the page's "Paste code and join" (JoinPasteNow). Never asked in a player's game (no commands file there).
+// with the clipboard's code as the page's "Paste code and join" (JoinPasteNow), or leaves (LeaveNow), or opens the
+// Multiplayer page and presses nothing (main). Never asked in a player's game (no commands file there).
 bool TestMenu(const std::string& page);
 // Where co-op's own menu is, for the play-test bridge's `coop_menu` state member: "closed" while it is shut, else the
 // page word (CoopPauseMenu::PageWord). It does not see the game's own pause screen, so "closed" is not "the game's

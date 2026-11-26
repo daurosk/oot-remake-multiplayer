@@ -1,0 +1,17 @@
+# live-ganondorf-room B (see the A file): hs-ganondorf-rally.B.txt up to 'mark b-in' + its event line; B first in = the owner.
+mark start
+warp GanondorfStage GanondorfStage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+event DreamBossStage_Rematch_Ganondorf_Start
+wait 600
+mark b-ready

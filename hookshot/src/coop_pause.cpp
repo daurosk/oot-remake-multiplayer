@@ -12,6 +12,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -2556,8 +2557,10 @@ bool TestHost() {
     }
     MenuLock lock(__func__);
     FreshMain();
-    if (g_coop_on) {
-        LOG_WARNING(Core, "coop: multiplayer tab: test host: co-op came with the game's start: not hosting");
+    // (as the page's Host row, HostNow: refused only while that co-op is in a game; a server line naming no server
+    // running, row 170, is ended by Host() and the test hosts, as a player's press there does)
+    if (LauncherLive()) {
+        LOG_WARNING(Core, "coop: multiplayer tab: test host: co-op came with the game's start and is in a game: not hosting");
         return false;
     }
     CoopTitleMenu::Options o = g_menu.options();
@@ -2617,6 +2620,28 @@ bool TestMenu(const std::string& page) {
     if (page == "customize") {
         Open(CoopPauseMenu::Page::kCustomize);
         return true;
+    }
+    if (page == "main") {   // (the Multiplayer page opened, nothing pressed: its rows for a shot, row 170)
+        Open(CoopPauseMenu::Page::kMain);
+        return true;
+    }
+    // `menu open PAGE` (B #138, port-g7; CoopTestInput::kMenuPages): any page of the tab opened and nothing pressed, for
+    // its shot, by the path the title's rows open a page (coop_title.cpp, kRowPages -> CoopPause::Open): Menu::Open, the
+    // main page and then the page's own row decided, as a player's press of it (coop_pause_menu.cpp Menu::Open).
+    if (page.rfind("open ", 0) == 0) {
+        static const std::pair<std::string_view, CoopPauseMenu::Page> kPages[] = {
+            {"main", CoopPauseMenu::Page::kMain},         {"host", CoopPauseMenu::Page::kHost},
+            {"join", CoopPauseMenu::Page::kJoin},         {"local", CoopPauseMenu::Page::kLocal},
+            {"settings", CoopPauseMenu::Page::kSettings}, {"commands", CoopPauseMenu::Page::kCommands},
+            {"customize", CoopPauseMenu::Page::kCustomize}, {"find", CoopPauseMenu::Page::kFind}};
+        const std::string_view which = std::string_view(page).substr(5);
+        for (const auto& [word, at] : kPages) {
+            if (which == word) {
+                Open(at);
+                return true;
+            }
+        }
+        return false;
     }
     if (page == "close") {
         g_wanted = HOS_COOP_MENU_WANT_CLOSE;

@@ -1,0 +1,18 @@
+# live-kakariko-host B (see the A file): live-kakariko-child's B; B's server line is 127.0.0.1:<port> (hookshot.py run
+# --host-in-game) and it retries until A hosts, then waits for its welcome (lichii/hook/coop_hook.cpp:2779).
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 600
+mark b-in
+await 3600 coop: welcomed as player \d+ on
+wait 300
+mark b-joined

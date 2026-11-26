@@ -27,10 +27,7 @@ from pair import READY_FRAMES   # noqa: E402
 
 
 def need_child_in_play(pair):
-    pair.until_in_play("both games in play before the row", max_frames=READY_FRAMES)   # (stepped, never one read)
-    for x in ("A", "B"):
-        s = pair.state(x)
-        assert s.get("age") == "child", "%s is %s: this row needs child Link (the kit save)" % (x, s.get("age"))
+    pair.need_boot_place("child", max_frames=READY_FRAMES)   # (in play, stepped; the boot's scene AND child Link)
 
 
 def place_in_front(pair, x, of, dist=2.5):

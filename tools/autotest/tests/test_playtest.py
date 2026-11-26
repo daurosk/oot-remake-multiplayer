@@ -473,6 +473,24 @@ class LiveLifecycle(unittest.TestCase):
         self.assertEqual(s["offsets"], {"A": 7, "B": 0})
         self.assertEqual(s["planned"], {})
 
+    def test_relaunch_stdout_is_only_its_json(self):
+        # C #132 rule (review-c123-11): the runner's boot lines go to stderr; stdout = the ONE JSON answer _live reads
+        import contextlib
+        import io
+        self.live.discard(22)
+        live.plan(self.d, "B", "killed")
+
+        def runner(argv):
+            print("hookshot.py run: boot line on stdout")
+            return 0
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            r = live.relaunch(self.args(player="B", boot=None, no_load=False, restore=False), alive=self.alive,
+                              runner=runner)
+        self.assertTrue(r["ok"])
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("boot line on stdout", err.getvalue())
+
     def test_a_failed_relaunch_stays_planned(self):
         self.live.discard(22)
         live.plan(self.d, "B", "killed")

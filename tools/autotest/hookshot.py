@@ -68,6 +68,10 @@ STICK_KEYS = {  # full stick directions: (stick, x, y)
     "RSTICK_UP": ("R", 0, 1), "RSTICK_DOWN": ("R", 0, -1), "RSTICK_LEFT": ("R", -1, 0), "RSTICK_RIGHT": ("R", 1, 0),
 }
 WEAR_SLOTS = ("weapon", "shield", "head", "armor", "boots", "hand")
+# The `menu` step's words: lichii/hook/coop_testinput.h kMenuWords and kMenuPages, the one lists
+# (tests/test_ingame_menu_pages.py checks these copies against them).
+MENU_WORDS = ("customize", "close", "host", "paste", "leave", "main")
+MENU_PAGES = ("main", "host", "join", "local", "settings", "commands", "customize", "find")
 MODULE_ONLY = ("chat", "give", "wear", "dress", "assign", "place", "face", "aim", "kill", "hit", "stun", "drop", "verb", "hurt", "setflag", "setenum", "menu",
                "dump", "event", "autosave")
 
@@ -452,9 +456,14 @@ def parse(text):
                 fail("want: assign ITEM")
             s.kind, s.name = "assign", w[1]
         elif cmd == "MENU":
-            if len(w) != 2 or w[1].lower() not in ("customize", "close", "host", "paste", "leave"):
-                fail("want: menu customize|close|host|paste|leave")
-            s.kind, s.name = "menu", w[1].lower()
+            if len(w) == 3 and w[1].lower() == "open":     # `menu open PAGE` (B #138): any page, nothing pressed
+                if w[2].lower() not in MENU_PAGES:
+                    fail("want: menu open " + "|".join(MENU_PAGES))
+                s.kind, s.name = "menu", "open " + w[2].lower()
+            else:
+                if len(w) != 2 or w[1].lower() not in MENU_WORDS:
+                    fail("want: menu " + "|".join(MENU_WORDS) + ", or menu open " + "|".join(MENU_PAGES))
+                s.kind, s.name = "menu", w[1].lower()
         elif cmd == "AWAIT":
             # Row 325: "await TICKS REGEX": until a NEW line of this game's own log (written after the step began)
             # matches REGEX (the rest of the line, spaces kept), at most TICKS. The runner reads the log itself: no
@@ -701,6 +710,7 @@ class Player:
         self.mem_ok = None            # guest memory reads answered (None: not tried)
         self.warps = []
         self.warp_failed = []         # "ASKED -> GOT": warps the bridge sent to another map (the run FAILs on them)
+        self.not_taken = []           # marks / test commands the module never read (the run FAILs on them: B #137)
         self.angle = 0.0              # camera model: world direction = stick direction turned by this
         self.learned = False
 
@@ -752,6 +762,7 @@ class Player:
         # hookshot_log-X.txt, as it reads the emulator's log.
         if self.commands and not self._send(["mark " + name]):
             self.log("coop: test mark %s NOT taken (no module reading LICHII_COOP_TEST_COMMANDS?)" % name)
+            self.not_taken.append("mark " + name)
         if self.shot:
             try:
                 self.shot(name)
@@ -986,6 +997,8 @@ class Player:
                          % (s.kind, s.line))
             return
         taken = self._send([s.text for s in batch])
+        if not taken:
+            self.not_taken.extend("%s (line %d)" % (s.kind, s.line) for s in batch)
         for s in batch:
             self.log("coop: test %s %s (line %d: %s)" % (s.kind, "sent" if taken else "NOT taken", s.line,
                                                          "the module's log says what it did" if taken else
@@ -1212,11 +1225,17 @@ def to_play(bridge, log, timeout, clock=time.monotonic, sleep=time.sleep):
 # nothing and reads no controller; with a cold driver cache that is minutes (~170 s seen), so a run waits for it.
 # Longshot rc.4 builds pipelines at their create (RX_VK_LOAD=create) and logs "vk: start-up: the shaders took N s"
 # instead of rc.3's precompile total.
-# Longshot v3.1.1 with RX_VK_PRECOMPILE=0 (no shader preparation before the title: a test lane's ~11 GB less commit per
-# game, game-commit-c141) logs neither: its programs are loaded at their create calls from the caches, and its ready line
-# is the index of those (gpu/vk/vk_programs.cpp:434, logged once; a default start never writes it: run-b0ee5af3 default).
-RENDERER_READY = re.compile(r"vk: precompile: \d+ programs, .* in \d+ ms|vk: start-up: the shaders took \d"
-                            r"|vk: programs: load at create: \d+ notes of \d+ programs indexed")
+# The renderer is up once Longshot's rx_start logs "rx: renderer: Vulkan (longshot_vk.dll)": after the back end's start()
+# returned, on every path (window or not; host/rx_backend.c rx_start, v3.0.0-rc.4 to v3.2.0). NOT the precompile's
+# summary line: that one comes BEFORE the start-up ends (the pipeline cache's save, the worker's end, the start screen's
+# fade; gpu/vk/vk_main.cpp prepare_with_screen). party-hud-bridge-85e3b255 (lane 2, B #137 14:57): B logged the summary,
+# then its start-up never ended (no "start-up: the shaders took", prep_running still set at the quit), but it was called
+# ready, its window placed and its boot sent; the module never started and live.py start said ok.
+# (game-commit-c141: a no-precompile start, RX_VK_PRECOMPILE=0, writes this line too, right after its 'vk: programs:
+# load at create: N notes ... indexed' line: run-b0ee5af3 / run-8dd1d8af noprecompile game-out-A:159-160, pair-98d95485.)
+RENDERER_READY = re.compile(r"rx: renderer: Vulkan \(")
+RENDERER_FAILED = re.compile(r"rx: .*nothing is drawn|rx: the Vulkan back end could not start")
+RENDERER_PRECOMPILED = re.compile(r"vk: precompile: \d+ programs, .* in \d+ ms")
 
 
 # Longshot's own switches (gpu/vk/switches.def; host/hos_main.c env_line_allowed's prefixes) reach a test game only when
@@ -1296,6 +1315,9 @@ def wait_renderer(read_log, alive, timeout, stall=RENDERER_STALL, limit=RENDERER
         text = read_log()
         if RENDERER_READY.search(text):
             return clock() - t0
+        bad = RENDERER_FAILED.search(text)
+        if bad:
+            raise RuntimeError("the renderer did not start: %s" % bad.group(0))
         if not alive():
             raise RuntimeError("the game closed before its renderer started")
         now = clock()
@@ -1307,6 +1329,10 @@ def wait_renderer(read_log, alive, timeout, stall=RENDERER_STALL, limit=RENDERER
             raise TimeoutError("renderer not started in %d s (still compiling: %s)" % (max(limit, timeout),
                                                                                        line or "no progress line"))
         if now > deadline:
+            if RENDERER_PRECOMPILED.search(text):
+                raise TimeoutError("renderer not started: the precompile ended but Longshot's start-up did not (no "
+                                   "'rx: renderer: Vulkan' line for %d s after the last progress; party-hud-bridge-85e3b255)"
+                                   % stall)
             if rose is None:
                 raise TimeoutError("renderer not started in %d s (no compile progress logged)" % timeout)
             raise TimeoutError("renderer not started: no compile progress for %d s (last: %s, %.0f s in)"
@@ -1843,6 +1869,11 @@ def run(a):
         wrong = ["%s %s" % (x, ", ".join(p.warp_failed)) for x, p in sorted(players.items()) if p.warp_failed]
         if wrong:   # (the shots are taken: they show where the game went instead)
             raise RuntimeError("warp landed on another map than asked: " + "; ".join(wrong))
+        # (a boot whose marks or test commands the module never read did not set the game up: party-hud-bridge-85e3b255's B
+        # had no module at all, yet this run said 'scenario played' and exited 0, so live.py start answered ok: B #137)
+        lost = ["%s %s" % (x, ", ".join(p.not_taken)) for x, p in sorted(players.items()) if p.not_taken]
+        if lost:
+            raise RuntimeError("NOT taken by the module (not started?): " + "; ".join(lost))
         say("scenario played")
     except Exception as e:
         failed = str(e) or e.__class__.__name__

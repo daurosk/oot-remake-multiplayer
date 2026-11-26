@@ -156,6 +156,10 @@ jobs:
       # (it plays tools/autotest/ingame/test_smoke.py and tools/autotest/ingame/test_rows.py on two fake bridges)
       - name: In-game test system selftests (fake games, no game)
         run: python tools/autotest/tests/test_ingame.py -v
+      - name: In-game rejoin, server restart, lan251 and host-menu (rows 292/170) selftests (fake live.py)
+        run: |
+          python tools/autotest/tests/test_ingame_rejoin.py -v
+          python tools/autotest/tests/test_ingame_host_menu.py -v
       - name: Test game window placement tests
         run: python tools/autotest/tests/test_placement.py -v
       - name: hs.py cache, locks and game build tests

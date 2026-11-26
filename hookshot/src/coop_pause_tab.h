@@ -1188,7 +1188,9 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept;
 // A join made with a file loaded connected: the game goes back to its title screen by itself, as the System page's
 // Title Screen and its question's Title Screen would (the pause menu opened on System if it is not, the cursor stepped
 // to Title Screen, A, then the question answered), so the host's save is loaded from there. The player's buttons wait
-// meanwhile; it gives up after kToTitleMs. Any thread.
+// meanwhile; it gives up after kToTitleMs of the game's clock (coop_game_clock.h: a held or stalled game's wall time
+// does not count), not counting the time an event in our game held it with the pause menu shut (the menu cannot open
+// then; the player's buttons reach the game meanwhile, so a talk can end). Any thread.
 inline constexpr std::uint64_t kToTitleMs = 25000;
 void ToTitle() noexcept;
 bool GoingToTitle() noexcept;

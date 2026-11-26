@@ -1018,6 +1018,45 @@ TEST_CASE("testinput: menu leave leaves the session as the Multiplayer page's Le
     CHECK(requests[0].name == "leave");
 }
 
+TEST_CASE("testinput: menu main opens the Multiplayer page and presses nothing (row 170's page shot)") {
+    std::string error;
+    CHECK_FALSE(Parse("menu main now\n", error));
+    CHECK_FALSE(Parse("menu map\n", error));
+    Runner r(Must("menu Main\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].kind == Kind::menu);
+    CHECK(requests[0].name == "main");
+}
+
+TEST_CASE("testinput: menu open PAGE opens any page of the tab, nothing pressed (B #138)") {
+    std::string error;
+    for (const auto word : kMenuPages) {
+        const std::string line = "menu open " + std::string(word) + "\n";
+        Runner r(Must(line.c_str()));
+        std::vector<std::string> log;
+        r.Advance(0.0, std::nullopt, log);
+        const auto requests = r.TakeRequests();
+        REQUIRE(requests.size() == 1);
+        CHECK(requests[0].kind == Kind::menu);
+        CHECK(requests[0].name == "open " + std::string(word));
+    }
+    Runner up(Must("menu Open Settings\n"));   // (any case, as the other words)
+    std::vector<std::string> log;
+    up.Advance(0.0, std::nullopt, log);
+    const auto got = up.TakeRequests();
+    REQUIRE(got.size() == 1);
+    CHECK(got[0].name == "open settings");
+    CHECK_FALSE(Parse("menu open\n", error));
+    CHECK(error.find("menu open main|host|join|local|settings|commands|customize|find") != std::string::npos);
+    CHECK_FALSE(Parse("menu open map\n", error));
+    CHECK_FALSE(Parse("menu open main now\n", error));
+    CHECK_FALSE(Parse("menu join\n", error));   // (a page is opened by `open`: no bare page word but main)
+    CHECK(NotAllowed(Must("menu open find"), ActKinds()).empty());   // (the bridge's act takes it: a menu line)
+}
+
 TEST_CASE("testinput: the bridge's act allows only the listed kinds and refuses the whole script otherwise") {
     const auto& allowed = ActKinds();
     CHECK(NotAllowed(Must("kill Enemy_Test\nhit Enemy_Test 2\nhurt 2\nplace 1 2 3\nface 1 2\nchat hello"), allowed).empty());

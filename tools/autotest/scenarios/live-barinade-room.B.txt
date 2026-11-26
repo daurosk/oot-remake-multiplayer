@@ -1,0 +1,17 @@
+# live-barinade-room B (see the A file): hs-barinade-native.B.txt up to 'mark b-in' + its event line.
+mark start
+warp BarinadeStage BarinadeStage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+event DreamBossStage_Rematch_Barinade_Start
+wait 600
+mark b-ready

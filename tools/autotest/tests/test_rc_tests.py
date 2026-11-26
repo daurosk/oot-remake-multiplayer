@@ -44,6 +44,82 @@ def items(*specs):
     return [{"test": t, "smoke": s, "env": list(e)} for t, s, e in specs]
 
 
+MARKER_DUMP = r'''
+import json, sys
+import pytest
+sys.path.insert(0, sys.argv[3])
+import proven
+
+
+class Dump:
+    """Each collected test's own markers, read before bt_plugin deselects any: {base nodeid: [needs_env args in
+    marker order (deduplicated), needs_boot name or "", smoke]}."""
+    def __init__(self):
+        self.out = {}
+
+    @pytest.hookimpl(tryfirst=True)
+    def pytest_collection_modifyitems(self, config, items):
+        for it in items:
+            env = []
+            for m in it.iter_markers("needs_env"):
+                env += [str(a).strip() for a in m.args if str(a).strip() not in env]
+            b = it.get_closest_marker("needs_boot")
+            self.out.setdefault(proven.base_nodeid(it.nodeid),
+                                [env, str(b.args[0]) if b and b.args else "", it.get_closest_marker("smoke") is not None])
+
+
+d = Dump()
+code = pytest.main([sys.argv[1], "--collect-only", "-q", "-p", "no:cacheprovider"], plugins=[d])
+with open(sys.argv[2], "w", encoding="utf-8") as f:
+    json.dump({"code": int(code), "tests": d.out}, f)
+'''
+
+
+def marker_dump(folder, work):
+    """{test: (needs_env list, needs_boot, smoke)} of the tests under folder, from a pytest collection of this
+    selftest's own (an independent read of the markers, to check rc_tests.collect + groups_of against)."""
+    import subprocess
+    script, out, cwd = (os.path.join(work, n) for n in ("marker_dump.py", "marker_dump.json", "marker_dump"))
+    write(script, MARKER_DUMP)
+    os.makedirs(cwd, exist_ok=True)   # (bt_plugin's session end writes ingame-out/ into the current folder)
+    p = subprocess.run([sys.executable, "-I", script, os.path.abspath(folder), out, AUTOTEST], cwd=cwd,
+                       capture_output=True, text=True, timeout=300)
+    if not os.path.isfile(out):
+        raise AssertionError("marker dump: exit %s: %s" % (p.returncode, (p.stdout + p.stderr)[-600:]))
+    with open(out, encoding="utf-8") as f:
+        doc = json.load(f)
+    if doc["code"] not in (0, 1) or not doc["tests"]:   # (bt_plugin: a collect-only session with no test run = 1)
+        raise AssertionError("marker dump: pytest exit %s, %d test(s)" % (doc["code"], len(doc["tests"])))
+    return {t: (v[0], v[1], v[2]) for t, v in doc["tests"].items()}
+
+
+def group_faults(marks, groups):
+    """What is wrong with rc_tests.groups_of's groups for these markers ({test: (env, boot, smoke)}): the default
+    group first; each test in exactly the group of its own (needs_boot, proven.env_key(needs_env)); no empty group;
+    smoke-tier tests (smoke, no env/boot) in none, every other test in one."""
+    faults, placed = [], {}
+    if not groups or groups[0]["name"] != "default" or groups[0]["boot"] or groups[0]["env"]:
+        faults.append("the first group is not the default one")
+    for g in groups:
+        want = (g["boot"], pv.env_key(g["env"]))
+        if g["name"] != "default" and not g["tests"]:
+            faults.append("empty group %s" % g["name"])
+        for t in g["tests"]:
+            env, boot, smoke = marks[t]
+            if t in placed:
+                faults.append("%s in two groups (%s, %s)" % (t, placed[t], g["name"]))
+            placed[t] = g["name"]
+            if (boot, pv.env_key(env)) != want:
+                faults.append("%s (needs_boot %r, needs_env %s) is in group %s" % (t, boot, env, g["name"]))
+    for t, (env, boot, smoke) in marks.items():
+        if smoke and not env and not boot:
+            if t in placed:
+                faults.append("smoke-tier %s is in group %s" % (t, placed[t]))
+        elif t not in placed:
+            faults.append("%s is in no group" % t)
+    return faults
+
+
 BOSS = "live-twinrova-room"
 K1, K2 = "test_boss.py::test_twinrova_shooter", "test_boss.py::test_twinrova_hud"
 # bt_plugin 86711283c's own collection step: a test this run's --boot/--env cannot run is deselected, also on
@@ -138,22 +214,44 @@ class Collect(Base):
         self.assertEqual([(g["name"], g["env"], g["tests"]) for g in groups],
                          [("default", [], [A, B, C]), ("env1", HUD, [H1, H2])])
 
-    def test_real_suite_env_group_is_test_party_hud_only(self):
-        """B #129 selftest on the repo's own tools/autotest/ingame: the needs_env group holds only test_party_hud.py
-        and the default group no needs_env test (runs once the in-game tests are on the branch under test)."""
+    def test_real_suite_groups_follow_each_tests_own_markers(self):
+        """B #129 selftest on the repo's own tools/autotest/ingame (B #139: was pinned to test_party_hud.py, which
+        broke on every new needs_env test). The expected group of EVERY test comes from its own needs_env /
+        needs_boot / smoke markers, read by a pytest collection of this test's own (marker_dump below, not
+        rc_tests' collector): each test is in exactly the group of its (needs_boot, proven.env_key(needs_env)), the
+        default group holds no needs_env or needs_boot test, a group never holds a test of another key, and no test
+        is lost. A non-env test landing in an env group (or the reverse) fails here."""
         real = os.path.join(AUTOTEST, "ingame")
         if not os.path.isfile(os.path.join(real, "test_party_hud.py")):
             self.skipTest("no tools/autotest/ingame/test_party_hud.py on this branch yet")
+        marks = marker_dump(real, self.tmp)
         got = rt.collect(real, self.tmp)
-        env = {x["test"] for x in got if x["env"]}
-        groups = rt.groups_of(got)
-        self.assertTrue(env)
-        self.assertEqual({t.split("::")[0] for t in env}, {"test_party_hud.py"})
-        self.assertFalse(set(groups[0]["tests"]) & env)
-        self.assertEqual([g["name"] for g in groups], ["default", "env1"])
-        self.assertEqual(set(groups[1]["tests"]), env)
-        for g in groups:                                                     # 86711283c: a needs_boot test only
-            self.assertEqual({x["boot"] for x in got if x["test"] in g["tests"]} - {g["boot"]}, set(), g["name"])
+        self.assertEqual({x["test"] for x in got}, set(marks))                       # the same tests
+        for x in got:                                                                # rc_tests reads the markers
+            self.assertEqual((x["env"], x["boot"], x["smoke"]), marks[x["test"]], x["test"])
+        self.assertTrue(any(m[0] for m in marks.values()), "no needs_env test in the real suite")
+        self.assertTrue(all(marks[t][0] for t in (x["test"] for x in got) if t.startswith("test_party_hud.py::")))
+        self.assertEqual(group_faults(marks, rt.groups_of(got)), [])
+
+    def test_group_faults_catches_a_test_in_the_wrong_group(self):
+        marks = {A: ([], "", False), S1: ([], "", True), H1: (HUD, "", False), K1: ([], BOSS, False)}
+        good = [{"name": "default", "boot": "", "env": [], "tests": [A]},
+                {"name": "env1", "boot": "", "env": HUD, "tests": [H1]},
+                {"name": BOSS, "boot": BOSS, "env": [], "tests": [K1]}]
+        self.assertEqual(group_faults(marks, good), [])
+        bad = [dict(g, tests=list(g["tests"])) for g in good]
+        bad[1]["tests"].append(A)                                   # a non-env test in the env group
+        self.assertTrue(any("is in group env1" in f for f in group_faults(marks, bad)))
+        bad = [dict(g, tests=list(g["tests"])) for g in good]
+        bad[0]["tests"].append(H1); bad[1]["tests"] = []            # an env test in the default group
+        faults = group_faults(marks, bad)
+        self.assertTrue(any("is in group default" in f for f in faults) and any("empty group env1" in f for f in faults))
+        bad = [dict(g, tests=list(g["tests"])) for g in good]
+        bad[2]["tests"] = []                                        # a needs_boot test lost
+        self.assertTrue(any("%s is in no group" % K1 in f for f in group_faults(marks, bad)))
+        bad = [dict(g, tests=list(g["tests"])) for g in good]
+        bad[0]["tests"].append(S1)                                  # a smoke test in a group
+        self.assertTrue(any("smoke" in f for f in group_faults(marks, bad)))
 
 
 class Boots(Base):

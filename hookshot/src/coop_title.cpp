@@ -21,6 +21,7 @@
 
 #include "common/logging.h"
 #include "coop_auto_press.h"
+#include "coop_game_clock.h"
 #include "coop_hook.h"
 #include "coop_i18n.h"
 #include "coop_lobby.h"
@@ -1820,7 +1821,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
         CoopPause::CloseNative();
     }
     if (const std::uint64_t t0 = g_auto_press_ms.load(); t0 != 0) {   // (the host's save loading by itself)
-        const std::uint64_t e = NowMs() - t0;
+        const std::uint64_t e = CoopGameClock::NowMs() - t0;   // (the game's clock: coop_game_clock.h)
         if (e >= CoopAutoPress::kEndMs || InGame()) {
             g_auto_press_ms = 0;
             LOG_INFO(Core, "coop: title: the host's save: the presses that load it are done ({})",
@@ -1897,7 +1898,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
                        NowMs() - g_title_view_ms.load() >= 1000) {
                 g_auto_load_until = 0;
                 g_focus_to = 0;   // (the game's first button, Continue; then the A presses: OnPad's start)
-                g_auto_press_ms = NowMs();
+                g_auto_press_ms = CoopGameClock::NowMs();
                 LOG_INFO(Core, "coop: title: the host's save is in: Continue, its newest save and Load pressed for "
                                "the player");
             }
@@ -2044,7 +2045,7 @@ void StopSaveWait() {
 
 bool MenuMouseHeld() {
     const std::uint64_t t0 = g_auto_press_ms.load();
-    return CoopAutoPress::Running(t0, NowMs()) && !InGame();
+    return CoopAutoPress::Running(t0, CoopGameClock::NowMs()) && !InGame();
 }
 
 void LoadHostSaveOnTitle(bool test) {

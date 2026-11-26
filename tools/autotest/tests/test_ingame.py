@@ -587,6 +587,24 @@ class BootCommand(unittest.TestCase):
                            text=True, timeout=60)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
 
+    def test_check_args_refuses_the_sampler_switches(self):
+        # (game-commit-c141 run-b8a8a4f3: HOS_SLOW_FRAMES' all-thread sampler crashed the game, 0xc0000005 in
+        # RtlVirtualUnwind) refused at --check-args, so live.py start --dry-run (the lane check) is a SETUP-FAIL first
+        import bt_plugin as B
+        hs = [sys.executable, "-I", os.path.join(AUTOTEST, "hookshot.py"), "run", "--out", self.tmp] + self.games() + [
+            "--script-a", B.BOOT_A, "--script-b", B.BOOT_B]
+        for kv in ("HOS_SLOW_FRAMES=x", "A:HOS_SLOW_FRAMES=x", "HOS_SAMPLE_ALL=y"):
+            p = subprocess.run(hs + ["--env", kv, "--check-args"], capture_output=True, text=True, timeout=60)
+            self.assertEqual(p.returncode, 2, kv + ": " + p.stdout + p.stderr)
+            self.assertIn("sampler", p.stderr)
+        p = subprocess.run(hs + ["--env", "RX_VK_FRAME_LOG=frames.csv", "--check-args"], capture_output=True, text=True,
+                           timeout=60)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        r = self.live("--dry-run", "--session", os.path.join(self.tmp, "s"), "--game-a", os.path.join(self.tmp, "a"),
+                      "--boot-a", B.BOOT_A, "--no-load", "--env", "HOS_SLOW_FRAMES=x")
+        self.assertFalse(r["ok"])
+        self.assertIn("sampler", r["error"])
+
     def test_result_line(self):
         import bt_plugin as B
         c = {k: 0 for k in B.RESULTS}

@@ -1219,6 +1219,20 @@ RENDERER_READY = re.compile(r"vk: precompile: \d+ programs, .* in \d+ ms|vk: sta
                             r"|vk: programs: load at create: \d+ notes of \d+ programs indexed")
 
 
+# Longshot's all-thread sampler (host/mkw_glue.c sample_all_thread, started for these two: mkw_glue.c:976-978) suspends
+# every thread and walks its stack with RtlVirtualUnwind; on v3.2.0 that walk faulted in the sampler's thread and took
+# the game down (game-commit-c141 run-b8a8a4f3, HOS_SLOW_FRAMES: 'CRASH: exception 0xc0000005 ... at ntdll.dll+0x1ff2a',
+# return addresses longshot.exe+0x1faef7c2 = after unwind_step's call of RtlVirtualUnwind, +0x1faeeb93 = the sampler's
+# loop; the fault Longshot's own mkw_glue.c:347-354 describes). A test game never gets them: run refuses them, so a
+# --check-args / live.py start --dry-run is a SETUP-FAIL before any boot. Frame times without a sampler: RX_VK_FRAME_LOG.
+SAMPLER_SWITCHES = {
+    "HOS_SLOW_FRAMES": "Longshot's slow-frame recorder runs the all-thread sampler, which crashed a test game "
+                       "(0xc0000005 in RtlVirtualUnwind, game-commit-c141): use RX_VK_FRAME_LOG=<file> for frame times",
+    "HOS_SAMPLE_ALL": "Longshot's all-thread sampler crashed a test game (0xc0000005 in RtlVirtualUnwind, "
+                      "game-commit-c141): not for test runs",
+}
+
+
 def read_text(path):
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
@@ -1948,6 +1962,10 @@ def main(argv=None):
     for kv in a.env:
         if "=" not in kv:
             p.error("--env NAME=VALUE")
+        k = kv.split("=", 1)[0]
+        k = k[2:] if k[:2] in ("A:", "B:") else k
+        if k in SAMPLER_SWITCHES:
+            p.error("--env %s: %s" % (k, SAMPLER_SWITCHES[k]))
     if a.what == "run" and not a.script_a and not a.only:
         p.error("--script-a (or --only B)")
     if getattr(a, "host_in_game", False):

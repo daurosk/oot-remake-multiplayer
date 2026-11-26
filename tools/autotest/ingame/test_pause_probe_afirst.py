@@ -61,7 +61,7 @@ def _record(pair, what, pos):
     return out
 
 
-def _probe(pair, gap, warp=None):
+def _probe(pair, gap, warp=None, wait=0):
     if warp:
         # (test_smoke::test_warp right before test_pause in both failing runs: warp_both(WARP_TO), the boot's own scene,
         # test_smoke.py:42, in the TEST body as test_warp does: 2f734963a has no set-up warp allowance (368eab365), so a
@@ -71,6 +71,11 @@ def _probe(pair, gap, warp=None):
         pair.until_in_play("both games in play before the probe", max_frames=P.READY_FRAMES)
     pos = {x: pair.log[x].mark() for x in ("A", "B")}
     _record(pair, "before", pos)
+    # (crawl-337-12: after_warp_wait - B's + was got and refused right after the warp (pause-warp-34950797); wait first,
+    # recording each 30 frames, to tell a post-arrival lockout (B pauses after the wait) from a player bug (B still refuses))
+    for i in range(wait // 30):
+        pair.step_both(30)
+        _record(pair, "wait +%d" % ((i + 1) * 30), pos)
     pair.press("A", ["PLUS"], frames=4)
     _record(pair, "after A's +", pos)
     for i in range(gap // 10):
@@ -109,3 +114,10 @@ def test_pause_probe_afirst_after_a_paused(pair):
 @pytest.mark.row("probe crawl-337-11: warp_both (test_warp) then A's + and B's + back to back - measures only")
 def test_pause_probe_afirst_after_warp(pair):
     _probe(pair, gap=0, warp="KakarikoVillage_Child")
+
+
+@pytest.mark.budget(180)
+@pytest.mark.needs_env("LICHII_COOP_TEST_STATE=1")
+@pytest.mark.row("probe crawl-337-12: warp_both, 150 + 150 frames' wait, then A's + and B's + back to back - measures only")
+def test_pause_probe_afirst_after_warp_wait(pair):
+    _probe(pair, gap=0, warp="KakarikoVillage_Child", wait=300)

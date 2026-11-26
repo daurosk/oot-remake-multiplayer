@@ -1,0 +1,11 @@
+# row53-tot-probe (row-53-ocarina-2): the Temple of Time placement probe (row53-tot-probe.A.txt has every value's source).
+# Line checks read the game logs (hookshot_log-A/-B). The judge (offline/row-53-ocarina-2/probe-run.ps1) reads the Link
+# places from the mark lines and the shots.
+start A B
+load A B
+shot loaded
+play A row53-tot-probe.A.txt B row53-tot-probe.B.txt
+shot end
+lines market-A A min=1 coop: test mark market \(Link at
+lines place-A A min=3 coop: test place [-0-9.]+ [-0-9.]+ [-0-9.]+: done
+lines marks-A A min=6 coop: test mark p-[a-z-]+ \(Link at

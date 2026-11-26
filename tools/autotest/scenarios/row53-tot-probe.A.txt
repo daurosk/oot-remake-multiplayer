@@ -1,0 +1,44 @@
+# row53-tot-probe (row-53-ocarina-2): where does Link land when placed inside the Temple of Time? A short probe before the
+# open_fast Door of Time run. Every value's source:
+#  - the Temple of Time is an area of Market_Child (tools/puppet_pack/start_points.py header; dump romfs
+#    Banc/Market/Market_Child_Static: Land_TempleOfTime_A_01 at 80.93 102.10 -34.00, Land_TempleOfTime_Inside_A_01 at
+#    95.58 102.10 -34.00, the Door of Time Obj_TimeTemple_Door_A_01 at 118.38 104.86 -34.00 (OOTRR door_open.rs DOOR
+#    Obj_TimeTemple_Door_A_01_cb9f, the door its open edit drives); Market_Child_Dynamic: StartPos LightPrelude
+#    (Prelude of Light arrival, inside the temple) at 84.75 104.23 -34.00, the temple's warp point
+#    Obj_TimeTemple_WarpPoint_A_01 at 84.75 103.79 -34.00, Demo_Dm_TimeTemple_0000_Moving Position at 76.50 103.93 -34.00)
+#  - the hookshot runner's warp lands at the map's own start, never a named one (hookshot.py Runner.warp: "start ... not
+#    used on hookshot (the map's own)"); for Market_Child that is the market gate: 11-23 p7-walk v2
+#    (shots-lane1/p7-walk/20261123-070414 hookshot_log-A.txt:29615 "test mark market (Link at -1.71 102.12 65.00)")
+#  - the 11-23 place 105.80 100.00 -34.20 logged "done" but Link stayed at -1.97 102.12 65.24 (same log :29657, :30654):
+#    y 100.00 is under the temple floor (102.10 to 104.23 above), so the game put him back. Here every place is 1.5 m or
+#    more over the floor height of the nearest dump placement, so he drops onto it.
+#  - mark lines log Link's place (lichii/hook/coop_testinput.cpp "coop: test {} (Link at ...)"); the judge reads them.
+#  - place / face / goto: hookshot.py MODULE_ONLY place and face, goto X Z [RADIUS] [TICKS] (hookshot.py parse).
+mark start
+warp Market_Child
+wait 600
+mark market
+# 1. the temple's doorway area (cutscene position 76.50 103.93 -34.00), 1.6 m up
+place 76.5 105.5 -34.0
+wait 240
+mark p-door
+# 2. inside, the warp point (84.75 103.79 -34.00), 1.7 m up
+place 84.75 105.5 -34.0
+wait 240
+mark p-warp
+face 118.38 -34.0
+wait 120
+mark p-warp-face
+# 3. between the altar and the door (the spirit stone base 110.43 103.88 -34.00 is in front of the door), 1.6 m up
+place 106.0 105.5 -34.0
+wait 240
+mark p-altar
+face 118.38 -34.0
+wait 120
+mark p-altar-face
+# 4. walk on toward the door (stops at its wall when it is shut)
+goto 116.0 -34.0 0.5 600
+wait 120
+mark p-at-door
+wait 300
+mark end

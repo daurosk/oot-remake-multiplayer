@@ -1,6 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /* Squadala drop-in proof (v1-longshot-dropin, P0): co-op's first hook on a STOCK longshot.exe, no Longshot rebuild.
 
-   Loaded as winmm.dll beside longshot.exe (winmm_stubs.S forwards every winmm export to System32's own winmm.dll).
+   Loaded as winmm.dll beside the game's bin\longshot.exe (winmm_stubs.S forwards every winmm export to System32's own winmm.dll).
    At attach it reads longshot.exe's own COFF symbol table from the file on disk (the Longshot build links the lifted
    game with its symbols: f_<guest address> for every lifted function, plus the host's own functions), finds the lifted
    frame function f_83b6e300 (main+0x3b4e300, lichii/hook/coop_game_build.h frame_step; called twice by moduleCalc_,

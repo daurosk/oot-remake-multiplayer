@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Writes the drop-in's winmm forwarders from the export names of THIS PC's System32 winmm.dll (no Microsoft file is
 copied: only the names are read). Out: <out>/winmm.def, <out>/winmm_stubs.S, <out>/winmm_names.c.
 Each stub jumps through dropin_winmm_ptrs[i]; the first call of each resolves it from System32's winmm.dll

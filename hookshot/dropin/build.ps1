@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Builds the drop-in proof winmm.dll (hookshot/dropin) with the kit's llvm-mingw. Out: hookshot/dropin/out/winmm.dll
 # Usage: powershell -ExecutionPolicy Bypass -File hookshot\dropin\build.ps1 [-Toolchain <llvm-mingw bin>]
 param([string]$Toolchain = "")

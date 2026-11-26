@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /* Offline check of the drop-in's symbol reader and prologue decoder on a longshot.exe FILE (the game is not run).
    Usage: selftest.exe <longshot.exe> ; prints each wanted symbol's RVA and whether its prologue is a known shape.
    Exit 0 = every symbol found and every lifted target hookable. */

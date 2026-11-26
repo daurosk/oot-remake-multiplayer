@@ -1,6 +1,9 @@
 # giant-blade (proof-0116, O4 puppet-looks-0116-3): ADULT A wears Weapon_Sword_Giant, draws facing B, then Weapon_Sword_BrokenGiant.
 # PASS (B's shots b-giant / b-broken): the blade (broken: the stub) on A's puppet; run once with looks on, once with B
 # LICHII_COOP_LOOK_ITEMS=0 (B log 'wears weapon ...Blade1').
+# (B headers moved to A: run.ps1 reads #! lines only from the A script; both scripts begin with mark start + warp, so noload + start were meant for the run, regress-run-01113 2026-11-26)
+#! noload
+#! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_OBJECTS=1
 #! timeout 360
 mark start

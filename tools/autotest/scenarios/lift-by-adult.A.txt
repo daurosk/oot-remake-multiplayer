@@ -3,6 +3,9 @@
 # PASS (shots both): lifted/lifted2 = B's copy in A's hands in Ruto's sitting carry, looping (not Like Like hold, not T-pose);
 # walked = B follows on B's own screen; thrown = B lands where A's screen shows it (within 1 m), copy back on own poses.
 # Logs: A 'our Link lifted P2.s copy: asking', B 'P1 lifts our Link: yes', B 'carried: our own Link plays' (UNKNOWN 7).
+# (B headers moved to A: run.ps1 reads #! lines only from the A script; both scripts begin with mark start + warp, so noload + start were meant for the run, regress-run-01113 2026-11-26)
+#! noload
+#! start coop: test warp done
 #! switches LICHII_COOP_LIFT_PLAYER=1,LICHII_COOP_DEBUG_OBJECTS=1
 #! timeout 420
 mark start

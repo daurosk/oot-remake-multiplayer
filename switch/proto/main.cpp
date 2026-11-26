@@ -6,8 +6,10 @@
 //      through coop_frame_entry (start.s); a log line every 600 frames.
 //   3. It calls one of the game's own functions: the world clock setter
 //      main+0x34522d0 (world manager, seconds), as lichii/hook/coop_time.cpp does.
-//   4. It opens a socket with the game's own nn::socket (from sdk) and sends a
-//      UDP "hello" to 127.0.0.1:27520 (tools/switch_mod/listen.py prints it).
+//   4. It reads one game value: the current scene name (Banc module +0x40).
+//   5. It joins a coop_server with the game's own nn::socket (from sdk), the way a
+//      Longshot game does: ENet, HELLO, JOIN_PROOF, sealed WELCOME (switch/net,
+//      coop_join.h), so an emulator player and a Longshot player share one session.
 // No libc, no SDK headers: the game's modules are linked by rtld by name.
 //
 // Built so a recomp can lift the same binary as subsdk1 (docs/exefs.md, "Lifting"):
@@ -17,6 +19,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "../net/coop_join.h"
+#include "../net/net_plat.h"
+#include "coop_join_config.h"  // written by tools/switch_mod/build.py (--join, --password, --name)
 #include "hooks.h"
 #include "svc.h"
 
@@ -26,21 +31,14 @@ void nnMain();             // defined only in main: finds main's base
 void* malloc(size_t size);  // defined only in main: checks the build
 }
 
-struct sockaddr {
-    uint8_t sa_len;
-    uint8_t sa_family;
-    char sa_data[14];
-};
-
 namespace nn::socket {
 uint32_t Initialize(void* pool, unsigned long pool_size, unsigned long alloc_pool_size,
                     int concurrency);  // _ZN2nn6socket10InitializeEPvmmi
 bool IsInitialized();                  // _ZN2nn6socket13IsInitializedEv
-int Socket(int domain, int type, int protocol);                      // _ZN2nn6socket6SocketEiii
-int Connect(int fd, const ::sockaddr* addr, unsigned int len);       // _ZN2nn6socket7ConnectEiPK8sockaddrj
-long Send(int fd, const void* data, unsigned long size, int flags);  // _ZN2nn6socket4SendEiPKvmi
-int Close(int fd);                                                   // _ZN2nn6socket5CloseEi
 }  // namespace nn::socket
+namespace nn::os {
+void GenerateRandomBytes(void* out, unsigned long size);  // _ZN2nn2os19GenerateRandomBytesEPvm (sdk)
+}  // namespace nn::os
 
 // ---- What this build of the game looks like (build e0f3ccfaf50065ae, 1.1.1) ----
 namespace game {
@@ -51,6 +49,8 @@ constexpr uint32_t kFrameSiteInsn = 0x94d19c82;  // bl 0x3b4e300 (frame_step)
 constexpr uint64_t kWorldMgrPtr = 0x4e7eab0;  // coop_game_build.h .world_mgr_ptr
 constexpr uint64_t kTimeObject = 0x510;     // coop_time.cpp
 constexpr uint64_t kSetTime = 0x34522d0;    // coop_time.cpp kSetTime
+constexpr uint64_t kBancModulePtr = 0x4e919d0;  // coop_game_build.h .banc_module_ptr
+constexpr uint64_t kBancName = 0x40;        // player-state-map.md "Current scene": B+0x40 string pointer
 }  // namespace game
 
 // ---- Slots: the only way this module calls into the game (see hooks.h) ----
@@ -77,7 +77,6 @@ extern "C" COOP_EXPORT constinit __attribute__((section(".coop_hooks"), used)) h
 
 namespace {
 
-constexpr uint16_t kPort = 27520;  // LANE1's port (27510 + 10 * 1)
 constexpr uint32_t kNoon = 12 * 3600;
 
 uint64_t g_main = 0;
@@ -85,6 +84,7 @@ uint64_t g_frames = 0;
 bool g_host = false;  // the hooks were applied by a lifting recomp: no SVCs
 bool g_time_done = false;
 bool g_net_done = false;
+bool g_joining = false;
 alignas(0x1000) uint8_t g_socket_pool[0x400000];
 
 // ---- A tiny log: text and numbers into one line, then the kernel's debug string ----
@@ -212,7 +212,26 @@ void TrySetTime() {
     g_time_done = true;
 }
 
-void SayHello() {
+// One game value: the scene name, a path string at *(Banc module) + 0x40; logged when it changes.
+char g_scene[64] = {};
+void ReadScene() {
+    uint64_t banc = 0, str = 0;
+    if (!ReadU64(g_main + game::kBancModulePtr, banc) || banc == 0) return;
+    if (!ReadU64(banc + game::kBancName, str) || str == 0 || !Mapped(str)) return;
+    char now[64] = {};
+    const volatile char* p = reinterpret_cast<const volatile char*>(str);
+    for (size_t i = 0; i + 1 < sizeof now; ++i) {
+        const char c = p[i];
+        if (c == 0) break;
+        if (c < 0x20 || c > 0x7e) return;  // not text: not the name
+        now[i] = c;
+    }
+    if (now[0] == 0 || memcmp(now, g_scene, sizeof now) == 0) return;
+    memcpy(g_scene, now, sizeof now);
+    Log().s("game value: scene ").s(g_scene).s(" at frame ").dec(g_frames);
+}
+
+void StartJoin() {
     g_net_done = true;
     if (!nn::socket::IsInitialized()) {
         const uint32_t r = nn::socket::Initialize(g_socket_pool, sizeof(g_socket_pool), 0x20000, 4);
@@ -221,35 +240,46 @@ void SayHello() {
     } else {
         Log().s("net: using the game's socket library (already initialized)");
     }
-    const int fd = nn::socket::Socket(2 /*AF_INET*/, 2 /*SOCK_DGRAM*/, 0);
-    if (fd < 0) {
-        Log().s("net: socket failed");
-        return;
-    }
-    sockaddr addr{};
-    addr.sa_len = sizeof(addr);
-    addr.sa_family = 2;
-    addr.sa_data[0] = static_cast<char>(kPort >> 8);  // port, network order
-    addr.sa_data[1] = static_cast<char>(kPort & 0xff);
-    addr.sa_data[2] = 127;  // 127.0.0.1
-    addr.sa_data[5] = 1;
-    const int c = nn::socket::Connect(fd, &addr, sizeof(addr));
-    static const char kHello[] = "coop-proto hello from subsdk1";
-    long sent = -1;
-    for (int i = 0; i < 3 && c == 0; ++i) sent = nn::socket::Send(fd, kHello, sizeof(kHello) - 1, 0);
-    Log().s("net: connect ").dec(c == 0 ? 0 : 1).s(", sent ").dec(sent < 0 ? 0 : static_cast<uint64_t>(sent))
-        .s(" bytes x3 to 127.0.0.1:").dec(kPort);
-    nn::socket::Close(fd);
+    coopnet::JoinConfig c{};
+    const uint8_t ip[4] = COOP_JOIN_IP;
+    memcpy(c.ip, ip, 4);
+    c.port = COOP_JOIN_PORT;
+    c.password = COOP_JOIN_PASSWORD;
+    c.nickname = COOP_JOIN_NAME;
+    c.build_id = "exefs-proto subsdk1 (Fritchii)";
+    c.game_build_id = "e0f3ccfaf50065ae";
+    c.game_version = "1.1.1";
+    c.protocol_version = COOP_PROTOCOL_VERSION;
+    g_joining = coopnet::join_start(c);
 }
 
 }  // namespace
+
+// ---- What switch/net asks of the platform (net_plat.h) ----
+extern "C" void coop_plat_log(const char* text, size_t len) { svc::OutputDebugString(text, len); }
+extern "C" uint64_t coop_plat_ms() {
+    uint64_t ticks, freq;  // the CPU's generic timer (readable at EL0 on the console and in the JIT)
+    asm volatile("mrs %0, cntpct_el0" : "=r"(ticks));
+    asm volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    return freq ? ticks / (freq / 1000) : 0;
+}
+extern "C" void coop_plat_random(void* out, size_t len) { nn::os::GenerateRandomBytes(out, len); }
 
 // Every frame, before the game's frame step (start.s keeps all argument registers).
 extern "C" COOP_EXPORT void coop_proto_frame() {
     ++g_frames;
     if (g_frames == 1 || g_frames % 600 == 0) Log().s("frame ").dec(g_frames);
     if (!g_time_done && g_frames >= 300 && g_frames % 60 == 0) TrySetTime();
-    if (!g_net_done && g_frames >= 900) SayHello();
+    if (g_frames % 60 == 0) ReadScene();
+    if (!g_net_done && g_frames >= 900) StartJoin();
+    if (g_joining) {
+        coopnet::join_tick();
+        if (g_frames % 600 == 0) {
+            const coopnet::JoinStatus st = coopnet::join_status();
+            Log().s("net: join ").s(coopnet::to_string(st.state)).s(", player ").dec(st.player_number)
+                .s(", others seen ").dec(st.players_seen).s(", pings answered ").dec(st.pings_answered);
+        }
+    }
 }
 
 // rtld calls this once, after nninitStartup and before nnMain (actor-map.md, Module _init).

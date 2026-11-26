@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Unit tests for elf2nso.py on small ELF files made here (no compiler needed)."""
 from __future__ import annotations
 

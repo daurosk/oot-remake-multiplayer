@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /* ENet platform header for our nn::socket port (switch/net/enet_nx.cpp).
    Found before ENet's own include/enet/unix.h because the build puts this
    shim folder first on the include path; ENet's enet.h includes "enet/unix.h"

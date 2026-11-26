@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /* Freestanding stand-in for <string.h> (see stdlib.h). sdk exports all four. */
 #pragma once
 #include <stddef.h>

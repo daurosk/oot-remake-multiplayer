@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Check that the built ExeFS module can be lifted by a recomp, and write its entries file.
 
     lift_check.py module.elf [--entries <file>]

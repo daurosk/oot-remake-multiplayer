@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Unit tests for lift_check.py's instruction decoding and indirect-call tracking (no compiler needed)."""
 from __future__ import annotations
 

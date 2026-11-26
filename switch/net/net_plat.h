@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // What the freestanding net code (switch/net) needs from the place it runs.
 // The ExeFS module implements these in switch/proto/main.cpp (debug-string log,
 // the CPU's counter, nn::os::GenerateRandomBytes); the PC test in

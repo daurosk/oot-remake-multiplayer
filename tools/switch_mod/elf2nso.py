@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Turn the prototype's linked ELF (three PT_LOAD segments: RX, R, RW+bss) into an NSO module.
 
 Our own small converter, so the prototype needs only LLVM (clang + ld.lld). The NSO is written

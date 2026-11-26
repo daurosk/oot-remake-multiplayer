@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ENet's platform layer on the game's own nn::socket (sdk), for the ExeFS module.
 // Replaces ENet's unix.c and callbacks.c; ENet's host/peer/packet/list/protocol.c
 // are compiled unchanged (fetched at the pin in tools/switch_mod/deps.py).

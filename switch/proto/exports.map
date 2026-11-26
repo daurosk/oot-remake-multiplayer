@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* What a lifting recomp needs to see: the module's entry points, the hook table
    and its slots (docs/exefs.md, "Lifting"). Everything else stays local. */
 {

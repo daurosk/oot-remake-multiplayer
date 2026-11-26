@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // See coop_join.h. Message numbers and layouts: coop/protocol/include/coop/protocol/messages.hpp
 // (MessageType, Hello, JoinChallenge, JoinProof, Welcome, Ping, Pong, PlayerJoined) and
 // codec.cpp (little-endian u16/u32/u64, strings as u16 length + bytes, each message

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Build and run the PC test of the ExeFS module's net code (switch/net).
 
     net_host.py [--llvm <LLVM bin>] [--out <folder>]                 build + selftest

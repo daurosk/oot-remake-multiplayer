@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Build the ExeFS prototype (switch/proto) into an NSO code module with LLVM.
 
     build.py [--llvm <LLVM bin folder>] [--out <folder>] [--protocol-from <sha>]

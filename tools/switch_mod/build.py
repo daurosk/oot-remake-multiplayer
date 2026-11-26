@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the ExeFS prototype (switch/proto) into an NSO code module with LLVM.
 
-    build.py [--llvm <LLVM bin folder>] [--out <folder>]
+    build.py [--llvm <LLVM bin folder>] [--out <folder>] [--protocol-from <sha>]
 
 Needs clang and ld.lld with the AArch64 target (any stock LLVM build). Writes
 <out>/module.elf, <out>/subsdk1 and <out>/subsdk1.entries (default out:
@@ -30,9 +30,20 @@ NET = REPO / "switch" / "net"
 PROTOCOL_HPP = REPO / "coop" / "protocol" / "include" / "coop" / "protocol" / "messages.hpp"
 
 
-def protocol_version() -> int:
+def protocol_version(sha: str | None = None) -> int:
+    """kProtocolVersion from messages.hpp: this checkout, or the file at commit <sha> (git show),
+    so a run builds the module for the protocol of the game build it plays with, never a typed number."""
     import re
-    m = re.search(r"kProtocolVersion\s*=\s*(\d+)", PROTOCOL_HPP.read_text(encoding="utf-8"))
+    if sha:
+        rel = PROTOCOL_HPP.relative_to(REPO).as_posix()
+        r = subprocess.run(["git", "-C", str(REPO), "show", f"{sha}:{rel}"], capture_output=True, text=True,
+                           encoding="utf-8")
+        if r.returncode != 0:
+            sys.exit(f"build: --protocol-from {sha}: git show failed: {r.stderr.strip()}")
+        text = r.stdout
+    else:
+        text = PROTOCOL_HPP.read_text(encoding="utf-8")
+    m = re.search(r"kProtocolVersion\s*=\s*(\d+)", text)
     if not m:
         sys.exit("build: kProtocolVersion not found in messages.hpp")
     return int(m.group(1))
@@ -44,7 +55,7 @@ def c_string(text: str) -> str:
     return '"' + text + '"'
 
 
-def write_join_config(out: Path, join: str, password: str, name: str) -> None:
+def write_join_config(out: Path, join: str, password: str, name: str, protocol: int) -> None:
     host, _, port = join.rpartition(":")
     parts = host.split(".")
     if len(parts) != 4 or not all(p.isdigit() and int(p) < 256 for p in parts) or not port.isdigit():
@@ -60,7 +71,7 @@ def write_join_config(out: Path, join: str, password: str, name: str) -> None:
         f"#define COOP_JOIN_PORT {int(port)}",
         f"#define COOP_JOIN_PASSWORD {c_string(password)}",
         f"#define COOP_JOIN_NAME {c_string(name)}",
-        f"#define COOP_PROTOCOL_VERSION {protocol_version()}  // coop/protocol messages.hpp kProtocolVersion",
+        f"#define COOP_PROTOCOL_VERSION {protocol}  // coop/protocol messages.hpp kProtocolVersion",
     ]
     (out / "coop_join_config.h").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -114,12 +125,17 @@ def main() -> int:
     ap.add_argument("--join", default="127.0.0.1:27520", help="server the module joins (IPv4:port)")
     ap.add_argument("--password", default="exefs-crossplay-test", help="the server's join password")
     ap.add_argument("--name", default="emulator", help="nickname, 1 to 15 characters")
+    ap.add_argument("--protocol-from", metavar="SHA",
+                    help="take kProtocolVersion from messages.hpp at this commit (the game build played with); "
+                         "the handshake the module speaks must not differ between the two")
     a = ap.parse_args()
     clang = find_tool("clang", a.llvm)
     lld = find_tool("ld.lld", a.llvm)
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    write_join_config(out, a.join, a.password, a.name)
+    protocol = protocol_version(a.protocol_from)
+    print(f"build: protocol {protocol}" + (f" (from {a.protocol_from})" if a.protocol_from else ""))
+    write_join_config(out, a.join, a.password, a.name, protocol)
     d = deps.fetch_all()
     inc = ["-nostdlibinc", "-I", str(NET / "shim"), "-I", str(d["enet"] / "include"),
            "-I", str(d["monocypher"] / "src"), "-I", str(out)]

@@ -140,7 +140,13 @@ pytest-timeout (pytest.ini, 1800 s) is only the backstop for a call that never r
   checks that each game is in play (stepped), in the boot's scene, and of that age. Never check the age alone: a
   child Link in another map passes that.
 - A warp with `arrive_in_event` (a boss intro) is stepped until the game is in the scene, not loading, in the event
-  once the bridge's own 12 s wait is over; a warp takes longer than that under load.
+  once the bridge's own 12 s wait is over; a warp takes longer than that under load. A boot whose scene starts an
+  event on arrival (a boss stage boot) is taken the same way by the boot proof, then stepped until the event ends.
+- No game runs free (boss-respawn-bridge-e3e6e253): a call is never sent with less reply wait than it needs
+  (`REPLY_MIN_S` 2 s, plus its frames at 20 a second); when the deadline cannot give that, the test FAILs
+  `timeout ... not sent` with the connection and the hold kept. A reply that is lost anyway (a dropped connection,
+  a hung bridge) holds the game again at once (noted), and the next test starts after the recovery. A warp that
+  meets Longshot's one teleport per 8 s per game ('still in progress') waits the gap out, stepping, and asks once more.
 - Title test: `load_both` presses A only on a game whose log shows the title line since the way back was asked,
   never on a game in play (an A there opens and shuts the menu); `back to the title: given up` FAILs it at once.
 - Memory: each game's commit charge is sampled every 30 s from the boot start into `<dir>/lane<L>/commit.csv` and

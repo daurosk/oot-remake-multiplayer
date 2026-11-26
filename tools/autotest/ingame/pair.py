@@ -38,6 +38,14 @@ FPS = 30              # Ocarina of Time's calc rate on Hookshot: frames -> secon
 WARP_PAIR_MEASURED_S = 31.0
 RECOVER_WARP_S = WARP_PAIR_MEASURED_S   # one game's warp in a recovery: the worst TWO-game warp = 2x one game's (margin)
 RECOVER_BASE_S = SETUP_LIMIT_S          # a recovery's other part: out of a load, an event's end, in play (stepped)
+# The shortest reply wait a call is ever sent with (boss-respawn-bridge-e3e6e253, CAUSE 2: a call sent with the 0.2 s
+# left of a spent deadline timed the socket out; playtest_client.request closes it on any OSError and the bridge lets the
+# game RUN FREE mid-arrival, so every later test's recovery met 'teleport still in progress'). Cited parts: a held
+# game's `state` waits up to 300 ms for a snapshot (docs/playtest.md "world"), Longshot's status waits 250 ms for an
+# update (docs/playtest.md, control.c cmd_status), a `shot` runs up to 5 frames; frames at the client's own worst rate,
+# 20 a second (playtest_client.py input/move: timeout + frames / 20.0). 0.3 + 0.25 + 5/20 = 0.8 s, x2.5 margin.
+REPLY_MIN_S = 2.0
+CLIENT_FPS = 20.0     # the client's worst stepping rate (playtest_client.py input/move reply waits)
 
 
 class SetupFail(Exception):
@@ -225,13 +233,44 @@ class Pair:
         self.notes.append("set-up %.1f s" % took)
 
     # -- frames -----------------------------------------------------------------------------------------------
-    def _wait(self):
-        """A reply's wait: what is left of the deadline (at most 60 s, at least 0.2 s so a call can still answer)."""
-        return max(0.2, min(60.0, self.deadline.left()))
+    def _need(self, cmd, frames=0):
+        """The reply wait a call needs: REPLY_MIN_S, plus its frames at CLIENT_FPS (step / input / move run them)."""
+        return REPLY_MIN_S + max(0, int(frames or 0)) / CLIENT_FPS
+
+    def _wait(self, cmd="call", need=REPLY_MIN_S):
+        """A reply's wait: at least what the call needs and at most what is left of the deadline (60 s when the call
+        needs less). If the deadline cannot give it what it needs, the call is NOT sent: TestTimeout naming it, the
+        connection and the hold kept (was max(0.2, left): a bare socket timeout that let the game run free)."""
+        left = self.deadline.left()
+        if left < need:
+            raise TestTimeout("timeout after %.0f s: %s not sent (%.1f s left, its reply needs %.1f s; the game stays "
+                              "held)" % (self.deadline.seconds, cmd, max(0.0, left), need))
+        return min(max(60.0, need), left)
 
     def call(self, x, cmd, **args):
         self.deadline.check(cmd)
-        return self.c[x].request(cmd, reply_timeout=self._wait(), **args)
+        wait = self._wait(cmd, self._need(cmd, args.get("frames")))
+        return self._request(x, cmd, wait, **args)
+
+    def _request(self, x, cmd, wait, **args):
+        """One request; if its reply does not come (a socket timeout, a dropped connection), game x is held again at
+        once before the error goes on (a reconnect holds: playtest_client hold=True), so no game runs free until the
+        next test's recovery (B #138: re-hold after any step timeout)."""
+        try:
+            return self.c[x].request(cmd, reply_timeout=wait, **args)
+        except (OSError, ValueError) as e:
+            self.rehold(x, "%s: %s: %s" % (cmd, type(e).__name__, e))
+            raise
+
+    def rehold(self, x, why):
+        """Game x held again after a failed request (its connection is closed: the next request reconnects and holds).
+        Noted; a failed re-hold is noted too (the next test's recovery reconnects anyway, and SETUP-FAILs if it cannot)."""
+        client = self.c[x]
+        try:
+            client.request("pause", reply_timeout=REPLY_MIN_S)
+            self.notes.append("%s: held again after %s" % (x, why))
+        except Exception as e:                 # noqa: BLE001
+            self.notes.append("%s: NOT held again after %s: %s: %s" % (x, why, type(e).__name__, e))
 
     def step_both(self, frames=1):
         """Both games run `frames` frames, A first then B, in chunks (no game is ever more than CHUNK ahead)."""
@@ -318,7 +357,9 @@ class Pair:
                 have = (self.state(x).get("scene") or "")
                 if scene and have.lower() != scene.lower():
                     self.notes.append("boot: %s in %s, not the boot's %s: warped there by the bridge" % (x, have, scene))
-                    self.warp_one(x, scene)
+                    # (arrive_in_event=None: a boss stage boot, live-twinrova-room / live-phantom-ganon, starts its intro
+                    # on arrival, so the bridge answers 'timeout' with Link there; the event's end is stepped below)
+                    self.warp_one(x, scene, arrive_in_event=None)
             self.until_in_play("both games in play after the boot", tuple(self.c), max_frames)
         except SetupFail:
             raise
@@ -446,6 +487,7 @@ class Pair:
             self.step_both(52)
             ran += 60
 
+    TELEPORT_GAP_S = 8      # s: Longshot's one teleport per 8 s per game (docs/playtest.md `warp`, 'still in progress')
     ARRIVE_IN_EVENT_WAIT = 12   # s: the bridge's own wait per game for arrive_in_event; it answers 'timeout' in the
     #                             arrival event, then the arrival is waited for on state (warp_one), not judged here
 
@@ -465,16 +507,30 @@ class Pair:
 
     def warp_one(self, x, scene, entrance=None, arrive_in_event=False):
         """Game x alone to `scene`, by warp_both's rules (entrance, arrive_in_event, waits inside the deadline); the
-        other game is stepped to the same frame count after it (row-286-wake-3). Returns x's state."""
+        other game is stepped to the same frame count after it (row-286-wake-3). Returns x's state.
+        arrive_in_event=None (boot_ready: a boot's scene may or may not start an event on arrival): the bridge's own
+        60 s wait, and a 'timeout' is judged on state like arrive_in_event=True (in the scene, not loading, the event
+        running), anything else raises."""
         extra = {} if entrance in (None, "") else {"entrance": entrance}
         before = self.c[x].last_frame or 0
-        wait = self.ARRIVE_IN_EVENT_WAIT if arrive_in_event else 60
-        t = max(1, int(min(wait, self.deadline.left() - 2)))   # (the bridge answers by t, a little under the deadline)
-        self.deadline.check("warp")
-        r = self.c[x].request("warp", check=False, reply_timeout=max(0.2, min(t + 15, self.deadline.left())),
-                              scene=scene, timeout=t, **extra)        # (the reply wait stays inside the deadline)
+        wait = self.ARRIVE_IN_EVENT_WAIT if arrive_in_event is True else 60
+        for attempt in (1, 2):
+            t = max(1, int(min(wait, self.deadline.left() - 2)))   # (the bridge answers by t, a little under the deadline)
+            self.deadline.check("warp")
+            r = self._request(x, "warp", self._wait("warp", t + REPLY_MIN_S), check=False,
+                              scene=scene, timeout=t, **extra)        # (the bridge answers by t; never sent short of it)
+            if attempt == 1 and r.get("error") == "failed" and "still in progress" in (r.get("message") or ""):
+                # (Longshot allows one teleport every TELEPORT_GAP_S per game, docs/playtest.md `warp`: 'another
+                # teleport is still in progress'. After a game ran free mid-teleport (boss-respawn-bridge-e3e6e253's
+                # recoveries) the gap is waited out, game x stepped, and the warp asked once more)
+                self.notes.append("%s: warp %s: %s; the gap waited out, asked again" % (x, scene, r.get("message")))
+                gap_end = self.deadline.clock() + self.TELEPORT_GAP_S
+                while self.deadline.clock() < gap_end:
+                    self.call(x, "step", frames=CHUNK)
+                continue
+            break
         if not r.get("ok"):
-            if not (arrive_in_event and r.get("error") == "timeout"):
+            if not (arrive_in_event is not False and r.get("error") == "timeout"):
                 raise pc.BridgeError(r)
             # (the bridge's wait is over, not the warp: a warp measures 13.5-15.5 s per game, WARP_PAIR_MEASURED_S,
             # more than ARRIVE_IN_EVENT_WAIT; so the arrival is waited for on STATE, stepped, inside the deadline;

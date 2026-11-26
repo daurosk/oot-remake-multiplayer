@@ -919,6 +919,115 @@ class FakeHooks(unittest.TestCase):
             self.assertTrue(m.__name__.startswith("fakes_"))
 
 
+class ReplyWait(unittest.TestCase):
+    """boss-respawn-bridge-e3e6e253 CAUSE 2: a call sent with the 0.2 s left of a spent deadline timed the socket out,
+    the client closed it, the game ran free mid-arrival and every later recovery SETUP-FAILed ('teleport still in
+    progress'). Now: never sent short (TestTimeout naming it, nothing sent), a long step gets its frames' wait, a lost
+    reply re-holds the game at once, and a warp met by Longshot's 8 s teleport gap waits it out and asks once more."""
+
+    class Clock:
+        t = 0.0
+
+        def __call__(self):
+            return self.t
+
+    class Scripted:
+        """A client: warps answer from `warps` in turn; state says KokiriForest_Child in play; step advances the clock."""
+
+        def __init__(self, clock, warps=()):
+            self.clock, self.warps, self.calls, self.last_frame = clock, list(warps), [], 100
+
+        def request(self, cmd, reply_timeout=None, check=True, **args):
+            self.calls.append((cmd, reply_timeout, args))
+            if cmd == "step":
+                self.clock.t += 0.5
+                self.last_frame += int(args.get("frames", 1))
+                return {"ok": True, "frame": self.last_frame}
+            if cmd == "warp":
+                r = self.warps.pop(0)
+                if check and not r.get("ok"):
+                    raise P.pc.BridgeError(r)
+                return r
+            return {"ok": True, "frame": self.last_frame, "scene": "KokiriForest_Child", "loading": False,
+                    "event": False, "not_ready": None}
+
+    def make(self, budget, warps=()):
+        clock = self.Clock()
+        pair = P.Pair.__new__(P.Pair)
+        pair.c = {"A": self.Scripted(clock, warps)}
+        pair.log, pair.shots, pair.notes = {}, [], []
+        pair.deadline = P.Deadline(budget, clock=clock)
+        return pair, clock
+
+    def test_a_call_is_never_sent_short(self):
+        pair, clock = self.make(1.0)
+        with self.assertRaisesRegex(P.TestTimeout, r"state not sent \(1\.0 s left, its reply needs 2\.0 s; the game "
+                                                   r"stays held\)"):
+            pair.state("A")
+        self.assertEqual(pair.c["A"].calls, [])            # (nothing went out: the connection and the hold are kept)
+
+    def test_a_long_step_gets_its_frames_wait(self):
+        pair, clock = self.make(300)
+        pair.call("A", "step", frames=1200)
+        wait = pair.c["A"].calls[0][1]
+        self.assertGreaterEqual(wait, P.REPLY_MIN_S + 1200 / P.CLIENT_FPS)   # 62 s (was capped at 60: a step of 1200
+        self.assertLessEqual(wait, 300)                                        # frames at 20 fps timed out)
+
+    def test_a_step_its_deadline_cannot_carry_is_not_sent(self):
+        pair, clock = self.make(30)
+        with self.assertRaisesRegex(P.TestTimeout, r"step not sent"):
+            pair.call("A", "step", frames=1200)
+        self.assertEqual(pair.c["A"].calls, [])
+
+    def test_a_warp_is_never_sent_short_of_its_own_timeout(self):
+        pair, clock = self.make(2.5, warps=[{"ok": True}])
+        with self.assertRaisesRegex(P.TestTimeout, r"warp not sent"):
+            pair.warp_one("A", "KakarikoVillage_Child")
+        self.assertEqual(pair.c["A"].calls, [])
+
+    def test_a_teleport_gap_is_waited_out_and_asked_once_more(self):
+        busy = {"ok": False, "error": "failed", "message": "Longshot's teleport: another teleport is still in progress"}
+        pair, clock = self.make(120, warps=[busy, {"ok": True, "arrived": True}])
+        pair.warp_one("A", "KakarikoVillage_Child")
+        self.assertEqual([c for c, _, _ in pair.c["A"].calls].count("warp"), 2)
+        self.assertGreaterEqual(clock.t, P.Pair.TELEPORT_GAP_S)
+        self.assertTrue(any("the gap waited out" in n for n in pair.notes), pair.notes)
+
+    def test_a_second_teleport_gap_raises(self):
+        busy = {"ok": False, "error": "failed", "message": "another teleport is still in progress"}
+        pair, clock = self.make(120, warps=[busy, busy])
+        with self.assertRaisesRegex(P.pc.BridgeError, r"still in progress"):
+            pair.warp_one("A", "KakarikoVillage_Child")
+
+    def test_a_lost_reply_holds_the_game_again(self):
+        """A real fake lane: the reply of one state is lost (socket timeout), the client closes, the fake game runs
+        free; Pair re-holds it at once (a reconnect holds), noted, and the error goes on."""
+        import socket
+        import fakegame
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        lane = fakegame.FakeLane(tmp)
+        self.addCleanup(lane.close)
+        pair = P.Pair(lane.games(), out_dir=tmp)
+        self.addCleanup(pair.close)
+        pair.begin(60)
+        pair.state("A")
+        self.assertTrue(lane.g["A"].paused)
+        client = pair.c["A"]
+        real = client._send
+        def lost(cmd, wait, args):
+            if cmd == "state":
+                raise socket.timeout("timed out")
+            return real(cmd, wait, args)
+        client._send = lost
+        with self.assertRaises(OSError):
+            pair.state("A")
+        client._send = real
+        self.assertTrue(any("A: held again after state: TimeoutError" in n for n in pair.notes), pair.notes)
+        self.assertTrue(client.held)
+        self.assertTrue(lane.g["A"].paused)
+
+
 class SetupLimit(unittest.TestCase):
     """Pair.setup's 30 s limit holds for the calls inside it (review-c123-6 point 2): a hung bridge in a set-up is a
     SETUP-FAIL at the limit, not a FAIL at the test's budget. A fake clock: no real waiting."""
@@ -955,7 +1064,10 @@ class SetupLimit(unittest.TestCase):
             with pair.setup():
                 pair.state("A")
         self.assertLessEqual(pair.c["A"].waits[0], P.SETUP_LIMIT_S)
-        self.assertLessEqual(clock.t, P.SETUP_LIMIT_S)
+        # (+ the re-hold after the lost reply, at most REPLY_MIN_S: no game runs free; on a hung bridge it fails too)
+        self.assertLessEqual(clock.t, P.SETUP_LIMIT_S + P.REPLY_MIN_S)
+        self.assertEqual(pair.c["A"].waits[1:], [P.REPLY_MIN_S])
+        self.assertTrue(any("NOT held again" in n for n in pair.notes), pair.notes)
         self.assertIn("TimeoutError", str(cm.exception))
         self.assertEqual(pair.deadline.left(), 240 - clock.t)      # the test's own deadline is back after it
 
@@ -978,7 +1090,7 @@ class SetupLimit(unittest.TestCase):
         with self.assertRaises(P.SetupFail):
             with pair.setup():
                 pair.warp_both("PhantomGanonStage", arrive_in_event=True)
-        self.assertLessEqual(clock.t, P.SETUP_LIMIT_S)
+        self.assertLessEqual(clock.t, P.SETUP_LIMIT_S + P.REPLY_MIN_S)      # (+ the re-hold, as above)
         self.assertTrue(all(w <= P.SETUP_LIMIT_S for w in pair.c["A"].waits), pair.c["A"].waits)
 
     def test_short_test_budget_wins(self):
@@ -1270,6 +1382,46 @@ class BootProof(unittest.TestCase):
         pair = self.lane(BT_FAKE_BOOT_STUCK="B")
         with self.assertRaisesRegex(P.SetupFail, r"^boot: .*B"):
             pair.boot_ready("KakarikoVillage_Child", max_frames=100)
+
+    INTRO_FAKE = (
+        "def setup(game):\n    game.intro_until = 0\n"
+        "def command(game, m):\n"
+        "    if m.get('cmd') != 'warp' or m.get('scene') != 'BossStage':\n        return None\n"
+        "    game.run(40)\n    game.scene, game.intro_until = m['scene'], game.frame + 300\n"
+        "    return {'ok': False, 'error': 'timeout', 'message': 'not in BossStage; held (the intro event)'}\n"
+        "def state(game, st):\n"
+        "    if game.scene == 'BossStage' and game.frame < game.intro_until:\n        st['event'] = True\n")
+
+    def intro_pair(self, fake):
+        import fakegame
+        d = os.path.join(self.tmp, "fakes")
+        os.makedirs(d)
+        with open(os.path.join(d, "intro.py"), "w", encoding="utf-8") as f:
+            f.write(fake)
+        lane = fakegame.FakeLane(self.tmp, fakes_dir=d)
+        self.addCleanup(lane.close)
+        pair = P.Pair(lane.games(), out_dir=self.tmp)
+        self.addCleanup(pair.close)
+        pair.begin(240)
+        return pair
+
+    def test_a_boot_scene_that_starts_an_event_on_arrival_is_waited_out(self):
+        """A boss stage boot (live-twinrova-room, live-phantom-ganon): the bridge's warp answers 'timeout' with Link
+        there, in the intro event (coop_playtest_core.cpp WarpArrived waits for no event). boot_ready takes that
+        arrival on state and steps until the intro ends (was SETUP-FAIL 'boot: BridgeError: timeout': the four
+        test_ingame_boss_wake selftests on integrate-0120 645a7dffd)."""
+        pair = self.intro_pair(self.INTRO_FAKE)
+        st = pair.boot_ready("BossStage")
+        for x in ("A", "B"):
+            self.assertTrue(pair.in_play(st[x]), st[x])
+            self.assertEqual(st[x]["scene"], "BossStage")
+        self.assertTrue(any("answered timeout in the arrival event" in n for n in pair.notes), pair.notes)
+
+    def test_a_boot_warp_timeout_with_no_event_is_still_setup_fail_boot(self):
+        """arrive_in_event=None is no pass for every timeout: in the scene with no event = SETUP-FAIL boot."""
+        pair = self.intro_pair(self.INTRO_FAKE.replace("game.frame + 300", "0"))
+        with self.assertRaisesRegex(P.SetupFail, r"^boot: BridgeError: timeout"):
+            pair.boot_ready("BossStage", max_frames=100)
 
     def test_a_stale_sample_is_stepped_not_judged(self):
         pair = self.lane(BT_FAKE_STALE_FRAMES=50)

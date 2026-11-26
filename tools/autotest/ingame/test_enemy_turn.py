@@ -61,7 +61,6 @@ HOLD = 150                         # frames the new owner is checked after the t
 CHUNK = 30                         # frames between owner reads (1 s of game)
 LIFE_WRITTEN = r"its Life step did not take the change: life written"   # coop_objects.cpp:4186
 SHOT_TOLERANCE = 0.80
-READY_FRAMES = 300                 # harness-c133-scene 82f9a7a5a test_rows READY_FRAMES (need_boot_place)
 
 
 def other(x):
@@ -79,10 +78,10 @@ def own_number(st):
 def in_stage(pair, stage):
     """Both games in play in the boot's `stage`. The games are held right after the lane boot with no Link sample yet
     (state not_ready 'no fresh Link sample': gifts-237-3d17b642 SETUP-FAIL 16:20 UTC, review-rows-c136 16:25), so both
-    are stepped until each has a fresh in-play sample (READY_FRAMES, the bound harness-c133-scene 82f9a7a5a gives
-    pair.until_in_play), then the scene is checked. Shared by test_regress_bosses.py."""
-    pair.until("both games in play (a fresh Link sample) after the boot",
-               lambda: all(pair.in_play(pair.state(x)) for x in ("A", "B")), max_frames=READY_FRAMES)
+    are stepped until each has a fresh in-play sample (pair.until_in_play with the harness's own P.READY_FRAMES,
+    pair.py; it names each game's why_not on a timeout), then the scene is checked. Shared by test_regress_bosses.py."""
+    pair.until_in_play("both games in play (a fresh Link sample) after the boot", ("A", "B"),
+                       max_frames=P.READY_FRAMES)
     for x in ("A", "B"):
         s = pair.state(x)
         assert (s.get("scene") or "").lower() == stage.lower(), "%s is in %s, not %s (the boot's stage)" % (

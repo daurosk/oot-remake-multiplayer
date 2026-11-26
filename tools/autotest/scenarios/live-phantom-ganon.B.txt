@@ -1,4 +1,10 @@
-# live-phantom-ganon B (see the A file).
+# live-phantom-ganon B (see the A file). Its own '#!' header, as hs-phantom-ganon-down.B.txt has (the old row's B
+# boot that warped): without it B's pre-title warp may not take (test-bridge-c127-3 11:58, pilot game-out-B: B stayed
+# in its save's place).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1,LICHII_COOP_MOVE_PROBE=1
+#! timeout 1500
 mark start
 nofairy
 warp PhantomGanonStage PhantomGanonStage

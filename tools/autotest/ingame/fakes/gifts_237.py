@@ -35,9 +35,16 @@ def setup(game):
 
 
 def after(game, m, r):
-    if m.get("cmd") != "flag" or m.get("name") not in GIFTS or _mode() == "off" or m["name"] not in _shared():
+    if m.get("cmd") == "flag":
+        share(game, m.get("name"), m.get("value"), r.get("was", 0))
+
+
+def share(game, name, now, was):
+    """Gift Bool NAME set from WAS to NOW in GAME: the module's relay to the other game (flag_watcher.cpp
+    share_pickup_named). Called for a bridge `flag` and by a fake whose own game sets a gift (fakes/songs.py: the
+    frogs' payout), so every gift goes through this one relay and its BT_FAKE_GIFTS modes."""
+    if name not in GIFTS or _mode() == "off" or name not in _shared():
         return
-    name, was, now = m["name"], r.get("was", 0), m.get("value")
     if now in (1, True) and was in (0, False, None):
         go = 1
     elif now in (0, False) and was in (1, True) and _mode() == "back":

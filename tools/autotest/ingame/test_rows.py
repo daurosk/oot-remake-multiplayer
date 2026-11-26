@@ -112,11 +112,9 @@ def test_ocarina_notes(pair):
         # 'press A 12' + 'wait 120' closes the first-use "Ocarina Audio Input" note that eats L R Y X ('mark ready').
         # Not taken over: its walk ahead + turn round (:17-22, 'hold LSTICK_UP 40' / 'hold LSTICK_DOWN 4') only make
         # B's shots show the puppet's front; this row judges the sound log, takes no shot, and a walk is not set-up.
-        pair.press("A", ["LEFT"], frames=12)
-        pair.step_both(240)
-        assert pair.log["A"].find(r"ocarina probe: our Link plays the ocarina"),             "A: no 'ocarina probe: our Link plays the ocarina' 240 frames after DLEFT (wave2 hs-ocarina-show)"
-        pair.press("A", ["A"], frames=12)     # (may send one note itself: each note below has its own log mark)
-        pair.step_both(120)
+        # The ONE shared way (Pair.ocarina_out): the first-use box is closed with B, not A, which the probe-ocarina-
+        # 2f14b333 run proved (the scenario's 'press A 12' was never checked by a log line), and no note is sent by it.
+        pair.ocarina_out("A")
     for key, note in ON.KEY_NOTE.items():
         pair.log["A"].mark()
         pair.log["B"].mark()

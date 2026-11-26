@@ -63,9 +63,10 @@ def test_phantom_ganon_hand_over_no_fall(pair):
     with pair.setup():
         if (pair.info or {}).get("fake"):
             pair.warp_both(SCENE)               # (the fake lane has no boot scripts)
+        # stepped, never one read (B #139 16:31, the gifts-237/row53 class): both in play in the boot's scene
+        st = pair.need_boot_place()
         for x in ("A", "B"):
-            s = pair.state(x)
-            assert pair.in_play(s), "%s not in play (%s)" % (x, s.get("not_ready"))
+            s = st[x]
             assert s.get("scene") == SCENE, "%s is in %s, not %s (the boot live-phantom-ganon)" % (x, s.get("scene"), SCENE)
         start = {}
         for x in ("A", "B"):

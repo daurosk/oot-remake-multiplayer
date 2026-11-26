@@ -785,6 +785,21 @@ TEST_CASE("testinput: nofairy empties every bottle (five setenum requests), as h
     }
 }
 
+TEST_CASE("testinput (gear-link): menu look KEY=VALUE hands the hook a look part to choose and wear") {
+    std::string error;
+    CHECK_FALSE(Parse("menu look link_gear\n", error));       // (no VALUE)
+    CHECK_FALSE(Parse("menu look a=b c\n", error));           // (one KEY=VALUE only)
+    CHECK_FALSE(Parse("menu paint link_gear=hidden\n", error));
+    Runner r(Must("menu look link_gear=hidden\nmenu Look Link_Gear=None\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 2);
+    CHECK(requests[0].kind == Kind::menu);
+    CHECK(requests[0].name == "look link_gear=hidden");
+    CHECK(requests[1].name == "look link_gear=none");
+}
+
 TEST_CASE("testinput: menu hands the hook the Customize page or the close (issue 74)") {
     std::string error;
     CHECK_FALSE(Parse("menu\n", error));

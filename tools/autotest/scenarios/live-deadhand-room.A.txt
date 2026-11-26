@@ -1,0 +1,22 @@
+# live-deadhand-room A (boot for live.py start, row 232's bridge tests ingame/test_enemies.py::test_deadhand_grab*): the save into the boss rush DeadHandStage, no fairy revive, past the title, the rush's own arrival event (same boot as hs-deadhand-grab-232.A.txt up to 'mark a-in' + its event line).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 900
+mark start
+nofairy                 # hs-deadhand-grab-232.A.txt: a bite while held is a hit: no bottled-fairy revive in the middle
+warp DeadHandStage DeadHandStage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark a-in
+event DreamBossStage_Rematch_Arrive   # hs-deadhand-grab-232.A.txt: a bare warp has none and places no boss
+wait 600
+mark a-ready

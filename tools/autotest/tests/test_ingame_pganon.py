@@ -64,8 +64,8 @@ class PhantomGanonBoot(unittest.TestCase):
         import bt_plugin as B
 
         class Cfg:
-            def getoption(self, name):
-                return {"env": [], "session_minutes": 28, "boot": BOOT}[name]
+            def getoption(self, name):   # (an option this test does not set: None, as pytest's unset default;
+                return {"env": [], "session_minutes": 28, "boot": BOOT}.get(name)   # kit-smoke added kit_ls)
         args = B.boot_args(Cfg(), 1, os.path.join(self.tmp, "coop_server.exe"), os.path.join(self.tmp, "s"))
         i = args.index("--lane")
         args[i:i + 2] = self.helper.games()

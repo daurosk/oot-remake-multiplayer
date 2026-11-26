@@ -3280,11 +3280,17 @@ class FullBuildTest(unittest.TestCase):
         self.assertEqual(out.get(anim), build.character_param_entry(5344, game[anim], theirs[anim]))
         self.assertGreater(out.get(anim), 5344)
         self.assertTrue(any("Player_Adult puppets take OoT Character Select's" in line for line in said), said)
+
+        def manifest_anims():   # (row 285's bridge test reads this from the lane's pack)
+            with open(os.path.join(mod, "coop_puppet.json"), encoding="utf-8") as f:
+                return json.load(f)["characters"]["animation_params"]
+        self.assertEqual(manifest_anims(), {"Adult": [anim]})
         # A mod without its own Player pack: the game's, as before.
         os.remove(os.path.join(romfs, "Pack", "Actor", "Player_Adult.pack.zs"))
         mod = os.path.join(mods, "pack2")
         build.build(self.romfs, mod, log=lambda *_: None, look_slots=0, characters=build.find_characters(mod))
         self.assertEqual(member("CoopPuppet_Adult_C005", anim), game[anim])
+        self.assertEqual(manifest_anims(), {})
 
     def test_character_own_sets(self):
         # A character with clips of its own (the cow, 2026-11-23): the mod's AnimationParam names Player_<age>_<set>C_
@@ -3905,7 +3911,9 @@ class NupTest(unittest.TestCase):
                           "Tex/Mt_Vest_Player_Adult_Alb.bntx.zs", "Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs",
                           "Tex/Mt_Cloth_Parts_Player_Child_Alb.bntx.zs", "Tex/Mt_Vest_Player_Child_Alb.bntx.zs",
                           "Tex/Mt_PantsParts_Player_Child_Alb.bntx.zs", "Tex/Mt_Boots_Player_Adult_Alb.bntx.zs",
-                          "Tex/Mt_Leather_Player_Child_Alb.bntx.zs"} |
+                          "Tex/Mt_Leather_Player_Child_Alb.bntx.zs",
+                          "Tex/Mt_Glove_Player_Adult_Alb.bntx.zs",        # leather-link: look_items.BODY_BOOTS (adult
+                          "Tex/Mt_Leater_Upper_Player_Adult_Alb.bntx.zs"} |  # gloves, upper leather; dumpcheck.OPTIONAL)
                          {f"Model/Player_{v}.Player_{v}.bfres.zs" for v in build.VARIANTS},
                          set(dumpcheck.OPTIONAL))
         seed = "Pack/Actor/Shootable_DekuSeed.pack.zs"

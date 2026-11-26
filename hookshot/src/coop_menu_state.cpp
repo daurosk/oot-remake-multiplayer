@@ -84,4 +84,23 @@ std::string Json(const Tab& tab, const Screen& screen) {
     return "{\"coop\":" + TabJson(tab) + ",\"customize_screen\":" + ScreenJson(screen) + "}";
 }
 
+std::string MinusJson(const Minus& m) {
+    if (!m.open) return "{\"open\":false}";
+    std::string out = "{\"open\":true,\"tab\":" + Quote(m.tab) + ",\"view\":" + Quote(m.view) +
+                      ",\"details_page\":" + std::to_string(m.details_page) +
+                      ",\"details_pages\":" + std::to_string(m.details_pages) + ",\"key_items\":";
+    if (m.details_page != 1) return out + "null}";
+    out += "[";
+    for (std::size_t i = 0; i < m.key_items.size(); ++i) {
+        out += std::string(i ? "," : "") + "{\"name\":" + Quote(m.key_items[i].name) + ",\"value\":" +
+               Quote(m.key_items[i].value) + "}";
+    }
+    return out + "]}";
+}
+
+std::string Json(const Tab& tab, const Screen& screen, const Minus& minus) {
+    return "{\"coop\":" + TabJson(tab) + ",\"customize_screen\":" + ScreenJson(screen) + ",\"minus\":" +
+           MinusJson(minus) + "}";
+}
+
 }  // namespace CoopMenuState

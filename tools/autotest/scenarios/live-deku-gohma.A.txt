@@ -1,0 +1,33 @@
+# live-deku-gohma A (boot for live.py start, row 136's bridge test ingame/test_boss_away.py::test_boss_away_dungeon): the save into the Deku Tree, past the title, Queen Gohma's set alive (same boot as hs-boss-away-dungeon.A.txt up to its setflag lines; the quest step the old run wrote into the save files is a setenum here).
+# Get_StoneOfForest (0x7d776b61) = GoToBossRoom: offline/boss-away-0115-probe.ps1 profile gohma-alive (enum:0x7d776b61=0xb5df43cb,
+# GoToBossRoom); a step below GoToWarpPoint = her alive (lichii/hook/coop_boss_beaten.inc:5,88). The test reads it back (flag_read)
+# and VOIDs unless B's walk-in makes her body (Enemy_DungeonBoss_Gohma in B's world list): the setenum-after-landing is that proof.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 600
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark a-landed
+setenum 0x7d776b61 GoToBossRoom
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossDie 0   # else the game drops her death event as played (hs-gohma-death)
+wait 120
+mark a-ready

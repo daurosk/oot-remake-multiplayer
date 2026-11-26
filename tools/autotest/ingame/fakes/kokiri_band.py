@@ -41,8 +41,7 @@ def setup(game):
 def state(game, st):
     if not _on(game) or st.get("pos") is None:
         return
-    if (game.scene or "").endswith("_Adult"):
-        st["age"] = "adult"
+    # (the age comes from FakeGame.age(): its warp sets Sequence_IsChildhood for an _Adult/_Child name, as the real verb)
     st["view"] = _view()
     if (game.other.scene or "").endswith("_Adult"):
         for a in st["world"]["actors"]:

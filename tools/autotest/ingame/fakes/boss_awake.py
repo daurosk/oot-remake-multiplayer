@@ -27,6 +27,9 @@ def _on(game):
 def setup(game):
     game.awake_warp, game.awake_at, game.awake_ok, game.awake_gen = False, None, False, 0
     game.awake_counts = [0, 0, 0, 0]   # brain sent, action sent, brain put in, action put in
+    if _on(game):
+        game.flags["Sequence_IsChildhood"] = 0   # the boot live-twinrova-room is an adult save
+                                                 # (scenarios/live-twinrova-room.A.txt line 1); fakegame.age() reads it
 
 
 def command(game, m):

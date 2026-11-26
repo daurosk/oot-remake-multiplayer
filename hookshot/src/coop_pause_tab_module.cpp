@@ -2821,6 +2821,9 @@ int ApplyMinusPage(void* ctx, std::uint64_t gen) {
 // Which lines can be picked go to the Page (SetMinusLines), as whether a view shows (SetMinusInView).
 void FollowSays();
 int g_minus_view_seen = -1;   // the view MinusWords last showed (g_mutex)
+// What MinusWords last drew, for the play-test bridge's `menu` state (MinusNow; its own lock: read from any thread).
+std::mutex g_minus_drawn_mutex;
+CoopMenuState::Minus g_minus_drawn;
 void MinusWords(void* ctx, std::uint64_t layout, std::uint64_t gen, int tab) {
     if (tab < 0 || tab >= kMinusTabs) return;
     if (tab != static_cast<int>(MinusPage::kMods)) FollowSays();   // (a Host or Join refused: why, on the Session view)
@@ -2894,6 +2897,23 @@ void MinusWords(void* ctx, std::uint64_t layout, std::uint64_t gen, int tab) {
         for (std::size_t k = 0; k < lines.size() && k < 32; ++k) {
             if (!lines[k].name.empty() && lines[k].act != RowAction::kNone) pickable |= 1u << k;
         }
+    }
+    {   // (the bridge's `menu` state: what this page draws now; DetailLines' own page rule, coop_pause_tab.cpp)
+        CoopMenuState::Minus drawn;
+        drawn.open = true;
+        drawn.tab = tab == static_cast<int>(MinusPage::kMultiplayer) ? "multiplayer" : mods ? "mods" : "lobby";
+        drawn.view = ViewWord(view);
+        if (!mods && v.typing_lines.empty()) {   // (the details list drawn: DetailLines' own page rule)
+            const DetailPaging paging = DetailPages(view, v);
+            drawn.details_pages = paging.pages, drawn.details_page = paging.page;
+            if (paging.pages > 1 && paging.page == 1) {
+                for (std::size_t k = 1; k < lines.size(); ++k) {   // (line 0: the "Key items  Page 2/2" heading)
+                    if (!lines[k].name.empty()) drawn.key_items.push_back({lines[k].name, lines[k].value});
+                }
+            }
+        }
+        std::lock_guard lock(g_minus_drawn_mutex);
+        g_minus_drawn = std::move(drawn);
     }
     lines.resize(kLinePanes);
     // (the help of what is selected: a row's, the list's line's, co-op's menu's or the Mods tab's; CoopPauseTab::MinusHelp)
@@ -5339,6 +5359,17 @@ std::array<MenuActor, 4> MenuActors() noexcept {
 CoopMenuState::Screen CustomizeScreen() {
     std::lock_guard lock(g_snail_mutex);
     return CoopMenuState::FromDriver(g_snail, g_snail_open, !g_snail_wait && !g_snail_fallback);
+}
+
+CoopMenuState::Minus MinusNow() {
+    int tab = -1;
+    {
+        std::lock_guard lock(g_mutex);
+        tab = g_page.MinusTab();
+    }
+    if (tab < 0) return {};   // (none of ours shows: the last drawn page is gone)
+    std::lock_guard lock(g_minus_drawn_mutex);
+    return g_minus_drawn;
 }
 
 int MousePage() noexcept {

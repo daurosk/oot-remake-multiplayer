@@ -53,7 +53,7 @@ add_library(hookshot_coop MODULE src/coop_hookshot.cpp src/coop_draw.cpp src/coo
   src/coop_lobby_tab.cpp src/coop_lobby_tab_module.cpp src/coop_local_start.cpp src/coop_local_start_os.cpp
   src/coop_pause_tab.cpp src/coop_pause_tab_module.cpp src/coop_title_native.cpp src/coop_problem_ask.cpp src/coop_native_tags.cpp
   src/coop_auto_rejoin.cpp src/coop_lan.cpp src/coop_lan_net.cpp src/coop_room_list.cpp src/coop_room_list_text.cpp src/coop_browse.cpp src/coop_longshot_settings.cpp
-  src/coop_look.cpp src/coop_look_live.cpp src/coop_look_tunic.cpp src/coop_look_paint.cpp src/coop_look_parts.cpp src/coop_look_menu.cpp src/coop_snail_custom.cpp src/coop_menu_state.cpp src/coop_look_view.cpp
+  src/coop_look.cpp src/coop_look_live.cpp src/coop_look_tunic.cpp src/coop_look_paint.cpp src/coop_look_parts.cpp src/coop_look_menu.cpp src/coop_snail_custom.cpp src/coop_menu_state.cpp src/coop_map_drawn.cpp src/coop_look_view.cpp
   ${_coop_sources})
 # compat/ first: its core/ and common/ headers stand in for the emulator's.
 target_include_directories(hookshot_coop PRIVATE compat src "${_coop_hook}" ../server)

@@ -254,24 +254,31 @@ def boot_paths(name):
     return a, b
 
 
-def boot_scene(name=DEFAULT_BOOT):
-    """The scene the boot puts both games in: its scripts' first `warp SCENE [start]` line (hookshot.py parse: 'warp'
-    takes a scene and an optional start). Both scripts must name the same one (a boot with none: None, any scene).
-    Pair.boot_ready proves each game is there, in play, with no event, before any test (NO REPEAT VOIDS,
-    test-bridge-pilot-fa63e90f r1: B stayed in Graveyard_Child in an event)."""
+def boot_place(name=DEFAULT_BOOT):
+    """(scene, start) the boot puts both games at: its scripts' first `warp SCENE [start]` line (hookshot.py parse:
+    'warp' takes a scene and an optional start; start None when the line has none). Both scripts must name the same
+    scene (a boot with none: (None, None), any scene). The one source of a test's way back to the lane's boot place."""
     got = []
     for path in boot_paths(name):
-        scene = None
+        place = (None, None)
         with open(path, encoding="utf-8", errors="replace") as f:
             for ln in f:
                 w = ln.split("#", 1)[0].split()
                 if len(w) >= 2 and w[0] == "warp":
-                    scene = w[1]
+                    place = (w[1], w[2] if len(w) >= 3 else None)
                     break
-        got.append(scene)
-    if got[0] != got[1]:
-        raise pytest.UsageError("--boot %s: the A and B scripts warp to different scenes (%s / %s)" % (name, got[0], got[1]))
-    return got[0]
+        got.append(place)
+    if got[0][0] != got[1][0]:
+        raise pytest.UsageError("--boot %s: the A and B scripts warp to different scenes (%s / %s)"
+                                % (name, got[0][0], got[1][0]))
+    return got[1] if got[1][1] else got[0]
+
+
+def boot_scene(name=DEFAULT_BOOT):
+    """The scene the boot puts both games in (boot_place's scene). Pair.boot_ready proves each game is there, in play,
+    with no event, before any test (NO REPEAT VOIDS, test-bridge-pilot-fa63e90f r1: B stayed in Graveyard_Child in an
+    event)."""
+    return boot_place(name)[0]
 
 
 BOOT_READY_S = 240    # the boot proof's own deadline (out of a load, a warp of a game left elsewhere, an event's end)
@@ -566,7 +573,8 @@ def lane_pair(request):
         lanefake = fakegame.FakeLane(out, env=boot_env(config),     # (fakes/*.py hooks see the boot's switches)
                                      fakes_dir=os.environ.get("BT_FAKE_FAKES_DIR") or fakegame.FAKES,
                                      solo_log=(os.environ.get("BT_FAKE_SOLO_LOG") or solo.IDLE)
-                                     if config.getoption("solo") else None)
+                                     if config.getoption("solo") else None,
+                                     boot=config.getoption("boot"))   # (and its name: game.boot)
         games = lanefake.games()
         if config.getoption("solo"):     # (the fake A logs what the real module logs with no server: solo.IDLE)
             games = {solo.GAME: games[solo.GAME]}

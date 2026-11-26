@@ -3,6 +3,10 @@ the game: each line said is the module's own text (file:line in test_dbno_crawl.
 row's inputs: 'chat /dbno ...', the bottle setenums, 'hurt', A held beside a downed B, Character Select's Int,
 Sequence_IsChildhood (the age), and a stick while downed.
 
+Only where this row is (fakegame.py: "A hook reacts only where its row is"): life, hurt, the bottles and stick
+movement only once A said 'chat /dbno ...' this boot (every test's rules() does, before any of them). Before, state()
+wrote st['life'] on EVERY boot and a stick moved Link at this row's walk rate in every row (row-286-wake-4 19:02 scan).
+
 BT_FAKE_DBNO_BUG (selftests, tests/test_ingame_dbno_crawl.py):
   stand     the 0.11.13 FAIL: the downed child is given back to the game's Wait ('Crawl taken but not crawling'),
             never lies, walks at full speed
@@ -31,12 +35,19 @@ def num(game):
 
 
 def setup(game):
-    game.dbno = {"state": "up", "life": 12, "fairy": game.tag == "B", "held": 0, "charsel": 0}
+    game.dbno = {"state": "up", "life": 12, "fairy": game.tag == "B", "held": 0, "on": False}
+    if not game.env_on("COOP_TEST_NO_CHARACTER_SELECT=1"):   # (no_cs.SWITCH: that game boots without the mod, the
+        game.flags.setdefault(CHARSEL, 0)                     # flag unset = kind unknown/None, no_cs.has_character_select)
     game.dbno_rules = {"on": True, "bleed": 45, "hold": 50}
 
 
 def adult(game):
-    return game.flags.get("Sequence_IsChildhood", 1) in (0, False)
+    return game.age() == "adult"   # (fakegame.age: the one source of a fake game's age)
+
+
+def here(game):
+    """This row is running on this lane: A said 'chat /dbno ...' (act) since the boot."""
+    return game.dbno["on"]
 
 
 def say_rules(game):
@@ -95,6 +106,8 @@ def go_down(game):
 
 def act(game, words):
     if words[:2] == ["chat", "/dbno"] and game.tag == "A":
+        for g in (game, game.other):
+            g.dbno["on"] = True
         arg = words[2:]
         if arg == ["off"]:
             game.dbno_rules["on"] = False
@@ -108,6 +121,8 @@ def act(game, words):
             game.dbno_rules["bleed"] = int(arg[1])
             say_rules(game)
         return True
+    if not here(game):
+        return False
     if len(words) == 3 and words[0] == "setenum" and words[1] in BOTTLES and words[2] == "Empty":
         if game.dbno["fairy"]:
             game.dbno["fairy"] = False
@@ -126,19 +141,19 @@ def act(game, words):
     return False
 
 
-def command(game, m):
+def after(game, m, r):
+    # The character flag goes through the built-in flag store (game.flags) and this hook only adds to its answer, so
+    # another row's fake of the same flag (fakes/levitate.py nochar, later in file-name order) still takes effect;
+    # a `command` hook here answered it for every test and hid theirs.
     if m.get("cmd") == "flag_read" and m.get("name") == CHARSEL:
-        return {"ok": True, "kind": "int", "value": game.dbno["charsel"]}
+        if r.get("value") is not None:     # (unset = no Character Select in the fake: no_cs.has_character_select)
+            r["kind"] = "int"
+        return
     if m.get("cmd") == "flag" and m.get("name") == CHARSEL:
-        was, game.dbno["charsel"] = game.dbno["charsel"], int(m["value"])
         o, n = game.other, int(m["value"])
         o.later(30, lambda: o.say("coop: look: P%d wears 11 part colour(s), character %d (PLAYER_LOOK)" % (num(game), n)))
-        return {"ok": True, "was": was, "value": n}
-    return None
-
-
-def after(game, m, r):
-    if m.get("cmd") != "input":
+        return
+    if m.get("cmd") != "input" or not here(game):
         return
     frames = int(m.get("frames", 1))
     stick = m.get("stick")
@@ -160,7 +175,6 @@ def after(game, m, r):
 
 
 def state(game, st):
-    if st.get("pos") is None:
+    if st.get("pos") is None or not here(game):
         return
     st["life"] = game.dbno["life"]
-    st["age"] = "adult" if adult(game) else "child"

@@ -78,5 +78,61 @@ class DbnoCrawl(unittest.TestCase):
         self.assertEqual(res["test_teleport_to_player"]["result"], "PASS", p.stdout[-2000:])
 
 
+class DbnoFakeStaysInItsRow(unittest.TestCase):
+    """fakes/dbno_crawl.py reacts only where its row is (fakegame.py hook rule): another row's boot keeps the life its
+    own fake gave it, and a stick, a hurt or a bottle there is not this row's (row-286-wake-4 19:02 scan: st['life']
+    was written on every boot)."""
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, os.path.join(INGAME, "fakes"))
+        import dbno_crawl
+        cls.fake = dbno_crawl
+
+    def games(self):
+        class G:
+            def __init__(self, tag):
+                self.tag, self.flags, self.pos, self.facing, self.lines = tag, {}, [0.0, 0.0, 0.0], 0.0, []
+
+            def age(self):
+                return "adult" if self.flags.get("Sequence_IsChildhood", 1) in (0, False) else "child"
+
+            def env_on(self, want):     # (FakeGame.env_on: no boot switch on in these stubs)
+                return False
+
+            def say(self, line):
+                self.lines.append(line)
+
+            def later(self, n, fn):
+                fn()
+
+            def state(self):
+                return {}
+        a, b = G("A"), G("B")
+        a.other, b.other = b, a
+        for g in (a, b):
+            self.fake.setup(g)
+        return a, b
+
+    def test_another_rows_boot_is_left_alone(self):
+        a, b = self.games()
+        st = {"pos": [0.0, 0.0, 0.0], "age": "adult", "life": 80}
+        self.fake.state(b, st)
+        self.assertEqual(st["life"], 80)
+        self.assertFalse(self.fake.act(b, ["hurt", "4"]))                         # the built-in answers
+        self.assertFalse(self.fake.act(b, ["setenum", self.fake.BOTTLES[0], "Empty"]))
+        self.fake.after(b, {"cmd": "input", "frames": 30, "stick": [0, 1]}, {})
+        self.assertEqual(b.pos, [0.0, 0.0, 0.0])
+        self.assertEqual(a.lines + b.lines, [])
+
+    def test_this_rows_inputs_still_drive_it(self):
+        a, b = self.games()
+        self.assertTrue(self.fake.act(a, ["chat", "/dbno", "time", "10"]))
+        self.assertTrue(self.fake.act(b, ["hurt", "4"]))
+        st = {"pos": [0.0, 0.0, 0.0], "age": "child", "life": 80}
+        self.fake.state(b, st)
+        self.assertEqual(st["life"], 8)
+
+
 if __name__ == "__main__":
     unittest.main()

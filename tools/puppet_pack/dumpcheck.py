@@ -78,6 +78,8 @@ OPTIONAL = (
     # The boots in the player models (look_items.BODY_BOOTS): a copy per tunic colour.
     "Tex/Mt_Boots_Player_Adult_Alb.bntx.zs",
     "Tex/Mt_Leather_Player_Child_Alb.bntx.zs",
+    "Tex/Mt_Glove_Player_Adult_Alb.bntx.zs",
+    "Tex/Mt_Leater_Upper_Player_Adult_Alb.bntx.zs",
     "Model/Player_Child.Player_Child.bfres.zs",
     "Model/Player_Adult.Player_Adult.bfres.zs",
 )

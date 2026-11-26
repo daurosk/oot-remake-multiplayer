@@ -142,6 +142,33 @@ def header_switches(path):
     return out
 
 
+# `#! server ARG ...` (the old scenarios' header, run.ps1's; e.g. hs-difficulty-lobby.steps.txt '#! server --difficulty
+# hard'): more coop_server arguments, read from the A script as the switches are, so a live.py boot (--boot NAME of the
+# in-game tests) can make the lobby it needs. The runner's own (--port, --password-env, the delays) cannot be given here.
+SERVER_HEADER_FORBIDDEN = ("--port", "--password", "--password-env", "--bind", "--test-delay-ms", "--test-jitter-ms")
+SERVER_HEADER_WORD = re.compile(r"^[A-Za-z0-9:,._=%+-]{1,80}$")
+
+
+def header_server_args(path):
+    """The `#! server ...` header lines of a scenario file as one argument list (ValueError on a word the runner owns
+    or one with other characters: the arguments go to coop_server's argv, no shell)."""
+    out = []
+    if not path:
+        return out
+    with open(path, encoding="utf-8-sig") as f:
+        for line in f.read().split("\n"):
+            m = re.match(r"^#!\s*server\s+(.+?)\s*$", line)
+            if not m:
+                continue
+            for word in m.group(1).split():
+                if not SERVER_HEADER_WORD.match(word):
+                    raise ValueError("#! server: %r is not a plain argument" % word)
+                if word.split("=", 1)[0] in SERVER_HEADER_FORBIDDEN:
+                    raise ValueError("#! server: %s is the runner's own" % word)
+                out.append(word)
+    return out
+
+
 def read_script(path, _depth=0):
     """A scenario file's text with each `include FILE` line replaced by that file's text (FILE beside it; an
     include may include, at most INCLUDE_DEPTH deep). One copy of a step several scenarios share (the Gohma kill
@@ -456,13 +483,17 @@ def parse(text):
                 fail("want: assign ITEM")
             s.kind, s.name = "assign", w[1]
         elif cmd == "MENU":
-            if len(w) == 3 and w[1].lower() == "open":     # `menu open PAGE` (B #138): any page, nothing pressed
+            # (gear-link: "menu look KEY=VALUE", the module's coop_testinput.cpp MENU: a look part chosen and worn)
+            if len(w) == 3 and w[1].lower() == "look" and "=" in w[2]:
+                s.kind, s.name = "menu", " ".join(w[1:]).lower()
+            elif len(w) == 3 and w[1].lower() == "open":     # `menu open PAGE` (B #138): any page, nothing pressed
                 if w[2].lower() not in MENU_PAGES:
                     fail("want: menu open " + "|".join(MENU_PAGES))
                 s.kind, s.name = "menu", "open " + w[2].lower()
             else:
                 if len(w) != 2 or w[1].lower() not in MENU_WORDS:
-                    fail("want: menu " + "|".join(MENU_WORDS) + ", or menu open " + "|".join(MENU_PAGES))
+                    fail("want: menu " + "|".join(MENU_WORDS) + ", menu open " + "|".join(MENU_PAGES)
+                         + ", or menu look KEY=VALUE")
                 s.kind, s.name = "menu", w[1].lower()
         elif cmd == "AWAIT":
             # Row 325: "await TICKS REGEX": until a NEW line of this game's own log (written after the step began)
@@ -1423,6 +1454,67 @@ def pack_folders(game):
     return mods, pack, romfs
 
 
+# ------------------------------------------------------------------------------- row 288 / 207: a seed's menus
+# A randomizer seed made in the game is a new mod folder at the top of the co-op Mods list whose
+# romfs/UI/Layout2Archive/Common.Product.*.blarc.zs (the game's own, without Character Select's layouts) then wins
+# (player log mr.bons4i-20261125-202634: 'Common.Product.100...blarc.zs <- mods\randomizer-<pc>-open_fast', list of 4
+# rows). OOT_TEST_SEED_LAYOUT=1 (a test switch, --env A:OOT_TEST_SEED_LAYOUT=1, tools/autotest/ingame/test_charpage.py)
+# makes that state before the game starts: SEED_MOD with the game's own archive, first row of coop-mods.list (the
+# list's first row wins: hos_coop_mods.h hos_coop_mods_rank; an unlisted mod ranks under every listed one). Every start
+# without the switch takes both away again, so a run that died leaves no seed for the next boot of that lane.
+SEED_MOD = "zz-test-seed-layout"
+SEED_ROW = "on " + SEED_MOD
+
+
+def _write_rows(path, rows):
+    """The list written anew (a new file put in its place: a hard link to another lane's list is never changed)."""
+    tmp = path + ".seed-tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        f.write("".join(r + "\n" for r in rows))
+    os.replace(tmp, path)
+
+
+def seed_layout(game, env, say):
+    """Puts the test seed's layout archive in (switch on) or takes it away (switch off). Returns the lines said."""
+    mods, _, romfs = pack_folders(game)
+    folder, lst = os.path.join(mods, SEED_MOD), os.path.join(mods, "coop-mods.list")
+    if os.path.islink(mods) or getattr(os.path, "isjunction", lambda p: False)(mods):
+        # (a mods folder shared by a link: another game's list and mods would change too)
+        line = "test seed layout: %s is a link, not touched" % mods
+        say(line)
+        return [line]
+    rows = []
+    if os.path.isfile(lst):
+        with open(lst, encoding="utf-8", errors="replace") as f:
+            rows = f.read().splitlines()
+    kept = [r for r in rows if r.strip() != SEED_ROW]
+    lines = []
+    if env.get("OOT_TEST_SEED_LAYOUT", "") != "1":
+        if os.path.isdir(folder):
+            shutil.rmtree(folder, ignore_errors=True)
+            lines.append("test seed layout taken away (%s)" % folder)
+        if len(kept) != len(rows):
+            _write_rows(lst, kept)
+            lines.append("test seed row taken out of %s" % lst)
+    else:
+        src_dir = os.path.join(romfs or os.path.join(game, "romfs"), "UI", "Layout2Archive")
+        own = sorted(n for n in (os.listdir(src_dir) if os.path.isdir(src_dir) else [])
+                     if n.lower().startswith("common.product.") and n.lower().endswith(".blarc.zs"))
+        if not own or not kept or kept[0].strip() != "coop-mods 1":   # (the list's head: hos_coop_mods.h:77)
+            # (the test's set-up says SETUP-FAIL: it looks for the 'test seed layout in' line)
+            lines.append("test seed layout NOT made (game archive %s, list head %r)" % (own or "none in " + src_dir,
+                                                                                       kept[:1]))
+        else:
+            dst = os.path.join(folder, "romfs", "UI", "Layout2Archive")
+            os.makedirs(dst, exist_ok=True)
+            shutil.copyfile(os.path.join(src_dir, own[0]), os.path.join(dst, own[0]))
+            _write_rows(lst, [kept[0], SEED_ROW] + kept[1:])
+            lines.append("test seed layout in: %s (the game's own %s), first row of %s" % (folder, own[0], lst))
+    for line in lines:
+        say(line)
+    return lines
+
+
 def pack_start(game, env, say):
     """The kit's start of the pack for one game (env: the game's switches). Returns the lines said."""
     mods, pack, romfs = pack_folders(game)
@@ -1655,7 +1747,7 @@ def run(a):
                 if delay:
                     senv["OOT_COOP_TEST"] = "1"   # coop_server refuses the delay without it
                 server = lanes.hs.popen_quiet(lanes.hs.server_bind([a.server, "--port", str(a.port), "--password-env",
-                                              "OOT_COOP_TEST_PASSWORD"] + delay + a.server_arg), stdout=so, stderr=subprocess.STDOUT, env=senv)
+                                              "OOT_COOP_TEST_PASSWORD"] + delay + header_server_args(a.script_a) + a.server_arg), stdout=so, stderr=subprocess.STDOUT, env=senv)
             keep_pids()
             time.sleep(1)
         for i, x in enumerate(tags):
@@ -1698,6 +1790,7 @@ def run(a):
                 env[k] = v
             exe = os.path.join(exe_dir(g), "longshot.exe" if WINDOWS else "longshot")
             started[x] = time.time()
+            seed_layout(g, env, lambda line, x=x: say("%s: %s" % (x, line)))   # (row 288's test seed, or none: kit too)
             if kits[x]:
                 say("%s: the kit's own start (%s)" % (x, kits[x]))
                 procs[x] = PidProcess(kit_start(kits[x], env, out, x))
@@ -1995,6 +2088,12 @@ def main(argv=None):
                     parse(read_script(path))
                 except (ScriptError, OSError) as e:
                     p.error("script %s: %s" % (path, e))
+        try:
+            extra = header_server_args(a.script_a)
+        except (ValueError, OSError) as e:
+            p.error("script %s: %s" % (a.script_a, e))
+        if extra and not a.server:
+            p.error("script %s: '#! server %s' but no --server to give it to" % (a.script_a, " ".join(extra)))
         print("run arguments OK (--check-args: nothing started)")
         return 0
     if not a.lane:

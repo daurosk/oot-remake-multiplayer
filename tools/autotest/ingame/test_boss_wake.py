@@ -87,9 +87,10 @@ def warp_one(pair, x, scene, entrance=None, in_event=True):
 
 
 def need_in_play(pair):
-    for x in ("A", "B"):
-        s = pair.state(x)
-        assert pair.in_play(s), "%s not in play (%s)" % (x, s.get("not_ready"))
+    """The first set-up: the shared pair.need_boot_place (harness-c133-scene 82f9a7a5a): both games in play STEPPED
+    (never one read: the gifts-237/row53 'not in play' SETUP-FAIL class, B #139 16:31), in the boot's scene
+    (TwinrovaStage, scenarios/live-twinrova-room.A/B.txt) and adult (the boot's save)."""
+    return pair.need_boot_place("adult")
 
 
 def look_both(pair, name, missed):

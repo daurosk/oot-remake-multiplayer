@@ -511,8 +511,10 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             // Multiplayer page's Host (hookshot.py --host-in-game: LICHII_COOP_TEST_HOST), joins with the clipboard's
             // code as the page's "Paste code and join" (private-lobby-fix), or leaves the
             // session as the page's Leave row does (remount-leave), or the Multiplayer page opened and nothing pressed (its
-            // rows for a shot, row 170); `menu open PAGE` any page so (B #138). Test only.
-            // `menu open PAGE` (B #138): any page of the tab, nothing pressed (kMenuPages, coop_testinput.h).
+            // rows for a shot, row 170); `menu open PAGE` (B #138): any page of the tab, nothing pressed (kMenuPages,
+            // coop_testinput.h). gear-link: menu look KEY=VALUE (a settings key without look_, e.g. link_gear=hidden;
+            // VALUE none unsets it): that part chosen as the Customize page chooses it and worn as when the menu closes.
+            // Test only.
             const auto low = [](std::string_view v) {
                 std::string out(v);
                 std::transform(out.begin(), out.end(), out.begin(),
@@ -525,16 +527,20 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
                 return out;
             };
             const std::string page = w.size() >= 2 ? low(w[1]) : std::string{};
-            if (page == "open") {
-                const std::string which = w.size() == 3 ? low(w[2]) : std::string{};
-                if (std::find(kMenuPages.begin(), kMenuPages.end(), which) == kMenuPages.end()) {
+            const std::string arg = w.size() == 3 ? low(w[2]) : std::string{};
+            if (page == "look" && arg.find('=') != std::string::npos) {
+                step.kind = Kind::menu;
+                step.mark = "look " + arg;
+            } else if (page == "open") {
+                if (std::find(kMenuPages.begin(), kMenuPages.end(), arg) == kMenuPages.end()) {
                     return fail("want: menu open " + joined(kMenuPages));
                 }
                 step.kind = Kind::menu;
-                step.mark = "open " + which;
+                step.mark = "open " + arg;
             } else {
                 if (w.size() != 2 || std::find(kMenuWords.begin(), kMenuWords.end(), page) == kMenuWords.end()) {
-                    return fail("want: menu " + joined(kMenuWords) + ", or menu open " + joined(kMenuPages));
+                    return fail("want: menu " + joined(kMenuWords) + ", menu open " + joined(kMenuPages) +
+                                ", or menu look KEY=VALUE");
                 }
                 step.kind = Kind::menu;
                 step.mark = page;

@@ -3503,3 +3503,17 @@ TEST_CASE("row 223: the details list's second page is the key items, only with a
     v.detail_page = 1;
     CHECK_FALSE(DetailLines(View::kLan, v)[0].paged);
 }
+
+TEST_CASE("row 223: DetailPages is the details list's page rule (DetailLines and the play-test state)") {
+    SessionView v;
+    v.detail_page = 1;
+    CHECK(DetailPages(View::kMain, v).pages == 1);   // (no game: one page, shown as page 0)
+    CHECK(DetailPages(View::kMain, v).page == 0);
+    v.tally_ok = true;
+    CHECK(DetailPages(View::kSession, v).pages == 2);
+    CHECK(DetailPages(View::kSession, v).page == 1);
+    v.detail_page = 2;   // (wraps round)
+    CHECK(DetailPages(View::kMain, v).page == 0);
+    CHECK(DetailPages(View::kLan, v).pages == 0);
+    CHECK(DetailPages(View::kPassword, v).pages == 0);
+}

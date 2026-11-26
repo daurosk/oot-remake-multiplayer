@@ -55,6 +55,9 @@ GEAR = (
     "Mt_Weapon_Sword_Biggoron_Alb.01",
     "Mt_Boots_Player_Adult_Alb",
     "Mt_Leather_Player_Child_Alb",   # the child's boots (and his belts: one texture)
+    # leather-link: the adult's gloves and upper leather (Clothing Color 3 on Link, link_leather only).
+    "Mt_Glove_Player_Adult_Alb",
+    "Mt_Leater_Upper_Player_Adult_Alb",
     "Mt_Boots_Armor_Adult_HoverBoot_Alb",
     "Mt_Boots_Armor_Adult_HeavyBoot_Alb",
     "Mt_Silver_Armor_Adult_Gauntlet_Silver_Alb",

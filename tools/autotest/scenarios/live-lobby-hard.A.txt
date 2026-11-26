@@ -1,0 +1,21 @@
+# live-lobby-hard A (boot for live.py start; tools/autotest/ingame/test_difficulty.py): live-kakariko-child's boot in a lobby made
+# with a difficulty: the lane's coop_server starts with --difficulty hard (hs-difficulty-lobby.steps.txt's '#! server'
+# line; hookshot.py header_server_args), the same SessionConfig::difficulty the Host page's choice fills (server/main.cpp:358).
+#! noload
+#! server --difficulty hard
+#! start coop: test warp done
+#! switches LICHII_COOP_CHEATS=1
+#! timeout 900
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 600
+mark a-in

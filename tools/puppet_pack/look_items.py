@@ -373,6 +373,10 @@ def info_row_as(row, actor, project_name=None):
 BODY_BOOTS = (
     "Mt_Boots_Player_Adult_Alb",
     "Mt_Leather_Player_Child_Alb",
+    # leather-link: the adult's gloves and upper leather (the Leather colour, part 28): a copy per colour too, so
+    # your Leather never paints the puppets' (the game's names are your own Link's).
+    "Mt_Glove_Player_Adult_Alb",
+    "Mt_Leater_Upper_Player_Adult_Alb",
 )
 
 

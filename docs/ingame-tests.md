@@ -83,7 +83,10 @@ the save are changed; a missing flag is a SETUP-FAIL. Each save is kept in `coop
 baseline is put back. Every flag is read back on every save. A test that needs a profile:
 `@pytest.mark.needs_save(NAME)`. A run with another `--save`, or none, deselects it. `summary.json` `identity.save`
 is `{name, sha256: {game: {rel: sha256}}}`. `saves/gohma-alive.py` puts Queen Gohma back alive, with the quest at
-her room (rows 137/138).
+her room (rows 137/138). A profile may also have `CLEAR_TEXT = [0x...]`: String64 flags whose 64 bytes of text are
+emptied ("") in every save, checked in every save after, and read back as `""` by `prove`; a save without one is a
+SETUP-FAIL. `saves/no-ocarina.py` takes both ocarinas out of both games (`save_flags.NO_OCARINA` and
+`PlayerStatus.EquipOcarina`, issue 190): `test_songs.test_ocarina_given_saria`.
 
 SOLO boot (owner rule: features that are not multiplayer must also work solo, with co-op idle): `--solo` boots only
 lane game A, with no co-op session. That means `live.py start --only A` without `--server`, so hookshot.py run gives

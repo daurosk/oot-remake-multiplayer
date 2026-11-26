@@ -81,19 +81,19 @@ TEST_CASE("menu state: Link's pages count as the title does, and Y turns them") 
     Driver d;
     auto s = OpenFor(d, 0);
     CHECK(s.page_no == 1);
-    CHECK(s.pages == 4);
-    CHECK(Has(s.texts.title, "(page 1 of 4)"));
+    CHECK(s.pages == 5);   // (look-link-cs: Hair and clothes)
+    CHECK(Has(s.texts.title, "(page 1 of 5)"));
     CHECK(Has(Json(Tab{}, s), "{\"option\":0,\"label\":\"Eye Colour\","));
-    for (int page = 2; page <= 4; ++page) {
+    for (int page = 2; page <= 5; ++page) {
         d.Pad(CoopSnailCustom::kY);
         s = FromDriver(d, true, true);
         CHECK(s.page_no == page);
-        CHECK(Has(s.texts.title, "(page " + std::to_string(page) + " of 4)"));
+        CHECK(Has(s.texts.title, "(page " + std::to_string(page) + " of 5)"));
     }
     d.Pad(CoopSnailCustom::kY);   // (past the last: back to the first)
     s = FromDriver(d, true, true);
     CHECK(s.page_no == 1);
-    CHECK(Has(Json(Tab{}, s), "\"page_no\":1,\"pages\":4"));
+    CHECK(Has(Json(Tab{}, s), "\"page_no\":1,\"pages\":5"));
 }
 
 TEST_CASE("menu state: the mixer is said, and a screen co-op does not drive gives no rows") {
@@ -106,4 +106,23 @@ TEST_CASE("menu state: the mixer is said, and a screen co-op does not drive give
     d.Close();
     CHECK(Json(Tab{}, FromDriver(d, false, true)) ==
           "{\"coop\":{\"open\":false},\"customize_screen\":{\"open\":false}}");
+}
+
+TEST_CASE("menu state: the - menu's tabs, closed and on the session's page of the details (no lines: codes live there)") {
+    CHECK(MinusJson(Minus{}) == "{\"open\":false}");
+    CHECK(Has(Json(Tab{}, Screen{}, Minus{}), ",\"minus\":{\"open\":false}}"));
+    Minus m;
+    m.open = true, m.tab = "multiplayer", m.view = "main", m.details_page = 0, m.details_pages = 2;
+    m.key_items = {{"Songs", "3 of 12"}};   // (filled by mistake: page 0 never shows them)
+    CHECK(MinusJson(m) == "{\"open\":true,\"tab\":\"multiplayer\",\"view\":\"main\",\"details_page\":0,"
+                          "\"details_pages\":2,\"key_items\":null}");
+}
+
+TEST_CASE("menu state: the key items page gives each line's name and value") {
+    Minus m;
+    m.open = true, m.tab = "multiplayer", m.view = "session", m.details_page = 1, m.details_pages = 2;
+    m.key_items = {{"Songs", "3 of 12"}, {"Medallions", "0 of 6"}};
+    CHECK(MinusJson(m) == "{\"open\":true,\"tab\":\"multiplayer\",\"view\":\"session\",\"details_page\":1,"
+                          "\"details_pages\":2,\"key_items\":[{\"name\":\"Songs\",\"value\":\"3 of 12\"},"
+                          "{\"name\":\"Medallions\",\"value\":\"0 of 6\"}]}");
 }

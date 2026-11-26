@@ -76,11 +76,21 @@ def dist(a, b):
     return math.dist(a[::2], b[::2])
 
 
-def need_in_play(pair, age):
-    for x in ("A", "B"):
-        s = pair.state(x)
-        assert pair.in_play(s), "%s not in play (%s)" % (x, s.get("not_ready"))
-        assert s.get("age") == age, "%s is %s: this row needs %s Link" % (x, s.get("age"), age)
+def need_at(pair, age, scene):
+    """Both games in play in `scene` as `age` Link after the warp: STEPPED until true (pair.until_in_play, then
+    pair.until on scene + age), never judged from one read (B #139 16:31: a one-read first set-up is the
+    gifts-237/row53 'not in play' SETUP-FAIL class; harness-c133-scene pair.need_boot_place does the same for the
+    boot's place). AssertionError naming each game's scene/age after the frame bound."""
+    pair.until_in_play("both games in play in %s" % scene)
+
+    def there():
+        return all(pair.in_play(st) and (st.get("scene") or "").lower() == scene.lower() and st.get("age") == age
+                   for st in (pair.state(x) for x in ("A", "B")))
+    try:
+        pair.until("both games in %s as %s Link" % (scene, age), there)
+    except AssertionError as e:
+        got = "; ".join("%s in %s, %s" % (x, pair.state(x).get("scene"), pair.state(x).get("age")) for x in ("A", "B"))
+        raise AssertionError("%s; %s: this row needs %s Link in %s" % (e, got, age, scene)) from None
 
 
 def to_place(pair, age, scene, entrance):
@@ -91,7 +101,7 @@ def to_place(pair, age, scene, entrance):
     pair.step_both(30)
     pair.warp_both(scene, entrance)
     pair.step_both(30)
-    need_in_play(pair, age)
+    need_at(pair, age, scene)
 
 
 def rules(pair, bleed_s):
@@ -206,6 +216,7 @@ def restored(pair, keep):
 def test_downed_child_crawls_and_is_revived(pair):
     with restored(pair, {}):
         with pair.setup():
+            pair.need_boot_place("child")   # the default boot's place, stepped (harness-c133-scene; boot = BOOT, child)
             to_place(pair, "child", "KokiriForest_Child", "FrontDekuTree")   # hs-dbno-child: open ground, no crawlspace
             hold = rules(pair, 240)     # long: the crawl and the revive come before any bleed-out (240 = kDbnoMaxBleedS)
             no_fairy(pair, "B")
@@ -241,6 +252,7 @@ def test_downed_charsel_puppet_lies(pair):
     keep = {}
     with restored(pair, keep):
         with pair.setup():
+            pair.need_boot_place("child")   # the default boot's place, stepped (harness-c133-scene; boot = BOOT, child)
             r = pair.flag_read("B", CHARSEL)
             assert r.get("kind") == "int", "no Character Select on this lane (%s reads %s)" % (CHARSEL, r.get("kind"))
             keep["charsel"] = r.get("value") or 0
@@ -269,6 +281,7 @@ def test_downed_charsel_puppet_lies(pair):
 def test_downed_adult_lies_bleeds_out_respawns(pair):
     with restored(pair, {}):
         with pair.setup():
+            pair.need_boot_place("child")   # the default boot's place, stepped (harness-c133-scene; boot = BOOT, child)
             to_place(pair, "adult", "HyruleField_Adult", "HyruleField_FrontOfKakarikoVillage")   # hs-dbno-adult
             rules(pair, 10)             # hs-dbno-adult.A.txt 'chat /dbno time 10' (kDbnoMinBleedS)
             no_fairy(pair, "B")

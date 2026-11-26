@@ -160,9 +160,12 @@ inline constexpr const char* kTunicBase = "green";
 // none (the game's own), "tunic-RRGGBB" for a colour; TunicColour reads it
 // back (nothing for any other name). With a Cap trim colour (below) the name
 // says both: "tunic-RRGGBB-cap-RRGGBB", or "tunic-green-cap-RRGGBB" on the
-// game's own green; TunicPaintOf reads every painting's name back.
+// game's own green; TunicPaintOf reads every painting's name back. vest-link: with a Vest colour (part 27) the
+// name has "-vest-RRGGBB" after the tunic's (before the cap's): "tunic-green-vest-RRGGBB" on the game's green. With
+// no vest colour every name is as it was (0.11.12).
 std::string TunicPainting(const std::optional<std::uint32_t>& colour,
-                          const std::optional<std::uint32_t>& cap = std::nullopt);
+                          const std::optional<std::uint32_t>& cap = std::nullopt,
+                          const std::optional<std::uint32_t>& vest = std::nullopt);
 std::optional<std::uint32_t> TunicColour(const std::string& name);
 // The tunic texels of `green` painted in `colour` (0xRRGGBB): the same
 // textures, sizes and order; a texture not in TunicTextures as it is.
@@ -199,17 +202,39 @@ void UseCap(std::shared_ptr<const Cap> cap);
 // How many of the table's textures are gear textures (Gear()): 0 for a pack made before row 278.
 std::size_t GearCapTextures(const Cap& cap);
 // What a tunic painting holds: the tunic's colour (nothing: the game's own
-// green) and the Cap trim's (nothing: as the tunic).
+// green), the Cap trim's (nothing: as the tunic) and, vest-link, the Vest's
+// (part 27; nothing: as the tunic, 0.11.12 byte for byte).
 struct TunicPaint {
     std::optional<std::uint32_t> tunic;
     std::optional<std::uint32_t> cap;
+    std::optional<std::uint32_t> vest = std::nullopt;
     bool operator==(const TunicPaint&) const = default;
 };
+
+// vest-link (C #132, Snail parity): ONE owner per texture of Link's clothes. Each entry names a texture of your
+// Link's (and the puppets' copies of it) and the look part that paints it when that part is set; unset, the texture
+// keeps the painter it had in 0.11.12 (the tunic for the tunic textures, the boots part for the boots'). The painters
+// ask OwnerOf, so no texture is ever painted by two parts. Nothing of Character Select is used: these are the game's
+// own textures, painted (works without the mod, solo and in co-op). Sources: Character Select's notes (MIT,
+// docs/NOTES.md: on Link Clothing Color 2 is the vest, Mt_Vest; the child's hat band Mt_Band draws the same texture)
+// and tools/puppet_pack/tunic_extra.py (EXTRA: the vest textures and what they hold).
+// Not in it: the Goron and Zora tunics' vests (Mt_Vest_Armor_Adult_*), which are those tunics' own models and keep
+// their tunic's colour (Character Select's palette never reached them either: the armour is another actor's model).
+struct TextureOwner {
+    const char* texture;   // in the game and in green.bin
+    CoopLook::Part part;   // paints it when set
+};
+const std::vector<TextureOwner>& Owners();
+// The part that paints `texture` when set; nothing for a texture no entry names.
+std::optional<CoopLook::Part> OwnerOf(std::string_view texture);
 // A painting's name read back (TunicPainting); nothing for kTunicBase and for
 // a name that is no painting (a pack colour's file).
 std::optional<TunicPaint> TunicPaintOf(const std::string& name);
-// The tunic texels of `green` in `paint`: the tunic's colour first, then the
-// cap's blocks (`cap`, may be null) in the cap's colour.
+// The tunic texels of `green` in `paint`: the tunic's colour first (a texture
+// OwnerOf gives to the vest: the vest's colour when set), then the cap's
+// blocks (`cap`, may be null) in the cap's colour; with no cap colour, cap
+// blocks in a vest-painted texture take the tunic's painting (the hood trims
+// follow the tunic, as in 0.11.12).
 CoopLookTunic::Texels TunicPainted(const CoopLookTunic::Texels& green, const TunicPaint& paint, const Cap* cap);
 // The cap's blocks of the texture `name` (in `format`) painted in `colour`:
 // each block of `green` (the texture's own texels) recoloured into `texels`
@@ -248,15 +273,23 @@ const std::vector<std::string>& BodyBoots();
 std::optional<char> LetterOf(std::string_view tunic);
 // A body boots texture's name in colour `letter`'s models; "" if `name` is not one.
 std::string BootsName(const std::string& name, char letter);
-// Each colour's boots colour (0xRRGGBB) by its letter; a letter not in it
-// keeps the game's colour.
-using Wearers = std::map<char, std::uint32_t>;
+// What a colour's body leather copies are painted in: its wearer's boots
+// colour and, leather-link, Leather colour (part 28, the owner of those
+// textures when set: Owners); nothing: the game's.
+struct BootsPaint {
+    std::optional<std::uint32_t> boots;
+    std::optional<std::uint32_t> leather = std::nullopt;   // (leather-link: a default: {boots} stays whole, -Wmissing-field-initializers)
+    bool operator==(const BootsPaint&) const = default;
+};
+// Each colour's paint by its letter; a letter not in it keeps the game's colour.
+using Wearers = std::map<char, BootsPaint>;
 // Who paints which colour's boots: your own Link first (`own`: the letter
 // of the model he wears, and his boots colour), then the others in the
 // order given (the first of a letter has it; nothing: the game's colour).
 struct Wearer {
     std::optional<char> letter;
     std::optional<std::uint32_t> boots;
+    std::optional<std::uint32_t> leather = std::nullopt;   // (leather-link: part 28; a default, as BootsPaint::leather)
 };
 Wearers Assign(const Wearer& own, const std::vector<Wearer>& others);
 // The boots wardrobe's base (every colour's copies in the game's colour) and
@@ -272,7 +305,8 @@ CoopLookTunic::Texels BootsTexels(const CoopLookTunic::Texels& gear, const Weare
 // The wardrobe's base (every copy as the pack wrote it), and a painting's name: kPuppetTunicsBase when none is
 // painted, else "ptunics|<colour>=RRGGBB|..." by colour.
 inline constexpr const char* kPuppetTunicsBase = "ptunics";
-// colour ("red") -> what it is painted in: its player's exact tunic colour and Cap trim (0.11.9: the trim too)
+// colour ("red") -> what it is painted in: its player's exact tunic colour and Cap trim (0.11.9: the trim too) and
+// Vest (vest-link: part 27; the name gets "+vest" and its colour)
 using TunicPaints = std::map<std::string, TunicPaint>;
 std::string PuppetTunicsName(const TunicPaints& paints);
 // The copies' texels for a painting: a copy given to a player, every texture of it from green painted in that

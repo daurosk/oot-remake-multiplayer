@@ -2651,6 +2651,30 @@ bool TestMenu(const std::string& page) {
         LeaveNow();
         return true;
     }
+    // gear-link: "look KEY=VALUE" (coop_testinput's `menu look`): that part chosen as the Customize page chooses a
+    // look (ChooseLookParts' SetPending) and worn as when the menu closes (ApplyOnUnpause); VALUE "none" unsets it.
+    if (page.rfind("look ", 0) == 0) {
+        const std::string spec = page.substr(5);
+        const std::size_t eq = spec.find('=');
+        if (eq == std::string::npos) return false;
+        const std::string key = spec.substr(0, eq), value = spec.substr(eq + 1);
+        for (const CoopLook::PartInfo& info : CoopLook::Parts()) {
+            if (info.part == CoopLook::Part::tunic || key != info.key) continue;
+            CoopLook::Look look = CoopLook::Shown();
+            if (value == "none") {
+                look[info.part] = std::nullopt;
+            } else {
+                std::vector<std::string> errors;
+                const CoopLook::Look one = CoopLook::ReadParts("look_" + key + " = " + value + "\n", &errors);
+                if (!one[info.part]) return false;
+                look[info.part] = one[info.part];
+            }
+            ChooseLookParts(look);
+            WearChosenLook();
+            return true;
+        }
+        return false;
+    }
     return false;
 }
 

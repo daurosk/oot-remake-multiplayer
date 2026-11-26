@@ -79,6 +79,7 @@ std::string PagedName(CoopLook::Part part);
 inline constexpr const char* kNoColourOptions = "This character has no colour options";
 // npc-customize: the index of the Character group (a character's own parts) in Groups().
 inline constexpr std::size_t kCharacterGroup = 4;
+inline constexpr std::size_t kLinkModGroup = 5;   // (look-link-cs: Character Select's options on Link)
 
 // The preset colours, after the game's own (unset): CoopColors' names.
 const std::vector<std::string>& Presets();

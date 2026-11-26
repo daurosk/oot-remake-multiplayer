@@ -61,6 +61,16 @@ class Row237OnceGifts(unittest.TestCase):
         self.assertEqual(s["counts"].get("PASS"), 2 * 3, p.stdout[-2000:])
         self.assertIn("RESULT: PASS", p.stdout)
 
+    def test_pass_when_the_boot_has_no_fresh_sample_yet(self):
+        """Lane run gifts-237-3d17b642 (16:24 UTC 2026-11-26): every set-up SETUP-FAILed 'A not in play (no Link sample
+        has been taken yet ...)' because the first set-up judged ONE read. fakegame.py BT_FAKE_STALE_FRAMES=200 = that
+        lane state; the stepped set-up (test_rows.need_child_in_play -> pair.until_in_play) must still PASS each round."""
+        out = os.path.join(self.tmp, "stale")
+        p = T.pytest_run(["test_gifts_237.py", "--fake", "--no-rerun", "--repeat", "3", "--out", out, "-q"],
+                         env={"BT_FAKE_STALE_FRAMES": "200"})
+        s = T.summary(out)
+        self.assertEqual(s["counts"].get("PASS"), 2 * 3, p.stdout[-2000:])
+
     def test_fail_when_each_game_keeps_its_own(self):
         """The bug as reported: no gift Bool is shared, each player is paid again."""
         p, s = self.run_gifts("off", mode="off")

@@ -260,7 +260,7 @@ class FakeGame:
             self.later(20, lambda: self.say("coop: ocarina probe: our Link plays the ocarina, 8 AS slots"))
             return
         if self.box:
-            if "B" in buttons:
+            if "B" in buttons and self.tag not in os.environ.get("BT_FAKE_OCARINA_BOX_STUCK", ""):
                 self.box = False
                 self.later(20, lambda: self.say("coop: ocarina probe: our Link plays the ocarina, 8 AS slots"))
             return                                       # (the box eats every other button: no note)

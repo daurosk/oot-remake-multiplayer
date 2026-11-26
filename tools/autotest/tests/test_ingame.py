@@ -1221,6 +1221,14 @@ class OcarinaReady(unittest.TestCase):
         self.assertTrue(pair.ocarina_out("B"))
         self.assertEqual([n for n in pair.notes if "first-use" in n], [])
 
+    def test_a_box_b_does_not_close_is_named_never_passed(self):
+        """The plays line must come after the B press (review-c123-13 17:47): a box B leaves up raises."""
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"BT_FAKE_OCARINA_BOX_STUCK": "B"}):
+            pair = self.lane(0)
+            with self.assertRaisesRegex(AssertionError, r"B: 'ocarina probe: our Link plays the ocarina' after B closed"):
+                pair.ocarina_out("B")
+
     def test_ocarina_out_with_nothing_on_the_d_pad_names_it(self):
         pair = self.lane(5000)
         with self.assertRaisesRegex(AssertionError, r"B: the ocarina back on the D-pad"):

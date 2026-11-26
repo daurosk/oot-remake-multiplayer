@@ -113,8 +113,12 @@ if (Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue) { SetupFa
 . (Join-Path $root 'coord-multiplayer\offline\lib\test-display.ps1')
 try { $td = Get-TestDisplay } catch { SetupFail ("$_" -replace '^SETUP-FAIL ', '') }
 Res "display $($td.Name) ($($td.Reason))"
+$shotLib = Join-Path $root 'coord-multiplayer\offline\lib\screen-shot.ps1'
+if (-not (Test-Path -LiteralPath $shotLib)) { SetupFail "missing $shotLib (the shared window-shot helper)" }
+. $shotLib
 Res 'setup proof OK'
 if ($SetupOnly) { Res 'RESULT: SETUP-OK (-SetupOnly: nothing built or started)'; exit 0 }
+foreach ($l in (Clear-TestScreen -Bounds $td.Bounds)) { Res "test screen $($td.Name): $l" }   # (other windows minimised, none closed)
 
 # --- the module, for the lane's protocol (a fresh test-only password per run)
 $password = 'exefs-xplay-' + ([guid]::NewGuid().ToString('N').Substring(0, 12))
@@ -210,22 +214,15 @@ try {
     }
     # let pings run a minute with all three in, then a shot of the Fritchii window
     if (-not $fr.HasExited -and -not $hs.HasExited) { Start-Sleep -Seconds 60 }
-    try {
-        Add-Type -AssemblyName System.Drawing
-        Add-Type @'
-using System; using System.Runtime.InteropServices;
-public static class XplayWin { [StructLayout(LayoutKind.Sequential)] public struct R { public int L, T, Ri, B; }
-  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out R r); }
-'@
-        $fr.Refresh()
-        $r = New-Object XplayWin+R
-        if ($fr.MainWindowHandle -ne 0 -and [XplayWin]::GetWindowRect($fr.MainWindowHandle, [ref]$r)) {
-            $bmp = New-Object System.Drawing.Bitmap ([Math]::Max(1, $r.Ri - $r.L)), ([Math]::Max(1, $r.B - $r.T))
-            [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($r.L, $r.T, 0, 0, $bmp.Size)
-            $bmp.Save((Join-Path $run 'fritchii.png'), [System.Drawing.Imaging.ImageFormat]::Png)
-            Res "shot: $(Join-Path $run 'fritchii.png')"
-        } else { Res 'shot: no Fritchii window' }
-    } catch { Res "shot failed: $_" }
+    # The shot through the shared helper (coord-multiplayer\offline\lib\screen-shot.ps1: raise, own-pid 9-point cover check):
+    # a covered, failed or missing shot of a running Fritchii = SETUP-FAIL (2026-11-26: raw screen copies showed the Claude app).
+    if (-not $fr.HasExited) {
+        $s = Save-WindowShot -Process $fr -Path (Join-Path $run 'fritchii.png') -Log (Join-Path $run 'covered.txt')
+        if (-not $s -or $s.Covered -or $s.Failed) {
+            Res "SETUP-FAIL shot of the Fritchii window not usable: $(if ($s) { $s.Why } else { 'no window handle or smaller than 100 px' })"
+            $verdict = 'SETUP-FAIL'
+        } else { Res "shot: $($s.Path)" }
+    } else { Res 'shot: Fritchii already exited (the checks below say why)' }
     # the Longshot scenario runs on to its end (8 minutes): wait for hookshot.py to close the games and the server
     if (-not $hs.WaitForExit(20 * 60 * 1000)) { Res 'hookshot.py did not end in 20 minutes: stopped'; Stop-Process -Id $hs.Id -Force }
     Res "hookshot.py exit $($hs.ExitCode)"

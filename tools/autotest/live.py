@@ -914,7 +914,7 @@ def main(argv=None):
     st.add_argument("--lock-wait", type=float, default=0, help="s to wait for a busy lane (default: refuse at once)")
     st.add_argument("--dll", help="(with --lane) a hookshot_coop.dll for this session only: the lane's own is put aside "
                     "and put back when the session ends")
-    st.add_argument("--precompile", choices=("test", "default"), default="test",
+    st.add_argument("--precompile", choices=hookshot.PRECOMPILE_CHOICES, default="test",
                     help="test (default): no shader precompile before the title (hookshot.py TEST_LANE_PRECOMPILE, "
                          "~11 GB less commit a game); default: Longshot's own start, as players run it")
     st.add_argument("--dry-run", action="store_true", help="check the boot's runner arguments and scripts (hookshot.py "

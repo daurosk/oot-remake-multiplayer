@@ -1055,7 +1055,8 @@ def main(argv=None):
     r.add_argument("--renderer-stall", type=int, help="while the compile logs progress: seconds without a rise "
                                                       "before it fails (default: hookshot.py's)")
     r.add_argument("--renderer-limit", type=int, help="seconds in all for one renderer start (default: hookshot.py's)")
-    r.add_argument("--precompile", choices=("test", "default"), default="test",
+    import hookshot as hk_choices  # noqa: E402 (PRECOMPILE_CHOICES: hookshot.py's one list)
+    r.add_argument("--precompile", choices=hk_choices.PRECOMPILE_CHOICES, default="test",
                    help="test (default): no shader precompile before the title (hookshot.py TEST_LANE_PRECOMPILE); "
                         "default: Longshot's own start, as players run it")
     a = ap.parse_args(argv)

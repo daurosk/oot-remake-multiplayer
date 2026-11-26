@@ -95,7 +95,8 @@ def pytest_addoption(parser):
     g.addoption("--save", default=None, metavar="NAME", help="a save profile for this boot (testsave.py: "
                 "ingame/saves/NAME.py FLAGS set in both lane games' autotest-save before the boot, the baseline put "
                 "back after live.py stop); tests marked needs_save(NAME) run only with it")
-    g.addoption("--precompile", choices=("test", "default"), default="test", help="test (default): the lane games "
+    import hookshot as _hk   # (PRECOMPILE_CHOICES: hookshot.py's one list)
+    g.addoption("--precompile", choices=_hk.PRECOMPILE_CHOICES, default="test", help="test (default): the lane games "
                 "start with no shader precompile (hookshot.py TEST_LANE_PRECOMPILE, ~11 GB less commit a game); "
                 "default: Longshot's own start, as players run it (the rc's one smoke on stock settings). In "
                 "summary.json 'identity'")

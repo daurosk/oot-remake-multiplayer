@@ -62,11 +62,12 @@ def _record(pair, what, pos):
 
 
 def _probe(pair, gap, warp=None):
+    if warp:
+        # (test_smoke::test_warp right before test_pause in both failing runs: warp_both(WARP_TO), the boot's own scene,
+        # test_smoke.py:42, in the TEST body as test_warp does: 2f734963a has no set-up warp allowance (368eab365), so a
+        # warp inside pair.setup() would time out at its flat 30 s; review-rows-c130-6 23:13)
+        pair.warp_both(warp)
     with pair.setup():
-        if warp:
-            # (test_smoke::test_warp right before test_pause in both failing runs: warp_both(WARP_TO), the boot's own
-            # scene, test_smoke.py:42; set-up 1.1 s after it in tb-gate-ui-f9f3b9c2)
-            pair.warp_both(warp)
         pair.until_in_play("both games in play before the probe", max_frames=P.READY_FRAMES)
     pos = {x: pair.log[x].mark() for x in ("A", "B")}
     _record(pair, "before", pos)

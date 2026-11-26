@@ -6,6 +6,8 @@ the lane as it was.
 A profile is ingame/saves/NAME.py (or $BT_SAVES_DIR/NAME.py) with
 
     FLAGS = ["enum:0x7d776b61=0xb5df43cb", "bool:0x6b093b51=0", ...]   # save_flags.py set's form, each cited
+    CLEAR_TEXT = [0xb72cd3fc]   # optional: String64 flags emptied to "" (the 64 bytes of text zeroed), each cited
+
 
 Only flags already in the save are changed (save_flags.set_values; a missing one is a SETUP-FAIL). Per game folder:
 <game>/coop-test-save.json names the profile and the files. It is written BEFORE any save changes, so a run that dies
@@ -18,6 +20,7 @@ import importlib.util
 import json
 import os
 import shutil
+import struct
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -63,6 +66,29 @@ def load(name, saves_dir=None):
     return out
 
 
+def clear_text_of(name, saves_dir=None):
+    """Profile NAME's CLEAR_TEXT: the String64 hashes whose text it empties ([] when it has none)."""
+    load(name, saves_dir)                               # (its own checks: name, file, FLAGS)
+    spec = importlib.util.spec_from_file_location("btsave_t_" + name.replace("-", "_"), profile_path(name, saves_dir))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    raw = getattr(mod, "CLEAR_TEXT", None) or []
+    if not isinstance(raw, (list, tuple)) or not all(isinstance(h, int) and 0 < h <= 0xffffffff for h in raw):
+        raise SaveProfileError("--save %s: CLEAR_TEXT is not a list of String64 hashes" % name)
+    return list(raw)
+
+
+def _text_at(data, h):
+    """Where String64 h's 64 bytes of text are in a save (as save_flags.no_ocarina finds EquipOcarina's)."""
+    at = SF.index(bytes(data)).get((SF.STRING64, h))
+    if at is None:
+        raise SF.SaveError("not in this save: String64 %#010x" % h)
+    text = struct.unpack_from("<I", data, at)[0]
+    if text + 64 > len(data):
+        raise SF.SaveError("String64 %#010x: its text is past the end of the save" % h)
+    return text
+
+
 def saves_of(folder):
     """The baseline's progress.sav files, relative to the game folder ('/' separated)."""
     base = os.path.join(folder, BASE)
@@ -84,10 +110,13 @@ def sha256(path):
         return hashlib.sha256(f.read()).hexdigest()
 
 
-def put_in(folders, name, changes, say=print):
+def put_in(folders, name, changes, say=print, clear=None):
     """Profile NAME's flags into every save of each game's baseline. {folder name: {rel: sha256}} once every flag
-    reads back on every save."""
+    reads back on every save. `clear`: the String64 hashes to empty (default: the profile's CLEAR_TEXT when its file is
+    where bt_plugin's --save finds it, else none: a caller that loaded `changes` from elsewhere passes its own)."""
     want = {(k, h): (v if k != SF.TYPES["bool"] else (1 if v else 0)) for k, h, v in changes}
+    if clear is None:
+        clear = clear_text_of(name) if os.path.isfile(profile_path(name)) else []
     got = {}
     for folder in folders:
         rels = saves_of(folder)
@@ -103,6 +132,9 @@ def put_in(folders, name, changes, say=print):
             data = bytearray(old)
             try:
                 SF.set_values(data, changes)
+                for h in clear:
+                    at = _text_at(data, h)
+                    data[at:at + 64] = bytes(64)
                 SF.index(bytes(data))
             except SF.SaveError as e:
                 raise SaveProfileError("%s: --save %s: %s" % (src, name, e))
@@ -122,6 +154,13 @@ def put_in(folders, name, changes, say=print):
                 if have is None or (have & 0xff if k == SF.TYPES["bool"] else have) != v:
                     raise SaveProfileError("%s %s: flag %#010x is %s, not %s after --save %s"
                                            % (folder, rel, h, have, v, name))
+            for h in clear:
+                try:
+                    at = _text_at(data, h)
+                except SF.SaveError as e:
+                    raise SaveProfileError("%s %s: --save %s: %s" % (folder, rel, name, e))
+                if any(data[at:at + 64]):
+                    raise SaveProfileError("%s %s: String64 %#010x is not empty after --save %s" % (folder, rel, h, name))
             got.setdefault(os.path.basename(folder), {})[rel] = sha256(_p(folder, rel))
     return got
 
@@ -207,6 +246,7 @@ def prove(pair, name, games=None, saves_dir=None):
     try:
         flags = load(name, saves_dir)
         expect = expect_of(name, saves_dir)
+        clear = clear_text_of(name, saves_dir)
     except SaveProfileError as e:
         raise P.SetupFail(str(e)) from e
     miss, notes = [], []
@@ -230,6 +270,10 @@ def prove(pair, name, games=None, saves_dir=None):
             v = pair.flag_read(x, "0x%08x" % h).get("value")
             if not _same(kind, want, v):
                 miss.append("%s flag 0x%08x = %s, not %s (the profile's save not loaded?)" % (x, h, v, want))
+        for h in clear:                                 # (flag_read gives a String64 as kind 'text')
+            v = pair.flag_read(x, "0x%08x" % h).get("value")
+            if v != "":
+                miss.append("%s String64 0x%08x = %r, not '' (the profile's save not loaded?)" % (x, h, v))
         notes.append("save %s proven on %s (%d flag(s)%s)" % (
             name, x, len(flags), "".join(", %s" % k for k in EXPECT_KEYS if k in e)))
     if miss:

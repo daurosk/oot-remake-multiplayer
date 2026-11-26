@@ -18,7 +18,7 @@ $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss')
 $out = Join-Path $coord "offline\v1-dropin-proof\$stamp"
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 $logFile = Join-Path $out 'run.log'
-function Say([string]$m) { $l = (Get-Date).ToUniversalTime().ToString('HH:mm:ss') + ' ' + $m; Write-Output $l; Add-Content -LiteralPath $logFile -Value $l -Encoding utf8 }
+function Say([string]$m) { $l = (Get-Date).ToUniversalTime().ToString('HH:mm:ss') + ' ' + $m; Write-Host $l; Add-Content -LiteralPath $logFile -Value $l -Encoding utf8 }
 function SetupFail([string]$m) { Say "SETUP-FAIL $m"; Say "RESULT SETUP-FAIL $m"; exit 2 }
 
 # ---- setup proof (each check < 2 min) -------------------------------------------------------------------------------

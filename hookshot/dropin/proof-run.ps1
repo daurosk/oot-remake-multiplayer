@@ -54,6 +54,12 @@ if (-not $SetupOnly -and -not $BuildOnly -and "$turn" -match 'NO game starts|OWN
 try { $disp = Get-TestDisplay -Display $Display } catch { SetupFail $_.Exception.Message }
 if (-not $disp.Bounds) { SetupFail "display $($disp.Name) has no bounds" }
 Say "display $($disp.Name) $($disp.Width)x$($disp.Height) ($($disp.Reason))"
+# Window shots through the shared helper (raise, own-pid 9-point cover check; 2026-11-26: raw screen copies showed the Claude app)
+$shotLib = Join-Path $coord 'offline\lib\screen-shot.ps1'
+if (-not (Test-Path -LiteralPath $shotLib)) { SetupFail "missing $shotLib (the shared window-shot helper)" }
+. $shotLib
+$script:shotWhy = ''
+if (-not $SetupOnly -and -not $BuildOnly) { foreach ($l in (Clear-TestScreen -Bounds $disp.Bounds)) { Say "test screen $($disp.Name): $l" } }   # (minimised, none closed)
 # (the same order: ONE local compile on the PC at a time, held by the folder oot-remake-multiplayer\build.lock, 4 jobs at most)
 # -FullSpeed (only while the owner is away; TEST-TURN says when the 4-job/Idle limit is lifted): -Jobs as given, else all
 # CPU threads but four, at Normal priority. build.lock is taken either way.
@@ -90,13 +96,12 @@ public static class DW { [DllImport("user32.dll")] public static extern bool Set
   public struct RECT { public int L, T, R, B; } }
 '@
 function Shot([System.Diagnostics.Process]$p, [string]$path) {
-    $p.Refresh(); $r = New-Object DW+RECT
-    if (-not [DW]::GetWindowRect($p.MainWindowHandle, [ref]$r)) { Say "shot: no window rect"; return $false }
-    $w = $r.R - $r.L; $h = $r.B - $r.T
-    if ($w -le 0 -or $h -le 0) { Say "shot: empty window"; return $false }
-    $bmp = New-Object System.Drawing.Bitmap $w, $h
-    $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($r.L, $r.T, 0, 0, $bmp.Size); $g.Dispose()
-    $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose(); Say "shot: $path ${w}x$h"; return $true
+    # a covered, failed or missing shot sets $script:shotWhy -> that version's result is SETUP-FAIL (exit 2), not FAIL
+    $script:shotWhy = ''
+    $s = Save-WindowShot -Process $p -Path $path -Log (Join-Path (Split-Path -Parent $path) 'covered.txt')
+    if (-not $s) { $script:shotWhy = 'no window handle or smaller than 100 px'; Say "shot: $($script:shotWhy)"; return $false }
+    if ($s.Covered -or $s.Failed) { $script:shotWhy = $s.Why; Say "shot: NOT USABLE $($s.Path): $($s.Why)"; return $false }
+    Say "shot: $($s.Path)"; return $true
 }
 
 
@@ -218,7 +223,7 @@ foreach ($t in $Versions) {
         if ($exited) { $results[$t] = "FAIL the game exited by itself (see $t-longshot_log.txt)" }
         elseif (-not $framed) { $results[$t] = 'FAIL no frame 600 line in 240 s' }
         elseif (-not $wordOk) { $results[$t] = 'FAIL guest word check' }
-        elseif (-not $shotOk) { $results[$t] = 'FAIL no screenshot' }
+        elseif (-not $shotOk) { $results[$t] = "SETUP-FAIL no usable screenshot ($($script:shotWhy))" }
         else { $results[$t] = "PASS frame 600 at $secs s after start, guest word read, shot $t-game.png" }
     } finally {
         # every path: the game closed, its log kept, our winmm.dll out of the stock folder
@@ -238,6 +243,8 @@ foreach ($t in $Versions) {
     }
 }
 $all = @($Versions | Where-Object { "$($results[$_])" -notlike 'PASS*' }).Count -eq 0
-Say ("RESULT " + $(if ($all) { 'PASS' } else { 'FAIL' }) + ' | ' + (($Versions | ForEach-Object { "$_ $($results[$_])" }) -join ' | '))
+$setupBad = @($Versions | Where-Object { "$($results[$_])" -like 'SETUP-FAIL*' }).Count -gt 0
+$word = if ($all) { 'PASS' } elseif ($setupBad) { 'SETUP-FAIL' } else { 'FAIL' }
+Say ("RESULT $word | " + (($Versions | ForEach-Object { "$_ $($results[$_])" }) -join ' | '))
 Say "stock games kept in $ShortRoot, the official zips in $stockRoot (a rerun reuses them; delete by hand when done)"
-exit $(if ($all) { 0 } else { 1 })
+exit $(if ($all) { 0 } elseif ($setupBad) { 2 } else { 1 })

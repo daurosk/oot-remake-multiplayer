@@ -33,6 +33,41 @@ def kit_save():
     return bytes(data), text
 
 
+def hpp_ocarina():
+    """namespace ocarina's hash constants of coop/host/include/coop/host/game_items.hpp, {name: hash}."""
+    import re
+    path = os.path.join(HERE, "..", "..", "..", "coop", "host", "include", "coop", "host", "game_items.hpp")
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    body = text[text.index("namespace ocarina {"):]
+    body = body[:body.index("}  // namespace ocarina")]
+    return {m.group(1): int(m.group(2), 16)
+            for m in re.finditer(r"constexpr std::uint32_t (k\w+) = (0x[0-9a-fA-F]{8});", body)}
+
+
+class OneSource(unittest.TestCase):
+    """The test's, the fake's and save_flags' ocarina hashes are the module's (ONE SOURCE OF TRUTH, review-c123-11)."""
+
+    def test_pinned_to_game_items_hpp(self):
+        sys.path.insert(0, T.INGAME)
+        import test_songs as S
+        k = hpp_ocarina()
+        self.assertEqual(int(S.FAIRY_COUNT, 16), k["kFairy"])
+        self.assertEqual(int(S.EQUIP, 16), k["kEquip"])
+        self.assertEqual(SF.EQUIP_OCARINA, k["kEquip"])
+        self.assertEqual({int(h, 16) for h in S.MENDED_BOOLS},   # ocarina_bools_mend for a held Fairy Ocarina
+                         {k[n] for n in ("kIsGetFairy", "kGotFairy", "kSlotA", "kSlotB", "kPrepared")})
+        self.assertEqual({h for _, h, _ in SF.NO_OCARINA},
+                         {k[n] for n in ("kFairy", "kTime", "kIsGetFairy", "kIsGetTime", "kSlotA", "kSlotB",
+                                         "kGotFairy", "kGotTime")})
+
+    def test_profile_is_save_flags_no_ocarina(self):
+        sys.path.insert(0, T.INGAME)
+        import testsave
+        self.assertEqual(testsave.load("no-ocarina"), [(SF.TYPES[k], h, v) for k, h, v in SF.NO_OCARINA])
+        self.assertEqual(testsave.clear_text_of("no-ocarina"), [SF.EQUIP_OCARINA])
+
+
 class Songs(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -138,7 +173,7 @@ class Songs(unittest.TestCase):
                           2: [(h, 1) for k, h, _ in SF.NO_OCARINA if k == "int"]})
         with open(os.path.join(folder, testsave.BASE, "slot_00", "progress.sav"), "wb") as f:
             f.write(bytes(data))
-        with self.assertRaisesRegex(testsave.SaveProfileError, "String64 0xb72cd3fc"):
+        with self.assertRaisesRegex(testsave.SaveProfileError, "not in this save: 0xb72cd3fc"):
             testsave.put_in([folder], "no-ocarina", testsave.load("no-ocarina"), say=lambda m: None)
         testsave.undo(folder, say=lambda m: None)
 

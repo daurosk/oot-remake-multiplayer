@@ -20,7 +20,6 @@ import importlib.util
 import json
 import os
 import shutil
-import struct
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -78,17 +77,6 @@ def clear_text_of(name, saves_dir=None):
     return list(raw)
 
 
-def _text_at(data, h):
-    """Where String64 h's 64 bytes of text are in a save (as save_flags.no_ocarina finds EquipOcarina's)."""
-    at = SF.index(bytes(data)).get((SF.STRING64, h))
-    if at is None:
-        raise SF.SaveError("not in this save: String64 %#010x" % h)
-    text = struct.unpack_from("<I", data, at)[0]
-    if text + 64 > len(data):
-        raise SF.SaveError("String64 %#010x: its text is past the end of the save" % h)
-    return text
-
-
 def saves_of(folder):
     """The baseline's progress.sav files, relative to the game folder ('/' separated)."""
     base = os.path.join(folder, BASE)
@@ -110,13 +98,14 @@ def sha256(path):
         return hashlib.sha256(f.read()).hexdigest()
 
 
-def put_in(folders, name, changes, say=print, clear=None):
+def put_in(folders, name, changes, say=print, clear=None, saves_dir=None):
     """Profile NAME's flags into every save of each game's baseline. {folder name: {rel: sha256}} once every flag
-    reads back on every save. `clear`: the String64 hashes to empty (default: the profile's CLEAR_TEXT when its file is
-    where bt_plugin's --save finds it, else none: a caller that loaded `changes` from elsewhere passes its own)."""
+    reads back on every save. `clear`: the String64 hashes to empty; default: profile NAME's CLEAR_TEXT, read from
+    `saves_dir` (else BT_SAVES_DIR / saves/, where bt_plugin's --save finds it: bt_plugin passes neither) when the
+    profile is there, else none (a caller that loaded `changes` from elsewhere passes its own)."""
     want = {(k, h): (v if k != SF.TYPES["bool"] else (1 if v else 0)) for k, h, v in changes}
     if clear is None:
-        clear = clear_text_of(name) if os.path.isfile(profile_path(name)) else []
+        clear = clear_text_of(name, saves_dir) if os.path.isfile(profile_path(name, saves_dir)) else []
     got = {}
     for folder in folders:
         rels = saves_of(folder)
@@ -133,7 +122,7 @@ def put_in(folders, name, changes, say=print, clear=None):
             try:
                 SF.set_values(data, changes)
                 for h in clear:
-                    at = _text_at(data, h)
+                    at = SF.string64_text_at(data, h)
                     data[at:at + 64] = bytes(64)
                 SF.index(bytes(data))
             except SF.SaveError as e:
@@ -156,7 +145,7 @@ def put_in(folders, name, changes, say=print, clear=None):
                                            % (folder, rel, h, have, v, name))
             for h in clear:
                 try:
-                    at = _text_at(data, h)
+                    at = SF.string64_text_at(data, h)
                 except SF.SaveError as e:
                     raise SaveProfileError("%s %s: --save %s: %s" % (folder, rel, name, e))
                 if any(data[at:at + 64]):

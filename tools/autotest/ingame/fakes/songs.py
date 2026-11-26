@@ -21,14 +21,17 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 import ocarina_notes as ON   # noqa: E402
+import save_flags as SF      # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import test_songs as T       # noqa: E402
 
 RIVER = "ZoraRiver_Child"
 FROG_SPOT = (8.90, 102.40, -50.90)
 PAID = {"ZeldaLullaby": "0x6e3948e7", "StormSong": "0xd578df95"}
 KNOWN = {"ZeldaLullaby": "IsGet.Item_Melody_ZeldaLullaby", "StormSong": "IsGet.Item_Melody_StormSong"}
-COUNT, EQUIP = "0xb7df60f1", "0xb72cd3fc"
-BOOLS = ("0x42bd296f", "0x137df1ac", "0xaacdef1f", "0xda41879d", "0x171de71f")
-TIME = ("0x54e2a3d1", "0x1da2c511", "0xac6a85e3")   # the Ocarina of Time's count, IsGet, Got (save_flags.NO_OCARINA)
+COUNT, EQUIP, BOOLS = T.FAIRY_COUNT, T.EQUIP, T.MENDED_BOOLS   # the test's own (pinned to game_items.hpp)
+# the profile's other flags (save_flags.NO_OCARINA, the one source): all but the Fairy Ocarina's, 0 in the kit save
+TIME = tuple("%#010x" % h for _, h, _ in SF.NO_OCARINA if "%#010x" % h not in BOOLS + (COUNT,))
 FAIRY = "Item_Ocarina_Fairy"
 
 

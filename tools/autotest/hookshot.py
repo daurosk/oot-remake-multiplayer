@@ -1169,6 +1169,17 @@ class Player:
 
 # ---------------------------------------------------------------------------------------------- the two-game run
 
+def wait_warps(players, slack=30.0):
+    """Waits for every warp thread of each Player (`hookshot.py run`, after its scripts ended): a warp asks on until it
+    is done, failed or gave up (warp_for s), and a run that ended first left it unasked (test-bridge-pilot-fa63e90f).
+    RuntimeError for a warp still alive after warp_for + slack s."""
+    for x, p in sorted(players.items()):
+        for t in p.warps:
+            t.join(p.warp_for + slack)
+            if t.is_alive():
+                raise RuntimeError("game %s: a warp still asking after %.0f s" % (x, p.warp_for + slack))
+
+
 def to_play(bridge, log, timeout, clock=time.monotonic, sleep=time.sleep):
     """Title and file select to the world: A pressed every 2 s until the bridge says play with a map known."""
     deadline = clock() + timeout
@@ -1756,6 +1767,12 @@ def run(a):
                 both("%s-%03d" % (a.name, n))
                 n += 1
             time.sleep(0.25)
+        # A script's warp asks on in its own thread (Player.warp) and a script may end before the game took it: the
+        # teleport is dropped while the save's arrival event plays, and was asked again only while the process lived.
+        # test-bridge-pilot-fa63e90f (live.py start): B's 'warp KakarikoVillage_Child' was 'sent, not accepted' 1 s
+        # before the script ended, so B stayed in Graveyard_Child in an event. So each warp is waited for (it ends by
+        # itself within warp_for: done, failed or gave up), as `hookshot.py play` already did.
+        wait_warps(players)
         if errs:
             raise RuntimeError("play: " + ", ".join("%s %s" % kv for kv in errs.items()))
         time.sleep(1)

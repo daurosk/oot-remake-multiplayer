@@ -1549,5 +1549,37 @@ class WarpSceneCheckTest(unittest.TestCase):
         self.assertNotIn("A", out)   # (no bridge was opened, no look taken)
 
 
+class WaitWarpsTest(unittest.TestCase):
+    """hookshot.py run waits for the scripts' warps (test-bridge-pilot-fa63e90f: B's boot warp was dropped when the
+    script ended 1 s after a 'sent, not accepted' teleport, so B stayed in Graveyard_Child in an event)."""
+
+    class P:
+        def __init__(self, warps, warp_for=0.2):
+            self.warps, self.warp_for = warps, warp_for
+
+    def test_a_warp_that_ends_is_waited_for(self):
+        done = []
+        t = threading.Thread(target=lambda: (threading.Event().wait(0.3), done.append(1)))
+        t.start()
+        hs.wait_warps({"B": self.P([t], warp_for=5.0)})
+        self.assertEqual(done, [1])
+
+    def test_a_warp_that_never_ends_is_an_error(self):
+        stop = threading.Event()
+        t = threading.Thread(target=stop.wait, daemon=True)
+        t.start()
+        try:
+            with self.assertRaisesRegex(RuntimeError, "game B: a warp still asking"):
+                hs.wait_warps({"B": self.P([t], warp_for=0.1)}, slack=0.1)
+        finally:
+            stop.set()
+
+    def test_run_waits_before_scenario_played(self):
+        with open(hs.__file__, encoding="utf-8") as f:
+            src = f.read()
+        body = src[src.index("        ts = [threading.Thread(target=play, args=(x,), daemon=True)"):]
+        self.assertLess(body.index("wait_warps(players)"), body.index('say("scenario played")'))
+
+
 if __name__ == "__main__":
     unittest.main()

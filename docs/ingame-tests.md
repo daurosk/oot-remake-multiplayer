@@ -148,6 +148,34 @@ pytest-timeout (pytest.ini, 1800 s) is only the backstop for a call that never r
   (`<dir>/lane<L>/shots/`). A test never writes a reference: a person checks a NO-REF candidate and copies it into
   `refs/`.
 
+## The lane's boot proof, recovery and memory
+
+- Boot proof: after `live.py start` and the hello check, inside lane_pair's try (so a miss stops the session),
+  `Pair.boot_ready` steps both games out of the boot's load, warps a game in another scene than the boot scripts'
+  `warp` line there by the bridge, and needs both in play (a fresh Link sample, no load, no event) in that scene.
+  Anything else makes every test of the lane `SETUP-FAIL lane<L> boot: ...`, naming each game's scene, load, event
+  and not_ready. (Pilot test-bridge-pilot-fa63e90f r1: B was left in Graveyard_Child in an event because
+  `hookshot.py run` ended the boot script without waiting for its warp; it now waits, `wait_warps`.)
+- Set-up checks step frames until ready (`pair.until_in_play`, 300 frames at most), never one state read: a stale
+  sample right after a boot or a pause is a game not ready yet, not a FAIL.
+- Recovery: after a test that did not pass, or one marked `leaves_play` (the title test, which runs last in its
+  round), the next test first runs the boot proof again (`Pair.recover`): a miss cannot cascade. It waits on game
+  state, not on a fixed time: 30 s for the stepped part plus 31 s for each game it has to warp back to the boot
+  scene (the worst warp measured, `warp_both` 26.9-31.0 s for both games on a full lane, party-hud-bridge-6947aa3d),
+  so 92 s at most. It is the lane's boot proof, not a test's set-up: a set-up that warps cannot fit 30 s.
+- A warp with `arrive_in_event` (a boss intro) is stepped until the game is in the scene, not loading, in the event
+  once the bridge's own 12 s wait is over; a warp takes longer than that under load. A boot whose scene starts an
+  event on arrival (a boss stage boot) is taken the same way by the boot proof, then stepped until the event ends.
+- No game runs free (boss-respawn-bridge-e3e6e253): a call is never sent with less reply wait than it needs
+  (`REPLY_MIN_S` 2 s, plus its frames at 20 a second); when the deadline cannot give that, the test FAILs
+  `timeout ... not sent` with the connection and the hold kept. A reply that is lost anyway (a dropped connection,
+  a hung bridge) holds the game again at once (noted), and the next test starts after the recovery. A warp that
+  meets Longshot's one teleport per 8 s per game ('still in progress') waits the gap out, stepping, and asks once more.
+- Title test: `load_both` presses A only on a game whose log shows the title line since the way back was asked,
+  never on a game in play (an A there opens and shuts the menu); `back to the title: given up` FAILs it at once.
+- Memory: each game's commit charge is sampled every 30 s from the boot start into `<dir>/lane<L>/commit.csv` and
+  `commit.json` (first, peak and last GB per game), also in summary.json `commit`.
+
 ## Writing a test
 
 ```python

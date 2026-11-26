@@ -23,12 +23,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import ocarina_notes as ON     # noqa: E402  (the ONE key -> note table)
 import playtest_client as pc   # noqa: E402
+from pair import READY_FRAMES   # noqa: E402
 
 
 def need_child_in_play(pair):
+    pair.until_in_play("both games in play before the row", max_frames=READY_FRAMES)   # (stepped, never one read)
     for x in ("A", "B"):
         s = pair.state(x)
-        assert pair.in_play(s), "%s not in play (%s)" % (x, s.get("not_ready"))
         assert s.get("age") == "child", "%s is %s: this row needs child Link (the kit save)" % (x, s.get("age"))
 
 

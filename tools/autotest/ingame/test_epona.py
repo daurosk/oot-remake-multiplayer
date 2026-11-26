@@ -65,7 +65,6 @@ A_SAME = r"coop: ride: P\d+ rides Animal_Epona_Adult \(horse copy CoopRide_Epona
 A_GONE = r"coop: ride: P\d+(?:'s horse gone| off the horse) \(copy deleted\)"   # coop_ride.cpp:334-336
 A_COPY = r"coop: spawn: CoopRide_Epona: create copy"                 # a-one-copy (coop_spawn.cpp:2031 Say)
 NOTE_SENT = r"coop: ocarina note \d+ \(Ocarina_%s\) sent"             # test_rows.test_ocarina_notes (coop_ocarina_sound.cpp)
-OCARINA_OUT = r"ocarina probe: our Link plays the ocarina"           # test_rows.test_ocarina_notes
 
 
 def stick(pair, x, sx, sy, frames):
@@ -270,20 +269,9 @@ def test_epona_seen(pair):
             pair.press("B", ["ZL"], frames=8)
             watch_from_south(pair, EPONA_FIELD)
         with pair.setup():                            # the ocarina is set-up too (its own 30 s)
-            # the ocarina out as test_rows.test_ocarina_notes (kit save: on d-left = the bridge's LEFT), its first-use note
-            # closed with A, then put away (B) and out again, so no note but the song's is played after it
-            pair.need_ocarina("B")                    # its re-equip after the last load first (songs-frogs-733c4d8f)
-            pair.press("B", ["LEFT"], frames=12)
-            pair.step_both(240)
-            assert pair.log["B"].find(OCARINA_OUT), "B: no '%s' 240 frames after LEFT" % OCARINA_OUT
-            pair.press("B", ["A"], frames=12)
-            pair.step_both(120)
-            pair.press("B", ["B"], frames=8)
-            pair.step_both(60)
-            pair.log["B"].mark()
-            pair.press("B", ["LEFT"], frames=12)
-            pair.step_both(240)
-            assert pair.log["B"].find(OCARINA_OUT), "B: the ocarina did not come out again"
+            # the ocarina out through the ONE shared way (Pair.ocarina_out: kit save on d-left = the bridge's LEFT, the
+            # first-use box closed with B, so no note but the song's is played after it; probe-ocarina-2f14b333)
+            pair.ocarina_out("B")
         start = pair.log["A"].mark()
         for key in ON.keys("EponaSong"):          # X Y A X Y A, ON.SONG_HOLD presses ON.SONG_GAP apart (run fec750ad)
             pair.log["B"].mark()

@@ -80,21 +80,9 @@ def value(pair, x, name):
     return r["value"]
 
 
-def ocarina_out(pair, x, again=False):
-    """D-pad Left (the kit save has the ocarina there: hs-ocarina.A.txt 'press DLEFT 12' + 'wait 240'), then the probe
-    line. The first time its first-use "Ocarina Audio Input" note is closed with A and the ocarina put away (B) and out
-    again, so no note but the song's is played after it (test_epona.test_epona_seen's own steps)."""
-    pair.need_ocarina(x)                              # its re-equip after the last load first (songs-frogs-733c4d8f)
-    pair.log[x].mark()
-    pair.press(x, ["LEFT"], frames=12)
-    pair.step_both(240)
-    assert pair.log[x].find(OCARINA_OUT), "%s: no '%s' 240 frames after LEFT" % (x, OCARINA_OUT)
-    if again:
-        return
-    pair.press(x, ["A"], frames=12)
-    pair.step_both(120)
-    ocarina_away(pair, x)
-    ocarina_out(pair, x, again=True)
+def ocarina_out(pair, x):
+    """D-pad Left through the ONE shared way (Pair.ocarina_out: the first-use box closed with B, no note played by it)."""
+    pair.ocarina_out(x)
 
 
 def ocarina_away(pair, x):

@@ -1162,8 +1162,8 @@ class ReplyWait(unittest.TestCase):
 
 
 class OcarinaReady(unittest.TestCase):
-    """Pair.need_ocarina (songs-frogs-733c4d8f SETUP-FAIL, 11-26): a D-pad press before the module's ocarina re-equip
-    after a load takes nothing out; every ocarina test waits for that line first."""
+    """Pair.need_ocarina + Pair.ocarina_out (songs-frogs-733c4d8f / -58f13b22 SETUP-FAIL, probe-ocarina-2f14b333): the
+    re-equip after a load first; then D-pad Left's free-Ocarina line, the first-use box closed with B, the plays line."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -1193,7 +1193,38 @@ class OcarinaReady(unittest.TestCase):
         self.assertTrue(pair.ocarina_ready("B"))
         pair.press("B", ["LEFT"], frames=12)
         pair.step_both(40)
-        self.assertTrue(pair.log["B"].find(r"ocarina probe: our Link plays the ocarina", pos=0))
+        self.assertTrue(pair.log["B"].find(P.OCARINA_FREE, pos=0))
+
+    def test_the_old_set_up_never_sees_the_plays_line_behind_the_first_use_box(self):
+        """songs-frogs-733c4d8f / -58f13b22: LEFT, 240 frames, 'plays the ocarina' wanted: the box is up, so never."""
+        pair = self.lane(0)
+        pair.need_ocarina("B")
+        pair.press("B", ["LEFT"], frames=12)
+        pair.step_both(240)
+        self.assertTrue(pair.log["B"].find(P.OCARINA_FREE, pos=0))
+        self.assertIsNone(pair.log["B"].find(P.OCARINA_PLAYS, pos=0))
+
+    def test_ocarina_out_closes_the_first_use_box_with_b_then_plays(self):
+        pair = self.lane(200)
+        self.assertTrue(pair.ocarina_out("B"))
+        self.assertTrue(any("first-use 'Ocarina Audio Input' box up: closed with B" in n for n in pair.notes), pair.notes)
+        pair.press("B", ["X"], frames=4)              # (Link plays: a note key now sends its note)
+        pair.step_both(10)
+        self.assertTrue(pair.log["B"].find(r"ocarina note 16", pos=0))
+
+    def test_ocarina_out_again_has_no_box_and_presses_no_b(self):
+        pair = self.lane(0)
+        pair.ocarina_out("B")
+        pair.press("B", ["B"], frames=8)              # (away)
+        pair.step_both(60)
+        pair.notes.clear()
+        self.assertTrue(pair.ocarina_out("B"))
+        self.assertEqual([n for n in pair.notes if "first-use" in n], [])
+
+    def test_ocarina_out_with_nothing_on_the_d_pad_names_it(self):
+        pair = self.lane(5000)
+        with self.assertRaisesRegex(AssertionError, r"B: the ocarina back on the D-pad"):
+            pair.ocarina_out("B")
 
     def test_a_warp_needs_a_new_re_equip(self):
         pair = self.lane(200)

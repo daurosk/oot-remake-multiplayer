@@ -64,6 +64,9 @@ class FakeGame:
         # (the module's ocarina re-equip after each load, Pair.need_ocarina: BT_FAKE_OCARINA_LATE=N frames after the
         # boot and after each warp, default 0 = at once; before it D-pad Left takes nothing out, songs-frogs-733c4d8f)
         self.ocarina_late, self.equipped = int(os.environ.get("BT_FAKE_OCARINA_LATE", "0") or 0), False
+        # (the game's first-use "Ocarina Audio Input" box on the boot's first D-pad Left, Pair.ocarina_out: the free-Ocarina
+        # event line at once, 'plays the ocarina' only after B closes it; probe-ocarina-2f14b333)
+        self.box, self.box_seen = False, False
         self.other = None
         # (selftests of the lane's boot proof, Pair.boot_ready: BT_FAKE_BOOT_EVENT=B leaves B where the save puts it,
         # Graveyard_Child, in an event a warp ends (test-bridge-pilot-fa63e90f r1); BT_FAKE_BOOT_STUCK=B the same but
@@ -249,8 +252,18 @@ class FakeGame:
             if not self.equipped:
                 return                                   # nothing on the D-pad yet: nothing comes out
             self.ocarina = True
-            self.later(20, lambda: self.say("coop: ocarina probe: our Link plays the ocarina"))
+            self.later(2, lambda: self.say("coop: event: the running event is our free Ocarina (by the game's request): "
+                                           "our Link is not held by it, no hide, no hold, no claim"))
+            if not self.box_seen:
+                self.box, self.box_seen = True, True     # the first-use box: no play, no notes until it is closed
+                return
+            self.later(20, lambda: self.say("coop: ocarina probe: our Link plays the ocarina, 8 AS slots"))
             return
+        if self.box:
+            if "B" in buttons:
+                self.box = False
+                self.later(20, lambda: self.say("coop: ocarina probe: our Link plays the ocarina, 8 AS slots"))
+            return                                       # (the box eats every other button: no note)
         if "B" in buttons:
             self.ocarina = False
         notes = {"L": (4, "D"), "R": (8, "F"), "Y": (11, "B"), "X": (16, "HighD"), "A": (14, "A")}

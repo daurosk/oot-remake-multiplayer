@@ -29,9 +29,9 @@ Needs a module with testhost-170 (715803341); before it, TestHost refuses and th
 Only the Host path is driven. The Join rows on a dead line (JoinPasteNow / JoinLanNow / JoinRoomNow / RejoinNow ->
 Join() EndLauncher) share the same LauncherLive rule but are NOT proven in game here.
 The player-facing part, B's Multiplayer page after the host (the Session view hosting, not 'Co-op is on'), is a bridge
-shot of B: `menu main` (testhost-170 d06ef04bb: opens co-op's Multiplayer page, presses nothing), state.menu.coop.page
+shot of B: `menu main` (testhost-170 6408faaf4: opens co-op's Multiplayer page, presses nothing), state.menu.coop.page
 == 'main' (coop_menu_state.cpp:30, PageWord kMain), check_shot B 'row170-host-page' (NO-REF until a ref is stored),
-then `menu close`. --expect-commit must contain d06ef04bb.
+then `menu close`. --expect-commit must contain 6408faaf4 (testhost-170 tip, has d06ef04bb).
 """
 import json
 import os
@@ -150,7 +150,7 @@ def run_170(pair, dead, host, password, boot_a=BOOT_A, boot_b=BOOT_B):
     pair.expect_log("B", LISTENING, max_frames=600)
     pair.expect_log("B", START_ENDED, max_frames=600)
     pair.never_log("B", NOT_HOSTING)
-    pair.act("B", "menu main")                        # (d06ef04bb: the page opened, nothing pressed)
+    pair.act("B", "menu main")                        # (6408faaf4: the page opened, nothing pressed)
     pair.until("170: B's Multiplayer page open", lambda: mp_page(pair.state("B")) == "main", max_frames=120)
     pair.check_shot("B", "row170-host-page")
     pair.act("B", "menu close")

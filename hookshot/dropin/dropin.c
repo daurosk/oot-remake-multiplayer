@@ -111,6 +111,8 @@ static int prologue_len(const uint8_t *p) {
         else if (q[0] == 0x48 && q[1] == 0x81 && q[2] == 0xec) n += 7;
         else if ((q[0] == 0x48 || q[0] == 0x49 || q[0] == 0x4c || q[0] == 0x4d) && (q[1] == 0x89 || q[1] == 0x8b) &&
                  (q[2] & 0xc0) == 0xc0) n += 3;
+        else if ((q[0] == 0x48 || q[0] == 0x4c) && (q[1] == 0x89 || q[1] == 0x8b) && (q[2] & 0xc7) == 0x44 &&
+                 q[3] == 0x24) n += 5;   /* mov [rsp+disp8], reg / mov reg, [rsp+disp8] (never rip-relative) */
         else return 0;
     }
     return n;

@@ -4,8 +4,9 @@
 # Longshot rebuild for co-op. Per version: build stock with the release's own builder (--cli), check its symbols offline
 # (selftest.exe), drop our winmm.dll beside the game's bin\longshot.exe, start the game, wait for our log's frame lines,
 # screenshot, close; winmm.dll removed again on every path. Unattended; exit 0 = PASS (both), 1 = FAIL, 2 = SETUP-FAIL.
-# Usage: powershell -ExecutionPolicy Bypass -File hookshot\dropin\proof-run.ps1 [-Versions v3.1.1,v3.2.0] [-Display \\.\DISPLAY2]
-param([string[]]$Versions = @('v3.1.1', 'v3.2.0'), [string]$Display = '', [int]$Jobs = 0)
+# Usage: powershell -ExecutionPolicy Bypass -File hookshot\dropin\proof-run.ps1 [-Versions v3.1.1,v3.2.0] [-Display \\.\DISPLAY2] [-SetupOnly]
+# -SetupOnly: the setup proof and the official setup's --check only (installs the tools, checks the game file): no build, no game.
+param([string[]]$Versions = @('v3.1.1', 'v3.2.0'), [string]$Display = '', [int]$Jobs = 0, [switch]$SetupOnly)
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $here))        # ...\OOT REMAKE
@@ -98,7 +99,7 @@ foreach ($t in $Versions) {
     $p = $null
     try {
         # ---- 1. the stock build, by the release's own setup + builder ----
-        if (-not (Test-Path -LiteralPath $exe)) {
+        if ($SetupOnly -or -not (Test-Path -LiteralPath $exe)) {
             if (-not (Test-Path -LiteralPath (Join-Path $builder 'tools.lock'))) {
                 if (Test-Path -LiteralPath $builder) { Remove-Item -LiteralPath $builder -Recurse -Force }
                 Expand-Archive -LiteralPath (Join-Path $vdir "dl\LongshotBuilder-$t-windows-x64.zip") -DestinationPath $builder
@@ -112,6 +113,7 @@ foreach ($t in $Versions) {
             $c = Run-Setup $setup "--check --nup `"$nup`" --log `"$(Join-Path $out "check-$t.log")`"" "check-$t" 30
             if ($c -ne 0) { SetupFail "$t official setup --check exit $c (tools not installed or game not accepted; see check-$t.*)" }
             Say "$t setup + --check OK after $([Math]::Round(((Get-Date) - $t0).TotalMinutes, 1)) min"
+            if ($SetupOnly) { $results[$t] = 'PASS setup only (official tools installed, game file checked; no build, no game start)'; continue }
             $c = Run-Setup $setup ("--nup `"$nup`" --out `"$game`" --work `"$work`" --language en-US --jobs $Jobs " +
                                    "--log `"$(Join-Path $out "build-$t.log")`"") "build-$t" 90
             $mins = [Math]::Round(((Get-Date) - $t0).TotalMinutes, 1)

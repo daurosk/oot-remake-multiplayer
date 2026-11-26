@@ -82,6 +82,10 @@ class FakeGame:
         self.srv.bind(("127.0.0.1", 0))
         self.srv.listen(1)
         self.port = self.srv.getsockname()[1]
+        # (the module's bridge line, hookshot/src/coop_playtest.cpp:836; BT_FAKE_NO_MODULE=B: B's module never started,
+        # party-hud-bridge-85e3b255. Its bridge port still answers here, so only the log check can catch it)
+        if tag not in os.environ.get("BT_FAKE_NO_MODULE", ""):
+            self.say("coop: playtest: listening on 127.0.0.1:%d (control on; dumps and shots in %s)" % (self.port, folder))
         threading.Thread(target=self.serve, daemon=True).start()
 
     def say(self, line):

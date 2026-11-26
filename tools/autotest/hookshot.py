@@ -701,6 +701,7 @@ class Player:
         self.mem_ok = None            # guest memory reads answered (None: not tried)
         self.warps = []
         self.warp_failed = []         # "ASKED -> GOT": warps the bridge sent to another map (the run FAILs on them)
+        self.not_taken = []           # marks / test commands the module never read (the run FAILs on them: B #137)
         self.angle = 0.0              # camera model: world direction = stick direction turned by this
         self.learned = False
 
@@ -752,6 +753,7 @@ class Player:
         # hookshot_log-X.txt, as it reads the emulator's log.
         if self.commands and not self._send(["mark " + name]):
             self.log("coop: test mark %s NOT taken (no module reading LICHII_COOP_TEST_COMMANDS?)" % name)
+            self.not_taken.append("mark " + name)
         if self.shot:
             try:
                 self.shot(name)
@@ -986,6 +988,8 @@ class Player:
                          % (s.kind, s.line))
             return
         taken = self._send([s.text for s in batch])
+        if not taken:
+            self.not_taken.extend("%s (line %d)" % (s.kind, s.line) for s in batch)
         for s in batch:
             self.log("coop: test %s %s (line %d: %s)" % (s.kind, "sent" if taken else "NOT taken", s.line,
                                                          "the module's log says what it did" if taken else
@@ -1212,7 +1216,15 @@ def to_play(bridge, log, timeout, clock=time.monotonic, sleep=time.sleep):
 # nothing and reads no controller; with a cold driver cache that is minutes (~170 s seen), so a run waits for it.
 # Longshot rc.4 builds pipelines at their create (RX_VK_LOAD=create) and logs "vk: start-up: the shaders took N s"
 # instead of rc.3's precompile total.
-RENDERER_READY = re.compile(r"vk: precompile: \d+ programs, .* in \d+ ms|vk: start-up: the shaders took \d")
+# The renderer is up once Longshot's rx_start logs "rx: renderer: Vulkan (longshot_vk.dll)": after the back end's start()
+# returned, on every path (window or not; host/rx_backend.c rx_start, v3.0.0-rc.4 to v3.2.0). NOT the precompile's
+# summary line: that one comes BEFORE the start-up ends (the pipeline cache's save, the worker's end, the start screen's
+# fade; gpu/vk/vk_main.cpp prepare_with_screen). party-hud-bridge-85e3b255 (lane 2, B #137 14:57): B logged the summary,
+# then its start-up never ended (no "start-up: the shaders took", prep_running still set at the quit), but it was called
+# ready, its window placed and its boot sent; the module never started and live.py start said ok.
+RENDERER_READY = re.compile(r"rx: renderer: Vulkan \(")
+RENDERER_FAILED = re.compile(r"rx: .*nothing is drawn|rx: the Vulkan back end could not start")
+RENDERER_PRECOMPILED = re.compile(r"vk: precompile: \d+ programs, .* in \d+ ms")
 
 
 def read_text(path):
@@ -1257,6 +1269,9 @@ def wait_renderer(read_log, alive, timeout, stall=RENDERER_STALL, limit=RENDERER
         text = read_log()
         if RENDERER_READY.search(text):
             return clock() - t0
+        bad = RENDERER_FAILED.search(text)
+        if bad:
+            raise RuntimeError("the renderer did not start: %s" % bad.group(0))
         if not alive():
             raise RuntimeError("the game closed before its renderer started")
         now = clock()
@@ -1268,6 +1283,10 @@ def wait_renderer(read_log, alive, timeout, stall=RENDERER_STALL, limit=RENDERER
             raise TimeoutError("renderer not started in %d s (still compiling: %s)" % (max(limit, timeout),
                                                                                        line or "no progress line"))
         if now > deadline:
+            if RENDERER_PRECOMPILED.search(text):
+                raise TimeoutError("renderer not started: the precompile ended but Longshot's start-up did not (no "
+                                   "'rx: renderer: Vulkan' line for %d s after the last progress; party-hud-bridge-85e3b255)"
+                                   % stall)
             if rose is None:
                 raise TimeoutError("renderer not started in %d s (no compile progress logged)" % timeout)
             raise TimeoutError("renderer not started: no compile progress for %d s (last: %s, %.0f s in)"
@@ -1780,6 +1799,11 @@ def run(a):
         wrong = ["%s %s" % (x, ", ".join(p.warp_failed)) for x, p in sorted(players.items()) if p.warp_failed]
         if wrong:   # (the shots are taken: they show where the game went instead)
             raise RuntimeError("warp landed on another map than asked: " + "; ".join(wrong))
+        # (a boot whose marks or test commands the module never read did not set the game up: party-hud-bridge-85e3b255's B
+        # had no module at all, yet this run said 'scenario played' and exited 0, so live.py start answered ok: B #137)
+        lost = ["%s %s" % (x, ", ".join(p.not_taken)) for x, p in sorted(players.items()) if p.not_taken]
+        if lost:
+            raise RuntimeError("NOT taken by the module (not started?): " + "; ".join(lost))
         say("scenario played")
     except Exception as e:
         failed = str(e) or e.__class__.__name__

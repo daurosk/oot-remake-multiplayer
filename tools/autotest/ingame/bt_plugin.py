@@ -229,7 +229,7 @@ def boot_scene(name=DEFAULT_BOOT):
 
 
 BOOT_READY_S = 240    # the boot proof's own deadline (out of a load, a warp of a game left elsewhere, an event's end)
-RECOVER_S = P.SETUP_LIMIT_S
+RECOVER_S = P.RECOVER_BASE_S + 2 * P.RECOVER_WARP_S   # the recovery's ceiling: both games warped (Pair.recover)
 
 
 def boot_identity(name=DEFAULT_BOOT):
@@ -564,12 +564,12 @@ def pair(request, lane_pair):
             raise P.SetupFail("this boot lacks the switch(es) %s (run it with --env %s)" % (", ".join(lack), lack[0]))
     if getattr(request.config, "_bt_dirty", False):
         # (the test before did not pass, or left play on purpose: the lane's recovery first, as its own set-up)
+        # (on state, bounded per game it warps: Pair.recover; was setup(limit=30 s), and two warps measure 27-31 s)
         lane_pair.begin(RECOVER_S + 5)
-        with lane_pair.setup(limit=RECOVER_S):
-            try:
-                lane_pair.boot_ready(boot_scene(request.config.getoption("boot")), max_frames=P.READY_FRAMES * 2)
-            except P.SetupFail as e:
-                raise P.SetupFail("recovery after the test before: %s" % e) from e
+        try:
+            lane_pair.recover(boot_scene(request.config.getoption("boot")), max_frames=P.READY_FRAMES * 2)
+        except P.SetupFail as e:
+            raise P.SetupFail("recovery after the test before: %s" % e) from e
         request.config._bt_dirty = False
         request.node.user_properties.append(("recovery", list(lane_pair.notes)))
     m = request.node.get_closest_marker("budget")

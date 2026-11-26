@@ -976,6 +976,122 @@ class SetupLimit(unittest.TestCase):
         self.assertLessEqual(pair.c["A"].waits[0], 10)
 
 
+class RecoverOnState(unittest.TestCase):
+    """The lane's recovery (Pair.recover) waits on game state, bounded per warp it needs: a warp takes the game's wall
+    time (party-hud-bridge-6947aa3d: warp_both 26.9-31.0 s, 3 recoveries SETUP-FAIL at the old fixed 30 s). Fake
+    clock and a fake bridge whose warp costs WARP_S of wall time: no real waiting."""
+
+    class Clock:
+        t = 0.0
+
+        def __call__(self):
+            return self.t
+
+    class SlowWarp:
+        """One game: in `scene`, in play. warp costs `warp_s` s of the clock and `warp_frames` frames; `hang` = the
+        warp never answers (waits its whole reply time). load_frames > 0: the warp answers 'timeout' (an
+        arrive_in_event warp) with the game still loading for that many frames, then in the scene in an event."""
+
+        def __init__(self, clock, scene, warp_s, warp_frames=150, hang=False, load_frames=0):
+            self.clock, self.scene, self.warp_s, self.hang = clock, scene, warp_s, hang
+            self.warp_frames, self.load_frames = warp_frames, load_frames
+            self.frame, self.last_frame, self.loading_until, self.event = 0, 0, 0, False
+            self.waits = []
+
+        def st(self):
+            return {"scene": self.scene, "loading": self.frame < self.loading_until, "event": self.event,
+                    "not_ready": None}
+
+        def request(self, cmd, reply_timeout=None, check=True, **a):
+            self.waits.append(reply_timeout)
+            if cmd == "warp":
+                if self.hang:
+                    self.clock.t += reply_timeout
+                    raise TimeoutError("timed out")
+                self.clock.t += min(self.warp_s, a["timeout"])
+                self.frame += self.warp_frames
+                self.last_frame = self.frame
+                self.scene = a["scene"]
+                if self.load_frames:
+                    self.loading_until, self.event = self.frame + self.load_frames, True
+                    return {"ok": False, "error": "timeout", "message": "held", "frame": self.frame}
+                return {"ok": True, "arrived": True, "frame": self.frame, "state": self.st()}
+            if cmd == "step":
+                self.frame += a["frames"]
+                self.clock.t += 0.01 * a["frames"]
+            self.last_frame = self.frame
+            return dict(self.st(), ok=True, frame=self.frame)
+
+        def close(self):
+            pass
+
+    BOOT = "KakarikoVillage_Child"
+    WARP_S = 15.5        # one game's warp: the worst measured warp_both (31.0 s, test_warp r3) over two games
+
+    def make(self, budget, **games):
+        clock = self.Clock()
+        pair = P.Pair.__new__(P.Pair)
+        pair.c = {x: self.SlowWarp(clock, **kw) for x, kw in games.items()}
+        pair.log, pair.shots, pair.notes = {}, [], []
+        pair.deadline = P.Deadline(budget, clock=clock)
+        return pair, clock
+
+    def test_two_measured_warps_recover(self):
+        """Both games in the save's scene (after a title test): two 15.5 s warps = 31 s, over the old 30 s limit."""
+        import bt_plugin
+        pair, clock = self.make(bt_plugin.RECOVER_S + 5, A=dict(scene="Graveyard_Child", warp_s=self.WARP_S),
+                                B=dict(scene="Graveyard_Child", warp_s=self.WARP_S))
+        st = pair.recover(self.BOOT)
+        self.assertTrue(all(s["scene"] == self.BOOT for s in st.values()), st)
+        self.assertGreater(clock.t, P.SETUP_LIMIT_S)         # (the run that failed 3/3: more than 30 s, and it passes)
+        self.assertTrue(any("2 warps" in n for n in pair.notes), pair.notes)
+        self.assertEqual(pair.c["A"].frame, pair.c["B"].frame)   # (the other game is stepped to the same frames)
+
+    def test_twice_the_measured_warp_still_recovers(self):
+        """The margin: one game's warp as long as the worst two-game warp measured (31 s each)."""
+        import bt_plugin
+        pair, clock = self.make(bt_plugin.RECOVER_S + 5, A=dict(scene="Graveyard_Child", warp_s=31.0),
+                                B=dict(scene="Graveyard_Child", warp_s=31.0))
+        pair.recover(self.BOOT)
+        self.assertLessEqual(clock.t, bt_plugin.RECOVER_S)
+
+    def test_a_hung_warp_is_setup_fail_inside_the_bound(self):
+        import bt_plugin
+        pair, clock = self.make(bt_plugin.RECOVER_S + 5, A=dict(scene="Graveyard_Child", warp_s=0, hang=True),
+                                B=dict(scene=self.BOOT, warp_s=0))
+        with self.assertRaisesRegex(P.SetupFail, r"^boot: TimeoutError"):
+            pair.recover(self.BOOT)
+        self.assertLessEqual(clock.t, P.RECOVER_BASE_S + P.RECOVER_WARP_S)   # (one game away: one warp's bound)
+        self.assertTrue(all(w <= P.RECOVER_BASE_S + P.RECOVER_WARP_S for w in pair.c["A"].waits), pair.c["A"].waits)
+        self.assertEqual(pair.deadline.seconds, bt_plugin.RECOVER_S + 5)    # (the outer deadline is back)
+
+    def test_nothing_away_is_bounded_like_a_set_up(self):
+        pair, clock = self.make(240, A=dict(scene=self.BOOT, warp_s=0, hang=True), B=dict(scene=self.BOOT, warp_s=0))
+        pair.recover(self.BOOT)                               # (no warp asked: the hung warp is never called)
+        self.assertTrue(any("bound 30 s, 0 warps" in n for n in pair.notes), pair.notes)
+
+    def test_recover_s_covers_both_warps(self):
+        import bt_plugin
+        self.assertGreaterEqual(bt_plugin.RECOVER_S, P.RECOVER_BASE_S + 2 * P.WARP_PAIR_MEASURED_S)
+        self.assertLessEqual(bt_plugin.RECOVER_S, bt_plugin.BOOT_READY_S)  # (never more than the boot proof's own)
+
+    def test_arrive_in_event_still_loading_is_stepped_to_the_arrival(self):
+        """The bridge's ARRIVE_IN_EVENT_WAIT is over while the game still loads (a warp is longer than 12 s under
+        load): stepped until in the scene, not loading, in the event; was one read, raised at once."""
+        pair, clock = self.make(120, A=dict(scene=self.BOOT, warp_s=12, load_frames=200),
+                                B=dict(scene=self.BOOT, warp_s=12, load_frames=200))
+        st = pair.warp_both("PhantomGanonStage", arrive_in_event=True)
+        self.assertTrue(all(s["scene"] == "PhantomGanonStage" and s["event"] and not s["loading"]
+                            for s in st.values()), st)
+        self.assertEqual(pair.c["A"].frame, pair.c["B"].frame)
+
+    def test_arrive_in_event_never_arriving_raises(self):
+        pair, clock = self.make(600, A=dict(scene=self.BOOT, warp_s=12, load_frames=10 ** 6),
+                                B=dict(scene=self.BOOT, warp_s=12))
+        with self.assertRaisesRegex(P.pc.BridgeError, r"^timeout: held; then \d+ frames: A: scene=PhantomGanonStage"):
+            pair.warp_one("A", "PhantomGanonStage", arrive_in_event=True)
+
+
 class LaneCheck(unittest.TestCase):
     def make(self, root, x, dll=b"module", patches="patches=abc", server=None, **over):
         d = os.path.join(root, "lane1-%s" % x)

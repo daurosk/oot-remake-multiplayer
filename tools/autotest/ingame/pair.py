@@ -29,6 +29,12 @@ BOOT_FRAMES = 2400    # the boot proof's ceiling per wait (80 s of game: a boot 
 #                       loading out of the menu, party-hud-bridge r1, renderers ready after 168/180 s)
 READY_FRAMES = 300    # a set-up's step-until-in-play ceiling (10 s of game: a stale sample, an event's end; inside 30 s)
 FPS = 30              # Ocarina of Time's calc rate on Hookshot: frames -> seconds in messages only, never for waiting
+# A warp's wall time is the game's (a load), not ours: measured, not guessed. warp_both (A then B, Longshot's teleport)
+# took 26.9 / 28.8 / 31.0 s on a full lane 2 (party-hud-bridge-6947aa3d summary.md test_warp r1-r3), i.e. one game's
+# warp 13.5-15.5 s. So a set-up that warps cannot be proven in SETUP_LIMIT_S (the cause of that run's 3 SETUP-FAILs).
+WARP_PAIR_MEASURED_S = 31.0
+RECOVER_WARP_S = WARP_PAIR_MEASURED_S   # one game's warp in a recovery: the worst TWO-game warp = 2x one game's (margin)
+RECOVER_BASE_S = SETUP_LIMIT_S          # a recovery's other part: out of a load, an event's end, in play (stepped)
 
 
 class SetupFail(Exception):
@@ -317,6 +323,43 @@ class Pair:
             raise SetupFail("boot: not in the boot's scene %s: %s" % (scene, "; ".join(wrong)))
         return {x: self.state(x) for x in self.c}
 
+    def recover(self, scene=None, max_frames=READY_FRAMES * 2):
+        """The lane's recovery after a test that did not pass or left play (bt_plugin's pair fixture): boot_ready
+        again, on game STATE. It is the lane's boot proof run again, not a test's set-up, so the 30 s set-up rule does
+        not bound it; its bound is RECOVER_BASE_S plus RECOVER_WARP_S for each game the state shows away from `scene`
+        (the only games boot_ready warps). Was one fixed 30 s for everything: two warps measure 27-31 s, so a
+        recovery that warped both games timed out 3/3 (party-hud-bridge-6947aa3d). Every frame wait stays frame-
+        bounded (max_frames); every bridge wait stays inside this bound. Anything wrong: SetupFail('recovery: ...')
+        or boot_ready's SetupFail('boot: ...'). Returns boot_ready's states; notes the time and the bound."""
+        outer = self.deadline
+        clock = outer.clock
+        t0 = clock()
+        limit = RECOVER_BASE_S
+        self.deadline = Deadline(max(0.0, min(limit, outer.left())), clock=clock)
+        try:
+            try:
+                self.until("both games out of a load before the recovery",
+                           lambda: all(_loaded(self.state(x)) for x in self.c), max_frames)
+                away = [x for x in self.c
+                        if scene and (self.state(x).get("scene") or "").lower() != scene.lower()]
+            except SetupFail:
+                raise
+            except Exception as e:
+                raise SetupFail("recovery: %s: %s" % (type(e).__name__, e)) from e
+            limit = RECOVER_BASE_S + RECOVER_WARP_S * len(away)
+            self.deadline = Deadline(max(0.0, min(limit - (clock() - t0), outer.left())), clock=clock)
+            try:
+                st = self.boot_ready(scene, max_frames)
+            except SetupFail:
+                raise
+            except Exception as e:
+                raise SetupFail("recovery: %s: %s" % (type(e).__name__, e)) from e
+        finally:
+            self.deadline = outer
+        self.notes.append("recovery %.1f s (bound %.0f s, %d warp%s)" % (clock() - t0, limit, len(away),
+                                                                        "" if len(away) == 1 else "s"))
+        return st
+
     def load_both(self, at_title, max_frames=3600):
         """Title / file select to play: A pressed 8 frames, then 52 frames of wait (the runner's to_play,
         tools/autotest/hookshot.py, in frames: A every 2 s there), ONLY on a game that at_title(x) says is at the title
@@ -340,7 +383,8 @@ class Pair:
             self.step_both(52)
             ran += 60
 
-    ARRIVE_IN_EVENT_WAIT = 12   # s per game for arrive_in_event (two warps + checks fit the 30 s set-up)
+    ARRIVE_IN_EVENT_WAIT = 12   # s: the bridge's own wait per game for arrive_in_event; it answers 'timeout' in the
+    #                             arrival event, then the arrival is waited for on state (warp_one), not judged here
 
     def warp_both(self, scene, entrance=None, arrive_in_event=False):
         """Both games to `scene` (the bridge's `warp`: Longshot's teleport in free play; with an `entrance` (a start of
@@ -350,7 +394,8 @@ class Pair:
         arrive_in_event (twinrova-shots-222-5): a stage whose arrival starts an event (a boss intro). The bridge's warp
         waits for Link in the scene with NO event (coop_playtest_core.cpp WarpArrived), so it answers 'timeout' with
         Link already there; then a fresh state with that scene, no load AND an event running counts as the arrival,
-        anything else raises. Each game's wait is ARRIVE_IN_EVENT_WAIT s, and every wait stays inside the deadline."""
+        anything else raises. The bridge waits ARRIVE_IN_EVENT_WAIT s per game; a game still loading then is stepped
+        until that state (frame-bounded), and every wait stays inside the deadline."""
         for x in ("A", "B"):
             self.warp_one(x, scene, entrance, arrive_in_event)
         return {x: self.state(x) for x in self.c}
@@ -366,10 +411,22 @@ class Pair:
         r = self.c[x].request("warp", check=False, reply_timeout=max(0.2, min(t + 15, self.deadline.left())),
                               scene=scene, timeout=t, **extra)        # (the reply wait stays inside the deadline)
         if not r.get("ok"):
-            st = self.state(x) if arrive_in_event and r.get("error") == "timeout" else None
-            if not (st and (st.get("scene") or "").lower() == scene.lower() and not st.get("loading")
-                    and st.get("event") is True):      # (review-c123-8: a timeout with no event is not an arrival)
+            if not (arrive_in_event and r.get("error") == "timeout"):
                 raise pc.BridgeError(r)
+            # (the bridge's wait is over, not the warp: a warp measures 13.5-15.5 s per game, WARP_PAIR_MEASURED_S,
+            # more than ARRIVE_IN_EVENT_WAIT; so the arrival is waited for on STATE, stepped, inside the deadline;
+            # review-c123-8: in the scene, not loading AND the event running, never a timeout with no event)
+            ran_wait = 0
+            while True:
+                st = self.state(x)
+                if ((st.get("scene") or "").lower() == scene.lower() and not st.get("loading")
+                        and st.get("event") is True):
+                    break
+                if ran_wait >= BOOT_FRAMES:      # (the frame ceiling of a load, as the boot proof's; the deadline first)
+                    raise pc.BridgeError(dict(r, message="%s; then %d frames: %s"
+                                              % (r.get("message"), ran_wait, self.why_not(x, st))))
+                self.call(x, "step", frames=CHUNK)     # (game x only: the other is stepped to x's frames below)
+                ran_wait += CHUNK
             self.notes.append("%s: warp %s answered timeout in the arrival event; in the scene, not loading: "
                               "arrived (event %s)" % (x, scene, st.get("event")))
         ran = max(0, (self.c[x].last_frame or before) - before)

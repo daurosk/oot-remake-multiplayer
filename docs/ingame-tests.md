@@ -123,7 +123,12 @@ pytest-timeout (pytest.ini, 1800 s) is only the backstop for a call that never r
 - Set-up checks step frames until ready (`pair.until_in_play`, 300 frames at most), never one state read: a stale
   sample right after a boot or a pause is a game not ready yet, not a FAIL.
 - Recovery: after a test that did not pass, or one marked `leaves_play` (the title test, which runs last in its
-  round), the next test first runs the boot proof again as its own set-up (30 s): a miss cannot cascade.
+  round), the next test first runs the boot proof again (`Pair.recover`): a miss cannot cascade. It waits on game
+  state, not on a fixed time: 30 s for the stepped part plus 31 s for each game it has to warp back to the boot
+  scene (the worst warp measured, `warp_both` 26.9-31.0 s for both games on a full lane, party-hud-bridge-6947aa3d),
+  so 92 s at most. It is the lane's boot proof, not a test's set-up: a set-up that warps cannot fit 30 s.
+- A warp with `arrive_in_event` (a boss intro) is stepped until the game is in the scene, not loading, in the event
+  once the bridge's own 12 s wait is over; a warp takes longer than that under load.
 - Title test: `load_both` presses A only on a game whose log shows the title line since the way back was asked,
   never on a game in play (an A there opens and shuts the menu); `back to the title: given up` FAILs it at once.
 - Memory: each game's commit charge is sampled every 30 s from the boot start into `<dir>/lane<L>/commit.csv` and

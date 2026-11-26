@@ -39,7 +39,7 @@ TEST_CASE("back window: normal in front, alone, minimized or without a window") 
     }
 }
 
-TEST_CASE("back window: two of our games, a third app in front: both normal; one of ours in front: only the other up") {
+TEST_CASE("back window: two of our games, a third app in front: both normal, one of ours in front: only the other up") {
     State a, b;   // two games on one PC, both behind a browser: neither window is in front, the front is not ours
     a.has_window = b.has_window = true;
     CHECK(Decide(Mode::Both, a) == Want{});

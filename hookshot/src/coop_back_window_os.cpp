@@ -10,7 +10,6 @@
 #include <string>
 
 #include <windows.h>
-#include <tlhelp32.h>
 
 #include "coop_off_frame.h"
 #include "coop_window_brand.h"
@@ -54,18 +53,23 @@ const std::wstring& OwnExe() {
     return name;
 }
 
-bool OtherGameRuns() {
-    const HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snap == INVALID_HANDLE_VALUE) return false;
-    PROCESSENTRY32W e{};
-    e.dwSize = sizeof e;
-    bool found = false;
-    const DWORD self = GetCurrentProcessId();
-    for (BOOL ok = Process32FirstW(snap, &e); ok && !found; ok = Process32NextW(snap, &e)) {
-        found = e.th32ProcessID != self && _wcsicmp(e.szExeFile, OwnExe().c_str()) == 0;
-    }
-    CloseHandle(snap);
-    return found;
+// Whether window `front` belongs to ANOTHER process of our exe (review-c124: never when a third app is in front).
+bool FrontIsOtherGame(HWND front) {
+    if (front == nullptr) return false;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(front, &pid);
+    if (pid == 0 || pid == GetCurrentProcessId()) return false;
+    const HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (h == nullptr) return false;
+    wchar_t path[MAX_PATH] = {};
+    DWORD n = MAX_PATH;
+    const BOOL ok = QueryFullProcessImageNameW(h, 0, path, &n);
+    CloseHandle(h);
+    if (!ok) return false;
+    std::wstring p(path, n);
+    const auto slash = p.find_last_of(L"\\/");
+    if (slash != std::wstring::npos) p = p.substr(slash + 1);
+    return _wcsicmp(p.c_str(), OwnExe().c_str()) == 0;
 }
 
 Want g_have;           // what is applied (both normal at the start: nothing of ours set yet)
@@ -73,11 +77,12 @@ bool g_said_mode = false;
 
 void Pass(Mode mode) {
     State s;
-    s.other_game = OtherGameRuns();
+    const HWND front = GetForegroundWindow();
+    s.front_is_ours = FrontIsOtherGame(front);
     FoundWindow f;
     EnumWindows(EachWindow, reinterpret_cast<LPARAM>(&f));
     s.has_window = f.hwnd != nullptr;
-    s.in_front = s.has_window && GetForegroundWindow() == f.hwnd;
+    s.in_front = s.has_window && front == f.hwnd;
     s.iconic = s.has_window && IsIconic(f.hwnd);
     const Want want = Decide(mode, s);
     if (want == g_have) return;
@@ -92,9 +97,9 @@ void Pass(Mode mode) {
         cpu_ok = SetPriorityClass(GetCurrentProcess(), want.cpu_up ? ABOVE_NORMAL_PRIORITY_CLASS : NORMAL_PRIORITY_CLASS);
     }
     LOG_INFO(Core,
-             "coop: back window: {} (another game on this PC {}, window {}, in front {}, minimized {}): GPU class {} "
+             "coop: back window: {} (another game of ours in front {}, window {}, in front {}, minimized {}): GPU class {} "
              "(status {:#x}), process class {}{}",
-             want.gpu_up || want.cpu_up ? "behind another game of ours: one step up" : "back to normal", s.other_game,
+             want.gpu_up || want.cpu_up ? "behind another game of ours: one step up" : "back to normal", s.front_is_ours,
              s.has_window, s.in_front, s.iconic, want.gpu_up ? "above normal" : "normal",
              static_cast<unsigned long>(gpu_status), want.cpu_up ? "above normal" : "normal", cpu_ok ? "" : " (refused)");
     g_have = want;

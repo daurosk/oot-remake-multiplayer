@@ -4,9 +4,10 @@
 // Row 83 / #245: with two or more of our games on one PC (the launcher's local co-op, 2 to 4 games, or Nucleus Co-op),
 // the one whose window is not in front was choppy. Nothing of ours or Longshot's slows it (reports/row-83-unfocus.md:
 // EcoQoS and the timer limit are off, focus is read for input only); Windows favours the foreground process for the
-// CPU (its quantum boost) and the GPU (WDDM's foreground boost). So a game whose window is behind while ANOTHER of our
-// games runs on the PC asks Windows for one step more than normal; in front, alone, minimized or hidden it is plain
-// normal again, so a solo game behind a browser never takes anything from the window in front.
+// CPU (its quantum boost) and the GPU (WDDM's foreground boost). So a game whose window is behind ANOTHER of our games
+// (the foreground window belongs to another process of our exe) asks Windows for one step more than normal; in front,
+// behind any other app (a browser, Discord: even with two of our games behind it), minimized or hidden it is plain
+// normal again, so our games never take anything from an app that is not ours.
 //
 // Logic only (tests/hookshot/back_window_test.cpp); the Windows reads and calls are in coop_back_window_os.cpp.
 
@@ -29,9 +30,9 @@ inline Mode ModeFrom(const char* env) {
 }
 
 struct State {
-    bool other_game = false;   // another process of our game's exe runs on this PC
-    bool has_window = false;   // this game's window was found (visible)
-    bool in_front = false;     // it is the foreground window
+    bool front_is_ours = false;   // the foreground window belongs to ANOTHER process of our game's exe
+    bool has_window = false;      // this game's window was found (visible)
+    bool in_front = false;        // it is the foreground window
     bool iconic = false;       // minimized
 };
 
@@ -43,7 +44,7 @@ struct Want {
 };
 
 inline Want Decide(Mode m, const State& s) {
-    const bool behind = s.other_game && s.has_window && !s.in_front && !s.iconic;
+    const bool behind = s.front_is_ours && s.has_window && !s.in_front && !s.iconic;
     Want w;
     if (!behind || m == Mode::Off) return w;
     w.gpu_up = m == Mode::Gpu || m == Mode::Both;

@@ -9,7 +9,7 @@ using namespace CoopBackWindow;
 namespace {
 State Behind() {
     State s;
-    s.other_game = true;
+    s.front_is_ours = true;
     s.has_window = true;
     return s;
 }
@@ -28,7 +28,7 @@ TEST_CASE("back window: normal in front, alone, minimized or without a window") 
         front.in_front = true;
         CHECK(Decide(m, front) == Want{});
         State alone = Behind();
-        alone.other_game = false;   // a solo game behind a browser takes nothing from the window in front
+        alone.front_is_ours = false;   // a third app in front (browser, Discord), even with 2+ of our games behind it
         CHECK(Decide(m, alone) == Want{});
         State mini = Behind();
         mini.iconic = true;
@@ -37,6 +37,17 @@ TEST_CASE("back window: normal in front, alone, minimized or without a window") 
         none.has_window = false;
         CHECK(Decide(m, none) == Want{});
     }
+}
+
+TEST_CASE("back window: two of our games, a third app in front: both normal; one of ours in front: only the other up") {
+    State a, b;   // two games on one PC, both behind a browser: neither window is in front, the front is not ours
+    a.has_window = b.has_window = true;
+    CHECK(Decide(Mode::Both, a) == Want{});
+    CHECK(Decide(Mode::Both, b) == Want{});
+    a.in_front = true;          // game A comes to the front
+    b.front_is_ours = true;     // so game B sees one of ours in front
+    CHECK(Decide(Mode::Both, a) == Want{});
+    CHECK(Decide(Mode::Both, b) == Want{true, true});
 }
 
 TEST_CASE("back window: LICHII_COOP_BACK_BOOST values") {

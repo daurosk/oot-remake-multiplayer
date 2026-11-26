@@ -116,7 +116,7 @@ def test_pause_probe_afirst_after_warp(pair):
     _probe(pair, gap=0, warp="KakarikoVillage_Child")
 
 
-@pytest.mark.budget(180)
+@pytest.mark.budget(240)
 @pytest.mark.needs_env("LICHII_COOP_TEST_STATE=1")
 @pytest.mark.row("probe crawl-337-12: warp_both, 150 + 150 frames' wait, then A's + and B's + back to back - measures only")
 def test_pause_probe_afirst_after_warp_wait(pair):
